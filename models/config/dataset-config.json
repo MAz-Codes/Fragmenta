@@ -1,0 +1,12 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "custom_dataset",
+            "path": "../../app/backend/data",
+            "custom_metadata_module": "custom_metadata"
+        }
+    ],
+    "random_crop": true,
+    "drop_last": true
+}

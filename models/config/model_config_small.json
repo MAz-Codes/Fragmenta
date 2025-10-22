@@ -1,0 +1,184 @@
+{
+    "model_type": "diffusion_cond",
+    "sample_size": 524288,
+    "sample_rate": 44100,
+    "audio_channels": 2,
+    "model": {
+        "pretransform": {
+            "type": "autoencoder",
+            "iterate_batch": false,
+            "model_half": true,
+            "config": {
+                "encoder": {
+                    "type": "oobleck",
+                    "requires_grad": false,
+                    "config": {
+                        "in_channels": 2,
+                        "channels": 128,
+                        "c_mults": [
+                            1,
+                            2,
+                            4,
+                            8,
+                            16
+                        ],
+                        "strides": [
+                            2,
+                            4,
+                            4,
+                            8,
+                            8
+                        ],
+                        "latent_dim": 128,
+                        "use_snake": true
+                    }
+                },
+                "decoder": {
+                    "type": "oobleck",
+                    "config": {
+                        "out_channels": 2,
+                        "channels": 128,
+                        "c_mults": [
+                            1,
+                            2,
+                            4,
+                            8,
+                            16
+                        ],
+                        "strides": [
+                            2,
+                            4,
+                            4,
+                            8,
+                            8
+                        ],
+                        "latent_dim": 64,
+                        "use_snake": true,
+                        "final_tanh": false
+                    }
+                },
+                "bottleneck": {
+                    "type": "vae"
+                },
+                "latent_dim": 64,
+                "downsampling_ratio": 2048,
+                "io_channels": 2
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "t5",
+                    "config": {
+                        "t5_model_name": "t5-base",
+                        "max_length": 64
+                    }
+                },
+                {
+                    "id": "seconds_total",
+                    "type": "number",
+                    "config": {
+                        "min_val": 0,
+                        "max_val": 256
+                    }
+                }
+            ],
+            "cond_dim": 768
+        },
+        "diffusion": {
+            "cross_attention_cond_ids": [
+                "prompt",
+                "seconds_total"
+            ],
+            "global_cond_ids": [
+                "seconds_total"
+            ],
+            "type": "dit",
+            "config": {
+                "io_channels": 64,
+                "embed_dim": 1024,
+                "depth": 16,
+                "num_heads": 8,
+                "cond_token_dim": 768,
+                "global_cond_dim": 768,
+                "transformer_type": "continuous_transformer",
+                "attn_kwargs": {
+                    "qk_norm": "ln"
+                }
+            }
+        },
+        "io_channels": 64
+    },
+    "training": {
+        "use_ema": true,
+        "log_loss_info": false,
+        "optimizer_configs": {
+            "diffusion": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "lr": 0.0001,
+                        "betas": [
+                            0.9,
+                            0.95
+                        ],
+                        "eps": 1e-08,
+                        "weight_decay": 0.01,
+                        "foreach": true
+                    }
+                },
+                "scheduler": {
+                    "type": "InverseLR",
+                    "config": {
+                        "inv_gamma": 1000000,
+                        "power": 0.5,
+                        "warmup": 0.99
+                    }
+                }
+            }
+        },
+        "demo": {
+            "demo_every": 250,
+            "demo_steps": 8,
+            "num_demos": 8,
+            "demo_cond": [
+                {
+                    "prompt": "drum breaks 174 BPM",
+                    "seconds_total": 6
+                },
+                {
+                    "prompt": "People talking in a crowded cafe",
+                    "seconds_total": 10
+                },
+                {
+                    "prompt": "A short, beautiful piano riff in C minor",
+                    "seconds_total": 6
+                },
+                {
+                    "prompt": "Tight Snare Drum",
+                    "seconds_total": 1
+                },
+                {
+                    "prompt": "A dog barking next to a waterfall",
+                    "seconds_total": 6
+                },
+                {
+                    "prompt": "Glitchy bass design",
+                    "seconds_total": 4
+                },
+                {
+                    "prompt": "Synth pluck arp with reverb and delay, 128 BPM",
+                    "seconds_total": 6
+                },
+                {
+                    "prompt": "Birds singing in the forest",
+                    "seconds_total": 10
+                }
+            ],
+            "demo_cfg_scales": [
+                1
+            ]
+        }
+    }
+}

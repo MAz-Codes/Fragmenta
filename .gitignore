@@ -1,0 +1,162 @@
+
+# ============================================
+# PYTHON BUILD & CACHE
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ============================================
+# VIRTUAL ENVIRONMENTS
+# ============================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ============================================
+# MODELS & CHECKPOINTS (LARGE FILES)
+# ============================================
+# Only keep config files, not actual models
+models/pretrained/*.safetensors
+models/pretrained/*.ckpt
+models/pretrained/*.pth
+models/fine_tuned/*/
+!models/fine_tuned/.gitkeep
+
+# ============================================
+# USER DATA & RUNTIME FILES
+# ============================================
+# Backend data and logs
+app/backend/data/
+app/backend/*.log
+
+# Output Files
+output/
+*.wav
+*.mp3
+*.flac
+*.aiff
+*.ogg
+
+# Training artifacts
+lightning_logs/
+*.ckpt
+
+# User configuration
+config/terms_accepted.json
+
+# Logs
+logs/
+*.log
+
+# ============================================
+# IDE & EDITORS
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================
+# OS GENERATED FILES
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ============================================
+# NODE.JS / FRONTEND
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
+
+# Frontend build (we keep source, not build)
+app/frontend/build/
+
+# ============================================
+# BUILD & DISTRIBUTION ARTIFACTS
+# ============================================
+# PyInstaller builds
+build/fragmenta/
+build/fragmenta.spec
+build/windows_source/
+
+# Distribution packages
+dist/
+distribution/builds/
+*.dmg
+*.app
+*.exe
+*.iss
+*.pkg
+*.deb
+*.rpm
+*.AppImage
+
+# Distribution prep files (private notes)
+DISTRIBUTION_PREP.md
+DISTRIBUTION.md
+
+# Private utility scripts and distribution tools
+scripts/
+distribution/
+
+# ============================================
+# TEMPORARY & CACHE FILES
+# ============================================
+tmp/
+temp/
+*.temp
+*.tmp
+.cache
+.parcel-cache
+
+# ============================================
+# DATASET FILES
+# ============================================
+# Keep example configs, exclude actual data
+*.csv
+*.json
+# But keep these important JSON files:
+!package.json
+!package-lock.json
+!tsconfig.json
+!*.config.json
+!models/config/*.json
+
+# ============================================
+# ENVIRONMENT & SECRETS
+# ============================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
