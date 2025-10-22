@@ -1,6 +1,6 @@
 <div align="center">
 
-# Fragmenta
+# Fragmenta Desktop
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Version](https://img.shields.io/badge/version-0.0.1-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
@@ -28,7 +28,7 @@ Please note that this is not a comemrcial software made for creating high-fideli
 
 ## Quick Start
 
-Download .dmg or .exe files for a hassle free install. Download here:
+Download .dmg or .exe files for a hassle free install:
 
 [MacOS](https://) | [Windows](https://)
 
