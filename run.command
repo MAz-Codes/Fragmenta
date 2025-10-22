@@ -2,9 +2,7 @@
 
 echo "Fragmenta Desktop"
 echo "================================="
-echo ""
-echo "Setting up your audio generation environment..."
-echo ""
+
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Project root: $PROJECT_ROOT"
