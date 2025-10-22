@@ -93,7 +93,7 @@ Upload audio files with text descriptions. The system will save audio and create
 
 Configure training parameters:
 - Base model: Stable Audio Open Small (341M) or 1.0 (838M)
-- Epochs: 1-100
+- Epochs
 - Batch size: 1-16
 - Learning rate
 - Checkpoint frequency
