@@ -105,12 +105,28 @@ pip install --upgrade pip setuptools wheel build --quiet
 echo "Package tools updated"
 echo ""
 
-echo "Installing all dependencies from requirements.txt..."
+echo "Installing PyTorch..."
+pip install torch torchvision torchaudio --quiet
+echo "PyTorch installed"
+echo ""
+
+echo "Installing core dependencies (skipping flash-attn on macOS)..."
 echo "This may take several minutes on first install..."
-pip install -r requirements.txt --quiet || {
-    echo "Some dependencies had conflicts, retrying with verbose output..."
-    pip install -r requirements.txt
+
+# Install everything except flash-attn first
+grep -v "flash-attn" requirements.txt > /tmp/requirements_temp.txt
+pip install -r /tmp/requirements_temp.txt --quiet || {
+    echo "Retrying with verbose output..."
+    pip install -r /tmp/requirements_temp.txt
 }
+rm /tmp/requirements_temp.txt
+
+echo ""
+echo "Attempting to install flash-attn (optional, will skip if CUDA not available)..."
+pip install "flash-attn>=2.8.3" --quiet 2>/dev/null || {
+    echo "flash-attn skipped (not needed on macOS)"
+}
+
 echo "Dependencies installed"
 echo ""
 
