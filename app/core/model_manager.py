@@ -20,7 +20,7 @@ class ModelManager:
             'stable-audio-open-small': {
                 'name': 'Stable Audio Open Small',
                 'repo': 'stabilityai/stable-audio-open-small',
-                'files': ['model.safetensors', 'config.json'],
+                'files': ['model.safetensors'],
                 'size': '2.1 GB',
                 'description': 'Fast generation, good quality, lower memory usage',
                 'best_for': 'Beginners, quick experiments, limited GPU',
@@ -30,7 +30,7 @@ class ModelManager:
             'stable-audio-open-1.0': {
                 'name': 'Stable Audio Open 1.0',
                 'repo': 'stabilityai/stable-audio-open-1.0',
-                'files': ['model.safetensors', 'config.json'],
+                'files': ['model.safetensors'],
                 'size': '8.2 GB',
                 'description': 'Highest quality, more detailed audio',
                 'best_for': 'Professional use, high-end GPUs',
@@ -48,18 +48,21 @@ class ModelManager:
 
         for model_id, info in self.available_models.items():
             is_downloaded = self.is_model_downloaded(model_id)
-            
+
             downloaded_size = None
             if is_downloaded:
                 if model_id == 'stable-audio-open-small':
                     model_file = self.models_dir / 'stable-audio-open-small-model.safetensors'
-                    downloaded_size = self._get_file_size(model_file) if model_file.exists() else None
+                    downloaded_size = self._get_file_size(
+                        model_file) if model_file.exists() else None
                 elif model_id == 'stable-audio-open-1.0':
                     model_file = self.models_dir / 'stable-audio-open-model.safetensors'
-                    downloaded_size = self._get_file_size(model_file) if model_file.exists() else None
+                    downloaded_size = self._get_file_size(
+                        model_file) if model_file.exists() else None
                 else:
                     model_path = self.models_dir / model_id
-                    downloaded_size = self._get_downloaded_size(model_path) if model_path.exists() else None
+                    downloaded_size = self._get_downloaded_size(
+                        model_path) if model_path.exists() else None
 
             models.append({
                 'id': model_id,
@@ -79,7 +82,7 @@ class ModelManager:
 
         if not file_path.exists() or not file_path.is_file():
             return "0 B"
-        
+
         size = file_path.stat().st_size
         return self._bytes_to_human(size)
 
@@ -204,7 +207,7 @@ class ModelManager:
                 try:
                     from app.core.hf_auth_dialog import show_hf_auth_dialog
                     success = show_hf_auth_dialog()
-                    
+
                     if not success:
                         print("Authentication dialog was cancelled")
                         if progress_callback:
@@ -289,15 +292,15 @@ class ModelManager:
                             filename=file_pattern,
                             resume_download=True
                         )
-                        
+
                         downloaded_path = Path(downloaded_file)
                         final_path = target_dir / final_filename
-                        
+
                         final_path.parent.mkdir(parents=True, exist_ok=True)
-                        
+
                         shutil.copy2(str(downloaded_path), str(final_path))
                         print(f"Saved as {final_filename}")
-                            
+
                         downloaded_files.append(str(final_path))
 
                         if progress_callback:
@@ -373,7 +376,7 @@ class ModelManager:
     def delete_model(self, model_id: str) -> bool:
 
         deleted_something = False
-        
+
         if model_id == 'stable-audio-open-small':
             model_file = self.models_dir / 'stable-audio-open-small-model.safetensors'
             config_file = self.models_dir / 'stable-audio-open-small-config.json'
@@ -383,7 +386,7 @@ class ModelManager:
         else:
             model_file = self.models_dir / f"{model_id}-model.safetensors"
             config_file = self.models_dir / f"{model_id}-config.json"
-        
+
         for file_path in [model_file, config_file]:
             if file_path.exists():
                 try:
@@ -392,7 +395,7 @@ class ModelManager:
                     deleted_something = True
                 except Exception as e:
                     print(f"Error deleting {file_path.name}: {e}")
-        
+
         model_path = self.models_dir / model_id
         if model_path.exists() and model_path.is_dir():
             try:
@@ -426,7 +429,7 @@ class ModelManager:
             for model_id in self.available_models.keys():
                 if self.is_model_downloaded(model_id):
                     model_count += 1
-            
+
             for file_path in self.models_dir.rglob("*"):
                 if file_path.is_file():
                     total_size += file_path.stat().st_size
