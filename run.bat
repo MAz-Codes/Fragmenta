@@ -37,10 +37,27 @@ echo This may take a few minutes...
 echo Note: Skipping flash-attn on Windows (Linux-only optimization)
 findstr /V "flash-attn" requirements.txt > "%TEMP%\requirements_windows.txt"
 python -m pip install -r "%TEMP%\requirements_windows.txt"
+if errorlevel 1 (
+    echo ERROR: Failed to install dependencies
+    echo Please check your internet connection and try again
+    del "%TEMP%\requirements_windows.txt"
+    pause
+    exit /b 1
+)
 del "%TEMP%\requirements_windows.txt"
+echo Dependencies installed successfully
 
 echo Installing bundled stable-audio-tools...
-cd stable-audio-tools && python -m pip install -e . && cd ..
+cd stable-audio-tools
+python -m pip install -e .
+if errorlevel 1 (
+    echo ERROR: Failed to install stable-audio-tools
+    cd ..
+    pause
+    exit /b 1
+)
+cd ..
+echo stable-audio-tools installed successfully
 
 echo Checking if React frontend is built...
 if not exist "app\frontend\build\index.html" (
