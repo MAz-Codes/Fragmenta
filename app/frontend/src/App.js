@@ -744,16 +744,16 @@ function TrainingMonitor({
                 <Grid item xs={6}>
                     <Typography variant="body2" color="textSecondary">Current Epoch</Typography>
                     <Typography variant="body1">
-                        {trainingStatus?.current_epoch || 0} / {trainingConfig.epochs}
+                        {trainingStatus?.current_epoch !== undefined ? 
+                            `${trainingStatus.current_epoch + 1} / ${trainingConfig.epochs}` : 
+                            '0 / ' + trainingConfig.epochs}
                     </Typography>
                 </Grid>
                 <Grid item xs={6}>
-                    <Typography variant="body2" color="textSecondary">Current Step / Total Steps</Typography>
+                    <Typography variant="body2" color="textSecondary">Global Step / Total Steps</Typography>
                     <Typography variant="body1" color="primary">
-                        {trainingStatus?.current_step !== undefined ?
-                            `${trainingStatus.current_step} / ${trainingStatus?.current_step !== undefined && trainingStatus?.current_epoch !== undefined ?
-                                (trainingStatus.current_epoch * (trainingStatus.total_steps_per_epoch || 35) + trainingStatus.current_step) :
-                                trainingStatus.current_step}` :
+                        {trainingStatus?.global_step !== undefined && trainingStatus?.total_steps !== undefined ?
+                            `${trainingStatus.global_step} / ${trainingStatus.total_steps}` :
                             'N/A'}
                     </Typography>
                 </Grid>
