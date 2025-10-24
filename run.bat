@@ -27,24 +27,39 @@ call "%PROJECT_ROOT%\venv\Scripts\activate.bat"
 cd /d "%PROJECT_ROOT%"
 
 echo Updating pip...
-python -m pip install --upgrade pip setuptools wheel build --quiet
+python -m pip install --upgrade pip setuptools wheel build
 
-echo Installing all dependencies from requirements.txt...
+echo Installing PyTorch...
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+echo Installing all other dependencies from requirements.txt...
 echo This may take a few minutes...
-python -m pip install -r requirements.txt --quiet
+echo Note: Skipping flash-attn on Windows (Linux-only optimization)
+findstr /V "flash-attn" requirements.txt > "%TEMP%\requirements_windows.txt"
+python -m pip install -r "%TEMP%\requirements_windows.txt"
+del "%TEMP%\requirements_windows.txt"
 
 echo Installing bundled stable-audio-tools...
-cd stable-audio-tools && python -m pip install -e . --quiet && cd ..
+cd stable-audio-tools && python -m pip install -e . && cd ..
 
-echo Verifying PyTorch installation...
-python -c "import torch; print('PyTorch version:', torch.__version__)" 2>nul
-if errorlevel 1 (
-    echo PyTorch not found, reinstalling...
-    python -m pip uninstall torch torchvision torchaudio -y --quiet
-    python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --quiet
+echo Checking if React frontend is built...
+if not exist "app\frontend\build\index.html" (
+    echo React frontend not built. Building now...
+    cd app\frontend
+    
+    echo Installing Node.js dependencies...
+    call npm install
+    
+    echo Building React app...
+    call npm run build
+    
+    cd ..\..
+    echo Frontend build complete!
+) else (
+    echo Frontend already built. Skipping build step.
 )
 
-echo Starting Fragmenta Desktop...
+echo Starting Fragmenta...
 python main.py
 
 pause
