@@ -7,9 +7,9 @@ Flask>=2.3.0
 Flask-CORS>=4.0.0
 requests>=2.28.0
 
-torch
+torch>=2.5,<=2.8
 torchvision
-torchaudio
+torchaudio>=2.5,<=2.8
 transformers>=4.30.0
 diffusers>=0.20.0
 accelerate>=0.20.0
