@@ -28,13 +28,16 @@ Please note that this is not a comemrcial software made for creating high-fideli
 
 ## Quick Start
 
-Download .dmg or .exe files for a hassle free install:
+Please read the following carefully:
 
-[MacOS](https://) | [Windows](https://)
+- Even though Fragmenta will run on MacOS, I do not really recommend it. It is extremely slow (unless you have a lot of RAM). 
+- If you want more coherent results, use the larger model.
+- The initial installation can take a long time. Go make yourself a cup of coffee while that happens!
+- This is an experimental one-person operation, fixes can take a while. With that said, enjoy making noises!
 
 ##
 
-Or just clone this repo:
+To get started, open your terminal and clone this repo:
 
 ```bash
 # Clone repository
@@ -43,9 +46,9 @@ cd fragmenta
 ```
 ```bash
 # Run application
-./run.sh           # Linux/Unix
+./run.sh           # Linux
 run.bat            # Windows
-./run.command      # macOS
+./run.command      # MacOS
 ```
 
 This will take a while, so be patient. The launcher script will:
