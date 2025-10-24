@@ -106,7 +106,7 @@ echo "Package tools updated"
 echo ""
 
 echo "Installing PyTorch..."
-pip install torch torchvision torchaudio --quiet
+pip install "torch>=2.5,<=2.8" torchvision "torchaudio>=2.5,<=2.8" --quiet
 echo "PyTorch installed"
 echo ""
 
