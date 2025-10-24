@@ -3,6 +3,16 @@ import os
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except AttributeError:
+        import codecs
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'ignore')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 if sys.platform == "darwin":
     os.environ["QT_QPA_PLATFORM"] = "cocoa"
     os.environ["QT_MAC_WANTS_LAYER"] = "1"
