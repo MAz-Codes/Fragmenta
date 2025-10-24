@@ -46,7 +46,6 @@ models/fine_tuned/*/
 # USER DATA & RUNTIME FILES
 # ============================================
 # Backend data and logs
-app/backend/data/
 app/backend/*.log
 
 # Output Files
@@ -88,11 +87,7 @@ logs/
 ehthumbs.db
 Thumbs.db
 
-# ============================================
-# PLATFORM-SPECIFIC RUN SCRIPTS
-# ============================================
-run.command
-run.bat
+
 
 # ============================================
 # NODE.JS / FRONTEND
@@ -126,10 +121,6 @@ distribution/builds/
 *.deb
 *.rpm
 *.AppImage
-
-# Distribution prep files (private notes)
-DISTRIBUTION_PREP.md
-DISTRIBUTION.md
 
 # Private utility scripts and distribution tools
 scripts/
