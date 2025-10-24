@@ -7,6 +7,12 @@ if sys.platform == "darwin":
     os.environ["QT_QPA_PLATFORM"] = "cocoa"
     os.environ["QT_MAC_WANTS_LAYER"] = "1"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+elif sys.platform == "win32":
+    os.environ["QT_QPA_PLATFORM"] = "windows"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+else:
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
 from app.core.config import get_config
 from app.core.model_manager import ModelManager
@@ -638,6 +644,9 @@ def main():
         os.environ['QT_QPA_PLATFORM'] = 'cocoa'
         os.environ['QT_MAC_WANTS_LAYER'] = '1'
         print(f"macOS: Setting Qt platform to cocoa")
+    elif sys.platform == "win32":
+        os.environ['QT_QPA_PLATFORM'] = 'windows'
+        print(f"Windows: Setting Qt platform to windows")
     else:
         os.environ['QT_QPA_PLATFORM'] = 'xcb'
         print(f"Linux: Setting Qt platform to xcb")
