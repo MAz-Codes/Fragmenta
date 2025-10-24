@@ -63,5 +63,22 @@ python3 -c 'import torch; print(f"PyTorch {torch.__version__} with CUDA {torch.c
 python3 -c 'import PyQt6.QtCore; print("PyQt6 ready")' 2>/dev/null || echo "PyQt6 issue"
 python3 -c 'import flash_attn; print(f"Flash Attention {flash_attn.__version__}")' 2>/dev/null || echo "Flash Attention not available (optional)"
 
+echo "Checking if React frontend is built..."
+if [ ! -f "app/frontend/build/index.html" ]; then
+    echo "React frontend not built. Building now..."
+    cd app/frontend
+    
+    echo "Installing Node.js dependencies..."
+    npm install
+    
+    echo "Building React app..."
+    npm run build
+    
+    cd ../..
+    echo "Frontend build complete!"
+else
+    echo "Frontend already built. Skipping build step."
+fi
+
 echo "Starting Fragmenta..."
 python3 main.py
