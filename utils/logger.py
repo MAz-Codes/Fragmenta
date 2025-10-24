@@ -36,21 +36,16 @@ class ColoredFormatter(logging.Formatter):
     }
 
     def format(self, record):
-        # Add color to level name
         if hasattr(record, 'levelname'):
             color = self.COLORS.get(record.levelname, Colors.RESET)
             record.levelname = f"{color}{record.levelname}{Colors.RESET}"
 
-        # Format the record
         formatted = super().format(record)
         
-        # On Windows, ensure safe encoding
         if sys.platform == 'win32':
             try:
-                # Test if the string can be encoded
                 formatted.encode('charmap')
             except UnicodeEncodeError:
-                # If not, replace problematic characters
                 formatted = formatted.encode('ascii', 'replace').decode('ascii')
         
         return formatted
@@ -73,18 +68,14 @@ class FragmentaLogger:
             self._initialized = True
 
     def setup_logging(self, log_level: str = None, log_file: bool = True):
-        # Ensure UTF-8 encoding for console output on Windows
         if sys.platform == 'win32':
             try:
                 sys.stdout.reconfigure(encoding='utf-8')
                 sys.stderr.reconfigure(encoding='utf-8')
             except AttributeError:
-                # Python < 3.7 doesn't have reconfigure
                 import codecs
                 sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'ignore')
                 sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'ignore')
-            # Set environment variable for any child processes
-            os.environ['PYTHONIOENCODING'] = 'utf-8'
 
         if log_level is None:
             log_level = os.environ.get('FRAGMENTA_LOG_LEVEL', 'INFO').upper()
