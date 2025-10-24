@@ -242,31 +242,39 @@ class ModelManager:
             if progress_callback:
                 progress_callback(20, "Starting file download...")
 
-            class ProgressWrapper:
-                def __init__(self, callback):
-                    self.callback = callback
-                    self.last_percent = 20
-
-                def __call__(self, bytes_downloaded, total_bytes):
-                    if total_bytes > 0:
-                        percent = 20 + \
-                            int((bytes_downloaded / total_bytes) * 70)
-                        if percent > self.last_percent:
-                            self.last_percent = percent
-                            if self.callback:
-                                self.callback(
-                                    percent, f"Downloaded {bytes_downloaded}/{total_bytes} bytes")
-
-            progress_wrapper = ProgressWrapper(
-                progress_callback) if progress_callback else None
-
-            if progress_callback:
-                progress_callback(0, "Starting model download...")
-
             try:
-                from huggingface_hub import snapshot_download
-                import shutil
                 from huggingface_hub import hf_hub_download
+                import shutil
+                from tqdm import tqdm
+                import sys
+                
+                # Redirect tqdm to capture progress
+                class TqdmToCallback:
+                    def __init__(self, callback, file_index, total_files):
+                        self.callback = callback
+                        self.file_index = file_index
+                        self.total_files = total_files
+                        self.last_percent = 0
+                    
+                    def __call__(self, t):
+                        """Returns a callback function for tqdm"""
+                        def inner(bytes_amount=1):
+                            if t.total:
+                                # Calculate progress: 20-90% range for all files
+                                file_progress = (t.n / t.total)
+                                overall_progress = (self.file_index + file_progress) / self.total_files
+                                percent = 20 + int(overall_progress * 70)
+                                
+                                if percent != self.last_percent:
+                                    self.last_percent = percent
+                                    downloaded_mb = t.n / (1024 * 1024)
+                                    total_mb = t.total / (1024 * 1024)
+                                    if self.callback:
+                                        self.callback(
+                                            percent, 
+                                            f"Downloading: {downloaded_mb:.1f}MB / {total_mb:.1f}MB"
+                                        )
+                        return inner
 
                 downloaded_files = []
                 total_files = len(model_info['files'])
@@ -274,7 +282,9 @@ class ModelManager:
                 for i, file_pattern in enumerate(model_info['files']):
                     if progress_callback:
                         progress_callback(
-                            0, f"Starting download of {file_pattern}...")
+                            20 + int((i / total_files) * 70), 
+                            f"Starting download of {file_pattern}..."
+                        )
 
                     try:
                         if file_pattern == 'model.safetensors':
@@ -287,11 +297,42 @@ class ModelManager:
                         else:
                             final_filename = f"{model_id}-{file_pattern}"
 
-                        downloaded_file = hf_hub_download(
-                            repo_id=model_info['repo'],
-                            filename=file_pattern,
-                            resume_download=True
-                        )
+                        # Use custom tqdm callback to intercept progress
+                        tqdm_callback = TqdmToCallback(progress_callback, i, total_files)
+                        
+                        # Monkey-patch tqdm for this download
+                        original_tqdm_init = tqdm.__init__
+                        
+                        def patched_tqdm_init(self, *args, **kwargs):
+                            original_tqdm_init(self, *args, **kwargs)
+                            # Hook into tqdm updates
+                            original_update = self.update
+                            def new_update(n=1):
+                                result = original_update(n)
+                                if progress_callback and self.total:
+                                    file_progress = (self.n / self.total)
+                                    overall_progress = (i + file_progress) / total_files
+                                    percent = 20 + int(overall_progress * 70)
+                                    downloaded_mb = self.n / (1024 * 1024)
+                                    total_mb = self.total / (1024 * 1024)
+                                    progress_callback(
+                                        percent, 
+                                        f"Downloading: {downloaded_mb:.1f}MB / {total_mb:.1f}MB"
+                                    )
+                                return result
+                            self.update = new_update
+                        
+                        tqdm.__init__ = patched_tqdm_init
+
+                        try:
+                            downloaded_file = hf_hub_download(
+                                repo_id=model_info['repo'],
+                                filename=file_pattern,
+                                resume_download=True
+                            )
+                        finally:
+                            # Restore original tqdm
+                            tqdm.__init__ = original_tqdm_init
 
                         downloaded_path = Path(downloaded_file)
                         final_path = target_dir / final_filename
@@ -304,7 +345,10 @@ class ModelManager:
                         downloaded_files.append(str(final_path))
 
                         if progress_callback:
-                            progress_callback(100, f"Completed {file_pattern}")
+                            progress_callback(
+                                20 + int(((i + 1) / total_files) * 70), 
+                                f"Completed {file_pattern}"
+                            )
 
                     except Exception as file_error:
                         print(
