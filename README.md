@@ -58,13 +58,19 @@ This will take a while, so be patient. The launcher script will:
 - Install all required packages
 - Launch the application
 
-## Running after initial Installation
+## Running After Initial Installation
 
-After the first installation you can run the program by just running the main.py from root:
+After the first installation, simply run the launcher script again:
 
 ```bash
-python main.py
+./run.sh           # Linux
+run.bat            # Windows
+./run.command      # MacOS
 ```
+
+The script will detect that everything is already installed and launch immediately.
+
+**Important:** Always use the launcher scripts - they ensure the correct Python environment is activated. If you are more experienced, you can just call ```main.py``` from root after activating the venv. 
 
 ## Project Structure
 
@@ -142,10 +148,16 @@ The backend app.py is located in:
 ```bash
 cd app/backend
 ```
-Do everything inside the venv:
+
+**Always activate the virtual environment first:**
 
 ```bash
-source venv/bin/activate
+# Activate venv
+source venv/bin/activate  # Linux/macOS
+# OR
+venv\Scripts\activate.bat  # Windows
+
+# Then run backend
 python app.py
 ```
 
