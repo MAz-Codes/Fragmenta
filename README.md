@@ -42,12 +42,12 @@ To get started, open your terminal and clone this repo:
 ```bash
 # Clone repository
 git clone https://github.com/MAz-Codes/fragmenta.git
-cd fragmenta
+cd Fragmenta
 ```
 ```bash
 # Run application
 ./run.sh           # Linux
-run.bat            # Windows
+./run.bat            # Windows
 ./run.command      # MacOS
 ```
 
@@ -60,17 +60,28 @@ This will take a while, so be patient. The launcher script will:
 
 ## Running After Initial Installation
 
-After the first installation, simply run the launcher script again:
+After the first installation, simply go to the root folder and run ```main.py``` while venv is activated:
 
+Linux:
 ```bash
-./run.sh           # Linux
-run.bat            # Windows
-./run.command      # MacOS
+cd Fragmenta
+venv/Source/activate
+python main.py
 ```
 
-The script will detect that everything is already installed and launch immediately.
+Windows:
+```bash
+cd Fragmenta
+venv\Scripts\activate
+python main.py
+```
 
-**Important:** Always use the launcher scripts - they ensure the correct Python environment is activated. If you are more experienced, you can just call ```main.py``` from root after activating the venv. 
+MacOS:
+```bash
+cd Fragmenta
+venv/Source/activate
+python main.py
+```
 
 ## Project Structure
 
@@ -162,6 +173,8 @@ python app.py
 ```
 
 ## Troubleshooting
+
+**Models do not Show After Downlaod:** You might need to restart the programm after downloading the mdoels. 
 
 **Qt Platform Plugin Error**: Setup script auto-installs Qt libraries
 
