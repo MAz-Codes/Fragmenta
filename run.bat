@@ -1,5 +1,8 @@
 @echo off
-REM Fragmenta Desktop - Windows Launcher Script
+
+
+chcp 65001 >nul
+set PYTHONIOENCODING=utf-8
 
 echo Fragmenta Desktop
 echo ===================
