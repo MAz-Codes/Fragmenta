@@ -1082,9 +1082,30 @@ function GeneratedFragmentsWindow({ fragments, onDownload }) {
                 flexDirection: 'column'
             }}
         >
-            <Typography variant="h6" gutterBottom>
-                Generated Fragments ({fragments.length})
-            </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h6">
+                    Generated Fragments ({fragments.length})
+                </Typography>
+                <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={async () => {
+                        try {
+                            const response = await axios.post('/api/open-output-folder');
+                            if (response.data.success) {
+                                console.log('Output folder opened successfully');
+                            } else {
+                                console.error('Failed to open output folder:', response.data.error);
+                            }
+                        } catch (error) {
+                            console.error('Error opening output folder:', error);
+                        }
+                    }}
+                    sx={{ ml: 2 }}
+                >
+                    Open Output Folder
+                </Button>
+            </Box>
 
             {fragments.length === 0 ? (
                 <Box
@@ -2880,7 +2901,6 @@ function App() {
                                     </Box>
                                 ) : (
                                     <Button
-                                        variant="contained"
                                         color="primary"
                                         fullWidth
                                         onClick={generateAudio}
