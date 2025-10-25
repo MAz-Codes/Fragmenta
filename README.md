@@ -118,10 +118,12 @@ Configure training parameters:
 - Learning rate
 - Checkpoint frequency
 
+**Important:**You must unwrap your trained model to be able to use it for generation. Unwraping can be done on the geenration page.
+
 ### 3. Generate Audio
 
 Use base or fine-tuned models to generate audio from text prompts (1-47 seconds). 
-
+After training, select the saved-fine tuned checkpoint from the dropdown menu, unwrap it and it will be ready for generation.
 
 ## API Endpoints
 
