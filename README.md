@@ -118,7 +118,7 @@ Configure training parameters:
 - Learning rate
 - Checkpoint frequency
 
-**Important:**You must unwrap your trained model to be able to use it for generation. Unwraping can be done on the geenration page.
+**Important:** You must unwrap your trained model to be able to use it for generation. Unwraping can be done on the geenration page.
 
 ### 3. Generate Audio
 
