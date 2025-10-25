@@ -222,43 +222,21 @@ class LoRATrainer:
             save_dir = str(config.get_path("models_fine_tuned") / model_name)
             os.makedirs(save_dir, exist_ok=True)
 
+            batch_size = self.config.get("batchSize", 4)
+            accum_batches = 1
+            precision = "32"
+            num_workers = 0
+            
             if device_info['type'] == 'cpu':
-                requested_batch_size = self.config.get("batchSize", 1)
-                batch_size = min(requested_batch_size, 1)
-                accum_batches = max(1, requested_batch_size // batch_size)
-                precision = "32"
-                num_workers = 0
                 print(f"\nMEMORY SETTINGS (CPU Training):")
-                print(f"- Batch Size: {batch_size}")
-                print(f"- Gradient Accumulation: {accum_batches}")
-                print(f"- Effective Batch Size: {batch_size * accum_batches}")
-                print(f"- Precision: {precision}")
-                print(f"- Workers: {num_workers}")
-
             elif base_model == "stable-audio-open-1.0":
-                requested_batch_size = self.config.get("batchSize", 1)
-                batch_size = min(requested_batch_size, 1)
-                accum_batches = max(1, requested_batch_size // batch_size)
-                precision = "32"
-                num_workers = 0
                 print(f"\nMEMORY SETTINGS (Large Model on {device_info['type'].upper()}):")
-                print(f"- Batch Size: {batch_size}")
-                print(f"- Gradient Accumulation: {accum_batches}")
-                print(f"- Effective Batch Size: {batch_size * accum_batches}")
-                print(f"- Precision: {precision}")
-                print(f"- Workers: {num_workers}")
             else:
-                requested_batch_size = self.config.get("batchSize", 1)
-                batch_size = min(requested_batch_size, 2)
-                accum_batches = max(1, requested_batch_size // batch_size)
-                precision = "32"
-                num_workers = 0
                 print(f"\nMEMORY SETTINGS (Small Model on {device_info['type'].upper()}):")
-                print(f"- Batch Size: {batch_size}")
-                print(f"- Gradient Accumulation: {accum_batches}")
-                print(f"- Effective Batch Size: {batch_size * accum_batches}")
-                print(f"- Precision: {precision}")
-                print(f"- Workers: {num_workers}")
+            
+            print(f"- Batch Size: {batch_size}")
+            print(f"- Precision: {precision}")
+            print(f"- Workers: {num_workers}")
 
             memory_flags = [
                 "--precision", precision,
@@ -364,25 +342,44 @@ class LoRATrainer:
                 env=env
             )
 
-            self.training_start_time = time.time()  # Store for loss history timing
+            self.training_start_time = time.time()
 
-            current_progress = self.training_status.get("progress", 0)
-            current_epoch = self.training_status.get("current_epoch", 0)
-            current_step = self.training_status.get("current_step", 0)
-            global_step = self.training_status.get("global_step", 0)
+            config_obj = get_config()
+            data_dir = config_obj.get_path("data")
+            
+            audio_files = []
+            for ext in ['.wav', '.mp3', '.flac', '.m4a']:
+                audio_files.extend(list(data_dir.glob(f"*{ext}")))
+            
+            num_files = len(audio_files)
+            total_epochs = self.config.get("epochs", 10)
+            steps_per_epoch = max(1, num_files // batch_size)
+            total_steps = steps_per_epoch * total_epochs
+            
+            print(f"\nTRAINING CALCULATION:")
+            print(f"- Audio files: {num_files}")
+            print(f"- Batch size: {batch_size}")
+            print(f"- Steps per epoch: {steps_per_epoch}")
+            print(f"- Total epochs: {total_epochs}")
+            print(f"- Total steps: {total_steps}")
+            print(f"- Checkpoint every: {self.config.get('checkpointSteps', 25)} steps")
 
             self.training_status.update({
                 "is_training": True,
                 "start_time": self.training_start_time,
-                "progress": current_progress,
-                "current_epoch": current_epoch,
-                "current_step": current_step,
-                "global_step": global_step,
+                "progress": 0,
+                "current_epoch": 0,
+                "current_step": 0,
+                "global_step": 0,
                 "checkpoints_saved": 0,
                 "error": None,
                 "device_info": device_info,
-                "total_steps_per_epoch": None,
-                "error_messages": []
+                "steps_per_epoch": steps_per_epoch,
+                "total_steps_per_epoch": steps_per_epoch,  # Frontend expects this name
+                "total_steps": total_steps,
+                "total_epochs": total_epochs,
+                "error_messages": [],
+                "stop_initiated": False
             })
 
             monitor_thread = threading.Thread(target=self._monitor_training)
@@ -520,113 +517,132 @@ class LoRATrainer:
             print(f"Monitoring started at: {time.strftime('%H:%M:%S')}")
             print("="*60)
 
+            import queue
+            stdout_queue = queue.Queue()
+            stderr_queue = queue.Queue()
+            
+            def read_stdout():
+                try:
+                    if self.training_process and self.training_process.stdout:
+                        for line in iter(self.training_process.stdout.readline, ''):
+                            if line:
+                                stdout_queue.put(line.strip())
+                            if not self.training_process or self.training_process.poll() is not None:
+                                break
+                except:
+                    pass
+            
+            def read_stderr():
+                try:
+                    if self.training_process and self.training_process.stderr:
+                        for line in iter(self.training_process.stderr.readline, ''):
+                            if line:
+                                stderr_queue.put(line.strip())
+                            if not self.training_process or self.training_process.poll() is not None:
+                                break
+                except:
+                    pass
+            
+            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+
             while self.training_process and self.training_process.poll() is None:
                 current_time = time.time()
                 elapsed_time = current_time - start_time
 
-                if self.training_process.stdout:
-                    try:
-                        import select
-                        if select.select([self.training_process.stdout], [], [], 0.1)[0]:
-                            line = self.training_process.stdout.readline()
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    self._process_training_output(
-                                        line, elapsed_time)
-                    except Exception as e:
-                        print(f"Stdout read error: {e}")
+                try:
+                    while not stdout_queue.empty():
+                        line = stdout_queue.get_nowait()
+                        if line:
+                            self._process_training_output(line, elapsed_time)
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Stdout processing error: {e}")
 
                 try:
-                    if self.training_process.stdout:
-                        import select
-                        if select.select([self.training_process.stdout], [], [], 0)[0]:
-                            line = self.training_process.stdout.readline()
-                            if line:
-                                line = line.strip()
-                                if line:
-                                    self._process_training_output(
-                                        line, elapsed_time)
-                except:
+                    while not stderr_queue.empty():
+                        line = stderr_queue.get_nowait()
+                        if line:
+                            print(f"Stderr: {line}")
+                            if "error" in line.lower() or "exception" in line.lower() or "warning" in line.lower():
+                                self.training_status["error_messages"].append(line)
+                except queue.Empty:
                     pass
-
-                if self.training_process.stderr:
-                    try:
-                        import select
-                        if select.select([self.training_process.stderr], [], [], 0.1)[0]:
-                            line = self.training_process.stderr.readline()
-                            if line:
-                                line = line.strip()
-                                print(f"Stderr: {line}")
-                                if "error" in line.lower() or "exception" in line.lower() or "warning" in line.lower():
-                                    self.training_status["error_messages"].append(
-                                        line)
-                    except:
-                        pass
+                except Exception as e:
+                    print(f"Stderr processing error: {e}")
 
                 if os.path.exists(save_dir):
                     checkpoint_files = list(Path(save_dir).glob("*.ckpt"))
                     current_checkpoint_count = len(checkpoint_files)
 
                     if current_checkpoint_count > last_checkpoint_count:
-                        print(f"CHECKPOINT SAVED! Total: {current_checkpoint_count}")
-
+                        print(f"\nCHECKPOINT SAVED! Total checkpoints: {current_checkpoint_count}")
                         last_checkpoint_count = current_checkpoint_count
                         self.training_status["checkpoints_saved"] = current_checkpoint_count
 
-                        total_epochs = self.config.get("epochs", 10)
-                        checkpoint_progress = min(
-                            90, (current_checkpoint_count / max(1, total_epochs)) * 90)
-                        self.training_status["progress"] = int(
-                            checkpoint_progress)
-                        print(f"Progress: {int(checkpoint_progress)}% ({current_checkpoint_count} checkpoints)")
-
-                if last_checkpoint_count == 0 and self.training_status["current_step"] == 0:
-                    estimated_epoch_time = 600
-                    total_epochs = self.config.get("epochs", 10)
-                    estimated_total_time = estimated_epoch_time * total_epochs
-                    time_progress = min(
-                        50, (elapsed_time / estimated_total_time) * 50)
-                    self.training_status["progress"] = int(time_progress)
-                    print(f"Time-based progress: {int(time_progress)}% (elapsed: {elapsed_time:.1f}s)")
-
-                self.training_status["checkpoints_saved"] = last_checkpoint_count
-
-                if int(elapsed_time) % 10 == 0 and int(elapsed_time) > 0 and self.training_status["current_step"] == 0:
-                    debug_step = int(elapsed_time / 10)
-                    self.training_status["current_step"] = debug_step
-                    self.training_status["current_epoch"] = 0
-
                 if int(elapsed_time) % 30 == 0 and int(elapsed_time) > 0:
-                    self._print_status_update(
-                        elapsed_time, last_step, last_loss, last_checkpoint_count)
+                    current_step = self.training_status.get("global_step", 0)
+                    total_steps = self.training_status.get("total_steps", 1)
+                    progress = self.training_status.get("progress", 0)
+                    current_loss = self.training_status.get("loss")
+                    
+                    print(f"\n{'='*60}")
+                    print(f"[{time.strftime('%H:%M:%S')}] Training Status:")
+                    print(f"- Elapsed: {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
+                    print(f"- Progress: {progress}% ({current_step}/{total_steps} steps)")
+                    print(f"- Epoch: {self.training_status.get('current_epoch', 0) + 1}")
+                    print(f"- Checkpoints: {last_checkpoint_count}")
+                    if current_loss:
+                        print(f"- Current Loss: {current_loss:.4f}")
+                    print(f"{'='*60}\n")
 
                 time.sleep(1)
 
             if self.training_process:
                 return_code = self.training_process.returncode
                 
+                reached_target = self.training_status.get("stop_initiated", False)
+                final_loss = self.training_status.get("loss")
+                completed_steps = self.training_status.get("global_step", 0)
+                
+                had_training_activity = elapsed_time > 30 and (last_checkpoint_count > 0 or final_loss is not None or completed_steps > 0)
+                
                 training_actually_succeeded = (
-                    return_code == 0 and 
-                    elapsed_time > 30 and
-                    (last_checkpoint_count > 0 or last_loss is not None)
+                    (return_code == 0 or reached_target) and 
+                    had_training_activity
                 )
                 
                 if training_actually_succeeded:
-                    print(f"\nTRAINING COMPLETED SUCCESSFULLY!")
+                    completed_epoch = self.training_status.get("current_epoch", 0)
+                    target_epochs = self.training_status.get("total_epochs", self.config.get("epochs", 10))
+                    total_steps = self.training_status.get("total_steps", 0)
+                    
+                    print(f"\n{'='*80}")
+                    print(f"TRAINING COMPLETED SUCCESSFULLY!")
+                    print(f"{'='*80}")
                     print(f"Final Stats:")
-                    print(f"- Total time: {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
-                    print(f"- Checkpoints saved: {last_checkpoint_count}")
-                    print(f"- Final loss: {last_loss if last_loss else 'N/A'}")
+                    print(f"- Epochs Completed: {completed_epoch + 1}/{target_epochs}")
+                    print(f"- Steps Completed: {completed_steps}/{total_steps}")
+                    print(f"- Total Time: {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
+                    print(f"- Checkpoints Saved: {last_checkpoint_count}")
+                    if final_loss:
+                        print(f"- Final Loss: {final_loss:.4f}")
+                    print(f"{'='*80}")
 
                     self.training_status.update({
                         "is_training": False,
                         "progress": 100,
-                        "current_epoch": self.config.get("epochs", 10),
-                        "loss": last_loss
+                        "current_epoch": completed_epoch,
+                        "loss": final_loss
                     })
 
-                    print(f"\nCheckpoints can be manually unwrapped from the Generation page")
+                    if last_checkpoint_count > 0:
+                        print(f"\nCheckpoints can be manually unwrapped from the Generation page")
+                    else:
+                        print(f"\nNo checkpoints were saved (checkpoint interval may be too high)")
                 else:
                     if elapsed_time < 30 and return_code == 0:
                         error_msg = "Training failed due to insufficient training data. You need at least as many audio files as your batch size. Current batch size is {}. Please add more audio files or reduce the batch size.".format(
@@ -663,145 +679,68 @@ class LoRATrainer:
             })
 
     def _process_training_output(self, line: str, elapsed_time: float):
+        if self.training_status.get("stop_initiated"):
+            return
+            
         line_lower = line.lower()
+        import re
 
-        if "step" in line_lower or "epoch" in line_lower or "it" in line_lower:
-            import re
-
-            lightning_pattern = r'epoch\s+(\d+).*?(\d+)/(\d+).*?loss=([0-9.]+)'
-            lightning_match = re.search(lightning_pattern, line_lower)
-
-            if lightning_match:
-                epoch = int(lightning_match.group(1))
-                current_step = int(lightning_match.group(2))
-                total_steps = int(lightning_match.group(3))
-                loss = float(lightning_match.group(4))
-
-                if (current_step != self.training_status.get("current_step", -1) or 
-                    epoch != self.training_status.get("current_epoch", -1)):
-                    print(f"[{time.strftime('%H:%M:%S')}] Epoch {epoch}, Step {current_step}/{total_steps}, Loss: {loss:.4f}")
-
-                self.training_status["current_step"] = current_step
-                self.training_status["current_epoch"] = epoch
-                self.training_status["loss"] = loss
-
-                total_epochs = self.config.get("epochs", 10)
-                global_step = (epoch * total_steps) + current_step
-                total_global_steps = total_epochs * total_steps
-
-                step_progress = min(
-                    90, (global_step / total_global_steps) * 90)
-
-                self.training_status["global_step"] = global_step
-                self.training_status["progress"] = int(step_progress)
-
-                if current_step % 10 == 0 or current_step == 1 or current_step == total_steps:
-                    print(f"Global Step: {global_step}, Progress: {step_progress:.1f}%")
-
-                self.training_status["total_steps_per_epoch"] = total_steps
-
-                if epoch >= total_epochs:
-                    print(f"\nTARGET EPOCHS REACHED: {epoch}/{total_epochs}")
-                    print(f"Automatically stopping training...")
-                    if self.training_process and self.training_process.poll() is None:
-                        self.training_process.terminate()
-                        print(f"Training process terminated successfully")
-                        self.training_status.update({
-                            "is_training": False,
-                            "progress": 100,
-                            "current_epoch": epoch,
-                            "loss": loss
-                        })
-                        return
-
-                current_time = time.time()
-                if hasattr(self, 'training_start_time'):
-                    elapsed = current_time - self.training_start_time
-                else:
-                    elapsed = 0
-
-                loss_entry = {
-                    "time": elapsed,
-                    "loss": loss,
-                    "step": current_step,
-                    "epoch": epoch
-                }
-                self.training_status["loss_history"].append(loss_entry)
-
-                # Keep only last 1000 points to prevent memory issues
-                if len(self.training_status["loss_history"]) > 1000:
-                    self.training_status["loss_history"] = self.training_status["loss_history"][-1000:]
-
-                return
-
-            if not self.training_status.get("total_steps_per_epoch"):
-                step_patterns = [
-                    r'step\s+(\d+)',
-                    r'global\s+step\s+(\d+)',
-                    r'step\s+(\d+)\s*/\s*(\d+)',
-                    r'(\d+)\s*/\s*(\d+)\s*steps',
-                    r'step\s*(\d+)',
-                    r'(\d+)\s*step',
-                ]
-
-                step = None
-                epoch = self.training_status.get("current_epoch", 0)
-
-                for pattern in step_patterns:
-                    match = re.search(pattern, line_lower)
-                    if match:
-                        if len(match.groups()) == 1:
-                            step = int(match.group(1))
-                        elif len(match.groups()) == 2:
-                            step = int(match.group(1))
-                        break
-
-                epoch_patterns = [
-                    r'epoch\s+(\d+)',
-                    r'epoch\s*(\d+)',
-                    r'(\d+)\s*epoch',
-                ]
-
-                for pattern in epoch_patterns:
-                    match = re.search(pattern, line_lower)
-                    if match:
-                        epoch = int(match.group(1))
-                        break
-
-                if step is not None:
-                    print(f"[{time.strftime('%H:%M:%S')}] Epoch {epoch}, Step {step}")
-
-                    self.training_status["current_step"] = step
-                    self.training_status["current_epoch"] = epoch
-
-                    total_epochs = self.config.get("epochs", 10)
-                    stored_total_steps = self.training_status.get(
-                        "total_steps_per_epoch")
-
-                    if stored_total_steps:
-                        global_step = (epoch * stored_total_steps) + step
-                        total_global_steps = total_epochs * stored_total_steps
-                        step_progress = min(
-                            90, (global_step / total_global_steps) * 90)
-                    else:
-                        estimated_steps_per_epoch = 35
-                        global_step = (
-                            epoch * estimated_steps_per_epoch) + step
-                        total_estimated_steps = total_epochs * estimated_steps_per_epoch
-                        step_progress = min(
-                            90, (global_step / total_estimated_steps) * 90)
-
-                    self.training_status["global_step"] = global_step
-                    self.training_status["progress"] = int(step_progress)
-
-        elif "loss" in line_lower and "=" in line_lower:
-            import re
-            loss_match = re.search(r'loss[=:\s]*([0-9.]+)', line_lower)
+        if "loss" in line_lower and ("train/loss" in line_lower or "loss=" in line_lower or "loss:" in line_lower):
+            loss_match = re.search(r'(?:train/)?loss[=:\s]+([0-9.]+)', line_lower)
             if loss_match:
                 loss = float(loss_match.group(1))
-                print(f"[{time.strftime('%H:%M:%S')}] Loss: {loss:.4f}")
-                self.training_status["loss"] = loss
+                
+                last_loss = self.training_status.get("loss")
+                if last_loss is None or abs(loss - last_loss) > 0.0001:
+                    global_step = self.training_status.get("global_step", 0) + 1
+                    self.training_status["global_step"] = global_step
+                    self.training_status["loss"] = loss
+                else:
+                    return
+                
+                steps_per_epoch = self.training_status.get("steps_per_epoch", 1)
+                total_steps = self.training_status.get("total_steps", 1)
+                target_epochs = self.training_status.get("total_epochs", 10)
+                
+                current_epoch = (global_step - 1) // steps_per_epoch
+                current_step = ((global_step - 1) % steps_per_epoch) + 1
+                
+                self.training_status["current_epoch"] = current_epoch
+                self.training_status["current_step"] = current_step
+                
+                progress = min(100, int((global_step / total_steps) * 100))
+                self.training_status["progress"] = progress
+                
+                print(f"[{time.strftime('%H:%M:%S')}] Step {global_step}/{total_steps} (Epoch {current_epoch}, Step {current_step}/{steps_per_epoch}) | Loss: {loss:.4f} | Progress: {progress}%")
 
+                if global_step >= total_steps:
+                    if not self.training_status.get("stop_initiated"):
+                        checkpoint_interval = self.config.get("checkpointSteps", 100)
+                        
+                        print(f"\n{'='*80}")
+                        print(f"TARGET EPOCHS REACHED: {current_epoch + 1}/{target_epochs}")
+                        print(f"{'='*80}")
+                        print(f"Completed {global_step}/{total_steps} steps")
+                        
+                        if global_step % checkpoint_interval == 0:
+                            print(f"Waiting 10 seconds for checkpoint at step {global_step} to save...")
+                            time.sleep(10)
+                        else:
+                            print(f"Waiting 5 seconds for any pending operations...")
+                            time.sleep(5)
+                        
+                        self.training_status["stop_initiated"] = True
+                        self.training_status["progress"] = 100
+                        
+                        print(f"Stopping training process...")
+                        if self.training_process and self.training_process.poll() is None:
+                            self.training_process.terminate()
+                            self.training_status.update({
+                                "is_training": False,
+                                "progress": 100
+                            })
+                    return
+                
                 current_time = time.time()
                 if hasattr(self, 'training_start_time'):
                     elapsed = current_time - self.training_start_time
@@ -811,38 +750,21 @@ class LoRATrainer:
                 loss_entry = {
                     "time": elapsed,
                     "loss": loss,
-                    "step": self.training_status.get("current_step", 0),
-                    "epoch": self.training_status.get("current_epoch", 0)
+                    "step": global_step,
+                    "epoch": current_epoch
                 }
                 self.training_status["loss_history"].append(loss_entry)
 
-                # Keep only last 1000 points to prevent memory issues
                 if len(self.training_status["loss_history"]) > 1000:
                     self.training_status["loss_history"] = self.training_status["loss_history"][-1000:]
+                
+                return
 
-        elif "lr" in line_lower or "learning_rate" in line_lower:
-            import re
-            lr_match = re.search(r'lr[:\s]*([0-9.e+-]+)', line_lower)
-            if lr_match:
-                lr = float(lr_match.group(1))
-                print(f"[{time.strftime('%H:%M:%S')}] Learning Rate: {lr:.2e}")
-
-        elif any(keyword in line_lower for keyword in ["saving", "checkpoint", "validation", "gradient"]):
-            print(f"INFO: [{time.strftime('%H:%M:%S')}] {line}")
-
-        elif any(keyword in line_lower for keyword in ["error", "exception", "warning", "failed"]):
+        if any(keyword in line_lower for keyword in ["saving", "checkpoint saved"]):
             print(f"[{time.strftime('%H:%M:%S')}] {line}")
 
-
-    def _print_status_update(self, elapsed_time: float, last_step: int, last_loss: Optional[float], checkpoint_count: int):
-        print(f"[{time.strftime('%H:%M:%S')}] Status Update:")
-        print(f"- Elapsed time: {time.strftime('%H:%M:%S', time.gmtime(elapsed_time))}")
-        print(f"- Progress: {self.training_status['progress']}%")
-        print(f"- Current epoch: {self.training_status['current_epoch']}")
-        print(f"- Checkpoints: {checkpoint_count}")
-        if last_loss:
-            print(f"- Last loss: {last_loss:.4f}")
-        print("-"*40)
+        elif any(keyword in line_lower for keyword in ["error", "exception", "failed"]) and "warning" not in line_lower:
+            print(f"[{time.strftime('%H:%M:%S')}] {line}")
 
     def get_status(self) -> Dict[str, Any]:
         status = self.training_status.copy()
