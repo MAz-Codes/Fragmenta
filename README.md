@@ -65,7 +65,7 @@ After the first installation, simply go to the root folder and run ```main.py```
 Linux:
 ```bash
 cd Fragmenta
-venv/Source/activate
+source venv/bin/activate
 python main.py
 ```
 
@@ -79,7 +79,7 @@ python main.py
 MacOS:
 ```bash
 cd Fragmenta
-venv/Source/activate
+source venv/bin/activate
 python main.py
 ```
 
