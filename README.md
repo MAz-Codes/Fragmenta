@@ -13,7 +13,7 @@
 
 </div>
 
-Fragmenta is an open-source desktop application for fine-tuning and generation using Stable Audio Open models. Think of this project as a ComfyUI for text-to-audio. You can definetly use it only as a user-friendly interface for inference but fine-tuning is made easy here to personlize the models. 
+Fragmenta is an open-source desktop application that brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by Stable Audio Open models. Think of this project as a ComfyUI for text-to-audio, done by one person. You can definetly use it only as a user-friendly interface for inference, but fine-tuning is what made easy here to personlize the models. 
 
 Please note that this is not a commercial software made for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline, created to facilitate the integration of personalized GenAI technology within the musical workflow for musicians and composers without the need for coding or knowledge of machine learning. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my "Bending the Algorithm" approach that seeks artist-first approaches in AI technology. For more: https://www.misaghazimi.com
 
