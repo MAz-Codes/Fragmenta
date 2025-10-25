@@ -15,7 +15,7 @@
 
 Fragmenta is an open-source desktop application for fine-tuning and generation using Stable Audio Open models. Think of this project as a ComfyUI for text-to-audio. You can definetly use it only as a user-friendly interface for inference but fine-tuning is made easy here to personlize the models. 
 
-Please note that this is not a comemrcial software made for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline, created to facilitate the integration of personalized GenAI technology within the musical workflow for musicians and compsoers without the need for coding or knwoledge of machine learning. It is therefore more suitable for experimental music and sonic arts applciations. This approach corresponds to my "Bending the Algorithm" approach that seeks artist-first approaches in AI technology. For more: https://www.misaghazimi.com
+Please note that this is not a commercial software made for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline, created to facilitate the integration of personalized GenAI technology within the musical workflow for musicians and composers without the need for coding or knowledge of machine learning. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my "Bending the Algorithm" approach that seeks artist-first approaches in AI technology. For more: https://www.misaghazimi.com
 
 ## Features
 
@@ -30,10 +30,11 @@ Please note that this is not a comemrcial software made for creating high-fideli
 
 Please read the following carefully:
 
-- Even though Fragmenta will run on MacOS, I do not really recommend it. It is extremely slow (unless you have a lot of RAM). 
+- I do not really recommend running Fragmenta on Mac. My tests on an M1 Macbook Pro was extremely slow. 
 - If you want more coherent results, use the larger model.
 - The initial installation can take a long time. Go make yourself a cup of coffee while that happens!
-- This is an experimental one-person operation, fixes can take a while. With that said, enjoy making noises!
+- This is an experimental one-person operation, fixes can take a while.
+- With that said, enjoy making noises! 
 
 ##
 
@@ -114,13 +115,13 @@ Upload audio files with text descriptions. The system will save audio and create
 Configure training parameters:
 - Base model: Stable Audio Open Small (341M) or 1.0 (838M)
 - Epochs
-- Batch size: 1-16
 - Learning rate
 - Checkpoint frequency
 
 ### 3. Generate Audio
 
-Use base or fine-tuned models to generate audio from text prompts (1-47 seconds).
+Use base or fine-tuned models to generate audio from text prompts (1-47 seconds). 
+
 
 ## API Endpoints
 
@@ -139,42 +140,10 @@ POST /api/start-fresh            Clear all data
 POST /api/free-gpu-memory        Free GPU memory
 ```
 
-## Development
-
-You are more than welcome to make your own mods in front- and/or backend.
-
-### Frontend Development
-
-The React app App.js is located here:
-
-```bash
-cd app/frontend
-npm run dev
-```
-If you make any changes, do not forget to build the app again before running the backend.
-
-### Backend Development
-
-The backend app.py is located in:
-```bash
-cd app/backend
-```
-
-**Always activate the virtual environment first:**
-
-```bash
-# Activate venv
-source venv/bin/activate  # Linux/macOS
-# OR
-venv\Scripts\activate.bat  # Windows
-
-# Then run backend
-python app.py
-```
 
 ## Troubleshooting
 
-**Models do not Show After Downlaod:** You might need to restart the programm after downloading the mdoels. 
+**Models do not Show After Download:** You might need to restart the program after downloading the models. 
 
 **Qt Platform Plugin Error**: Setup script auto-installs Qt libraries
 
