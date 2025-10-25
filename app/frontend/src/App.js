@@ -2480,69 +2480,98 @@ function App() {
                                             {/* Row 1 */}
                                             <Grid item xs={6}>
                                                 <Typography gutterBottom>Epochs</Typography>
-                                                <Slider
-                                                    value={trainingConfig.epochs}
-                                                    onChange={(e, value) => setTrainingConfig({
-                                                        ...trainingConfig,
-                                                        epochs: value
-                                                    })}
-                                                    min={1}
-                                                    max={1000}
-                                                    marks
-                                                    valueLabelDisplay="auto"
-                                                    sx={{ mb: 2 }}
-                                                />
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                    <Slider
+                                                        value={trainingConfig.epochs}
+                                                        onChange={(e, value) => setTrainingConfig({
+                                                            ...trainingConfig,
+                                                            epochs: value
+                                                        })}
+                                                        min={1}
+                                                        max={1000}
+                                                        valueLabelDisplay="auto"
+                                                        sx={{ flex: 1 }}
+                                                    />
+                                                    <TextField
+                                                        type="number"
+                                                        value={trainingConfig.epochs}
+                                                        onChange={(e) => {
+                                                            const val = parseInt(e.target.value) || 1;
+                                                            setTrainingConfig({
+                                                                ...trainingConfig,
+                                                                epochs: Math.max(1, Math.min(1000, val))
+                                                            });
+                                                        }}
+                                                        inputProps={{ min: 1, max: 1000, step: 1 }}
+                                                        sx={{ width: '80px' }}
+                                                        size="small"
+                                                    />
+                                                </Box>
                                             </Grid>
 
                                             <Grid item xs={6}>
-                                                <Typography gutterBottom>Checkpoint Interval</Typography>
-                                                <Slider
-                                                    value={trainingConfig.checkpointSteps}
-                                                    onChange={(e, value) => setTrainingConfig({
-                                                        ...trainingConfig,
-                                                        checkpointSteps: value
-                                                    })}
-                                                    min={10}
-                                                    max={1000}
-                                                    step={10}
-                                                    marks
-                                                    valueLabelDisplay="auto"
-                                                    sx={{ mb: 2 }}
-                                                />
+                                                <Typography gutterBottom>Checkpoint Interval (steps)</Typography>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                    <Slider
+                                                        value={trainingConfig.checkpointSteps}
+                                                        onChange={(e, value) => setTrainingConfig({
+                                                            ...trainingConfig,
+                                                            checkpointSteps: value
+                                                        })}
+                                                        min={10}
+                                                        max={1000}
+                                                        step={10}
+                                                        valueLabelDisplay="auto"
+                                                        sx={{ flex: 1 }}
+                                                    />
+                                                    <TextField
+                                                        type="number"
+                                                        value={trainingConfig.checkpointSteps}
+                                                        onChange={(e) => {
+                                                            const val = parseInt(e.target.value) || 10;
+                                                            setTrainingConfig({
+                                                                ...trainingConfig,
+                                                                checkpointSteps: Math.max(10, Math.min(1000, val))
+                                                            });
+                                                        }}
+                                                        inputProps={{ min: 10, max: 1000, step: 10 }}
+                                                        sx={{ width: '80px' }}
+                                                        size="small"
+                                                    />
+                                                </Box>
                                             </Grid>
 
                                             {/* Row 2 */}
                                             <Grid item xs={6}>
-                                                <Typography gutterBottom>Batch Size</Typography>
-                                                <Slider
-                                                    value={trainingConfig.batchSize}
-                                                    onChange={(e, value) => setTrainingConfig({
-                                                        ...trainingConfig,
-                                                        batchSize: value
-                                                    })}
-                                                    min={1}
-                                                    max={16}
-                                                    marks
-                                                    valueLabelDisplay="auto"
-                                                    sx={{ mb: 2 }}
-                                                />
-                                            </Grid>
-
-                                            <Grid item xs={6}>
                                                 <Typography gutterBottom>Learning Rate</Typography>
-                                                <Slider
-                                                    value={trainingConfig.learningRate}
-                                                    onChange={(e, value) => setTrainingConfig({
-                                                        ...trainingConfig,
-                                                        learningRate: value
-                                                    })}
-                                                    min={1e-6}
-                                                    max={1e-3}
-                                                    step={1e-6}
-                                                    marks
-                                                    valueLabelDisplay="auto"
-                                                    sx={{ mb: 2 }}
-                                                />
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                                                    <Slider
+                                                        value={trainingConfig.learningRate}
+                                                        onChange={(e, value) => setTrainingConfig({
+                                                            ...trainingConfig,
+                                                            learningRate: value
+                                                        })}
+                                                        min={1e-6}
+                                                        max={1e-3}
+                                                        step={1e-6}
+                                                        valueLabelDisplay="auto"
+                                                        sx={{ flex: 1 }}
+                                                    />
+                                                    <TextField
+                                                        type="number"
+                                                        value={trainingConfig.learningRate}
+                                                        onChange={(e) => {
+                                                            const val = parseFloat(e.target.value) || 1e-6;
+                                                            setTrainingConfig({
+                                                                ...trainingConfig,
+                                                                learningRate: Math.max(1e-6, Math.min(1e-3, val))
+                                                            });
+                                                        }}
+                                                        inputProps={{ min: 1e-6, max: 1e-3, step: 1e-6 }}
+                                                        sx={{ width: '100px' }}
+                                                        size="small"
+                                                    />
+                                                </Box>
                                             </Grid>
 
                                         </Grid>
