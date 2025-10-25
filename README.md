@@ -123,7 +123,7 @@ Configure training parameters:
 ### 3. Generate Audio
 
 Use base or fine-tuned models to generate audio from text prompts (1-47 seconds). 
-After training, select the saved-fine tuned checkpoint from the dropdown menu, unwrap it and it will be ready for generation.
+After training, select the saved fine-tuned checkpoint from the dropdown menu, unwrap it and it will be ready for generation.
 
 ## API Endpoints
 
