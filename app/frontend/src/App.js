@@ -1765,11 +1765,11 @@ function App() {
         const progressInterval = setInterval(() => {
             setGenerationProgress(prev => {
                 if (prev >= 90) return prev;
-                const newProgress = prev + Math.random() * 10;
+                const newProgress = prev + Math.random() * 3;  // Reduced from 10 to 3
                 setProcessingStatus(`Generating audio... ${Math.round(newProgress)}%`);
                 return newProgress;
             });
-        }, 500);
+        }, 1000);  // Increased from 500ms to 1000ms
 
         try {
             console.log('FRONTEND: Sending request to /api/generate with data:', requestData);
@@ -2875,7 +2875,7 @@ function App() {
                                             sx={{ height: 8, borderRadius: 4 }}
                                         />
                                         <Typography variant="caption" color="textSecondary" sx={{ mt: 1, display: 'block' }}>
-                                            This may take 30-60 seconds depending on the prompt length
+                                            Generation time may vary considerably depending on your hardware.
                                         </Typography>
                                     </Box>
                                 ) : (
