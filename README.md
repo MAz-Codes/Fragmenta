@@ -13,7 +13,7 @@
 
 </div>
 
-Fragmenta is an open-source desktop application that brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. Think of this project as a ComfyUI for text-to-audio, done by one person! You can definetly use it only as a user-friendly interface for inference, but fine-tuning is what made easy here to personlize the models. 
+Fragmenta is an open-source desktop application that brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. Think of this project as a ComfyUI for text-to-audio, done by one person! You can definetly use it only as a user-friendly interface for inference, but fine-tuning is what made easy here to personlize the models.
 
 Please note that this is not a commercial software made for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline, created to facilitate the integration of personalized GenAI technology within the musical workflow for musicians and composers without the need for coding or knowledge of machine learning. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my "Bending the Algorithm" approach that seeks artist-first approaches in AI technology. For more: https://www.misaghazimi.com
 
@@ -30,11 +30,13 @@ Please note that this is not a commercial software made for creating high-fideli
 
 Please read the following carefully:
 
-- I do not really recommend running Fragmenta on Mac. My tests on an M1 Macbook Pro were extremely slow. 
-- If you want more coherent results, use the larger model.
+- Inference on NVIDIA GPUs runs very fast (3s needed to generate 10s audio).
+- Inference on Mac can be challenging. My tests on an M1 Macbook Pro were slow (9m needed to generate 10s audio).
 - The initial installation can take a long time. Go make yourself a cup of coffee while that happens!
+- Installation is isolated, so deleting the folder removes everything. However, Python 3.11 and Node.js/npm are required and auto-installed if missing. Remove these manually if deleting the app.
+- If you want more coherent results, please use the larger model.
 - This is an experimental one-person operation, fixes can take a while.
-- With that said, enjoy making noises! 
+- With that said, enjoy making noises!
 
 ##
 
@@ -45,6 +47,7 @@ To get started, open your terminal and clone this repo:
 git clone https://github.com/MAz-Codes/fragmenta.git
 cd Fragmenta
 ```
+
 ```bash
 # Run application
 ./run.sh           # Linux
@@ -53,7 +56,8 @@ cd Fragmenta
 ```
 
 This will take a while, so be patient. The launcher script will:
-- Install system dependencies (Qt libraries)
+
+- Install system dependencies
 - Create Python 3.11 virtual environment
 - Install PyTorch with CUDA support
 - Install all required packages
@@ -61,9 +65,10 @@ This will take a while, so be patient. The launcher script will:
 
 ## Running After Initial Installation
 
-After the first installation, simply go to the root folder and run ```main.py``` while venv is activated:
+After the first installation, simply go to the root folder and run `main.py` while venv is activated:
 
 Linux:
+
 ```bash
 cd Fragmenta
 source venv/bin/activate
@@ -71,6 +76,7 @@ python main.py
 ```
 
 Windows:
+
 ```bash
 cd Fragmenta
 venv\Scripts\activate
@@ -78,6 +84,7 @@ python main.py
 ```
 
 MacOS:
+
 ```bash
 cd Fragmenta
 source venv/bin/activate
@@ -104,7 +111,7 @@ fragmenta/
 
 ### 0. Download the Models and Authenticate
 
-The app will guide you in depth through downloading the models and authenticating with HF. You do not need both models. If you do not have a CUDA GPU, running the large model is NOT recommended. 
+The app will guide you in depth through downloading the models and authenticating with HF. You do not need both models. If you do not have a CUDA GPU, running the large model is NOT recommended.
 
 ### 1. Process Audio Files
 
@@ -113,6 +120,7 @@ Upload audio files with text descriptions. The system will save audio and create
 ### 2. Train Model
 
 Configure training parameters:
+
 - Base model: [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) Small (341M) or 1.0 (838M)
 - Epochs
 - Learning rate
@@ -122,34 +130,16 @@ Configure training parameters:
 
 ### 3. Generate Audio
 
-Use base or fine-tuned models to generate audio from text prompts (1-47 seconds). 
+Use base or fine-tuned models to generate audio from text prompts (1-47 seconds).
 After training, select the saved fine-tuned checkpoint from the dropdown menu, unwrap it and it will be ready for generation.
-
-## API Endpoints
-
-```
-GET  /api/status                 System status
-GET  /api/models                 List models
-GET  /api/gpu-memory-status      GPU monitoring
-POST /api/process-files          Process audio
-POST /api/start-training         Start training
-POST /api/stop-training          Stop training
-GET  /api/training-status        Training progress
-POST /api/generate               Generate audio
-POST /api/unwrap-model           Unwrap checkpoint
-POST /api/delete-checkpoint      Delete checkpoint
-POST /api/start-fresh            Clear all data
-POST /api/free-gpu-memory        Free GPU memory
-```
-
 
 ## Troubleshooting
 
-**Models do not Show After Download:** You might need to restart the program after downloading the models. 
+**Models do not Show After Download:** You might need to restart the program after downloading the models.
 
 **Qt Platform Plugin Error**: Setup script auto-installs Qt libraries
 
-**Flash-Attention Installation**: Optional dependency, app works without it, not available for Windows 
+**Flash-Attention Installation**: Optional dependency, app works without it, not available for Windows
 
 **GPU Memory Issues**: Use "Free GPU" button or reduce batch size
 
