@@ -63,6 +63,37 @@ python3 -c 'import torch; print(f"PyTorch {torch.__version__} with CUDA {torch.c
 python3 -c 'import PyQt6.QtCore; print("PyQt6 ready")' 2>/dev/null || echo "PyQt6 issue"
 python3 -c 'import flash_attn; print(f"Flash Attention {flash_attn.__version__}")' 2>/dev/null || echo "Flash Attention not available (optional)"
 
+echo "Checking Node.js and npm installation..."
+if ! command_exists node || ! command_exists npm; then
+    echo "Node.js or npm not found. Installing..."
+    
+    if command_exists apt-get; then
+        echo "Installing Node.js via apt..."
+        curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+    elif command_exists pacman; then
+        echo "Installing Node.js via pacman..."
+        sudo pacman -S nodejs npm
+    else
+        echo "ERROR: Cannot automatically install Node.js"
+        echo "Please install Node.js manually from https://nodejs.org"
+        echo "Then re-run this script."
+        exit 1
+    fi
+    
+    if ! command_exists node || ! command_exists npm; then
+        echo "ERROR: Node.js installation failed"
+        echo "Please install Node.js manually from https://nodejs.org"
+        exit 1
+    fi
+    
+    echo "Node.js and npm installed successfully!"
+    node --version
+    npm --version
+else
+    echo "Node.js $(node --version) and npm $(npm --version) found"
+fi
+
 echo "Checking if React frontend is built..."
 if [ ! -f "app/frontend/build/index.html" ]; then
     echo "React frontend not built. Building now..."

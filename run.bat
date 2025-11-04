@@ -62,6 +62,40 @@ if errorlevel 1 (
 cd ..
 echo stable-audio-tools installed successfully
 
+echo Checking Node.js and npm installation...
+node --version >nul 2>&1
+set NODE_EXISTS=%ERRORLEVEL%
+npm --version >nul 2>&1
+set NPM_EXISTS=%ERRORLEVEL%
+
+if %NODE_EXISTS% neq 0 (
+    echo ERROR: Node.js not found
+    echo.
+    echo Node.js is required to build the React frontend.
+    echo Please install Node.js from: https://nodejs.org
+    echo.
+    echo After installation:
+    echo   1. Restart your terminal/command prompt
+    echo   2. Re-run this script
+    echo.
+    pause
+    exit /b 1
+)
+
+if %NPM_EXISTS% neq 0 (
+    echo ERROR: npm not found
+    echo.
+    echo npm should be installed with Node.js.
+    echo Please reinstall Node.js from: https://nodejs.org
+    echo.
+    pause
+    exit /b 1
+)
+
+echo Node.js and npm found:
+node --version
+npm --version
+
 echo Checking if React frontend is built...
 if not exist "app\frontend\build\index.html" (
     echo React frontend not built. Building now...
@@ -69,9 +103,22 @@ if not exist "app\frontend\build\index.html" (
     
     echo Installing Node.js dependencies...
     call npm install
+    if errorlevel 1 (
+        echo ERROR: Failed to install Node.js dependencies
+        echo Please check your internet connection and try again
+        cd ..\..
+        pause
+        exit /b 1
+    )
     
     echo Building React app...
     call npm run build
+    if errorlevel 1 (
+        echo ERROR: Failed to build React frontend
+        cd ..\..
+        pause
+        exit /b 1
+    )
     
     cd ..\..
     echo Frontend build complete!
