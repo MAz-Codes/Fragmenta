@@ -34,6 +34,7 @@ Please read the following carefully:
 - Inference on Mac can be challenging. My tests on an M1 Macbook Pro were slow (9m needed to generate 10s audio).
 - The initial installation can take a long time. Go make yourself a cup of coffee while that happens!
 - Installation is isolated, so deleting the folder removes everything. However, Python 3.11 and Node.js/npm are required and auto-installed if missing. Remove these manually if deleting the app.
+- After initial installation, the app works offline. Your data stays on your device.
 - If you want more coherent results, please use the larger model.
 - This is an experimental one-person operation, fixes can take a while.
 - With that said, enjoy making noises!
