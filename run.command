@@ -173,7 +173,7 @@ if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
         read -p "Press Enter to exit..."
         exit 1
     fi
-    
+    #
     echo "Node.js and npm installed successfully!"
     node --version
     npm --version
