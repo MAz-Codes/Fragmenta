@@ -143,6 +143,45 @@ else
 fi
 echo ""
 
+echo "Checking Node.js and npm installation..."
+if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+    echo "Node.js or npm not found. Installing..."
+    
+    if command -v brew &> /dev/null; then
+        echo "Installing Node.js via Homebrew..."
+        brew install node
+        export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    else
+        echo ""
+        echo "ERROR: Homebrew not found"
+        echo "Cannot automatically install Node.js on macOS without Homebrew"
+        echo ""
+        echo "Please either:"
+        echo "  1. Install Homebrew: https://brew.sh"
+        echo "     Then re-run this script"
+        echo "  2. Install Node.js manually: https://nodejs.org"
+        echo ""
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+    
+    if ! command -v node &> /dev/null || ! command -v npm &> /dev/null; then
+        echo ""
+        echo "ERROR: Node.js installation failed"
+        echo "Please install Node.js manually from https://nodejs.org"
+        echo ""
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+    
+    echo "Node.js and npm installed successfully!"
+    node --version
+    npm --version
+else
+    echo "Node.js $(node --version) and npm $(npm --version) found"
+fi
+echo ""
+
 echo "Checking if React frontend is built..."
 if [ ! -f "app/frontend/build/index.html" ]; then
     echo "React frontend not built. Building now..."
