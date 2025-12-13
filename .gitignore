@@ -35,7 +35,6 @@ venv.bak/
 # ============================================
 # MODELS & CHECKPOINTS (LARGE FILES)
 # ============================================
-# Only keep config files, not actual models
 models/pretrained/*.safetensors
 models/pretrained/*.ckpt
 models/pretrained/*.pth
@@ -45,10 +44,7 @@ models/fine_tuned/*/
 # ============================================
 # USER DATA & RUNTIME FILES
 # ============================================
-# Backend data and logs
 app/backend/*.log
-
-# Output Files
 output/
 *.wav
 *.mp3
@@ -56,14 +52,10 @@ output/
 *.aiff
 *.ogg
 
-# Training artifacts
 lightning_logs/
 *.ckpt
-
-# User configuration
 config/terms_accepted.json
 
-# Logs
 logs/
 *.log
 
@@ -99,18 +91,17 @@ yarn-error.log*
 .npm
 .eslintcache
 
-# Frontend build (we keep source, not build)
 app/frontend/build/
 
 # ============================================
 # BUILD & DISTRIBUTION ARTIFACTS
 # ============================================
-# PyInstaller builds
+
 build/fragmenta/
 build/fragmenta.spec
 build/windows_source/
 
-# Distribution packages
+
 dist/
 distribution/builds/
 *.dmg
@@ -122,7 +113,6 @@ distribution/builds/
 *.rpm
 *.AppImage
 
-# Private utility scripts and distribution tools
 scripts/
 distribution/
 
@@ -139,10 +129,8 @@ temp/
 # ============================================
 # DATASET FILES
 # ============================================
-# Keep example configs, exclude actual data
 *.csv
 *.json
-# But keep these important JSON files:
 !package.json
 !package-lock.json
 !tsconfig.json
