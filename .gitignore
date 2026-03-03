@@ -1,7 +1,4 @@
 
-# ============================================
-# PYTHON BUILD & CACHE
-# ============================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -23,27 +20,18 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# ============================================
-# VIRTUAL ENVIRONMENTS
-# ============================================
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
 
-# ============================================
-# MODELS & CHECKPOINTS (LARGE FILES)
-# ============================================
 models/pretrained/*.safetensors
 models/pretrained/*.ckpt
 models/pretrained/*.pth
 models/fine_tuned/*/
 !models/fine_tuned/.gitkeep
 
-# ============================================
-# USER DATA & RUNTIME FILES
-# ============================================
 app/backend/*.log
 output/
 *.wav
@@ -59,18 +47,12 @@ config/terms_accepted.json
 logs/
 *.log
 
-# ============================================
-# IDE & EDITORS
-# ============================================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# ============================================
-# OS GENERATED FILES
-# ============================================
 .DS_Store
 .DS_Store?
 ._*
@@ -80,10 +62,6 @@ ehthumbs.db
 Thumbs.db
 
 
-
-# ============================================
-# NODE.JS / FRONTEND
-# ============================================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -93,14 +71,9 @@ yarn-error.log*
 
 app/frontend/build/
 
-# ============================================
-# BUILD & DISTRIBUTION ARTIFACTS
-# ============================================
-
 build/fragmenta/
 build/fragmenta.spec
 build/windows_source/
-
 
 dist/
 distribution/builds/
@@ -116,9 +89,6 @@ distribution/builds/
 scripts/
 distribution/
 
-# ============================================
-# TEMPORARY & CACHE FILES
-# ============================================
 tmp/
 temp/
 *.temp
@@ -126,9 +96,6 @@ temp/
 .cache
 .parcel-cache
 
-# ============================================
-# DATASET FILES
-# ============================================
 *.csv
 *.json
 !package.json
@@ -137,11 +104,11 @@ temp/
 !*.config.json
 !models/config/*.json
 
-# ============================================
-# ENVIRONMENT & SECRETS
-# ============================================
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+debug_binaries.py
+fragmenta.spec
