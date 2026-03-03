@@ -27,6 +27,7 @@ gradio>=3.40.0
 matplotlib>=3.7.0
 plotly>=5.15.0
 
+setuptools<82
 tqdm>=4.65.0
 psutil>=5.9.0 
 wandb>=0.15.0 

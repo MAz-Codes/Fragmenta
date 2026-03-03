@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
@@ -5,30 +7,57 @@ import json
 class ProjectConfig:
 
     def __init__(self, project_root: Optional[Path] = None) -> None:
-        if project_root is None:
-            config_file_dir = Path(__file__).parent.parent.parent
-            if (config_file_dir / "requirements.txt").exists() and (config_file_dir / "app" / "frontend").exists():
-                project_root = config_file_dir
+        if getattr(sys, 'frozen', False):
+            # Running in PyInstaller bundle
+            self.frozen = True
+            # sys._MEIPASS is where PyInstaller unpacks the bundle
+            self.project_root = Path(sys._MEIPASS)
+            
+            # For writable data, use a user directory
+            if sys.platform == "win32":
+                self.user_data_dir = Path(os.environ["APPDATA"]) / "FragmentaDesktop"
+            elif sys.platform == "darwin":
+                self.user_data_dir = Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
             else:
-                current_dir = Path.cwd()
-                for parent in [current_dir] + list(current_dir.parents):
-                    if (parent / "requirements.txt").exists() and (parent / "app" / "frontend").exists():
-                        project_root = parent
-                        break
-                else:
+                # Linux/Unix
+                self.user_data_dir = Path.home() / ".local" / "share" / "FragmentaDesktop"
+                
+            self.user_data_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Running in frozen mode. Project root: {self.project_root}")
+            print(f"User data directory: {self.user_data_dir}")
+            
+        else:
+            self.frozen = False
+            if project_root is None:
+                config_file_dir = Path(__file__).parent.parent.parent
+                if (config_file_dir / "requirements.txt").exists() and (config_file_dir / "app" / "frontend").exists():
                     project_root = config_file_dir
-
-        self.project_root: Path = Path(project_root).resolve()
+                else:
+                    current_dir = Path.cwd()
+                    for parent in [current_dir] + list(current_dir.parents):
+                        if (parent / "requirements.txt").exists() and (parent / "app" / "frontend").exists():
+                            project_root = parent
+                            break
+                    else:
+                        project_root = config_file_dir
+            
+            self.project_root: Path = Path(project_root).resolve()
+            self.user_data_dir = self.project_root
 
         self.paths: Dict[str, Path] = {
-            "models": self.project_root / "models",
-            "models_config": self.project_root / "models" / "config",
-            "models_pretrained": self.project_root / "models" / "pretrained",
-            "models_fine_tuned": self.project_root / "models" / "fine_tuned",
+            # Writable paths - go to user_data_dir in frozen mode
+            "models": self.user_data_dir / "models",
+            "models_config": self.user_data_dir / "models" / "config",
+            "models_pretrained": self.user_data_dir / "models" / "pretrained",
+            "models_fine_tuned": self.user_data_dir / "models" / "fine_tuned",
+            "data": self.user_data_dir / "data",
+            "logs": self.user_data_dir / "logs",
+            "output": self.user_data_dir / "output",
+            
+            # Read-only attributes/codebase - stay in project_root
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",
             "frontend": self.project_root / "app" / "frontend",
-            "data": self.project_root / "app" / "backend" / "data",
             "stable_audio_tools": self.project_root / "stable-audio-tools",
             "venv": self.project_root / "venv",
         }
