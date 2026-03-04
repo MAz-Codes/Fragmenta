@@ -47,7 +47,7 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 
 ## Option 1: Run with Docker
 
-The fastest way to get started — no Python or Node.js installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta) or use the commands below.
+The fastest way to get started — no Python or Node.js installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
 
 ### GPU (NVIDIA)
 
