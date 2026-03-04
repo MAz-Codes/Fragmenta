@@ -166,7 +166,7 @@ fragmenta/
 
 ## License
 
-Copyright 2025 Misagh Azimi
+Copyright 2025-2026 Misagh Azimi
 
 Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
 

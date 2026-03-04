@@ -58,23 +58,81 @@ def request_entity_too_large(error):
 
 DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 
-logger.info("Initializing Backend API")
+# ---------------------------------------------------------------------------
+# Lazy-initialised backend components
+# ---------------------------------------------------------------------------
+# These are initialised on first real API request (not at import time) so that
+# the Flask server always starts — even when model files or heavy deps are
+# temporarily unavailable.  The /api/health endpoint works unconditionally.
+# ---------------------------------------------------------------------------
+config = None
+audio_processor = None
+generator = None
+model_manager = None
+_components_initialised = False
+_init_error = None
 
-try:
-    config = get_config()
-    audio_processor = SimpleAudioProcessor(
-        model_config_path=config.get_path("models_config") / "model_config.json"
-    )
-    generator = AudioGenerator(config)
 
-    from app.core.model_manager import ModelManager
-    model_manager = ModelManager(config)
+def _ensure_components():
+    """Initialise backend components on first use. Thread-safe."""
+    global config, audio_processor, generator, model_manager
+    global _components_initialised, _init_error
 
-    logger.info("Backend components initialized successfully")
+    if _components_initialised:
+        return
+    if _init_error:
+        raise RuntimeError(f"Backend failed to initialise earlier: {_init_error}")
 
-except Exception as e:
-    logger.error(f"Failed to initialize backend components: {e}")
-    raise
+    try:
+        logger.info("Initializing Backend API components (lazy)…")
+        config = get_config()
+        audio_processor = SimpleAudioProcessor(
+            model_config_path=config.get_path("models_config") / "model_config.json"
+        )
+        generator = AudioGenerator(config)
+
+        from app.core.model_manager import ModelManager
+        model_manager = ModelManager(config)
+
+        _components_initialised = True
+        logger.info("Backend components initialized successfully")
+
+    except Exception as e:
+        _init_error = str(e)
+        logger.error(f"Failed to initialize backend components: {e}")
+        raise
+
+
+@app.before_request
+def lazy_init():
+    """Initialise heavy components before the first real API call."""
+    if request.path == '/api/health':
+        return  # health endpoint must always work
+    try:
+        _ensure_components()
+    except Exception as e:
+        if request.path.startswith('/api/'):
+            return jsonify({'error': f'Backend not ready: {e}'}), 503
+        # Static file / React routes — let them through even if init fails
+        return None
+
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint — always available, even when components fail."""
+    import torch
+    status = {
+        'status': 'ok' if _components_initialised else 'degraded',
+        'components_ready': _components_initialised,
+        'init_error': _init_error,
+        'gpu_available': torch.cuda.is_available(),
+        'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+    }
+    code = 200 if _components_initialised else 503
+    # Return 200 even in degraded mode so Docker HEALTHCHECK doesn't kill
+    # the container before components finish loading
+    return jsonify(status), 200
+
 
 @app.route('/')
 def serve_react_app():
@@ -1211,7 +1269,7 @@ def get_license_info():
         
         return jsonify({
             "license": "Apache License 2.0",
-            "copyright": "Copyright 2025 Misagh Azimi",
+            "copyright": "Copyright 2025-2026 Misagh Azimi",
             "license_text": license_text,
             "notice_text": notice_text,
             "license_url": "http://www.apache.org/licenses/LICENSE-2.0"
@@ -1220,7 +1278,7 @@ def get_license_info():
         logger.error(f"Error reading license info: {e}")
         return jsonify({
             "license": "Apache License 2.0",
-            "copyright": "Copyright 2025 Misagh Azimi",
+            "copyright": "Copyright 2025-2026 Misagh Azimi",
             "error": str(e)
         }), 500
 
