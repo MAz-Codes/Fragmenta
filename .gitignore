@@ -112,3 +112,7 @@ temp/
 
 debug_binaries.py
 fragmenta.spec
+
+# Data directory (volume-mounted in Docker)
+data/
+!data/.gitkeep
