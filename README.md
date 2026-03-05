@@ -50,7 +50,7 @@ Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/
 
 ## Option 2: Run Locally with Docker
 
-This is the fastest way to get started locally — no Python or Node.js installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
+This is the fastest way to get started locally — no Python or Node.js installation needed. Usinf [Docker Desktop](https://www.docker.com/products/docker-desktop/) pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
 
 ### GPU (NVIDIA)
 
