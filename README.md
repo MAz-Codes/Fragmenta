@@ -44,10 +44,13 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 | **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 and Node.js if auto-installed) |
 
 ---
+## Option 1: Run Online on Hugging Face 🤗
 
-## Option 1: Run with Docker
+Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs. No coding or installations necessary. Limited GPU accelerated sessions are available, please get in touch for me to turn these on for you. 
 
-The fastest way to get started — no Python or Node.js installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
+## Option 2: Run Locally with Docker
+
+This is the fastest way to get started locally — no Python or Node.js installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
 
 ### GPU (NVIDIA)
 
