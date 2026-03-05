@@ -83,7 +83,7 @@ The `-v` volume mounts ensure downloaded models and generated audio persist acro
 
 ---
 
-## Option 2: Run Locally
+## Option 3: Install and run Locally
 
 ```bash
 git clone https://github.com/MAz-Codes/fragmenta.git
