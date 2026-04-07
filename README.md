@@ -1,6 +1,6 @@
 <div align="center">
 
-# Fragmenta Desktop
+# Fragmenta Desktop (beta)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Version](https://img.shields.io/badge/version-0.0.1-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
