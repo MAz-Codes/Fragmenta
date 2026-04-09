@@ -54,8 +54,18 @@ This is the fastest way to get started locally — no Python or Node.js installa
 
 ### GPU (NVIDIA)
 
-Requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+> **Windows users:** You must run this from the command line (PowerShell or CMD) — Docker Desktop's GUI "Run" button does not pass the GPU flag. After the first run the container will appear in Docker Desktop as normal.
 
+**Windows (PowerShell):**
+```powershell
+docker run -d -p 5001:5001 --gpus all `
+  -v ${PWD}/models:/app/models `
+  -v ${PWD}/output:/app/output `
+  -v ${PWD}/config:/app/config `
+  mazcode/fragmenta:gpu
+```
+
+**Linux:**
 ```bash
 docker run -d -p 5001:5001 --gpus all \
   -v ./models:/app/models \
@@ -64,15 +74,26 @@ docker run -d -p 5001:5001 --gpus all \
   mazcode/fragmenta:gpu
 ```
 
+
 Open **http://localhost:5001** in your browser.
 
 ### CPU (Mac / Linux / Windows — no GPU required)
 
+**Mac / Linux:**
 ```bash
 docker run -d -p 5001:5001 \
   -v ./models:/app/models \
   -v ./output:/app/output \
   -v ./config:/app/config \
+  mazcode/fragmenta:cpu
+```
+
+**Windows (PowerShell):**
+```powershell
+docker run -d -p 5001:5001 `
+  -v ${PWD}/models:/app/models `
+  -v ${PWD}/output:/app/output `
+  -v ${PWD}/config:/app/config `
   mazcode/fragmenta:cpu
 ```
 
