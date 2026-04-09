@@ -115,6 +115,12 @@ python main.py
 
 The app guides you through downloading models and authenticating with HuggingFace. You don't need both models. If you don't have an NVIDIA GPU, the large model is **not recommended**.
 
+> **HuggingFace Token Requirement:** The Stable Audio Open models are gated. You must:
+> 1. Accept the license on the model page (while logged into your HF account)
+> 2. Use a token with **Read access to public gated repositories** enabled
+>
+> Classic "read" tokens have this by default. Fine-grained tokens require you to **explicitly enable "Read access to public gated repositories"** under repository permissions at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+
 ### 1. Process Audio Files
 
 Upload audio files with text descriptions. The system saves audio and creates training metadata automatically.
