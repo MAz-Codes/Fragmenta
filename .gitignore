@@ -113,6 +113,14 @@ temp/
 debug_binaries.py
 fragmenta.spec
 
-# Data directory (volume-mounted in Docker)
+
 data/
 !data/.gitkeep
+.dockerignore
+docker-compose.cpu.yml
+docker-compose.yml
+docker-entrypoint.sh
+DOCKER.md
+Dockerfile
+Dockerfile.cpu
+Dockerfile.hf
