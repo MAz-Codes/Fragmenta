@@ -58,13 +58,6 @@ def request_entity_too_large(error):
 
 DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 
-# ---------------------------------------------------------------------------
-# Lazy-initialised backend components
-# ---------------------------------------------------------------------------
-# These are initialised on first real API request (not at import time) so that
-# the Flask server always starts — even when model files or heavy deps are
-# temporarily unavailable.  The /api/health endpoint works unconditionally.
-# ---------------------------------------------------------------------------
 config = None
 audio_processor = None
 generator = None
@@ -74,7 +67,6 @@ _init_error = None
 
 
 def _ensure_components():
-    """Initialise backend components on first use. Thread-safe."""
     global config, audio_processor, generator, model_manager
     global _components_initialised, _init_error
 
@@ -105,21 +97,18 @@ def _ensure_components():
 
 @app.before_request
 def lazy_init():
-    """Initialise heavy components before the first real API call."""
     if request.path == '/api/health':
-        return  # health endpoint must always work
+        return
     try:
         _ensure_components()
     except Exception as e:
         if request.path.startswith('/api/'):
             return jsonify({'error': f'Backend not ready: {e}'}), 503
-        # Static file / React routes — let them through even if init fails
         return None
 
 
 @app.route('/api/health')
 def health_check():
-    """Health check endpoint — always available, even when components fail."""
     import torch
     status = {
         'status': 'ok' if _components_initialised else 'degraded',
@@ -128,9 +117,8 @@ def health_check():
         'gpu_available': torch.cuda.is_available(),
         'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }
-    code = 200 if _components_initialised else 503
     # Return 200 even in degraded mode so Docker HEALTHCHECK doesn't kill
-    # the container before components finish loading
+    # the container before components finish loading.
     return jsonify(status), 200
 
 
@@ -208,18 +196,13 @@ def process_files():
 
         chunks_preview_data = []
         for filename, prompt in prompts_data:
-            chunks_preview_data.append([
-                filename,  # Original filename (not chunked)
-                filename,  # Source file
-                prompt,    # User's prompt
-                "original" # Not chunked
-            ])
+            chunks_preview_data.append([filename, filename, prompt, "original"])
 
-        # Do not overwrite the metadata! keeps dataset creation more sustainable
+        # Merge into existing metadata instead of overwriting, so repeated
+        # uploads accumulate into one dataset.
         json_path = Path(config.get_metadata_json_path())
         existing_metadata = []
-        
-        # Load existing metadata if file exists
+
         if json_path.exists():
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -245,11 +228,16 @@ def process_files():
             import json
             json.dump(final_metadata, f, indent=2)
 
+        try:
+            config.update_dataset_config()
+        except Exception as exc:
+            print(f"Warning: failed to refresh dataset-config.json: {exc}")
+
         return jsonify({
             'message': f'Files saved successfully! {len(saved_files)} original files saved to data folder',
             'saved_files': saved_files,
             'processed_count': len(saved_files),
-            'chunks_preview': chunks_preview_data,  # Show all files (no chunking)
+            'chunks_preview': chunks_preview_data,
             'data_folder': str(data_dir),
             'metadata_json': str(json_path),
             'approach': 'original_files_only'
@@ -273,6 +261,7 @@ def start_training():
         print(f"   - Model Name: {training_config.get('modelName', 'untitled')}")
         print(f"   - Base Model: {training_config.get('baseModel', 'NOT SET')}")
         print(f"   - Epochs: {training_config.get('epochs', 'NOT SET')}")
+        print(f"   - Checkpoint Steps: {training_config.get('checkpointSteps', 'NOT SET')}")
         print(f"   - Batch Size: {training_config.get('batchSize', 'NOT SET')}")
         print(f"   - Learning Rate: {training_config.get('learningRate', 'NOT SET')}")
         print(f"   - Save Wrapped Checkpoint: {training_config.get('saveWrappedCheckpoint', False)}")
@@ -292,8 +281,11 @@ def start_training():
             return jsonify({'error': error_msg}), 400
 
         if 'epochs' not in training_config:
-            training_config['epochs'] = 3
-            print(f"   Setting default epochs: 3")
+            training_config['epochs'] = 30
+            print(f"   Setting default epochs: 30")
+        if 'checkpointSteps' not in training_config:
+            training_config['checkpointSteps'] = 50
+            print(f"   Setting default checkpointSteps: 50")
         if 'batchSize' not in training_config:
             training_config['batchSize'] = 1
             print(f"   Setting default batch size: 1")
@@ -308,6 +300,7 @@ def start_training():
         print(f"   - Model Name: {training_config['modelName']}")
         print(f"   - Base Model: {training_config['baseModel']}")
         print(f"   - Epochs: {training_config['epochs']}")
+        print(f"   - Checkpoint Steps: {training_config['checkpointSteps']}")
         print(f"   - Batch Size: {training_config['batchSize']}")
         print(f"   - Learning Rate: {training_config['learningRate']}")
         print(f"   - Save Wrapped Checkpoint: {training_config['saveWrappedCheckpoint']}")
@@ -356,7 +349,7 @@ def generate_audio():
         config_file = None
         model_file_path = None
 
-        # Priority: unwrapped_model_path > model_path > base model
+        # Priority: unwrapped_model_path > model_path > base model.
         if unwrapped_model_path:
             model_file_path = Path(unwrapped_model_path)
             if not model_file_path.exists():
@@ -371,7 +364,7 @@ def generate_audio():
                     f"model_path:{model_name}", str(model_file_path))
             logger.debug(f"Using model path: {model_file_path}")
 
-        # Determine config based on file size or model name
+        # Small and full models use different configs; pick by file size when the name is ambiguous.
         if model_file_path:
             file_size_gb = model_file_path.stat().st_size / (1024**3)
             config_file = "model_config_small.json" if file_size_gb < 2.0 else "model_config.json"
@@ -392,7 +385,6 @@ def generate_audio():
     logger.info(f"Starting generation with config: {config_file}")
     try:
         if determined_model_path and determined_model_path.exists():
-            # Use the determined model path
             output_path = generator.generate_audio(
                 prompt,
                 unwrapped_model_path=unwrapped_model_path if unwrapped_model_path else None,
@@ -401,7 +393,6 @@ def generate_audio():
                 duration=duration
             )
         elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
-            # Handle base models
             model_file_mapping = {
                 'stable-audio-open-small': 'stable-audio-open-small-model.safetensors',
                 'stable-audio-open-1.0': 'stable-audio-open-model.safetensors'
@@ -538,10 +529,8 @@ def get_models():
                 has_checkpoint = len(checkpoint_files) > 0
                 has_config = len(config_files) > 0
 
-                # Create detailed checkpoint information
                 checkpoints = []
                 for ckpt_file in checkpoint_files:
-                    # Extract epoch and step from filename if possible
                     import re
                     name = ckpt_file.stem
                     epoch_match = re.search(r'epoch=(\d+)', name)
@@ -549,7 +538,6 @@ def get_models():
 
                     checkpoint_info = {
                         'name': name,
-                        # Use relative path
                         'path': str(ckpt_file.relative_to(config.project_root)),
                         'size_mb': round(ckpt_file.stat().st_size / (1024 * 1024), 1),
                         'created': ckpt_file.stat().st_mtime
@@ -562,45 +550,38 @@ def get_models():
 
                     checkpoints.append(checkpoint_info)
 
-                # Sort checkpoints by creation time (newest first)
                 checkpoints.sort(key=lambda x: x['created'], reverse=True)
 
-                # Get the latest checkpoint and config files
                 latest_checkpoint = max(checkpoint_files, key=lambda x: x.stat(
                 ).st_mtime) if checkpoint_files else None
                 latest_config = max(
                     config_files, key=lambda x: x.stat().st_mtime) if config_files else None
 
-                # Check for unwrapped models
                 unwrapped_dir = model_dir / "unwrapped"
                 unwrapped_models = []
                 if unwrapped_dir.exists():
                     for unwrapped_file in unwrapped_dir.glob("*.safetensors"):
                         unwrapped_models.append({
                             'name': unwrapped_file.stem,
-                            # Use relative path
                             'path': str(unwrapped_file.relative_to(config.project_root)),
                             'size_mb': round(unwrapped_file.stat().st_size / (1024 * 1024), 1),
                             'created': unwrapped_file.stat().st_mtime
                         })
 
-                    # Sort unwrapped models by creation time (newest first)
                     unwrapped_models.sort(
                         key=lambda x: x['created'], reverse=True)
 
-                # For fine-tuned models, use the base model's config
-                base_config_path = "models/config/model_config_small.json"  # Use relative path
+                # Fine-tuned models reuse the base model's config for unwrapping.
+                base_config_path = "models/config/model_config_small.json"
 
                 models.append({
                     'name': model_dir.name,
-                    # Use relative path
                     'path': str(model_dir.relative_to(config.project_root)),
                     'has_checkpoint': has_checkpoint,
                     'has_config': has_config,
-                    # Use relative path
                     'ckpt_path': str(latest_checkpoint.relative_to(config.project_root)) if latest_checkpoint else None,
-                    'config_path': base_config_path,  # Use base model config for unwrapping
-                    'checkpoints': checkpoints,  # Detailed checkpoint list
+                    'config_path': base_config_path,
+                    'checkpoints': checkpoints,
                     'unwrapped_models': unwrapped_models,
                     'created': model_dir.stat().st_mtime if model_dir.exists() else None
                 })
@@ -612,7 +593,6 @@ def get_models():
 
 @app.route('/api/models/available', methods=['GET'])
 def get_available_models():
-    """Get list of available models from Hugging Face"""
     try:
         models = model_manager.get_available_models()
         return jsonify({'models': models})
@@ -622,7 +602,6 @@ def get_available_models():
 
 @app.route('/api/models/<model_id>/info', methods=['GET'])
 def get_model_info(model_id):
-    """Get information about a specific model"""
     try:
         model_info = model_manager.get_model_info(model_id)
         if not model_info:
@@ -634,7 +613,6 @@ def get_model_info(model_id):
 
 @app.route('/api/models/<model_id>/accept-terms', methods=['POST'])
 def accept_model_terms(model_id):
-    """Accept terms for a specific model"""
     try:
         success = model_manager.accept_terms(model_id)
         if success:
@@ -647,13 +625,10 @@ def accept_model_terms(model_id):
 
 @app.route('/api/models/<model_id>/download', methods=['POST'])
 def download_model(model_id):
-    """Download a model from Hugging Face"""
     try:
-        # Check if terms are accepted
         if not model_manager.is_terms_accepted(model_id):
             return jsonify({'error': 'Terms not accepted for this model'}), 400
 
-        # Start download
         success = model_manager.download_model(model_id)
         if success:
             return jsonify({
@@ -666,38 +641,54 @@ def download_model(model_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/hf-login', methods=['POST'])
+def hf_login():
+    try:
+        data = request.json
+        token = data.get('token')
+        if not token:
+            return jsonify({'error': 'Token is required'}), 400
+            
+        import huggingface_hub
+        try:
+            huggingface_hub.login(token=token, add_to_git_credential=False)
+            user_info = huggingface_hub.whoami(token=token)
+            return jsonify({'success': True, 'user': user_info.get('name', 'User')})
+        except Exception as e:
+            return jsonify({'error': f'Invalid token or connection error: {str(e)}'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/base-models/status', methods=['GET'])
 def get_base_models_status():
-    """Get the download status of base models"""
     try:
         import os
         from pathlib import Path
-        
+
         base_models = {
             'stable-audio-open-1.0': {
                 'name': 'Stable Audio Open 1.0',
-                'path': 'models/pretrained',  # Updated to correct path
-                'file': 'stable-audio-open-model.safetensors',  # Specific file to check
+                'path': 'models/pretrained',
+                'file': 'stable-audio-open-model.safetensors',
                 'downloaded': False
             },
             'stable-audio-open-small': {
-                'name': 'Stable Audio Open Small', 
-                'path': 'models/pretrained',  # Updated to correct path
-                'file': 'stable-audio-open-small-model.safetensors',  # Specific file to check
+                'name': 'Stable Audio Open Small',
+                'path': 'models/pretrained',
+                'file': 'stable-audio-open-small-model.safetensors',
                 'downloaded': False
             }
         }
-        
-        # Check if models are actually downloaded by looking for specific files
+
         for model_id, info in base_models.items():
             model_dir = Path(info['path'])
             model_file = model_dir / info['file']
-            
-            # Check if the specific model file exists
+
             if model_file.exists() and model_file.is_file():
                 info['downloaded'] = True
             else:
-                # Fallback: check subdirectory structure (old format)
+                # Legacy layout: model stored in a subdirectory.
                 old_path = model_dir / model_id
                 if old_path.exists() and old_path.is_dir():
                     has_files = any([
@@ -716,7 +707,6 @@ def get_base_models_status():
 
 @app.route('/api/models/<model_id>/delete', methods=['DELETE'])
 def delete_model(model_id):
-    """Delete a downloaded model"""
     try:
         success = model_manager.delete_model(model_id)
         if success:
@@ -729,7 +719,6 @@ def delete_model(model_id):
 
 @app.route('/api/models/storage', methods=['GET'])
 def get_model_storage():
-    """Get storage information for models"""
     try:
         storage_info = model_manager.get_storage_info()
         return jsonify(storage_info)
@@ -739,21 +728,18 @@ def get_model_storage():
 
 @app.route('/api/start-fresh', methods=['POST'])
 def start_fresh():
-    """Delete all data and start fresh"""
     try:
         config = get_config()
         data_dir = config.get_path("data")
         config_dir = config.get_path("models_config")
 
-        # Delete all data files
         data_files_deleted = 0
         if data_dir.exists():
             for file_path in data_dir.glob("*"):
-                if file_path.is_file() and not file_path.name.endswith('.py'):  # Don't delete Python files
+                if file_path.is_file() and not file_path.name.endswith('.py'):
                     file_path.unlink()
                     data_files_deleted += 1
 
-        # Delete config metadata files (but keep the model configs)
         config_files_deleted = 0
         if config_dir.exists():
             for file_path in config_dir.glob("custom_metadata.py"):
@@ -761,7 +747,6 @@ def start_fresh():
                     file_path.unlink()
                     config_files_deleted += 1
 
-        # Recreate empty data directory
         data_dir.mkdir(exist_ok=True, parents=True)
 
         return jsonify({
@@ -776,7 +761,6 @@ def start_fresh():
 
 @app.route('/api/unwrap-model', methods=['POST'])
 def unwrap_model():
-    """Unwrap a specific model checkpoint"""
     try:
         data = request.json
         model_config = data.get('model_config')
@@ -786,34 +770,28 @@ def unwrap_model():
         if not model_config or not ckpt_path:
             return jsonify({'error': 'model_config and ckpt_path are required'}), 400
 
-        # Use the stable-audio-tools unwrap_model.py script directly for individual checkpoints
         import subprocess
         from pathlib import Path
 
-        # Get config to resolve relative paths
         config = get_config()
         repo_root = config.project_root
 
-        # Resolve paths relative to project root
         model_config_path = repo_root / \
             model_config if not Path(
                 model_config).is_absolute() else Path(model_config)
         ckpt_path_resolved = repo_root / \
             ckpt_path if not Path(ckpt_path).is_absolute() else Path(ckpt_path)
 
-        # Validate paths exist
         if not model_config_path.exists():
             return jsonify({'error': f'Model config not found: {model_config_path}'}), 400
         if not ckpt_path_resolved.exists():
             return jsonify({'error': f'Checkpoint not found: {ckpt_path_resolved}'}), 400
 
-        # Get the model directory and create unwrapped subdirectory
         model_dir = ckpt_path_resolved.parent
         unwrapped_dir = model_dir / "unwrapped"
         unwrapped_dir.mkdir(exist_ok=True)
 
         cmd = [
-            # Just the script name since we're running from stable-audio-tools dir
             sys.executable, 'unwrap_model.py',
             '--model-config', str(model_config_path),
             '--ckpt-path', str(ckpt_path_resolved),
@@ -821,17 +799,14 @@ def unwrap_model():
             '--use-safetensors'
         ]
 
-        # Run from repo root and set working directory to stable-audio-tools
+        # unwrap_model.py writes next to its CWD, so run from stable-audio-tools/.
         stable_audio_dir = repo_root / "stable-audio-tools"
 
         proc = subprocess.run(cmd, cwd=stable_audio_dir,
                               capture_output=True, text=True)
 
         if proc.returncode == 0:
-            # The unwrap_model.py script creates files in the stable-audio-tools directory
-            # We need to move them to the correct unwrapped directory
 
-            # Find the created file in stable-audio-tools directory
             import glob
             pattern = str(stable_audio_dir / f"{name}*.safetensors")
             created_files = glob.glob(pattern)
@@ -842,14 +817,12 @@ def unwrap_model():
                 target_path = unwrapped_dir / created_path.name
 
                 try:
-                    # Move the file to the unwrapped directory
                     created_path.rename(target_path)
                     moved_files.append(str(target_path))
                     print(f"Moved {created_path.name} to {target_path}")
                 except Exception as e:
                     print(f"Error moving {created_path}: {e}")
 
-            # Find all unwrapped files in the unwrapped directory
             unwrapped_files = list(unwrapped_dir.glob("*.safetensors"))
 
             return jsonify({
@@ -867,7 +840,6 @@ def unwrap_model():
 
 @app.route('/api/delete-checkpoint', methods=['POST'])
 def delete_checkpoint():
-    """Delete a specific checkpoint file"""
     try:
         data = request.json
         checkpoint_path = data.get('checkpoint_path')
@@ -875,11 +847,9 @@ def delete_checkpoint():
         if not checkpoint_path:
             return jsonify({'error': 'checkpoint_path is required'}), 400
 
-        # Get config to resolve relative paths
         config = get_config()
         repo_root = config.project_root
 
-        # Resolve path relative to project root
         ckpt_path_resolved = repo_root / \
             checkpoint_path if not Path(
                 checkpoint_path).is_absolute() else Path(checkpoint_path)
@@ -887,7 +857,7 @@ def delete_checkpoint():
         if not ckpt_path_resolved.exists():
             return jsonify({'error': f'Checkpoint file not found: {ckpt_path_resolved}'}), 404
 
-        # Ensure it's a .ckpt file for safety
+        # Restrict deletion to .ckpt to avoid accidental loss of unwrapped models.
         if not ckpt_path_resolved.suffix == '.ckpt':
             return jsonify({'error': f'Only .ckpt files can be deleted: {ckpt_path_resolved}'}), 400
 
@@ -907,7 +877,6 @@ def delete_checkpoint():
 
 @app.route('/api/delete-wrapped-checkpoint', methods=['POST'])
 def delete_wrapped_checkpoint():
-    """Delete wrapped checkpoint files for a specific model"""
     try:
         data = request.json
         model_name = data.get('model_name')
@@ -915,7 +884,6 @@ def delete_wrapped_checkpoint():
         if not model_name:
             return jsonify({'error': 'model_name is required'}), 400
 
-        # Find the model directory
         config = get_config()
         models_dir = config.get_path("models_fine_tuned")
         model_dir = models_dir / model_name
@@ -923,7 +891,6 @@ def delete_wrapped_checkpoint():
         if not model_dir.exists():
             return jsonify({'error': f'Model directory not found: {model_dir}'}), 404
 
-        # Find and delete wrapped checkpoint files (.ckpt)
         deleted_files = []
         for ckpt_file in model_dir.glob("*.ckpt"):
             try:
@@ -946,7 +913,6 @@ def delete_wrapped_checkpoint():
 
 @app.route('/api/free-gpu-memory', methods=['POST'])
 def free_gpu_memory():
-    """Free GPU memory by clearing cache and stopping training processes"""
     try:
         import subprocess
         import torch
@@ -955,23 +921,18 @@ def free_gpu_memory():
 
         print(" FREEING GPU MEMORY...")
 
-        # Clear PyTorch CUDA cache
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             print("    Cleared PyTorch CUDA cache")
 
-        # Clear MPS cache if available
         if hasattr(torch, 'mps') and torch.backends.mps.is_available():
             torch.mps.empty_cache()
             print("    Cleared MPS cache")
 
-        # Get current process ID to avoid killing ourselves
         current_pid = os.getpid()
         print(f"     Current process PID: {current_pid}")
 
-        # Check for training processes and stop them safely
         try:
-            # Get all CUDA processes
             result = subprocess.run(['nvidia-smi', '--query-compute-apps=pid,used_memory,process_name', '--format=csv,noheader,nounits'],
                                     capture_output=True, text=True, timeout=10)
 
@@ -986,32 +947,25 @@ def free_gpu_memory():
                                 pid_int = int(pid)
                                 mem_gb = float(mem_mb) / 1024
 
-                                # Skip our own process
                                 if pid_int == current_pid:
                                     print(
                                         f"     Skipping current process PID: {pid_int}")
                                     continue
 
-                                # Check if it's a Python process using significant memory
                                 if 'python' in process_name.lower() and mem_gb > 1.0:
                                     print(
                                         f"    Found Python process PID: {pid_int} using {mem_gb:.1f}GB")
                                     print(f"      Process: {process_name}")
 
-                                    # Try to gracefully stop the process
                                     try:
-                                        # Send SIGTERM first (graceful)
                                         subprocess.run(
                                             ['kill', '-TERM', str(pid_int)], check=False, timeout=5)
                                         print(
                                             f"    Sent SIGTERM to PID: {pid_int}")
 
-                                        # Wait a moment
                                         time.sleep(2)
 
-                                        # Check if process is still running
                                         try:
-                                            # Check if process exists
                                             os.kill(pid_int, 0)
                                             print(
                                                 f"     Process {pid_int} still running, sending SIGKILL")
@@ -1039,18 +993,14 @@ def free_gpu_memory():
         except Exception as e:
             print(f"     Could not check CUDA processes: {e}")
 
-        # Wait a moment for processes to stop
         time.sleep(3)
 
-        # Clear cache again after stopping processes
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             print("    Cleared PyTorch CUDA cache again")
 
-        # Get memory info after clearing
         memory_info = {}
         if torch.cuda.is_available():
-            # Use the same improved memory detection as the status endpoint
             total_memory = torch.cuda.get_device_properties(
                 0).total_memory / (1024**3)
             torch.cuda.synchronize()
@@ -1058,7 +1008,6 @@ def free_gpu_memory():
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
             free_memory = total_memory - allocated_memory
 
-            # Get nvidia-smi info
             try:
                 result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
                                         capture_output=True, text=True, timeout=5)
@@ -1077,7 +1026,7 @@ def free_gpu_memory():
                 nvidia_total_gb = total_memory
                 nvidia_free_gb = total_memory
 
-            # Use the most accurate reading
+            # PyTorch sometimes reports 0 for externally-allocated memory; fall back to nvidia-smi.
             if allocated_memory > 0:
                 final_allocated = allocated_memory
                 final_free = free_memory
@@ -1116,7 +1065,6 @@ def free_gpu_memory():
 
 @app.route('/api/toggle-debug', methods=['POST'])
 def toggle_debug():
-    """Toggle debug mode for GPU memory logging"""
     global DEBUG_MODE
     try:
         data = request.json
@@ -1136,14 +1084,12 @@ def toggle_debug():
 
 @app.route('/api/debug-status', methods=['GET'])
 def get_debug_status():
-    """Get current debug mode status"""
     return jsonify({
         'debug_mode': DEBUG_MODE,
         'message': f"Debug mode is {'enabled' if DEBUG_MODE else 'disabled'}"
     })
 
 
-# Add API call statistics for debugging
 _api_call_stats = {
     'gpu_memory_status': 0,
     'status': 0,
@@ -1153,18 +1099,15 @@ _api_call_stats = {
 
 
 def _log_api_call(endpoint):
-    """Log API call for debugging"""
     global _api_call_stats
     _api_call_stats[endpoint] = _api_call_stats.get(endpoint, 0) + 1
 
-    # Reset stats every hour
     if time.time() - _api_call_stats['last_reset'] > 3600:
         _api_call_stats = {endpoint: 1, 'last_reset': time.time()}
 
 
 @app.route('/api/debug-stats', methods=['GET'])
 def get_debug_stats():
-    """Get API call statistics for debugging"""
     return jsonify({
         'api_call_stats': _api_call_stats,
         'uptime_hours': (time.time() - _api_call_stats['last_reset']) / 3600,
@@ -1176,19 +1119,16 @@ def get_debug_stats():
     })
 
 
-# Add caching for GPU memory status to reduce overhead
 _gpu_memory_cache = {}
 _gpu_memory_cache_time = 0
-_gpu_memory_cache_duration = 2.0  # Cache for 2 seconds
+_gpu_memory_cache_duration = 2.0
 
-# Throttle memory warnings (only show every 30 seconds)
 _last_memory_warning_time = 0
-_memory_warning_interval = 30  # seconds
+_memory_warning_interval = 30
 
 
 @app.route('/api/open-output-folder', methods=['POST'])
 def open_output_folder():
-    """Open the output folder in the system file explorer"""
     try:
         import subprocess
         import platform
@@ -1211,25 +1151,40 @@ def open_output_folder():
 
 @app.route('/api/open-documentation', methods=['POST'])
 def open_documentation():
-    """Open the documentation URL in the default browser"""
     try:
         import webbrowser
-        
-        # TODO: Replace with actual documentation URL
-        documentation_url = "https://github.com/your-repo/fragmenta-docs"
-        webbrowser.open(documentation_url)
-        
-        return jsonify({"success": True, "message": "Documentation opened"})
+
+        payload = request.get_json(silent=True) or {}
+        doc_key = payload.get('doc_key', 'about')
+
+        docs_map = {
+            'about': 'https://www.misaghazimi.com/fragmenta',
+            'documentation': 'https://github.com/MAz-Codes/Fragmenta',
+        }
+
+        target_url = docs_map.get(doc_key)
+        if not target_url:
+            return jsonify({
+                "success": False,
+                "error": f"Unsupported documentation target: {doc_key}"
+            }), 400
+
+        webbrowser.open(target_url)
+
+        return jsonify({
+            "success": True,
+            "message": f"Opened {doc_key}",
+            "doc_key": doc_key,
+            "url": target_url,
+        })
     except Exception as e:
         logger.error(f"Error opening documentation: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
-# Global flag for welcome page state
 _welcome_page_closed = False
 
 @app.route('/api/welcome-page-closed', methods=['POST'])
 def welcome_page_closed():
-    """Signal that the welcome page has been closed"""
     global _welcome_page_closed
     try:
         _welcome_page_closed = True
@@ -1241,26 +1196,21 @@ def welcome_page_closed():
 
 @app.route('/api/welcome-page-status', methods=['GET'])
 def get_welcome_page_status():
-    """Check if welcome page has been closed"""
     global _welcome_page_closed
     return jsonify({"closed": _welcome_page_closed})
 
 @app.route('/api/license-info', methods=['GET'])
 def get_license_info():
-    """Get license and attribution information"""
     try:
         project_root = Path(__file__).parent.parent.parent
-        
-        # Read LICENSE file
+
         license_file = project_root / "LICENSE"
         license_text = ""
         if license_file.exists():
             with open(license_file, 'r', encoding='utf-8') as f:
-                # Read first 50 lines for summary
                 lines = f.readlines()[:50]
                 license_text = ''.join(lines)
-        
-        # Read NOTICE.md for attribution info
+
         notice_file = project_root / "NOTICE.md"
         notice_text = ""
         if notice_file.exists():
@@ -1284,12 +1234,32 @@ def get_license_info():
 
 @app.route('/api/models-status', methods=['GET'])
 def get_models_status():
-    """Check if required models exist and if auth dialog should be shown"""
     try:
-        from app.core.hf_auth_dialog import check_required_models_exist, should_show_auth_dialog
-        
-        models_exist, models_message = check_required_models_exist()
-        should_show, auth_reason = should_show_auth_dialog()
+        required_models = ['stable-audio-open-small', 'stable-audio-open-1.0']
+        downloaded_models = [
+            model_id for model_id in required_models if model_manager.is_model_downloaded(model_id)
+        ]
+        models_exist = len(downloaded_models) > 0
+        models_message = (
+            "Required base models are available."
+            if models_exist
+            else "No required base model is downloaded yet."
+        )
+
+        hf_authenticated = False
+        try:
+            from huggingface_hub import HfApi
+            HfApi().whoami()
+            hf_authenticated = True
+        except Exception:
+            hf_authenticated = False
+
+        should_show = (not models_exist) and (not hf_authenticated)
+        auth_reason = (
+            "Hugging Face authentication is required to download gated models."
+            if should_show
+            else "Authentication already available or models already downloaded."
+        )
         
         return jsonify({
             "models_exist": models_exist,
@@ -1308,11 +1278,9 @@ def get_models_status():
 
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
-    """Get current GPU memory status with caching to reduce overhead"""
     _log_api_call('gpu_memory_status')
     global _gpu_memory_cache, _gpu_memory_cache_time
 
-    # Check cache first
     current_time = time.time()
     if current_time - _gpu_memory_cache_time < _gpu_memory_cache_duration:
         return jsonify({'memory_info': _gpu_memory_cache})
@@ -1324,42 +1292,35 @@ def get_gpu_memory_status():
 
         memory_info = {}
         if torch.cuda.is_available():
-            # Get PyTorch memory info with better tracking
             total_memory = torch.cuda.get_device_properties(
                 0).total_memory / (1024**3)
 
-            # Force PyTorch to synchronize before reading memory
             torch.cuda.synchronize()
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
             free_memory = total_memory - allocated_memory
 
-            # Get nvidia-smi info for comparison (only if PyTorch shows 0 usage)
             nvidia_used_gb = 0
             nvidia_total_gb = total_memory
             nvidia_free_gb = total_memory
 
+            # PyTorch reports 0 when memory is held by other processes; ask nvidia-smi instead.
             if allocated_memory == 0:
                 try:
                     result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
-                                            capture_output=True, text=True, timeout=1)  # Add timeout
+                                            capture_output=True, text=True, timeout=1)
                     if result.stdout.strip():
                         used_mb, total_mb = result.stdout.strip().split(', ')
                         nvidia_used_gb = float(used_mb) / 1024
                         nvidia_total_gb = float(total_mb) / 1024
                         nvidia_free_gb = nvidia_total_gb - nvidia_used_gb
                 except Exception as e:
-                    # Only log if there's an actual error, not just missing nvidia-smi
                     if "Could not get nvidia-smi info" not in str(e):
                         print(f"GPU Memory Error: {e}")
 
-            # Get CUDA capability and device info
             cuda_capability = torch.cuda.get_device_capability(0)
             device_name = torch.cuda.get_device_name(0)
 
-            # Use the most accurate memory reading
-            # If PyTorch shows 0 but nvidia-smi shows usage, use nvidia-smi
-            # If PyTorch shows usage, use PyTorch
             if allocated_memory > 0:
                 final_allocated = allocated_memory
                 final_cached = cached_memory
@@ -1367,7 +1328,7 @@ def get_gpu_memory_status():
                 memory_source = "PyTorch"
             else:
                 final_allocated = nvidia_used_gb
-                final_cached = cached_memory  # Keep PyTorch cached
+                final_cached = cached_memory
                 final_free = nvidia_free_gb
                 memory_source = "nvidia-smi"
 
@@ -1384,19 +1345,17 @@ def get_gpu_memory_status():
                 'nvidia_used': nvidia_used_gb
             }
 
-            # Only log if there are significant issues AND enough time has passed
             global _last_memory_warning_time
             if (current_time - _last_memory_warning_time) > _memory_warning_interval:
-                if final_allocated > 10.0:  # More than 10GB used
+                if final_allocated > 10.0:
                     print(
                         f"  High GPU Memory Usage: {final_allocated:.2f}GB allocated, {final_free:.2f}GB free")
                     _last_memory_warning_time = current_time
-                elif final_free < 1.0:  # Less than 1GB free
+                elif final_free < 1.0:
                     print(
                         f"  Low GPU Memory: {final_free:.2f}GB free, {final_allocated:.2f}GB allocated")
                     _last_memory_warning_time = current_time
         else:
-            # CPU fallback
             memory_info['cpu'] = {
                 'total': psutil.virtual_memory().total / (1024**3),
                 'available': psutil.virtual_memory().available / (1024**3),
@@ -1405,7 +1364,6 @@ def get_gpu_memory_status():
                 'type': 'cpu'
             }
 
-        # Update cache
         _gpu_memory_cache = memory_info
         _gpu_memory_cache_time = current_time
 
@@ -1415,12 +1373,267 @@ def get_gpu_memory_status():
         return jsonify({'error': str(e)}), 500
 
 
+_annotate_job_lock = threading.Lock()
+_annotate_job = {
+    'state': 'idle',   # idle | running | done | error
+    'current': 0,
+    'total': 0,
+    'current_file': '',
+    'tier': None,
+    'folder': None,
+    'results': [],
+    'error': None,
+}
+_clap_download_job = {
+    'state': 'idle',   # idle | running | done | error
+    'message': '',
+    'error': None,
+}
+
+
+def _annotator_labels_path():
+    return Path(get_config().project_root) / 'config' / 'annotator_labels.json'
+
+
+def _clap_ckpt_path():
+    from app.backend.data.auto_annotator import clap_checkpoint_path
+    return clap_checkpoint_path(get_config().get_path('models_pretrained'))
+
+
+@app.route('/api/pick-folder', methods=['POST'])
+def pick_folder():
+    import subprocess
+    import shutil as _shutil
+
+    payload = request.json or {}
+    start_dir = payload.get('start_dir') or str(Path.home())
+
+    def _try(cmd):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if out.returncode == 0:
+                path = out.stdout.strip()
+                if path:
+                    return path
+        except Exception as exc:
+            logger.debug("folder dialog attempt failed (%s): %s", cmd[0], exc)
+        return None
+
+    chosen = None
+
+    if sys.platform.startswith('linux'):
+        if _shutil.which('zenity'):
+            chosen = _try(['zenity', '--file-selection', '--directory',
+                           f'--filename={start_dir}/', '--title=Choose audio folder'])
+        if not chosen and _shutil.which('kdialog'):
+            chosen = _try(['kdialog', '--getexistingdirectory', start_dir])
+        if not chosen:
+            # fall back to system python3's tkinter (the venv may not have tk)
+            script = (
+                "import tkinter as tk; from tkinter import filedialog; "
+                "r = tk.Tk(); r.withdraw(); "
+                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title='Choose audio folder'); "
+                "print(p or '')"
+            )
+            chosen = _try(['python3', '-c', script])
+    elif sys.platform == 'darwin':
+        chosen = _try(['osascript', '-e',
+                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{start_dir}")'])
+    elif sys.platform == 'win32':
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
+            f"$d.SelectedPath = '{start_dir}'; "
+            "if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.SelectedPath }}"
+        )
+        chosen = _try(['powershell', '-NoProfile', '-Command', ps])
+
+    if not chosen:
+        return jsonify({'path': None, 'cancelled': True})
+    return jsonify({'path': chosen})
+
+
+@app.route('/api/bulk-annotate/status', methods=['GET'])
+def bulk_annotate_status():
+    from app.backend.data.auto_annotator import clap_checkpoint_available
+    with _annotate_job_lock:
+        snapshot = {k: v for k, v in _annotate_job.items() if k != 'results'}
+        snapshot['result_count'] = len(_annotate_job['results'])
+    snapshot['clap_available'] = clap_checkpoint_available(get_config().get_path('models_pretrained'))
+    snapshot['clap_download'] = dict(_clap_download_job)
+    return jsonify(snapshot)
+
+
+@app.route('/api/bulk-annotate/results', methods=['GET'])
+def bulk_annotate_results():
+    with _annotate_job_lock:
+        return jsonify({'results': list(_annotate_job['results']), 'state': _annotate_job['state']})
+
+
+@app.route('/api/bulk-annotate', methods=['POST'])
+def bulk_annotate():
+    payload = request.json or {}
+    folder = payload.get('folder_path', '').strip()
+    tier = payload.get('tier', 'basic')
+    if tier not in ('basic', 'rich'):
+        return jsonify({'error': f"Invalid tier: {tier}"}), 400
+    if not folder:
+        return jsonify({'error': 'folder_path is required'}), 400
+
+    folder_path = Path(folder).expanduser()
+    if not folder_path.exists() or not folder_path.is_dir():
+        return jsonify({'error': f'Folder not found: {folder_path}'}), 400
+
+    from app.backend.data.auto_annotator import (
+        annotate_folder, load_label_sets, clap_checkpoint_available,
+    )
+
+    if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
+        return jsonify({'error': 'CLAP checkpoint not downloaded yet.'}), 409
+
+    with _annotate_job_lock:
+        if _annotate_job['state'] == 'running':
+            return jsonify({'error': 'An annotation job is already running.'}), 409
+        _annotate_job.update({
+            'state': 'running', 'current': 0, 'total': 0, 'current_file': '',
+            'tier': tier, 'folder': str(folder_path), 'results': [], 'error': None,
+        })
+
+    labels = load_label_sets(_annotator_labels_path())
+
+    def progress_cb(i, total, name):
+        with _annotate_job_lock:
+            _annotate_job['current'] = i
+            _annotate_job['total'] = total
+            _annotate_job['current_file'] = name
+
+    def runner():
+        try:
+            results = annotate_folder(
+                folder_path, tier=tier, label_sets=labels,
+                clap_ckpt_path=_clap_ckpt_path() if tier == 'rich' else None,
+                progress_cb=progress_cb,
+            )
+            with _annotate_job_lock:
+                _annotate_job['results'] = results
+                _annotate_job['state'] = 'done'
+        except Exception as exc:
+            logger.exception("Bulk annotation failed")
+            with _annotate_job_lock:
+                _annotate_job['state'] = 'error'
+                _annotate_job['error'] = str(exc)
+
+    threading.Thread(target=runner, daemon=True).start()
+    return jsonify({'message': 'Annotation started', 'tier': tier, 'folder': str(folder_path)})
+
+
+@app.route('/api/bulk-annotate/commit', methods=['POST'])
+def bulk_annotate_commit():
+    """Merge user-reviewed annotation results into metadata.json.
+
+    Body: { entries: [{ file_name, prompt, path }, ...], copy_files: bool }
+    """
+    payload = request.json or {}
+    entries = payload.get('entries') or []
+    copy_files = bool(payload.get('copy_files', True))
+    if not entries:
+        return jsonify({'error': 'No entries to commit.'}), 400
+
+    config = get_config()
+    data_dir = config.get_path('data')
+    data_dir.mkdir(exist_ok=True, parents=True)
+
+    json_path = Path(config.get_metadata_json_path())
+    existing_metadata = []
+    if json_path.exists():
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                existing_metadata = json.load(f)
+        except Exception as exc:
+            logger.warning("Could not load existing metadata: %s", exc)
+            existing_metadata = []
+    existing_files = {item['file_name']: item for item in existing_metadata}
+
+    import shutil
+    committed = 0
+    for entry in entries:
+        file_name = entry.get('file_name')
+        prompt = (entry.get('prompt') or '').strip()
+        src_path = entry.get('path')
+        if not file_name or not prompt or not src_path:
+            continue
+
+        src = Path(src_path)
+        if copy_files and src.exists() and src.parent.resolve() != data_dir.resolve():
+            dst = data_dir / file_name
+            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+                try:
+                    shutil.copy2(src, dst)
+                except Exception as exc:
+                    logger.warning("Copy failed for %s: %s", src, exc)
+                    continue
+            stored_path = f"app/backend/data/{file_name}"
+        else:
+            stored_path = str(src)
+
+        existing_files[file_name] = {
+            'file_name': file_name,
+            'prompt': prompt,
+            'path': stored_path,
+        }
+        committed += 1
+
+    final_metadata = list(existing_files.values())
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(final_metadata, f, indent=2)
+
+    try:
+        config.update_dataset_config()
+    except Exception as exc:
+        logger.warning("Failed to refresh dataset-config.json: %s", exc)
+
+    return jsonify({
+        'message': f'Committed {committed} annotations.',
+        'committed': committed,
+        'metadata_json': str(json_path),
+    })
+
+
+@app.route('/api/bulk-annotate/download-clap', methods=['POST'])
+def bulk_annotate_download_clap():
+    from app.backend.data.auto_annotator import download_clap_checkpoint
+
+    with _annotate_job_lock:
+        if _clap_download_job['state'] == 'running':
+            return jsonify({'error': 'CLAP download already in progress.'}), 409
+        _clap_download_job.update({'state': 'running', 'message': 'Starting download…', 'error': None})
+
+    def runner():
+        try:
+            target = download_clap_checkpoint(
+                get_config().get_path('models_pretrained'),
+                progress_cb=lambda m: _clap_download_job.update({'message': m}),
+            )
+            _clap_download_job.update({'state': 'done', 'message': f'Downloaded to {target}'})
+        except Exception as exc:
+            logger.exception("CLAP download failed")
+            _clap_download_job.update({'state': 'error', 'error': str(exc)})
+
+    threading.Thread(target=runner, daemon=True).start()
+    return jsonify({'message': 'CLAP download started'})
+
+
+@app.route('/api/bulk-annotate/unload-clap', methods=['POST'])
+def bulk_annotate_unload_clap():
+    from app.backend.data.auto_annotator import unload_clap
+    unload_clap()
+    return jsonify({'message': 'CLAP unloaded from memory.'})
+
+
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
-    """Shutdown the Flask server gracefully"""
     try:
         print(" Shutting down Flask server...")
-        # Use a function to shutdown the server
         func = request.environ.get('werkzeug.server.shutdown')
         if func is None:
             raise RuntimeError('Not running with the Werkzeug Server')
@@ -1431,4 +1644,6 @@ def shutdown():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    host = os.environ.get('FLASK_HOST', '0.0.0.0')
+    port = int(os.environ.get('FLASK_PORT', '5001'))
+    app.run(debug=True, host=host, port=port)

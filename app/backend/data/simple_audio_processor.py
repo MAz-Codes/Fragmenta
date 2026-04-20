@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 def fast_scandir(dir_path, ext_list):
     import os
     subfolders, files = [], []
-    # add starting period to extensions if needed
     ext_list = ['.'+x if x[0] != '.' else x for x in ext_list]
 
     try:
@@ -39,8 +38,7 @@ class SimpleAudioProcessor:
 
     def __init__(self, model_config_path: Optional[Path] = None):
         self.audio_extensions = (".wav", ".mp3", ".flac", ".m4a")
-        
-        # Load model config for info only
+
         if model_config_path and model_config_path.exists():
             with open(model_config_path, 'r') as f:
                 model_config = json.load(f)
@@ -48,7 +46,6 @@ class SimpleAudioProcessor:
             self.sample_rate = model_config.get("sample_rate", 44100)
             self.audio_channels = model_config.get("audio_channels", 2)
         else:
-            # Defaults
             self.sample_size = 2097152
             self.sample_rate = 44100
             self.audio_channels = 2
@@ -72,7 +69,6 @@ class SimpleAudioProcessor:
         output_dir: Path,
         prompts_file: Optional[Path] = None
     ) -> Dict[str, Any]:
-        # Find audio files
         audio_files = []
         for ext in self.audio_extensions:
             _, files = fast_scandir(str(input_dir), [ext[1:]])
@@ -83,37 +79,34 @@ class SimpleAudioProcessor:
 
         logger.info(f"Found {len(audio_files)} audio files")
 
-        # Create output directory
         output_dir.mkdir(exist_ok=True, parents=True)
-        
-        # Copy files to output directory (only if different directories)
+
         if input_dir != output_dir:
             import shutil
             for audio_file in audio_files:
                 src_path = Path(audio_file)
                 dst_path = output_dir / src_path.name
-                
+
                 if not dst_path.exists() or dst_path.stat().st_size != src_path.stat().st_size:
                     shutil.copy2(src_path, dst_path)
                     logger.info(f"Copied {src_path.name}")
         else:
             logger.info("Input and output directories are the same - no copying needed")
 
-        # Create simple dataset config
         dataset_config = {
             "dataset_type": "audio_dir",
             "datasets": [
                 {
-                    "id": "custom_dataset", 
+                    "id": "custom_dataset",
                     "path": str(output_dir),
                     "custom_metadata_module": "custom_metadata"
                 }
             ],
-            "random_crop": True,  # CRITICAL - enables random cropping during training
+            # random_crop is required: without it, training always sees file start.
+            "random_crop": True,
             "drop_last": True
         }
 
-        # Save prompts if provided
         if prompts_file and prompts_file.exists():
             prompts = self.load_prompts(prompts_file)
             if prompts:

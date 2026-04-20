@@ -1,16 +1,9 @@
-"""
-Centralized Logging System for Fragmenta Desktop
-Replaces scattered print statements with structured logging
-"""
-
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
 import os
-
-# Color codes for console output
 
 
 class Colors:
@@ -25,8 +18,6 @@ class Colors:
 
 
 class ColoredFormatter(logging.Formatter):
-    """Custom formatter that adds colors to log levels"""
-
     COLORS = {
         'DEBUG': Colors.CYAN,
         'INFO': Colors.GREEN,

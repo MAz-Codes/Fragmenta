@@ -8,18 +8,15 @@ class ProjectConfig:
 
     def __init__(self, project_root: Optional[Path] = None) -> None:
         if getattr(sys, 'frozen', False):
-            # Running in PyInstaller bundle
             self.frozen = True
-            # sys._MEIPASS is where PyInstaller unpacks the bundle
+            # PyInstaller unpacks the bundle to sys._MEIPASS; writable data lives elsewhere.
             self.project_root = Path(sys._MEIPASS)
-            
-            # For writable data, use a user directory
+
             if sys.platform == "win32":
                 self.user_data_dir = Path(os.environ["APPDATA"]) / "FragmentaDesktop"
             elif sys.platform == "darwin":
                 self.user_data_dir = Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
             else:
-                # Linux/Unix
                 self.user_data_dir = Path.home() / ".local" / "share" / "FragmentaDesktop"
                 
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -44,8 +41,9 @@ class ProjectConfig:
             self.project_root: Path = Path(project_root).resolve()
             self.user_data_dir = self.project_root
 
+        # Writable paths live under user_data_dir (diverges from project_root in frozen mode);
+        # read-only code/assets stay under project_root.
         self.paths: Dict[str, Path] = {
-            # Writable paths - go to user_data_dir in frozen mode
             "models": self.user_data_dir / "models",
             "models_config": self.user_data_dir / "models" / "config",
             "models_pretrained": self.user_data_dir / "models" / "pretrained",
@@ -53,8 +51,7 @@ class ProjectConfig:
             "data": self.user_data_dir / "data",
             "logs": self.user_data_dir / "logs",
             "output": self.user_data_dir / "output",
-            
-            # Read-only attributes/codebase - stay in project_root
+
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",
             "frontend": self.project_root / "app" / "frontend",
