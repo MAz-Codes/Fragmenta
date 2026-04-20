@@ -81,9 +81,7 @@ The following Python packages are distributed with Fragmenta Desktop:
 - **requests** - Apache License 2.0 - https://github.com/psf/requests
 
 ### User Interface
-- **PyQt6** - GPL v3 / Commercial License - https://www.riverbankcomputing.com/software/pyqt/
-- **PyQt6-WebEngine** - GPL v3 / Commercial License - https://www.riverbankcomputing.com/software/pyqt/
-- **Gradio** - Apache License 2.0 - https://github.com/gradio-app/gradio
+- **pywebview** - BSD License - https://github.com/r0x0r/pywebview
 
 ### Utilities
 - **numpy** - BSD License - https://numpy.org/
@@ -135,8 +133,8 @@ The following npm packages are included in the React frontend:
 - **flash-attn** - BSD-3-Clause License - https://github.com/Dao-AILab/flash-attention
 - Note: This is an optional dependency for performance optimization. The application functions without it.
 
-### PyQt6 Licensing Note
-Fragmenta Desktop uses PyQt6, which is dual-licensed under GPL v3 and a commercial license. This application is distributed under the Apache License 2.0 for its own code, and PyQt6 is used under the GPL v3 license. Users who wish to use this software in a manner incompatible with GPL v3 should obtain a commercial PyQt6 license from Riverbank Computing.
+### Desktop Windowing Note
+Fragmenta Desktop uses pywebview as a lightweight native window wrapper for the local web interface.
 
 ### Stable Audio Models
 The pre-trained Stable Audio models are subject to their own license terms from Stability AI. Please review the model license at:

@@ -1,14 +1,22 @@
 import torch
-import torchaudio
+import soundfile as sf
 import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import logging
 import sys
 import time
+import warnings
 
 sys.path.append(
     str(Path(__file__).parent.parent.parent.parent / "stable-audio-tools"))
+
+# Third-party package noise (clip/pkg_resources) is non-actionable for runtime.
+warnings.filterwarnings(
+    "ignore",
+    message=r"pkg_resources is deprecated as an API.*",
+    category=UserWarning,
+)
 
 from stable_audio_tools.models.utils import load_ckpt_state_dict
 from stable_audio_tools.inference.generation import generate_diffusion_cond
@@ -147,23 +155,6 @@ class AudioGenerator:
         seed: int = -1,
         output_path: Optional[Path] = None
     ) -> Path:
-        """
-        Generate audio from a text prompt
-
-        Args:
-            prompt: Text description of the audio to generate
-            model_path: Path to fine-tuned model directory
-            unwrapped_model_path: Path to unwrapped .safetensors file
-            config_file: Model config file to use (small or large)
-            duration: Duration in seconds
-            cfg_scale: Classifier-free guidance scale
-            steps: Number of diffusion steps
-            seed: Random seed (-1 for random)
-            output_path: Optional path to save the generated audio
-
-        Returns:
-            Path to the generated audio file
-        """
         print(f"\nAUDIO GENERATOR: generate_audio called")
         print(f"   - Prompt: '{prompt}'")
         print(f"   - Duration: {duration}s")
@@ -257,19 +248,34 @@ class AudioGenerator:
             device = next(self.model.parameters()).device
             print(f"Using device: {device}")
 
-            audio = generate_diffusion_cond(
-                model=self.model,
-                steps=steps,
-                cfg_scale=cfg_scale,
-                conditioning=conditioning,
-                batch_size=1,
-                sample_size=requested_sample_size,
-                seed=seed,
-                device=str(device),
-                sigma_min=0.03,
-                sigma_max=1000,
-                sampler_type="dpmpp-3m-sde"
-            )
+            with warnings.catch_warnings():
+                # Known torchsde float-boundary chatter from dpmpp-3m-sde.
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Should have tb<=t1 but got tb=.*",
+                    category=UserWarning,
+                    module=r"torchsde\._brownian\.brownian_interval",
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Should have ta>=t0 but got ta=.*",
+                    category=UserWarning,
+                    module=r"torchsde\._brownian\.brownian_interval",
+                )
+
+                audio = generate_diffusion_cond(
+                    model=self.model,
+                    steps=steps,
+                    cfg_scale=cfg_scale,
+                    conditioning=conditioning,
+                    batch_size=1,
+                    sample_size=requested_sample_size,
+                    seed=seed,
+                    device=str(device),
+                    sigma_min=0.03,
+                    sigma_max=1000,
+                    sampler_type="dpmpp-3m-sde"
+                )
 
             print(f"Generation complete, audio shape: {audio.shape}")
 
@@ -336,7 +342,8 @@ class AudioGenerator:
 
     def save_audio(self, audio: torch.Tensor, output_path: Path, sample_rate: int):
         output_path.parent.mkdir(exist_ok=True, parents=True)
-        torchaudio.save(str(output_path), audio, sample_rate)
+        audio_np = audio.detach().cpu().transpose(0, 1).numpy()
+        sf.write(str(output_path), audio_np, sample_rate, subtype="PCM_16")
 
     def get_model_info(self) -> Dict[str, Any]:
         if self.model is None:

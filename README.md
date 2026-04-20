@@ -3,7 +3,7 @@
 # Fragmenta Desktop (beta)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Version](https://img.shields.io/badge/version-0.0.1-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![Version](https://img.shields.io/badge/version-0.0.2-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
@@ -15,19 +15,21 @@
 
 </div>
 
-Fragmenta brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. Think of it as a ComfyUI for text-to-audio. You can use it as a user-friendly interface for inference, but fine-tuning is what's made easy here to personalize the models.
+Fragmenta brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. 
 
-This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalized GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Bending the Algorithm](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
+This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Bending the Algorithm](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
 
 ---
 
 ## Features
 
-- **Desktop app** with PyQt6 interface and embedded React frontend
+- **Desktop app** with lightweight `pywebview` window and pre-built React frontend — no Node.js or npm required
 - **Docker support** — run as a web app on any machine (GPU or CPU)
 - Audio file processing with automatic dataset creation
-- Guided model download and HuggingFace authorization
-- Model fine-tuning with LoRA, checkpoint saving and unwrapping
+- **Bulk auto-annotation** — automatically generate text prompts for your audio files using DSP analysis (Basic) or AI-powered tagging with LAION-CLAP (Rich)
+- Guided model download and HuggingFace authorisation
+- Model availability updates automatically after download — no restart needed
+- Model fine-tuning, checkpoint saving and unwrapping
 - Text-to-audio generation (1–47 seconds)
 - Real-time GPU memory monitoring
 
@@ -41,16 +43,17 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 | **Apple Silicon** | Works, but slow (~9m for 10s audio on M1) |
 | **Models** | The app guides you through downloading; use the larger model for more coherent results |
 | **Offline** | After initial setup, everything runs locally — your data stays on your device |
-| **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 and Node.js if auto-installed) |
+| **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 if auto-installed) |
 
 ---
+
 ## Option 1: Run on Hugging Face 🤗
 
-Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs. No coding or installations necessary, but generation is very slow. Limited GPU accelerated sessions are available, please get in touch for me to turn these on for you. 
+To showcase the pipeline, Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs. No coding or installations necessary, but generation is very slow. Limited GPU accelerated sessions are available — please get in touch for me to turn these on for you.
 
 ## Option 2: Run Locally with Docker
 
-This is the fastest way to get started locally — no Python or Node.js installation needed. Using [Docker Desktop](https://www.docker.com/products/docker-desktop/) pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
+The fastest way to get started locally — no Python installation needed. Using [Docker Desktop](https://www.docker.com/products/docker-desktop/) pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
 
 ### GPU (NVIDIA)
 
@@ -73,7 +76,6 @@ docker run -d -p 5001:5001 --gpus all \
   -v ./config:/app/config \
   mazcode/fragmenta:gpu
 ```
-
 
 Open **http://localhost:5001** in your browser.
 
@@ -101,32 +103,34 @@ docker run -d -p 5001:5001 `
 
 The `-v` volume mounts ensure downloaded models and generated audio persist across container restarts.
 
-
 ---
 
 ## Option 3: Run the App Locally
 
 ```bash
 git clone https://github.com/MAz-Codes/fragmenta.git
-cd Fragmenta
+cd fragmenta
 ```
+
+Run the installer for your platform:
 
 ```bash
-./run.sh           # Linux
-./run.bat          # Windows
-./run.command      # macOS
+./fragmenta.sh           # Linux
+./fragmenta.bat          # Windows
+fragmenta.command        # macOS (double-click in Finder, or run from terminal)
 ```
 
-The launcher script will install all dependencies (Python 3.11 venv, PyTorch, Node packages) and launch the app. This takes a while on first run.
+The installer sets up a Python virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a few minutes; subsequent launches are faster.
 
-### Running After Initial Installation
+### Launching After Installation
 
-```bash
-cd Fragmenta
-source venv/bin/activate   # Linux / macOS
-# venv\Scripts\activate    # Windows
-python main.py
-```
+Once installed, use the launch scripts to start Fragmenta directly without re-running the full installer:
+
+| Platform | How to launch |
+|----------|--------------|
+| **Linux** | Double-click `fragmenta.sh` (mark as executable first, or run `./fragmenta.sh` in terminal) |
+| **macOS** | Double-click `fragmenta.command` in Finder |
+| **Windows** | Double-click `fragmenta.bat` |
 
 ---
 
@@ -134,7 +138,7 @@ python main.py
 
 ### 0. Download Models & Authenticate
 
-The app guides you through downloading models and authenticating with HuggingFace. You don't need both models. If you don't have an NVIDIA GPU, the large model is **not recommended**.
+The app guides you through downloading models and authenticating with HuggingFace on first launch.
 
 > **HuggingFace Token Requirement:** The Stable Audio Open models are gated. You must:
 > 1. Accept the license on the model page (while logged into your HF account)
@@ -145,6 +149,17 @@ The app guides you through downloading models and authenticating with HuggingFac
 ### 1. Process Audio Files
 
 Upload audio files with text descriptions. The system saves audio and creates training metadata automatically.
+
+### 1b. Auto-Annotate Your Audio (Optional)
+
+If you have a folder of audio files without text descriptions, the **Bulk Annotate** panel can generate prompts for you automatically. Point it at a folder and choose a tier:
+
+| Tier | How it works | Requirements |
+|------|-------------|--------------|
+| **Basic** | DSP analysis via librosa — extracts tempo (BPM), musical key, brightness, and melodic/percussive character | No download, CPU only |
+| **Rich** | Everything in Basic, plus zero-shot genre, mood, and instrument tagging using [LAION-CLAP](https://github.com/LAION-AI/CLAP) | ~2.35 GB one-time model download, GPU recommended |
+
+Once annotation finishes, results appear in an editable table — you can review and tweak any prompt before saving. Choosing **"Copy files into data/"** moves everything into the dataset folder in one step; **"Leave files in place"** keeps them where they are and references their original paths.
 
 ### 2. Train Model
 
@@ -166,18 +181,22 @@ Use base or fine-tuned models to generate audio from text prompts (1–47 second
 ```
 fragmenta/
 ├── app/
-│   ├── backend/        # Flask API server
-│   ├── frontend/       # React interface
-│   ├── core/           # Core logic (generation, training)
-│   └── desktop/        # PyQt6 desktop wrapper
-├── stable-audio-tools/ # Stable Audio library (modified)
-├── models/             # Model configs and checkpoints
-├── utils/              # Utility modules
-├── config/             # Configuration files
-├── Dockerfile          # GPU Docker image
-├── Dockerfile.cpu      # CPU Docker image
-├── Dockerfile.hf       # Hugging Face Spaces image
-└── main.py             # Application entry point
+│   ├── backend/            # Flask API server
+│   ├── frontend/
+│   │   ├── build/          # Pre-built React app (served by Flask)
+│   │   └── src/            # React source (only needed for development)
+│   └── core/               # Core logic (generation, training, model management)
+├── stable-audio-tools/     # Stable Audio library (bundled with some modifications)
+├── models/                 # Model configs and checkpoints
+├── utils/                  # Utility modules
+├── config/                 # Configuration files
+├── fragmenta.sh              # Linux — first-time setup + launch
+├── fragmenta.bat             # Windows — first-time setup + launch
+├── fragmenta.command         # macOS — first-time setup + launch
+├── fragmenta.sh         # Linux — launch after installation (double-click)
+├── fragmenta.command      # macOS — launch after installation (double-click)
+├── fragmenta.bat      # Windows — launch after installation (double-click)
+└── start.py                # App entry point (called by launch scripts)
 ```
 
 ---
@@ -186,8 +205,7 @@ fragmenta/
 
 | Problem | Solution |
 |---|---|
-| Models don't show after download | Restart the application |
-| Qt platform plugin error | Setup script auto-installs Qt libraries |
+| pywebview/GTK error on Linux | Install WebKitGTK/GTK runtime packages, then rerun the installer |
 | Flash-Attention won't install | Optional dependency — app works without it. Not available on Windows |
 | GPU memory issues | Use the "Free GPU" button or reduce batch size |
 | Import errors | Verify Python 3.11 is installed |
@@ -204,6 +222,6 @@ Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 Fragmenta includes and depends on various third-party open-source software. See [NOTICE.md](NOTICE.md) for complete attribution and license information.
 
-- **PyQt6** — GPL v3
+- **pywebview** — BSD License
 - **Stable Audio Models** — Subject to Stability AI's model license (review when downloading)
 - **stable-audio-tools** — MIT License (included with modifications)

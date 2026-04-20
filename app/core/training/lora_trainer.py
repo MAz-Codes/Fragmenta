@@ -10,6 +10,9 @@ import torch.mps
 
 from app.core.config import get_config
 
+DEFAULT_EPOCHS = 30
+DEFAULT_CHECKPOINT_STEPS = 50
+
 def get_base_model_configs():
     config = get_config()
     return config.model_configs
@@ -24,7 +27,7 @@ class LoRATrainer:
             "is_training": False,
             "progress": 0,
             "current_epoch": 0,
-            "total_epochs": config.get("epochs", 10),
+            "total_epochs": config.get("epochs", DEFAULT_EPOCHS),
             "loss": None,
             "loss_history": [],
             "error": None,
@@ -36,6 +39,26 @@ class LoRATrainer:
             "global_step": 0,
             "checkpoints_saved": 0,
         }
+
+    @staticmethod
+    def _resolve_checkpoint_interval(total_steps: int, requested_interval: int) -> int:
+        """Choose a checkpoint interval that lands exactly on the final step."""
+        requested = max(1, int(requested_interval))
+        if total_steps <= 0:
+            return requested
+
+        requested = min(requested, total_steps)
+        if total_steps % requested == 0:
+            return requested
+
+        # Prefer a nearby lower divisor to keep cadence similar to user input.
+        min_reasonable = max(10, requested // 3)
+        for candidate in range(requested - 1, min_reasonable - 1, -1):
+            if total_steps % candidate == 0:
+                return candidate
+
+        # Fall back to one checkpoint at the exact final step.
+        return total_steps
 
     def _validate_dataset_before_training(self) -> Dict[str, Any]:
         try:
@@ -71,16 +94,16 @@ class LoRATrainer:
                 }
             
             steps_per_epoch = max(1, file_count // batch_size)
-            total_epochs = self.config.get("epochs", 10)
+            total_epochs = self.config.get("epochs", DEFAULT_EPOCHS)
             total_steps = steps_per_epoch * total_epochs
-            checkpoint_every = self.config.get("checkpointSteps", 100)
-            
-            checkpoint_warning = None
-            if total_steps < checkpoint_every:
-                checkpoint_warning = (
-                    f"WARNING: NOT ENOUGH DATA! "
-                    f"Training will complete in {total_steps} steps, but checkpoints are set to save every {checkpoint_every} steps. "
-                    f"Add more audio files or reduce checkpoint interval."
+            requested_checkpoint_every = self.config.get("checkpointSteps", DEFAULT_CHECKPOINT_STEPS)
+            checkpoint_every = self._resolve_checkpoint_interval(total_steps, requested_checkpoint_every)
+
+            checkpoint_adjustment = None
+            if checkpoint_every != requested_checkpoint_every:
+                checkpoint_adjustment = (
+                    f"Adjusted checkpoint interval from {requested_checkpoint_every} to {checkpoint_every} "
+                    f"so the final step ({total_steps}) is always checkpointed."
                 )
             
             return {
@@ -90,7 +113,8 @@ class LoRATrainer:
                 "steps_per_epoch": steps_per_epoch,
                 "total_steps": total_steps,
                 "checkpoint_every": checkpoint_every,
-                "checkpoint_warning": checkpoint_warning
+                "requested_checkpoint_every": requested_checkpoint_every,
+                "checkpoint_adjustment": checkpoint_adjustment,
             }
             
         except Exception as e:
@@ -126,7 +150,7 @@ class LoRATrainer:
         print(f"RECEIVED TRAINING CONFIG:")
         print(f"- Model Name: {self.config.get('modelName', 'untitled')}")
         print(f"- Base Model: {base_model}")
-        print(f"- Epochs: {self.config.get('epochs', 3)}")
+        print(f"- Epochs: {self.config.get('epochs', DEFAULT_EPOCHS)}")
         print(f"- Batch Size: {self.config.get('batchSize', 1)}")
         print(f"- Learning Rate: {self.config.get('learningRate', 1e-4)}")
         base_model_configs = get_base_model_configs()
@@ -261,6 +285,28 @@ class LoRATrainer:
             if not os.path.exists(venv_python):
                 venv_python = sys.executable
 
+            validation_result = self._validate_dataset_before_training()
+            if not validation_result["valid"]:
+                print(f"TRAINING VALIDATION FAILED!")
+                print(f"{validation_result['error']}")
+                return {
+                    "success": False,
+                    "error": validation_result["error"],
+                    "validation_failed": True
+                }
+
+            checkpoint_every = validation_result["checkpoint_every"]
+            if validation_result.get("checkpoint_adjustment"):
+                print(f"\nCHECKPOINT INTERVAL NOTICE:")
+                print(f"{validation_result['checkpoint_adjustment']}")
+                print(f"Training Stats:")
+                print(f"- Audio files: {validation_result['file_count']}")
+                print(f"- Batch size: {validation_result['batch_size']}")
+                print(f"- Steps per epoch: {validation_result['steps_per_epoch']}")
+                print(f"- Total steps: {validation_result['total_steps']}")
+                print(f"- Requested checkpoint every: {validation_result['requested_checkpoint_every']} steps")
+                print(f"- Effective checkpoint every: {checkpoint_every} steps")
+
             cmd = [
                 venv_python, "train.py",
                 "--pretrained-ckpt-path", pretrained_ckpt,
@@ -268,7 +314,7 @@ class LoRATrainer:
                 "--dataset-config", dataset_config,
                 "--name", model_name,
                 "--save-dir", save_dir,
-                "--checkpoint-every", str(self.config.get("checkpointSteps", 25)),
+                "--checkpoint-every", str(checkpoint_every),
                 "--batch-size", str(batch_size),
             ] + memory_flags
 
@@ -300,35 +346,6 @@ class LoRATrainer:
                 print(f"- Available: {device_info['memory_gb']:.2f} GB")
                 print(f"- Using: {device_info['memory_ratio']*100:.0f}%")
 
-            validation_result = self._validate_dataset_before_training()
-            if not validation_result["valid"]:
-                print(f"TRAINING VALIDATION FAILED!")
-                print(f"{validation_result['error']}")
-                return {
-                    "success": False,
-                    "error": validation_result["error"],
-                    "validation_failed": True
-                }
-            
-            if validation_result.get("checkpoint_warning"):
-                print(f"\nCHECKPOINT WARNING:")
-                print(f"{validation_result['checkpoint_warning']}")
-                print(f"Training Stats:")
-                print(f"- Audio files: {validation_result['file_count']}")
-                print(f"- Batch size: {validation_result['batch_size']}")
-                print(f"- Steps per epoch: {validation_result['steps_per_epoch']}")
-                print(f"- Total epochs: {validation_result['total_steps'] // validation_result['steps_per_epoch']}")
-                print(f"- Total steps: {validation_result['total_steps']}")
-                print(f"- Checkpoint every: {validation_result['checkpoint_every']} steps")
-                print(f"Recommended checkpoint interval: {max(10, validation_result['total_steps'] // 2)} steps")
-                
-                return {
-                    "success": False,
-                    "error": validation_result["checkpoint_warning"],
-                    "checkpoint_warning": True,
-                    "validation_stats": validation_result
-                }
-
             print(f"\nSTARTING TRAINING PROCESS...")
             print("="*80)
 
@@ -352,7 +369,7 @@ class LoRATrainer:
                 audio_files.extend(list(data_dir.glob(f"*{ext}")))
             
             num_files = len(audio_files)
-            total_epochs = self.config.get("epochs", 10)
+            total_epochs = self.config.get("epochs", DEFAULT_EPOCHS)
             steps_per_epoch = max(1, num_files // batch_size)
             total_steps = steps_per_epoch * total_epochs
             
@@ -362,7 +379,7 @@ class LoRATrainer:
             print(f"- Steps per epoch: {steps_per_epoch}")
             print(f"- Total epochs: {total_epochs}")
             print(f"- Total steps: {total_steps}")
-            print(f"- Checkpoint every: {self.config.get('checkpointSteps', 25)} steps")
+            print(f"- Checkpoint every: {checkpoint_every} steps")
 
             self.training_status.update({
                 "is_training": True,
@@ -378,6 +395,7 @@ class LoRATrainer:
                 "total_steps_per_epoch": steps_per_epoch,  # Frontend expects this name
                 "total_steps": total_steps,
                 "total_epochs": total_epochs,
+                "checkpoint_every": checkpoint_every,
                 "error_messages": [],
                 "stop_initiated": False
             })
@@ -617,7 +635,7 @@ class LoRATrainer:
                 
                 if training_actually_succeeded:
                     completed_epoch = self.training_status.get("current_epoch", 0)
-                    target_epochs = self.training_status.get("total_epochs", self.config.get("epochs", 10))
+                    target_epochs = self.training_status.get("total_epochs", self.config.get("epochs", DEFAULT_EPOCHS))
                     total_steps = self.training_status.get("total_steps", 0)
                     
                     print(f"\n{'='*80}")
@@ -700,7 +718,7 @@ class LoRATrainer:
                 
                 steps_per_epoch = self.training_status.get("steps_per_epoch", 1)
                 total_steps = self.training_status.get("total_steps", 1)
-                target_epochs = self.training_status.get("total_epochs", 10)
+                target_epochs = self.training_status.get("total_epochs", DEFAULT_EPOCHS)
                 
                 current_epoch = (global_step - 1) // steps_per_epoch
                 current_step = ((global_step - 1) % steps_per_epoch) + 1
@@ -715,7 +733,10 @@ class LoRATrainer:
 
                 if global_step >= total_steps:
                     if not self.training_status.get("stop_initiated"):
-                        checkpoint_interval = self.config.get("checkpointSteps", 100)
+                        checkpoint_interval = self.training_status.get(
+                            "checkpoint_every",
+                            self.config.get("checkpointSteps", DEFAULT_CHECKPOINT_STEPS)
+                        )
                         
                         print(f"\n{'='*80}")
                         print(f"TARGET EPOCHS REACHED: {current_epoch + 1}/{target_epochs}")

@@ -19,12 +19,16 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+models/pretrained/clap
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
+
+SIMPLIFICATION_PLAN.md
+
+main.py
 
 models/pretrained/*.safetensors
 models/pretrained/*.ckpt
@@ -69,13 +73,14 @@ yarn-error.log*
 .npm
 .eslintcache
 
-app/frontend/build/
+# app/frontend/build/ — pre-built and committed so end-users don't need npm
 
 build/fragmenta/
 build/fragmenta.spec
 build/windows_source/
 
 dist/
+dist/Fragmenta.app/
 distribution/builds/
 *.dmg
 *.app
@@ -85,9 +90,9 @@ distribution/builds/
 *.deb
 *.rpm
 *.AppImage
+*.spec
 
-scripts/
-distribution/
+scripts/__pycache__/
 
 tmp/
 temp/
@@ -111,11 +116,12 @@ temp/
 .env.production.local
 
 debug_binaries.py
-fragmenta.spec
 
+distribution
+scripts
 
-data/
-!data/.gitkeep
+/data/
+!/data/.gitkeep
 .dockerignore
 docker-compose.cpu.yml
 docker-compose.yml
@@ -124,3 +130,5 @@ DOCKER.md
 Dockerfile
 Dockerfile.cpu
 Dockerfile.hf
+DOCKERHUB.md
+.claude

@@ -115,7 +115,6 @@ class TrainingError(FragmentaError):
         
         super().__init__(message, details)
 
-# Exception mapping for common errors
 def map_common_exception(exception: Exception, context: str = None) -> FragmentaError:
     
     if isinstance(exception, FileNotFoundError):

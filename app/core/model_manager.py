@@ -203,41 +203,17 @@ class ModelManager:
                 print(f"Not authenticated with Hugging Face: {auth_error}")
                 if progress_callback:
                     progress_callback(0, "Authentication required...")
-
-                try:
-                    from app.core.hf_auth_dialog import show_hf_auth_dialog
-                    success = show_hf_auth_dialog()
-
-                    if not success:
-                        print("Authentication dialog was cancelled")
-                        if progress_callback:
-                            progress_callback(0, "Authentication cancelled")
-                        return False
-
-                    try:
-                        user = api.whoami()
-                        print(f"Now authenticated as: {user}")
-                        if progress_callback:
-                            progress_callback(
-                                10, "Authentication successful...")
-                    except Exception as retry_error:
-                        print(f"Still not authenticated: {retry_error}")
-                        if progress_callback:
-                            progress_callback(0, "Authentication failed")
-                        return False
-
-                except ImportError:
-                    print("To download models, you need to:")
-                    print(
-                        "1. Visit https://huggingface.co/stabilityai/stable-audio-open-small")
-                    print("2. Accept the terms and conditions")
-                    print("3. Log in to your Hugging Face account")
-                    print(
-                        "4. Get your access token from https://huggingface.co/settings/tokens")
-                    print("5. Run: huggingface-cli login")
-                    if progress_callback:
-                        progress_callback(0, "Manual authentication required")
-                    return False
+                print("To download models, you need to:")
+                print(
+                    "1. Visit https://huggingface.co/stabilityai/stable-audio-open-small")
+                print("2. Accept the terms and conditions")
+                print("3. Log in to your Hugging Face account")
+                print(
+                    "4. Get your access token from https://huggingface.co/settings/tokens")
+                print("5. Use the in-app Hugging Face login dialog")
+                if progress_callback:
+                    progress_callback(0, "Please authenticate in the app first")
+                return False
 
             if progress_callback:
                 progress_callback(20, "Starting file download...")
@@ -247,31 +223,28 @@ class ModelManager:
                 import shutil
                 from tqdm import tqdm
                 import sys
-                
-                # Redirect tqdm to capture progress
+
                 class TqdmToCallback:
                     def __init__(self, callback, file_index, total_files):
                         self.callback = callback
                         self.file_index = file_index
                         self.total_files = total_files
                         self.last_percent = 0
-                    
+
                     def __call__(self, t):
-                        """Returns a callback function for tqdm"""
                         def inner(bytes_amount=1):
                             if t.total:
-                                # Calculate progress: 20-90% range for all files
                                 file_progress = (t.n / t.total)
                                 overall_progress = (self.file_index + file_progress) / self.total_files
                                 percent = 20 + int(overall_progress * 70)
-                                
+
                                 if percent != self.last_percent:
                                     self.last_percent = percent
                                     downloaded_mb = t.n / (1024 * 1024)
                                     total_mb = t.total / (1024 * 1024)
                                     if self.callback:
                                         self.callback(
-                                            percent, 
+                                            percent,
                                             f"Downloading: {downloaded_mb:.1f}MB / {total_mb:.1f}MB"
                                         )
                         return inner
@@ -297,15 +270,14 @@ class ModelManager:
                         else:
                             final_filename = f"{model_id}-{file_pattern}"
 
-                        # Use custom tqdm callback to intercept progress
                         tqdm_callback = TqdmToCallback(progress_callback, i, total_files)
-                        
-                        # Monkey-patch tqdm for this download
+
+                        # hf_hub_download drives its own tqdm — monkey-patch its init/update so we
+                        # forward byte progress to progress_callback without a second progress bar.
                         original_tqdm_init = tqdm.__init__
-                        
+
                         def patched_tqdm_init(self, *args, **kwargs):
                             original_tqdm_init(self, *args, **kwargs)
-                            # Hook into tqdm updates
                             original_update = self.update
                             def new_update(n=1):
                                 result = original_update(n)
@@ -331,7 +303,6 @@ class ModelManager:
                                 resume_download=True
                             )
                         finally:
-                            # Restore original tqdm
                             tqdm.__init__ = original_tqdm_init
 
                         downloaded_path = Path(downloaded_file)
