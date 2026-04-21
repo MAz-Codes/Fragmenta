@@ -101,12 +101,12 @@ echo ""
 cd "$PROJECT_ROOT"
 
 echo "Updating Python package tools..."
-pip install --upgrade pip setuptools wheel build --quiet
+pip install --upgrade pip "setuptools<70" wheel build --quiet
 echo "Package tools updated"
 echo ""
 
 echo "Installing PyTorch..."
-pip install "torch>=2.5,<=2.8" torchvision "torchaudio>=2.5,<=2.8" --quiet
+pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" "numpy==1.23.5" --quiet
 echo "PyTorch installed"
 echo ""
 

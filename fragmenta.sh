@@ -80,13 +80,13 @@ source "$VENV_PATH/bin/activate"
 cd "$PROJECT_ROOT"
 
 echo "Updating pip..."
-pip install --upgrade pip setuptools wheel build --quiet
+pip install --upgrade pip "setuptools<70" wheel build --quiet
 
 echo "Installing all dependencies..."
 echo "Installing requested packages (this may take a few minutes)..."
 
 echo "Ensuring numpy compatibility..."
-pip install "numpy==1.23.5" --force-reinstall
+pip install "numpy==1.23.5"
 
 pip install -r requirements.txt --progress-bar on
 
