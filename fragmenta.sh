@@ -88,7 +88,25 @@ echo "Installing requested packages (this may take a few minutes)..."
 echo "Ensuring numpy compatibility..."
 pip install "numpy==1.23.5"
 
-pip install -r requirements.txt --progress-bar on
+echo "Installing PyTorch (CUDA 12.8 wheels)..."
+pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" \
+    --extra-index-url https://download.pytorch.org/whl/cu128 \
+    --progress-bar on
+
+echo "Installing remaining dependencies (flash-attn handled separately)..."
+REQ_TMP="$(mktemp)"
+grep -v "^flash-attn" requirements.txt > "$REQ_TMP"
+pip install -r "$REQ_TMP" --progress-bar on
+REQ_STATUS=$?
+rm -f "$REQ_TMP"
+if [ $REQ_STATUS -ne 0 ]; then
+    echo "ERROR: Failed to install core dependencies"
+    exit 1
+fi
+
+echo "Attempting flash-attn (optional, Linux + CUDA only)..."
+pip install "flash-attn>=2.8.3" --no-build-isolation --progress-bar on || \
+    echo "flash-attn install failed — continuing without it (optional optimization)"
 
 echo "Installing bundled stable-audio-tools..."
 if [ -d "$PROJECT_ROOT/stable-audio-tools" ]; then
