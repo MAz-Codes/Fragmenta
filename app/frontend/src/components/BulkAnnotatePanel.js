@@ -9,6 +9,7 @@ import {
     CloudDownload as CloudDownloadIcon,
     Save as SaveIcon,
     FolderOpen as FolderOpenIcon,
+    Upload as UploadIcon,
 } from 'lucide-react';
 import api from '../api';
 
@@ -24,7 +25,16 @@ export default function BulkAnnotatePanel({ onCommitted }) {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [committing, setCommitting] = useState(false);
+    const [isDocker, setIsDocker] = useState(false);
+    const [uploading, setUploading] = useState(false);
     const pollRef = useRef(null);
+    const folderInputRef = useRef(null);
+
+    useEffect(() => {
+        api.get('/api/environment')
+            .then(({ data }) => setIsDocker(!!data?.docker))
+            .catch(() => {});
+    }, []);
 
     const stopPolling = useCallback(() => {
         if (pollRef.current) {
@@ -101,6 +111,37 @@ export default function BulkAnnotatePanel({ onCommitted }) {
         }
     };
 
+    const openFolderUpload = () => {
+        setError('');
+        if (folderInputRef.current) {
+            folderInputRef.current.value = '';
+            folderInputRef.current.click();
+        }
+    };
+
+    const handleFolderSelected = async (event) => {
+        const fileList = Array.from(event.target.files || []);
+        if (fileList.length === 0) return;
+
+        setError('');
+        setUploading(true);
+        try {
+            const form = new FormData();
+            fileList.forEach((file) => {
+                form.append('files', file);
+                form.append('rel_paths', file.webkitRelativePath || file.name);
+            });
+            const { data } = await api.post('/api/upload-folder', form, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            if (data?.path) setFolderPath(data.path);
+        } catch (exc) {
+            setError(exc.response?.data?.error || exc.message);
+        } finally {
+            setUploading(false);
+        }
+    };
+
     const downloadClap = async () => {
         setError('');
         try {
@@ -173,14 +214,36 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                     disabled={isRunning}
                     InputProps={{ readOnly: true }}
                 />
-                <Button
-                    variant="outlined"
-                    onClick={pickFolder}
-                    startIcon={<FolderOpenIcon size={16} />}
-                    disabled={isRunning}
-                >
-                    Browse
-                </Button>
+                {isDocker ? (
+                    <>
+                        <input
+                            ref={folderInputRef}
+                            type="file"
+                            webkitdirectory=""
+                            directory=""
+                            multiple
+                            style={{ display: 'none' }}
+                            onChange={handleFolderSelected}
+                        />
+                        <Button
+                            variant="outlined"
+                            onClick={openFolderUpload}
+                            startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon size={16} />}
+                            disabled={isRunning || uploading}
+                        >
+                            {uploading ? 'Uploading…' : 'Upload Folder'}
+                        </Button>
+                    </>
+                ) : (
+                    <Button
+                        variant="outlined"
+                        onClick={pickFolder}
+                        startIcon={<FolderOpenIcon size={16} />}
+                        disabled={isRunning}
+                    >
+                        Browse
+                    </Button>
+                )}
                 <FormControl size="small" sx={{ minWidth: 140 }} disabled={isRunning}>
                     <InputLabel id="tier-label">Tier</InputLabel>
                     <Select

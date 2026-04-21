@@ -1400,6 +1400,62 @@ def _clap_ckpt_path():
     return clap_checkpoint_path(get_config().get_path('models_pretrained'))
 
 
+@app.route('/api/environment', methods=['GET'])
+def environment():
+    return jsonify({
+        'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
+    })
+
+
+@app.route('/api/upload-folder', methods=['POST'])
+def upload_folder():
+    # Browser-native folder upload path for containerised deployments
+    # (e.g. HF Space) where no display server is available for a native dialog.
+    audio_exts = {'.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'}
+
+    files = request.files.getlist('files')
+    rel_paths = request.form.getlist('rel_paths')
+
+    if not files:
+        return jsonify({'error': 'No files uploaded.'}), 400
+    if len(rel_paths) != len(files):
+        return jsonify({'error': 'rel_paths count does not match files count.'}), 400
+
+    first_rel = (rel_paths[0] or '').replace('\\', '/').lstrip('/')
+    folder_name = first_rel.split('/', 1)[0] if '/' in first_rel else 'folder'
+    safe_folder = ''.join(c for c in folder_name if c.isalnum() or c in '-_') or 'folder'
+
+    staging_root = get_config().get_path('data') / 'uploads'
+    staging_root.mkdir(parents=True, exist_ok=True)
+    target_dir = staging_root / f"{int(time.time())}-{safe_folder}"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for file_obj, rel in zip(files, rel_paths):
+        rel_norm = (rel or file_obj.filename or '').replace('\\', '/').lstrip('/')
+        if not rel_norm or '..' in rel_norm.split('/'):
+            continue
+        if Path(rel_norm).suffix.lower() not in audio_exts:
+            continue
+
+        dest = (target_dir / rel_norm).resolve()
+        try:
+            dest.relative_to(target_dir.resolve())
+        except ValueError:
+            continue
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        file_obj.save(dest)
+        saved += 1
+
+    if saved == 0:
+        import shutil
+        shutil.rmtree(target_dir, ignore_errors=True)
+        return jsonify({'error': 'No audio files found in the selected folder.'}), 400
+
+    return jsonify({'path': str(target_dir), 'file_count': saved})
+
+
 @app.route('/api/pick-folder', methods=['POST'])
 def pick_folder():
     import subprocess
@@ -1440,11 +1496,12 @@ def pick_folder():
         chosen = _try(['osascript', '-e',
                        f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{start_dir}")'])
     elif sys.platform == 'win32':
+        safe_start = (start_dir or '').replace("'", "''")
         ps = (
             "Add-Type -AssemblyName System.Windows.Forms; "
             "$d = New-Object System.Windows.Forms.FolderBrowserDialog; "
-            f"$d.SelectedPath = '{start_dir}'; "
-            "if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.SelectedPath }}"
+            f"$d.SelectedPath = '{safe_start}'; "
+            "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.SelectedPath }"
         )
         chosen = _try(['powershell', '-NoProfile', '-Command', ps])
 
