@@ -18,7 +18,7 @@ def get_base_model_configs():
     return config.model_configs
 
 
-class LoRATrainer:
+class FineTuner:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.training_process = None
@@ -911,7 +911,7 @@ class LoRATrainer:
 _trainer_instance = None
 
 
-def get_trainer() -> Optional[LoRATrainer]:
+def get_trainer() -> Optional[FineTuner]:
     return _trainer_instance
 
 
@@ -921,14 +921,23 @@ def start_training(config: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": "Training already in progress"}
 
     if not _trainer_instance:
-        _trainer_instance = LoRATrainer(config)
+        _trainer_instance = FineTuner(config)
     else:
         _trainer_instance.config = config
         _trainer_instance.training_status.update({
             "is_training": False,
+            "progress": 0,
+            "current_epoch": 0,
+            "total_epochs": config.get("epochs", DEFAULT_EPOCHS),
+            "loss": None,
+            "loss_history": [],
             "error": None,
             "start_time": None,
-            "estimated_completion": None
+            "estimated_completion": None,
+            "model_name": config.get("modelName", "untitled"),
+            "current_step": 0,
+            "global_step": 0,
+            "checkpoints_saved": 0,
         })
 
     return _trainer_instance.start_training()

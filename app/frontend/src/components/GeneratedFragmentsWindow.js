@@ -72,10 +72,18 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
                                         variant="subtitle2"
                                         sx={generatedFragmentsWindowStyles.fragmentPrompt}
                                     >
+                                        {fragment.batchTotal > 1 && (
+                                            <Box component="span" sx={{ fontWeight: 700, mr: 0.75 }}>
+                                                [{fragment.batchIndex}/{fragment.batchTotal}]
+                                            </Box>
+                                        )}
                                         {fragment.prompt}
                                     </Typography>
                                     <Typography variant="caption" color="textSecondary">
-                                        {fragment.duration}s • {fragment.timestamp}
+                                        {fragment.duration}s
+                                        {fragment.cfgScale !== undefined && ` • CFG ${fragment.cfgScale}`}
+                                        {fragment.seed !== undefined && ` • Seed ${fragment.seed}`}
+                                        {' • '}{fragment.timestamp}
                                     </Typography>
                                 </Box>
                                 <Box sx={generatedFragmentsWindowStyles.fragmentActions}>

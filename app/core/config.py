@@ -136,7 +136,7 @@ class ProjectConfig:
                 "datasets": [
                     {
                         "id": "fine_tune_data",
-                        "path": str(self.paths["data"].relative_to(self.project_root)),
+                        "path": str(self.paths["data"]),
                         "custom_metadata_module": "custom_metadata"
                     }
                 ],

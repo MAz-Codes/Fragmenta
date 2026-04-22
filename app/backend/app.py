@@ -3,7 +3,7 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
-from app.core.training.lora_trainer import start_training as start_training_func, get_training_status, stop_training
+from app.core.training.fine_tuner import start_training as start_training_func, get_training_status, stop_training
 from app.backend.data.simple_audio_processor import SimpleAudioProcessor
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -333,6 +333,14 @@ def generate_audio():
             data.get('prompt', ''), 'prompt', min_length=1, max_length=500)
         duration = Validator.number(
             data.get('duration', 10.0), 'duration', min_value=1, max_value=60)
+        cfg_scale = Validator.number(
+            data.get('cfg_scale', 7.0), 'cfg_scale', min_value=0.1, max_value=20.0)
+        seed = Validator.number(
+            data.get('seed', -1), 'seed', min_value=-1, max_value=2**32 - 1, integer_only=True)
+        batch_index = Validator.number(
+            data.get('batch_index', 1), 'batch_index', min_value=1, max_value=10, integer_only=True)
+        batch_total = Validator.number(
+            data.get('batch_total', 1), 'batch_total', min_value=1, max_value=10, integer_only=True)
         model_name = data.get('model_name', data.get('model', 'default'))
         model_path = data.get('model_path')
         unwrapped_model_path = data.get('unwrapped_model_path')
@@ -390,7 +398,11 @@ def generate_audio():
                 unwrapped_model_path=unwrapped_model_path if unwrapped_model_path else None,
                 model_path=determined_model_path if not unwrapped_model_path else None,
                 config_file=config_file,
-                duration=duration
+                duration=duration,
+                cfg_scale=cfg_scale,
+                seed=seed,
+                batch_index=batch_index,
+                batch_total=batch_total
             )
         elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
             model_file_mapping = {
@@ -409,7 +421,11 @@ def generate_audio():
                 prompt,
                 model_path=model_file_path,
                 config_file=config_file,
-                duration=duration
+                duration=duration,
+                cfg_scale=cfg_scale,
+                seed=seed,
+                batch_index=batch_index,
+                batch_total=batch_total
             )
         elif model_name and model_name != 'default':
             fine_tuned_path = config.get_path("models_fine_tuned") / model_name
@@ -417,10 +433,14 @@ def generate_audio():
                 raise ModelNotFoundError(model_name, str(fine_tuned_path))
 
             output_path = generator.generate_audio(
-                prompt, fine_tuned_path, duration=duration)
+                prompt, fine_tuned_path, duration=duration,
+                cfg_scale=cfg_scale, seed=seed,
+                batch_index=batch_index, batch_total=batch_total)
         else:
             logger.debug("Using default model")
-            output_path = generator.generate_audio(prompt, duration=duration)
+            output_path = generator.generate_audio(
+                prompt, duration=duration, cfg_scale=cfg_scale, seed=seed,
+                batch_index=batch_index, batch_total=batch_total)
 
         if not output_path.exists():
             raise GenerationError(prompt, model_name, "Generated audio file not found")

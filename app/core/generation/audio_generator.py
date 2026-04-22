@@ -4,9 +4,17 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
 import logging
+import re
 import sys
 import time
 import warnings
+from datetime import datetime
+
+
+def _slugify_prompt(text: str, max_len: int = 40) -> str:
+    s = re.sub(r'[^a-zA-Z0-9]+', '_', text.strip().lower())
+    s = re.sub(r'_+', '_', s).strip('_')
+    return s[:max_len] or 'untitled'
 
 sys.path.append(
     str(Path(__file__).parent.parent.parent.parent / "stable-audio-tools"))
@@ -153,7 +161,9 @@ class AudioGenerator:
         cfg_scale: float = 7.0,
         steps: int = 250,
         seed: int = -1,
-        output_path: Optional[Path] = None
+        output_path: Optional[Path] = None,
+        batch_index: int = 1,
+        batch_total: int = 1
     ) -> Path:
         print(f"\nAUDIO GENERATOR: generate_audio called")
         print(f"   - Prompt: '{prompt}'")
@@ -287,7 +297,10 @@ class AudioGenerator:
             if output_path is None:
                 output_dir = Path(__file__).parent.parent.parent.parent / "output"
                 output_dir.mkdir(exist_ok=True)
-                output_path = output_dir / f"generated_{int(time.time())}.wav"
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                slug = _slugify_prompt(prompt)
+                suffix = f"_{batch_index}" if batch_total > 1 else ""
+                output_path = output_dir / f"fragmenta_{ts}_{slug}{suffix}.wav"
 
             self.save_audio(audio_int16, output_path, self.model.sample_rate)
 

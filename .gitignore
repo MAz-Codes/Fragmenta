@@ -108,6 +108,8 @@ temp/
 !tsconfig.json
 !*.config.json
 !models/config/*.json
+models/config/dataset-config.json
+!config/annotator_labels.json
 
 .env
 .env.local

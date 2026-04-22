@@ -24,6 +24,8 @@ import {
     Accordion,
     AccordionSummary,
     AccordionDetails,
+    FormControlLabel,
+    Switch,
     CssBaseline,
     ThemeProvider,
     useMediaQuery
@@ -114,11 +116,24 @@ function App() {
     const [generationProgress, setGenerationProgress] = useState(0);
     const [selectedModel, setSelectedModel] = useState('');
     const [selectedUnwrappedModel, setSelectedUnwrappedModel] = useState('');
-    const [outputCounter, setOutputCounter] = useState(0);
     const [generatedFragments, setGeneratedFragments] = useState([]);
+    const [currentFilename, setCurrentFilename] = useState('');
+    const [cfgScale, setCfgScale] = useState(7.0);
+    const [batchCount, setBatchCount] = useState(1);
+    const [randomSeed, setRandomSeed] = useState(true);
+    const [seedValue, setSeedValue] = useState('');
 
-    const generateFileName = () => {
-        return `fragmenta_output${outputCounter.toString().padStart(3, '0')}.wav`;
+    const slugifyPrompt = (text, maxLen = 40) => {
+        const slug = (text || '').trim().toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '');
+        return (slug.slice(0, maxLen) || 'untitled');
+    };
+
+    const buildFragmentFilename = (prompt, timestampStr, batchIndex, batchTotal) => {
+        const suffix = batchTotal > 1 ? `_${batchIndex}` : '';
+        return `fragmenta_${timestampStr}_${slugifyPrompt(prompt)}${suffix}.wav`;
     };
 
     const downloadAudio = () => {
@@ -126,7 +141,7 @@ function App() {
             const url = URL.createObjectURL(generatedAudioBlob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = generateFileName();
+            link.download = currentFilename || 'fragmenta_output.wav';
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -484,16 +499,11 @@ function App() {
             return;
         }
 
-        let requestData = {
+        const baseRequestData = {
             prompt: generationPrompt,
-            duration: generationDuration
+            duration: generationDuration,
+            cfg_scale: cfgScale
         };
-
-        console.log('=== FRONTEND DEBUG: MODEL SELECTION ===');
-        console.log('selectedModel:', selectedModel);
-        console.log('selectedUnwrappedModel:', selectedUnwrappedModel);
-        console.log('baseModels:', baseModels);
-        console.log('availableModels:', availableModels);
 
         const baseModel = baseModels.find(m => m.name === selectedModel);
         if (baseModel) {
@@ -506,77 +516,115 @@ function App() {
                 return;
             }
 
-            requestData.model_name = selectedModel;
-            console.log('FRONTEND: Using base model:', selectedModel);
-            console.log('FRONTEND: Base model details:', baseModel);
+            baseRequestData.model_name = selectedModel;
         } else if (selectedUnwrappedModel) {
-            requestData.unwrapped_model_path = selectedUnwrappedModel;
-            console.log('FRONTEND: Using unwrapped model:', selectedUnwrappedModel);
-
-            const parentModel = availableModels.find(m => m.name === selectedModel);
-            console.log('FRONTEND: Parent model info:', parentModel);
+            baseRequestData.unwrapped_model_path = selectedUnwrappedModel;
         } else {
-            console.log('FRONTEND: No model selected!');
             setProcessingStatus('Please select a model');
             return;
         }
 
-        console.log('FRONTEND: Final request data:', requestData);
+        const parsedSeed = parseInt(seedValue, 10);
+        if (!randomSeed && (Number.isNaN(parsedSeed) || parsedSeed < 0)) {
+            setProcessingStatus('Please enter a non-negative integer seed, or enable Random Seed');
+            return;
+        }
+
+        const totalRuns = Math.max(1, Math.min(10, batchCount));
 
         await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
 
         setIsGenerating(true);
         setGenerationProgress(0);
-        setProcessingStatus('Starting audio generation...');
 
-        const progressInterval = setInterval(() => {
-            setGenerationProgress(prev => {
-                if (prev >= 90) return prev;
-                const newProgress = prev + Math.random() * 3;  // Reduced from 10 to 3
-                setProcessingStatus(`Generating audio... ${Math.round(newProgress)}%`);
-                return newProgress;
-            });
-        }, 1000);  // Increased from 500ms to 1000ms
+        let progressInterval;
+        const startProgressTicker = () => {
+            progressInterval = setInterval(() => {
+                setGenerationProgress(prev => {
+                    if (prev >= 90) return prev;
+                    return prev + Math.random() * 3;
+                });
+            }, 1000);
+        };
+        const stopProgressTicker = () => {
+            if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+            }
+        };
+
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const batchTimestamp =
+            `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+            `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
         try {
-            console.log('FRONTEND: Sending request to /api/generate with data:', requestData);
-            const response = await api.post('/api/generate', requestData, {
-                responseType: 'blob'
-            });
+            for (let i = 0; i < totalRuns; i++) {
+                const batchIndex = i + 1;
+                const runLabel = totalRuns > 1 ? ` (${batchIndex}/${totalRuns})` : '';
+                setProcessingStatus(`Generating audio${runLabel}...`);
+                setGenerationProgress(0);
+                startProgressTicker();
 
-            clearInterval(progressInterval);
-            setGenerationProgress(100);
+                const seedForRun = randomSeed
+                    ? Math.floor(Math.random() * 0xffffffff)
+                    : parsedSeed;
 
-            const audioUrl = URL.createObjectURL(response.data);
-            setGeneratedAudio(audioUrl);
-            setGeneratedAudioBlob(response.data);
+                const requestData = {
+                    ...baseRequestData,
+                    seed: seedForRun,
+                    batch_index: batchIndex,
+                    batch_total: totalRuns
+                };
 
-            const newFragment = {
-                id: Date.now(),
-                prompt: generationPrompt,
-                duration: generationDuration,
-                audioUrl: audioUrl,
-                audioBlob: response.data,
-                filename: generateFileName(),
-                timestamp: new Date().toLocaleString()
-            };
+                const response = await api.post('/api/generate', requestData, {
+                    responseType: 'blob'
+                });
 
-            setGeneratedFragments(prev => [...prev, newFragment]);
+                stopProgressTicker();
+                setGenerationProgress(100);
 
-            setOutputCounter(prev => prev + 1);
-            setProcessingStatus('Audio generated successfully!');
+                const audioUrl = URL.createObjectURL(response.data);
+                const fragmentFilename = buildFragmentFilename(
+                    generationPrompt, batchTimestamp, batchIndex, totalRuns
+                );
+
+                setGeneratedAudio(audioUrl);
+                setGeneratedAudioBlob(response.data);
+                setCurrentFilename(fragmentFilename);
+
+                const newFragment = {
+                    id: Date.now() + i,
+                    prompt: generationPrompt,
+                    duration: generationDuration,
+                    cfgScale,
+                    seed: seedForRun,
+                    batchIndex,
+                    batchTotal: totalRuns,
+                    audioUrl,
+                    audioBlob: response.data,
+                    filename: fragmentFilename,
+                    timestamp: new Date().toLocaleString()
+                };
+
+                setGeneratedFragments(prev => [...prev, newFragment]);
+            }
+
+            setProcessingStatus(totalRuns > 1
+                ? `Generated ${totalRuns} fragments successfully!`
+                : 'Audio generated successfully!');
 
             setTimeout(() => {
                 setGenerationProgress(0);
             }, 2000);
 
         } catch (error) {
-            clearInterval(progressInterval);
+            stopProgressTicker();
             setGenerationProgress(0);
-            console.log('FRONTEND: Generation error:', error);
-            console.log('FRONTEND: Error response:', error.response);
             setProcessingStatus(`Generation error: ${error.response?.data?.error || error.message}`);
         } finally {
+            stopProgressTicker();
             setIsGenerating(false);
         }
     };
@@ -1426,6 +1474,99 @@ function App() {
                                                         {generationDuration}s
                                                     </Typography>
                                                 </Box>
+
+                                                <Accordion sx={appStyles.accordionMarginBottom}>
+                                                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                                        <Typography variant="h6">Advanced</Typography>
+                                                    </AccordionSummary>
+                                                    <AccordionDetails sx={appStyles.advancedSettingsDetails}>
+                                                        <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>CFG Scale</Typography>
+                                                                <Box sx={appStyles.sliderRow}>
+                                                                    <Slider
+                                                                        value={cfgScale}
+                                                                        onChange={(e, value) => setCfgScale(value)}
+                                                                        min={0.1}
+                                                                        max={20}
+                                                                        step={0.1}
+                                                                        valueLabelDisplay="auto"
+                                                                        sx={appStyles.sliderFlexGrow}
+                                                                    />
+                                                                    <TextField
+                                                                        type="number"
+                                                                        value={cfgScale}
+                                                                        onChange={(e) => {
+                                                                            const val = parseFloat(e.target.value);
+                                                                            if (Number.isNaN(val)) return;
+                                                                            setCfgScale(Math.max(0.1, Math.min(20, val)));
+                                                                        }}
+                                                                        inputProps={{ min: 0.1, max: 20, step: 0.1 }}
+                                                                        sx={appStyles.sliderInputSmall}
+                                                                        size="small"
+                                                                    />
+                                                                </Box>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Batch Generation (per prompt)</Typography>
+                                                                <Box sx={appStyles.sliderRow}>
+                                                                    <Slider
+                                                                        value={batchCount}
+                                                                        onChange={(e, value) => setBatchCount(value)}
+                                                                        min={1}
+                                                                        max={10}
+                                                                        step={1}
+                                                                        marks
+                                                                        valueLabelDisplay="auto"
+                                                                        sx={appStyles.sliderFlexGrow}
+                                                                    />
+                                                                    <TextField
+                                                                        type="number"
+                                                                        value={batchCount}
+                                                                        onChange={(e) => {
+                                                                            const val = parseInt(e.target.value, 10) || 1;
+                                                                            setBatchCount(Math.max(1, Math.min(10, val)));
+                                                                        }}
+                                                                        inputProps={{ min: 1, max: 10, step: 1 }}
+                                                                        sx={appStyles.sliderInputSmall}
+                                                                        size="small"
+                                                                    />
+                                                                </Box>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Seed</Typography>
+                                                                <Box sx={appStyles.sliderRow}>
+                                                                    <FormControlLabel
+                                                                        control={
+                                                                            <Switch
+                                                                                checked={randomSeed}
+                                                                                onChange={(e) => setRandomSeed(e.target.checked)}
+                                                                            />
+                                                                        }
+                                                                        label="Random"
+                                                                    />
+                                                                    <TextField
+                                                                        type="number"
+                                                                        placeholder="e.g. 42"
+                                                                        value={seedValue}
+                                                                        onChange={(e) => setSeedValue(e.target.value)}
+                                                                        disabled={randomSeed}
+                                                                        inputProps={{ min: 0, max: 4294967295, step: 1 }}
+                                                                        sx={appStyles.sliderFlexGrow}
+                                                                        size="small"
+                                                                    />
+                                                                </Box>
+                                                                <Typography variant="caption" color="textSecondary">
+                                                                    {randomSeed
+                                                                        ? 'A new random seed is used for each generation in the batch.'
+                                                                        : 'The same seed is used for every generation in the batch.'}
+                                                                </Typography>
+                                                            </Grid>
+                                                        </Grid>
+                                                    </AccordionDetails>
+                                                </Accordion>
 
 
 
