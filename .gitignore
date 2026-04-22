@@ -107,7 +107,7 @@ temp/
 !package-lock.json
 !tsconfig.json
 !*.config.json
-!models/config/*.json
+
 models/config/dataset-config.json
 !config/annotator_labels.json
 config/annotator_labels.user.json
