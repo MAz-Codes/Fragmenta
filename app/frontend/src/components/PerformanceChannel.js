@@ -1,0 +1,265 @@
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import {
+    Box,
+    Typography,
+    TextField,
+    IconButton,
+    Slider,
+    CircularProgress,
+    Tooltip,
+} from '@mui/material';
+import {
+    Play as PlayIcon,
+    Square as StopIcon,
+    Repeat as LoopIcon,
+    Sparkles as GenerateIcon,
+    Volume2 as VolumeIcon,
+    VolumeX as MuteIcon,
+} from 'lucide-react';
+import { performanceChannelStyles as styles } from '../theme';
+
+const CHANNEL_COLORS = [
+    '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
+    '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
+];
+
+const KNOB_DEFS = [
+    { key: 'gain', label: 'GAIN', min: 0, max: 1.5, step: 0.01, default: 0 },
+    { key: 'filter', label: 'LPF', min: 200, max: 18000, step: 1, default: 18000, log: true },
+    { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+];
+
+export default function PerformanceChannel({
+    index,
+    strip,
+    onGenerate,
+    canGenerate,
+    onMuteSoloChange,
+    onStateChange,
+    maxDuration = 47,
+}) {
+    const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
+    const canvasRef = useRef(null);
+    const meterRef = useRef(null);
+    const meterRafRef = useRef(null);
+
+    const [prompt, setPrompt] = useState('');
+    const [duration, setDuration] = useState(8);
+    const [generating, setGenerating] = useState(false);
+    const [loaded, setLoaded] = useState(false);
+    const [playing, setPlaying] = useState(false);
+    const [looping, setLooping] = useState(true);
+    const [muted, setMuted] = useState(false);
+    const [soloed, setSoloed] = useState(false);
+    const [knobs, setKnobs] = useState(() => {
+        const initial = Object.fromEntries(KNOB_DEFS.map(k => [k.key, k.default]));
+        initial.pan = 0;
+        return initial;
+    });
+
+    useEffect(() => {
+        const tick = () => {
+            const el = meterRef.current;
+            if (el && strip) {
+                const level = strip.getLevel();
+                el.style.width = `${Math.min(100, level * 140)}%`;
+            }
+            meterRafRef.current = requestAnimationFrame(tick);
+        };
+        meterRafRef.current = requestAnimationFrame(tick);
+        return () => {
+            if (meterRafRef.current) cancelAnimationFrame(meterRafRef.current);
+        };
+    }, [strip]);
+
+    const drawWave = useCallback(() => {
+        if (strip && canvasRef.current) {
+            strip.drawWaveform(canvasRef.current, color);
+        }
+    }, [strip, color]);
+
+    useEffect(() => { drawWave(); }, [drawWave, loaded]);
+
+    useEffect(() => {
+        setDuration(prev => Math.min(prev, maxDuration));
+    }, [maxDuration]);
+
+    const handleGenerate = async () => {
+        if (!prompt.trim() || generating) return;
+        setGenerating(true);
+        try {
+            const blob = await onGenerate({ prompt, duration });
+            await strip.loadBlob(blob);
+            setLoaded(true);
+            onStateChange?.(index, { loaded: true });
+            requestAnimationFrame(drawWave);
+        } catch (err) {
+            console.error(`Channel ${index + 1} generate failed:`, err);
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handlePlay = () => {
+        if (!loaded) return;
+        strip.play(looping);
+        setPlaying(true);
+        onStateChange?.(index, { playing: true });
+    };
+
+    const handleStop = () => {
+        strip.stop();
+        setPlaying(false);
+        onStateChange?.(index, { playing: false });
+    };
+
+    const handleLoopToggle = () => {
+        setLooping(prev => {
+            const next = !prev;
+            strip.setLoop(next);
+            return next;
+        });
+    };
+
+    const handleMuteToggle = () => {
+        const next = !muted;
+        setMuted(next);
+        onMuteSoloChange(index, { mute: next });
+    };
+
+    const handleSoloToggle = () => {
+        const next = !soloed;
+        setSoloed(next);
+        onMuteSoloChange(index, { solo: next });
+    };
+
+    const handleKnob = (key, value) => {
+        setKnobs(prev => ({ ...prev, [key]: value }));
+        if (key === 'gain') strip.setUserGain(value);
+        else if (key === 'pan') strip.setPan(value);
+        else if (key === 'filter') strip.setFilter(value);
+        else if (key === 'delay') strip.setDelayMix(value);
+        else if (key === 'reverb') strip.setReverbMix(value);
+    };
+
+    return (
+        <Box sx={styles.strip(color, playing)}>
+            <Box sx={styles.stripHeader(color)}>
+                <Box sx={styles.channelBadge(color)}>{String(index + 1).padStart(2, '0')}</Box>
+                <Box sx={styles.muteSoloRow}>
+                    <Tooltip title="Mute">
+                        <IconButton size="small" onClick={handleMuteToggle} sx={styles.muteBtn(muted)}>M</IconButton>
+                    </Tooltip>
+                    <Tooltip title="Solo">
+                        <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
+                    </Tooltip>
+                </Box>
+            </Box>
+
+            <Box sx={styles.promptBox}>
+                <TextField
+                    placeholder="prompt…"
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    multiline
+                    minRows={2}
+                    maxRows={3}
+                    size="small"
+                    fullWidth
+                    sx={styles.promptField}
+                    disabled={generating}
+                />
+                <Box sx={styles.durationRow}>
+                    <Typography variant="caption" sx={styles.durationLabel}>{duration.toFixed(0)}s</Typography>
+                    <Slider
+                        value={duration}
+                        onChange={(_, v) => setDuration(v)}
+                        min={2}
+                        max={maxDuration}
+                        step={1}
+                        size="small"
+                        sx={styles.durationSlider(color)}
+                    />
+                </Box>
+                <IconButton
+                    onClick={handleGenerate}
+                    disabled={!canGenerate || !prompt.trim() || generating}
+                    sx={styles.generateBtn(color)}
+                    size="small"
+                >
+                    {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
+                </IconButton>
+            </Box>
+
+            <Box sx={styles.waveformWrap}>
+                <canvas
+                    ref={canvasRef}
+                    width={140}
+                    height={42}
+                    style={{ width: '100%', height: 42, display: 'block' }}
+                />
+                {!loaded && (
+                    <Typography variant="caption" sx={styles.waveformPlaceholder}>
+                        empty
+                    </Typography>
+                )}
+            </Box>
+
+            <Box sx={{ px: 1, py: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                    <Box component="span" sx={{ fontSize: '0.53rem', color: 'text.secondary', letterSpacing: '0.06em', minWidth: 28 }}>PAN</Box>
+                    <Slider
+                        value={knobs.pan ?? 0}
+                        onChange={(_, v) => handleKnob('pan', v)}
+                        min={-1}
+                        max={1}
+                        step={0.01}
+                        size="small"
+                        sx={{ flex: 1 }}
+                    />
+                </Box>
+            </Box>
+
+            <Box sx={styles.knobsGrid}>
+                {KNOB_DEFS.map((k) => (
+                    <Box key={k.key} sx={styles.knobCell}>
+                        <Slider
+                            orientation="vertical"
+                            value={knobs[k.key]}
+                            onChange={(_, v) => handleKnob(k.key, v)}
+                            min={k.min}
+                            max={k.max}
+                            step={k.step}
+                            size="small"
+                            sx={styles.knobSlider(color)}
+                        />
+                        <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
+                    </Box>
+                ))}
+            </Box>
+
+            <Box sx={styles.transportRow}>
+                <IconButton
+                    onClick={playing ? handleStop : handlePlay}
+                    disabled={!loaded}
+                    sx={styles.transportBtn(color, playing)}
+                    size="small"
+                >
+                    {playing ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                </IconButton>
+                <IconButton
+                    onClick={handleLoopToggle}
+                    sx={styles.loopBtn(color, looping)}
+                    size="small"
+                >
+                    <LoopIcon size={14} />
+                </IconButton>
+                <Box sx={styles.meterTrack}>
+                    <Box ref={meterRef} sx={styles.meterFill(color)} />
+                </Box>
+            </Box>
+
+        </Box>
+    );
+}

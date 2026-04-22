@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import {
     Container,
     Box,
@@ -32,12 +32,12 @@ import {
 } from '@mui/material';
 import {
     Plus as AddIcon,
-    Upload as UploadIcon,
+    Database as UploadIcon,
     Play as PlayIcon,
     Square as StopIcon,
-    Activity as ActivityIcon,
+    Cpu as ActivityIcon,
     SlidersHorizontal as SlidersIcon,
-    Sparkles as SparklesIcon,
+    Music as SparklesIcon,
     RefreshCw as RefreshIcon,
     ChevronDown as ExpandMoreIcon,
     CloudDownload as CloudDownloadIcon,
@@ -45,7 +45,9 @@ import {
     Info as InfoIcon,
     BookOpen as BookOpenIcon,
     Moon as MoonIcon,
-    Sun as SunIcon
+    Sun as SunIcon,
+    Piano as PerformanceIcon,
+    AlertCircle as AlertIcon
 } from 'lucide-react';
 import api from './api';
 import HfAuthDialog from './components/HfAuthDialog';
@@ -60,8 +62,11 @@ import WelcomePage from './components/WelcomePage';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
+const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
+
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome';
+const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
 
 function App() {
     const [tabValue, setTabValue] = useState(0);
@@ -76,6 +81,18 @@ function App() {
     const [showWelcomePage, setShowWelcomePage] = useState(
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
     );
+    const [performanceEnabled, setPerformanceEnabled] = useState(
+        () => window.localStorage.getItem(PERFORMANCE_ENABLED_KEY) === 'true'
+    );
+    const togglePerformance = () => {
+        setPerformanceEnabled((prev) => {
+            const next = !prev;
+            window.localStorage.setItem(PERFORMANCE_ENABLED_KEY, next ? 'true' : 'false');
+            if (!next && tabValue === 3) setTabValue(0);
+            if (next) setTabValue(3);
+            return next;
+        });
+    };
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
@@ -202,6 +219,7 @@ function App() {
         [colorMode]
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
+    const isIconOnlySidebar = useMediaQuery(appTheme.breakpoints.between('md', 'lg'));
 
     useEffect(() => {
         setSelectedUnwrappedModel('');
@@ -1026,11 +1044,28 @@ function App() {
                                 onChange={handleTabChange}
                                 orientation={isCompactLayout ? 'horizontal' : 'vertical'}
                                 aria-label="main navigation tabs"
-                                sx={appStyles.navigationTabs(isCompactLayout)}
+                                sx={appStyles.navigationTabs(isCompactLayout, isIconOnlySidebar)}
                             >
-                                <Tab icon={<UploadIcon size={20} />} iconPosition="start" label="Data Processing" />
-                                <Tab icon={<ActivityIcon size={20} />} iconPosition="start" label="Training" />
-                                <Tab icon={<SparklesIcon size={20} />} iconPosition="start" label="Generation" />
+                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Data Processing'} />
+                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Training'} />
+                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Generation'} />
+                                <Tab
+                                    icon={<PerformanceIcon size={20} />}
+                                    iconPosition={isIconOnlySidebar ? 'top' : 'start'}
+                                    label={isIconOnlySidebar ? undefined : (
+                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                                            Performance
+                                            <Switch
+                                                size="small"
+                                                checked={performanceEnabled}
+                                                onChange={() => {}}
+                                                onClick={(e) => { e.stopPropagation(); togglePerformance(); }}
+                                                sx={{ transform: 'scale(0.75)' }}
+                                            />
+                                        </Box>
+                                    )}
+                                    sx={{ opacity: performanceEnabled ? 1 : 0.5, transition: 'opacity 0.2s' }}
+                                />
                             </Tabs>
                         </Paper>
 
@@ -1827,6 +1862,32 @@ function App() {
                                         </Box>
                                     </Grid>
                                 </Grid>
+                            </TabPanel>
+
+                            <TabPanel value={tabValue} index={3}>
+                                {performanceEnabled ? (
+                                    <Suspense fallback={
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                                            <CircularProgress size={28} />
+                                        </Box>
+                                    }>
+                                        <PerformancePanel
+                                            selectedModel={selectedModel}
+                                            selectedUnwrappedModel={selectedUnwrappedModel}
+                                            availableModels={availableModels}
+                                            baseModels={baseModels}
+                                            onSelectModel={setSelectedModel}
+                                            onSelectUnwrappedModel={setSelectedUnwrappedModel}
+                                        />
+                                    </Suspense>
+                                ) : (
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
+                                        <AlertIcon size={48} color="#FFB74D" />
+                                        <Typography variant="body1" color="textSecondary" align="center">
+                                            Performance mode is turned off. Toggle on from the sidebar if you wish to enter performance mode.
+                                        </Typography>
+                                    </Box>
+                                )}
                             </TabPanel>
                         </Paper>
                     </Box>
