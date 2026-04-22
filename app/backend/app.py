@@ -457,6 +457,10 @@ def generate_audio():
         logger.error(f"Generation error: {str(e)}")
         return jsonify(APIResponse.error(str(e), status_code=400)), 400
     except Exception as e:
+        from app.core.generation.audio_generator import GenerationStopped
+        if isinstance(e, GenerationStopped):
+            logger.info("Generation stopped by user request")
+            return jsonify({'stopped': True, 'message': 'Generation stopped'}), 499
         logger.exception("Unexpected error during audio generation")
         return jsonify(APIResponse.error(f"Unexpected error: {str(e)}", status_code=500)), 500
 
@@ -767,12 +771,19 @@ def start_fresh():
                     file_path.unlink()
                     config_files_deleted += 1
 
+        labels_reset = False
+        user_labels_path = _annotator_labels_user_path()
+        if user_labels_path.exists():
+            user_labels_path.unlink()
+            labels_reset = True
+
         data_dir.mkdir(exist_ok=True, parents=True)
 
         return jsonify({
             'message': f'Fresh start completed! Deleted {data_files_deleted} data files and {config_files_deleted} config metadata files.',
             'data_files_deleted': data_files_deleted,
-            'config_files_deleted': config_files_deleted
+            'config_files_deleted': config_files_deleted,
+            'annotator_labels_reset': labels_reset
         })
 
     except Exception as e:
@@ -931,6 +942,18 @@ def delete_wrapped_checkpoint():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/stop-generation', methods=['POST'])
+def stop_generation_route():
+    if generator is None:
+        return jsonify({'stopped': False, 'message': 'Generator not initialised'}), 200
+    newly_set = generator.request_stop()
+    return jsonify({
+        'stopped': True,
+        'newly_set': newly_set,
+        'message': 'Stop signal sent to generator'
+    })
+
+
 @app.route('/api/free-gpu-memory', methods=['POST'])
 def free_gpu_memory():
     try:
@@ -938,11 +961,36 @@ def free_gpu_memory():
         import torch
         import os
         import time
+        import gc
 
         print(" FREEING GPU MEMORY...")
 
+        # The dominant VRAM consumer in this process is the loaded generator
+        # model. cuda.empty_cache() only releases *unused* cached blocks, so
+        # we must drop the live references first.
+        global generator
+        if generator is not None and getattr(generator, 'model', None) is not None:
+            print("    Unloading in-process generator model")
+            try:
+                generator.model = None
+            except Exception as exc:
+                print(f"     Could not drop generator model: {exc}")
+
+        try:
+            from app.backend.data.auto_annotator import unload_clap
+            unload_clap()
+            print("    Unloaded CLAP tagger (if loaded)")
+        except Exception as exc:
+            print(f"     Could not unload CLAP: {exc}")
+
+        gc.collect()
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
             print("    Cleared PyTorch CUDA cache")
 
         if hasattr(torch, 'mps') and torch.backends.mps.is_available():
@@ -1411,8 +1459,76 @@ _clap_download_job = {
 }
 
 
-def _annotator_labels_path():
+def _annotator_labels_default_path():
     return Path(get_config().project_root) / 'config' / 'annotator_labels.json'
+
+
+def _annotator_labels_user_path():
+    return Path(get_config().project_root) / 'config' / 'annotator_labels.user.json'
+
+
+def _annotator_labels_path():
+    user_path = _annotator_labels_user_path()
+    return user_path if user_path.exists() else _annotator_labels_default_path()
+
+
+_LABEL_CATEGORIES = ('genre', 'mood', 'instruments')
+
+
+def _read_labels_from(path):
+    if not path.exists():
+        return {cat: [] for cat in _LABEL_CATEGORIES}
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return {cat: list(data.get(cat) or []) for cat in _LABEL_CATEGORIES}
+
+
+@app.route('/api/annotator-labels', methods=['GET'])
+def get_annotator_labels():
+    user_path = _annotator_labels_user_path()
+    overridden = user_path.exists()
+    effective = _read_labels_from(user_path if overridden else _annotator_labels_default_path())
+    defaults = _read_labels_from(_annotator_labels_default_path())
+    return jsonify({'labels': effective, 'defaults': defaults, 'overridden': overridden})
+
+
+@app.route('/api/annotator-labels', methods=['PUT'])
+def put_annotator_labels():
+    payload = request.json or {}
+    cleaned = {}
+    for cat in _LABEL_CATEGORIES:
+        raw = payload.get(cat)
+        if raw is None:
+            cleaned[cat] = []
+            continue
+        if not isinstance(raw, list):
+            return jsonify({'error': f'{cat} must be a list of strings'}), 400
+        seen = set()
+        out = []
+        for item in raw:
+            if not isinstance(item, str):
+                return jsonify({'error': f'{cat} entries must be strings'}), 400
+            label = item.strip()
+            key = label.lower()
+            if not label or key in seen:
+                continue
+            seen.add(key)
+            out.append(label)
+        cleaned[cat] = out
+    user_path = _annotator_labels_user_path()
+    user_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(user_path, 'w', encoding='utf-8') as f:
+        json.dump(cleaned, f, indent=4)
+    return jsonify({'labels': cleaned, 'overridden': True})
+
+
+@app.route('/api/annotator-labels', methods=['DELETE'])
+def delete_annotator_labels():
+    user_path = _annotator_labels_user_path()
+    if user_path.exists():
+        user_path.unlink()
+    defaults = _read_labels_from(_annotator_labels_default_path())
+    return jsonify({'labels': defaults, 'overridden': False})
 
 
 def _clap_ckpt_path():

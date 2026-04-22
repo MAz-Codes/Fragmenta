@@ -3,6 +3,7 @@ import {
     Box, Paper, Typography, TextField, Button, MenuItem, Select, FormControl,
     InputLabel, LinearProgress, Alert, Table, TableHead, TableRow, TableCell,
     TableBody, TableContainer, Checkbox, Tooltip, CircularProgress,
+    Accordion, AccordionSummary, AccordionDetails, Autocomplete, Chip,
 } from '@mui/material';
 import {
     Tags as TagsIcon,
@@ -10,6 +11,8 @@ import {
     Save as SaveIcon,
     FolderOpen as FolderOpenIcon,
     Upload as UploadIcon,
+    ChevronDown as ExpandMoreIcon,
+    RotateCcw as ResetIcon,
 } from 'lucide-react';
 import api from '../api';
 
@@ -27,6 +30,12 @@ export default function BulkAnnotatePanel({ onCommitted }) {
     const [committing, setCommitting] = useState(false);
     const [isDocker, setIsDocker] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
+    const [labelsOverridden, setLabelsOverridden] = useState(false);
+    const [labelsLoading, setLabelsLoading] = useState(false);
+    const [labelsSaving, setLabelsSaving] = useState(false);
+    const [labelsMessage, setLabelsMessage] = useState('');
+    const [labelsError, setLabelsError] = useState('');
     const pollRef = useRef(null);
     const folderInputRef = useRef(null);
 
@@ -35,6 +44,66 @@ export default function BulkAnnotatePanel({ onCommitted }) {
             .then(({ data }) => setIsDocker(!!data?.docker))
             .catch(() => {});
     }, []);
+
+    const loadLabels = useCallback(async () => {
+        setLabelsLoading(true);
+        try {
+            const { data } = await api.get('/api/annotator-labels');
+            setLabels({
+                genre: data?.labels?.genre || [],
+                mood: data?.labels?.mood || [],
+                instruments: data?.labels?.instruments || [],
+            });
+            setLabelsOverridden(!!data?.overridden);
+            setLabelsError('');
+        } catch (exc) {
+            setLabelsError(exc.response?.data?.error || exc.message);
+        } finally {
+            setLabelsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { loadLabels(); }, [loadLabels]);
+
+    const updateLabelCategory = (category, value) => {
+        const cleaned = Array.from(new Set(
+            (value || []).map((s) => String(s).trim()).filter(Boolean)
+        ));
+        setLabels((prev) => ({ ...prev, [category]: cleaned }));
+        setLabelsMessage('');
+    };
+
+    const saveLabels = async () => {
+        setLabelsSaving(true);
+        setLabelsMessage('');
+        setLabelsError('');
+        try {
+            const { data } = await api.put('/api/annotator-labels', labels);
+            setLabels(data?.labels || labels);
+            setLabelsOverridden(!!data?.overridden);
+            setLabelsMessage('Annotator labels saved.');
+        } catch (exc) {
+            setLabelsError(exc.response?.data?.error || exc.message);
+        } finally {
+            setLabelsSaving(false);
+        }
+    };
+
+    const resetLabels = async () => {
+        setLabelsSaving(true);
+        setLabelsMessage('');
+        setLabelsError('');
+        try {
+            const { data } = await api.delete('/api/annotator-labels');
+            setLabels(data?.labels || { genre: [], mood: [], instruments: [] });
+            setLabelsOverridden(false);
+            setLabelsMessage('Reverted to built-in default labels.');
+        } catch (exc) {
+            setLabelsError(exc.response?.data?.error || exc.message);
+        } finally {
+            setLabelsSaving(false);
+        }
+    };
 
     const stopPolling = useCallback(() => {
         if (pollRef.current) {
@@ -202,6 +271,77 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                 Point at a folder of audio files and auto-generate prompts.
                 Basic uses librosa (tempo + key). Rich adds CLAP tagging (genre, mood, instruments).
             </Typography>
+
+            <Accordion sx={{ mb: 2 }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon size={18} />}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="subtitle1">Annotator Labels</Typography>
+                        {labelsOverridden && (
+                            <Chip size="small" color="primary" variant="outlined" label="Custom" />
+                        )}
+                    </Box>
+                </AccordionSummary>
+                <AccordionDetails>
+                    <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                        These replace the built-in label sets used by Rich (CLAP) auto-annotation.
+                        Type a label and press Enter to add it; click the × on a chip to remove it.
+                    </Typography>
+                    {labelsError && <Alert severity="error" sx={{ mb: 2 }}>{labelsError}</Alert>}
+                    {labelsMessage && <Alert severity="success" sx={{ mb: 2 }}>{labelsMessage}</Alert>}
+                    {['genre', 'mood', 'instruments'].map((category) => (
+                        <Box key={category} sx={{ mb: 2 }}>
+                            <Autocomplete
+                                multiple
+                                freeSolo
+                                options={[]}
+                                value={labels[category] || []}
+                                onChange={(_, value) => updateLabelCategory(category, value)}
+                                disabled={labelsLoading || labelsSaving}
+                                renderTags={(value, getTagProps) =>
+                                    value.map((option, index) => (
+                                        <Chip
+                                            variant="outlined"
+                                            size="small"
+                                            label={option}
+                                            {...getTagProps({ index })}
+                                        />
+                                    ))
+                                }
+                                renderInput={(params) => (
+                                    <TextField
+                                        {...params}
+                                        label={category.charAt(0).toUpperCase() + category.slice(1)}
+                                        placeholder="Add a label…"
+                                        size="small"
+                                    />
+                                )}
+                            />
+                        </Box>
+                    ))}
+                    <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+                        <Button
+                            variant="contained"
+                            onClick={saveLabels}
+                            startIcon={labelsSaving ? <CircularProgress size={16} /> : <SaveIcon size={16} />}
+                            disabled={labelsLoading || labelsSaving}
+                        >
+                            {labelsSaving ? 'Saving…' : 'Save labels'}
+                        </Button>
+                        <Tooltip title={labelsOverridden ? '' : 'No custom labels to reset'}>
+                            <span>
+                                <Button
+                                    variant="outlined"
+                                    onClick={resetLabels}
+                                    startIcon={<ResetIcon size={16} />}
+                                    disabled={labelsSaving || !labelsOverridden}
+                                >
+                                    Reset to defaults
+                                </Button>
+                            </span>
+                        </Tooltip>
+                    </Box>
+                </AccordionDetails>
+            </Accordion>
 
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
                 <TextField

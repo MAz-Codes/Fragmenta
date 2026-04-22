@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Container,
     Box,
@@ -122,6 +122,8 @@ function App() {
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');
+    const generationAbortRef = useRef(null);
+    const stopGenerationRef = useRef(false);
 
     const slugifyPrompt = (text, maxLen = 40) => {
         const slug = (text || '').trim().toLowerCase()
@@ -534,6 +536,10 @@ function App() {
 
         await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
 
+        stopGenerationRef.current = false;
+        const abortController = new AbortController();
+        generationAbortRef.current = abortController;
+
         setIsGenerating(true);
         setGenerationProgress(0);
 
@@ -559,8 +565,14 @@ function App() {
             `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
             `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
+        let stoppedEarly = false;
+        let completedRuns = 0;
         try {
             for (let i = 0; i < totalRuns; i++) {
+                if (stopGenerationRef.current) {
+                    stoppedEarly = true;
+                    break;
+                }
                 const batchIndex = i + 1;
                 const runLabel = totalRuns > 1 ? ` (${batchIndex}/${totalRuns})` : '';
                 setProcessingStatus(`Generating audio${runLabel}...`);
@@ -579,7 +591,8 @@ function App() {
                 };
 
                 const response = await api.post('/api/generate', requestData, {
-                    responseType: 'blob'
+                    responseType: 'blob',
+                    signal: abortController.signal
                 });
 
                 stopProgressTicker();
@@ -609,11 +622,18 @@ function App() {
                 };
 
                 setGeneratedFragments(prev => [...prev, newFragment]);
+                completedRuns += 1;
             }
 
-            setProcessingStatus(totalRuns > 1
-                ? `Generated ${totalRuns} fragments successfully!`
-                : 'Audio generated successfully!');
+            if (stoppedEarly) {
+                setProcessingStatus(
+                    `Generation stopped after ${completedRuns}/${totalRuns} fragment${completedRuns === 1 ? '' : 's'}.`
+                );
+            } else {
+                setProcessingStatus(totalRuns > 1
+                    ? `Generated ${totalRuns} fragments successfully!`
+                    : 'Audio generated successfully!');
+            }
 
             setTimeout(() => {
                 setGenerationProgress(0);
@@ -622,11 +642,35 @@ function App() {
         } catch (error) {
             stopProgressTicker();
             setGenerationProgress(0);
-            setProcessingStatus(`Generation error: ${error.response?.data?.error || error.message}`);
+            const wasAborted = error?.name === 'CanceledError'
+                || error?.name === 'AbortError'
+                || error?.code === 'ERR_CANCELED'
+                || stopGenerationRef.current;
+            if (wasAborted) {
+                setProcessingStatus(
+                    `Generation stopped after ${completedRuns}/${totalRuns} fragment${completedRuns === 1 ? '' : 's'}.`
+                );
+            } else {
+                setProcessingStatus(`Generation error: ${error.response?.data?.error || error.message}`);
+            }
         } finally {
             stopProgressTicker();
             setIsGenerating(false);
+            generationAbortRef.current = null;
+            stopGenerationRef.current = false;
         }
+    };
+
+    const stopGeneration = () => {
+        stopGenerationRef.current = true;
+        // Tell the backend first so the in-flight diffusion loop bails out at
+        // the next step, then abort the HTTP request on our side. Fire-and-
+        // forget; we deliberately do not pass the abort signal here.
+        api.post('/api/stop-generation').catch(() => {});
+        if (generationAbortRef.current) {
+            try { generationAbortRef.current.abort(); } catch (_) {}
+        }
+        setProcessingStatus('Stopping generation…');
     };
 
     const handleStartFresh = async () => {
@@ -1477,7 +1521,7 @@ function App() {
 
                                                 <Accordion sx={appStyles.accordionMarginBottom}>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="h6">Advanced</Typography>
+                                                        <Typography variant="h6">Advanced Settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -1586,6 +1630,17 @@ function App() {
                                                         <Typography variant="caption" color="textSecondary" sx={appStyles.generatingHint}>
                                                             Generation time may vary considerably depending on your hardware.
                                                         </Typography>
+                                                        <Button
+                                                            variant="outlined"
+                                                            color="error"
+                                                            fullWidth
+                                                            startIcon={<StopIcon size={16} />}
+                                                            onClick={stopGeneration}
+                                                            disabled={stopGenerationRef.current}
+                                                            sx={{ mt: 1.5 }}
+                                                        >
+                                                            Stop
+                                                        </Button>
                                                     </Box>
                                                 ) : (
                                                     <Button

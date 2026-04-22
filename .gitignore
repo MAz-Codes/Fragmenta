@@ -110,6 +110,7 @@ temp/
 !models/config/*.json
 models/config/dataset-config.json
 !config/annotator_labels.json
+config/annotator_labels.user.json
 
 .env
 .env.local

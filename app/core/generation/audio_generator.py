@@ -6,9 +6,15 @@ from typing import Dict, Any, Optional, List, Tuple
 import logging
 import re
 import sys
+import threading
 import time
 import warnings
 from datetime import datetime
+
+
+class GenerationStopped(Exception):
+    """Raised by the per-step callback when a stop has been requested."""
+    pass
 
 
 def _slugify_prompt(text: str, max_len: int = 40) -> str:
@@ -40,7 +46,14 @@ class AudioGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.current_model_name = None
         self.current_model_path = None
+        self._stop_event = threading.Event()
         logger.info(f"Using device: {self.device}")
+
+    def request_stop(self) -> bool:
+        """Signal the in-flight diffusion loop (if any) to abort at the next step."""
+        already_set = self._stop_event.is_set()
+        self._stop_event.set()
+        return not already_set
 
     def load_local_base_model(self, model_name: str = "stable-audio-open-small") -> bool:
         try:
@@ -201,6 +214,13 @@ class AudioGenerator:
 
         print(f"AUDIO GENERATOR: Model loaded successfully")
 
+        # A new generation invalidates any prior stop request.
+        self._stop_event.clear()
+
+        def _stop_callback(state):
+            if self._stop_event.is_set():
+                raise GenerationStopped("Stop requested mid-diffusion")
+
         try:
             print(f"Generating audio for prompt: '{prompt}'")
             print(f"Duration: {duration}s, CFG scale: {cfg_scale}, Steps: {steps}")
@@ -284,7 +304,8 @@ class AudioGenerator:
                     device=str(device),
                     sigma_min=0.03,
                     sigma_max=1000,
-                    sampler_type="dpmpp-3m-sde"
+                    sampler_type="dpmpp-3m-sde",
+                    callback=_stop_callback
                 )
 
             print(f"Generation complete, audio shape: {audio.shape}")
@@ -310,11 +331,16 @@ class AudioGenerator:
 
             return output_path
 
+        except GenerationStopped:
+            print("AUDIO GENERATOR: Generation stopped by user request")
+            raise
         except Exception as e:
             print(f"AUDIO GENERATOR: Error during generation: {str(e)}")
             import traceback
             traceback.print_exc()
             raise
+        finally:
+            self._stop_event.clear()
 
     def generate_batch(
         self,
