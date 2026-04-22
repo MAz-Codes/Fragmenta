@@ -1,5 +1,6 @@
 import subprocess
 import os
+import re
 import sys
 import time
 import threading
@@ -12,6 +13,91 @@ from app.core.config import get_config
 
 DEFAULT_EPOCHS = 30
 DEFAULT_CHECKPOINT_STEPS = 50
+
+VALID_PRECISIONS = {"auto", "32", "32-true", "16-mixed", "bf16-mixed", "16-true", "bf16-true"}
+
+
+def _auto_precision(device_info: Dict[str, Any]) -> str:
+    """Pick a sensible default precision given the detected device."""
+    device_type = device_info.get('type')
+    if device_type == 'cuda':
+        capability = device_info.get('cuda_capability') or (0, 0)
+        # Ampere (8.0) and newer have first-class bf16 support; on older
+        # cards bf16 falls back to slow paths so use fp16 mixed instead.
+        if capability and capability[0] >= 8:
+            return "bf16-mixed"
+        return "16-mixed"
+    # CPU and MPS: Lightning's mixed-precision plugins are not supported,
+    # so fp32 is the only safe choice.
+    return "32"
+
+
+_OOM_PATTERNS = ("OutOfMemoryError", "CUDA out of memory", "MPS backend out of memory")
+
+_NOISY_LINE_PATTERNS = (
+    "FutureWarning", "DeprecationWarning", "UserWarning", "warnings.warn",
+    "pkg_resources", "Stderr:", "tqdm",
+    "rank_zero", "GPU available", "TPU available", "IPU available", "HPU available",
+)
+
+_PYTHON_ERROR_RE = re.compile(
+    r"^(?:[A-Za-z_][A-Za-z0-9_.]*?(?:Error|Exception|Warning))(?::|\b)"
+)
+
+
+def _translate_oom_error(stderr_text: str, batch_size: int, precision: str, base_model: str) -> str:
+    """Turn a CUDA/MPS OOM stack into one actionable line for the UI."""
+    if not stderr_text:
+        return ""
+    if not any(pat in stderr_text for pat in _OOM_PATTERNS):
+        return ""
+
+    suggestions = []
+    if base_model and 'small' not in base_model.lower():
+        suggestions.append("switch to the small base model (stable-audio-open-small)")
+    if batch_size and batch_size > 1:
+        suggestions.append(f"lower batch size (currently {batch_size}) to 1")
+    if precision in ("32", "32-true"):
+        suggestions.append("set precision to bf16-mixed (CUDA Ampere+) or 16-mixed")
+
+    if not suggestions:
+        suggestions.append("free other GPU processes or use a card with more VRAM")
+
+    advice = "; ".join(suggestions)
+    return f"GPU ran out of memory at batch_size={batch_size}, precision={precision}. Try: {advice}."
+
+
+def _summarize_training_error(stderr_text: str, max_chars: int = 300) -> str:
+    """Pull a meaningful one-liner out of a noisy training stderr blob."""
+    if not stderr_text:
+        return ""
+
+    raw_lines = stderr_text.splitlines()
+    # Strip the "Stderr: " prefix the monitor adds and skip framework noise so
+    # the actual exception isn't buried under deprecation warnings.
+    cleaned = []
+    for line in raw_lines:
+        s = line.strip()
+        if s.startswith("Stderr: "):
+            s = s[len("Stderr: "):].strip()
+        if not s:
+            continue
+        if any(pat in s for pat in _NOISY_LINE_PATTERNS):
+            continue
+        cleaned.append(s)
+
+    if not cleaned:
+        return ""
+
+    # Walk bottom-up looking for a Python exception line ("XxxError: ..."),
+    # which is what the user actually needs to act on.
+    for line in reversed(cleaned):
+        if _PYTHON_ERROR_RE.match(line):
+            return line[:max_chars]
+
+    # Fall back to the last non-noisy line so we never serve a generic
+    # "process exited unexpectedly" when there's *something* to report.
+    return cleaned[-1][:max_chars]
 
 def get_base_model_configs():
     config = get_config()
@@ -248,19 +334,32 @@ class FineTuner:
 
             batch_size = self.config.get("batchSize", 4)
             accum_batches = 1
-            precision = "32"
+            requested_precision = str(self.config.get("precision", "auto") or "auto").lower()
+            if requested_precision not in VALID_PRECISIONS:
+                print(f"   Unknown precision '{requested_precision}', falling back to auto")
+                requested_precision = "auto"
+            if requested_precision == "auto":
+                precision = _auto_precision(device_info)
+                precision_source = f"auto ({precision})"
+            else:
+                precision = requested_precision
+                precision_source = f"user ({precision})"
             num_workers = 0
-            
+
             if device_info['type'] == 'cpu':
                 print(f"\nMEMORY SETTINGS (CPU Training):")
             elif base_model == "stable-audio-open-1.0":
                 print(f"\nMEMORY SETTINGS (Large Model on {device_info['type'].upper()}):")
             else:
                 print(f"\nMEMORY SETTINGS (Small Model on {device_info['type'].upper()}):")
-            
+
             print(f"- Batch Size: {batch_size}")
-            print(f"- Precision: {precision}")
+            print(f"- Precision: {precision_source}")
             print(f"- Workers: {num_workers}")
+
+            # Stash for the monitor's failure-translation path; precision is
+            # picked here in start_training but consumed by _monitor_training.
+            self.training_status["precision_used"] = precision
 
             memory_flags = [
                 "--precision", precision,
@@ -447,6 +546,7 @@ class FineTuner:
                             "type": "cuda",
                             "memory_gb": cuda_memory,
                             "memory_ratio": 0.8,
+                            "cuda_capability": cuda_capability,
                             "reason": f"CUDA with {cuda_memory:.2f} GB available"
                         }
                     elif cuda_memory >= 8:
@@ -455,6 +555,7 @@ class FineTuner:
                             "type": "cuda",
                             "memory_gb": cuda_memory,
                             "memory_ratio": 0.6,
+                            "cuda_capability": cuda_capability,
                             "reason": f"CUDA with {cuda_memory:.2f} GB available (limited)"
                         }
                 except Exception as e:
@@ -668,15 +769,40 @@ class FineTuner:
                         )
                         failure_reason = "INSUFFICIENT_DATA"
                     else:
+                        # The reader threads have already drained stdout/stderr
+                        # into queues, so communicate() returns empty. Use the
+                        # error_messages buffer those threads populated instead.
+                        captured_stderr = "\n".join(
+                            self.training_status.get("error_messages") or []
+                        )
                         try:
                             stdout, stderr = self.training_process.communicate(
                                 timeout=5)
-                            error_msg = stderr if stderr else stdout
-                            if not error_msg:
-                                error_msg = "Training process exited unexpectedly"
-                        except:
-                            error_msg = "Could not capture error output"
-                        failure_reason = "UNKNOWN_ERROR"
+                            raw_stderr = stderr or stdout or captured_stderr or ""
+                        except Exception:
+                            raw_stderr = captured_stderr or ""
+
+                        oom_advice = _translate_oom_error(
+                            captured_stderr or raw_stderr,
+                            batch_size=int(self.config.get("batchSize", 4) or 4),
+                            precision=str(self.training_status.get("precision_used") or "32"),
+                            base_model=str(self.config.get("baseModel") or ""),
+                        )
+                        if oom_advice:
+                            error_msg = oom_advice
+                            failure_reason = "CUDA_OOM"
+                        else:
+                            summary = _summarize_training_error(captured_stderr or raw_stderr)
+                            if summary:
+                                error_msg = f"Training crashed: {summary}"
+                                failure_reason = "TRAINING_CRASHED"
+                            else:
+                                error_msg = (
+                                    f"Training process exited unexpectedly "
+                                    f"(return code {return_code}). "
+                                    f"Check the backend log for details."
+                                )
+                                failure_reason = "UNKNOWN_ERROR"
 
                     print(f"\nTRAINING FAILED!")
                     print(f"Reason: {failure_reason}")

@@ -295,6 +295,9 @@ def start_training():
         if 'saveWrappedCheckpoint' not in training_config:
             training_config['saveWrappedCheckpoint'] = False
             print(f"   Setting default saveWrappedCheckpoint: False")
+        if 'precision' not in training_config or not training_config['precision']:
+            training_config['precision'] = 'auto'
+            print(f"   Setting default precision: auto")
 
         print(f"\nVALIDATED CONFIG:")
         print(f"   - Model Name: {training_config['modelName']}")
@@ -304,6 +307,7 @@ def start_training():
         print(f"   - Batch Size: {training_config['batchSize']}")
         print(f"   - Learning Rate: {training_config['learningRate']}")
         print(f"   - Save Wrapped Checkpoint: {training_config['saveWrappedCheckpoint']}")
+        print(f"   - Precision: {training_config['precision']}")
 
         result = start_training_func(training_config)
 

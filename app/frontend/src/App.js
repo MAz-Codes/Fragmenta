@@ -99,7 +99,8 @@ function App() {
         learningRate: 1e-4,
         modelName: 'my_fine_tuned_model',
         baseModel: '',
-        saveWrappedCheckpoint: false
+        saveWrappedCheckpoint: false,
+        precision: 'auto'
     });
     const [isTraining, setIsTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
@@ -1300,6 +1301,62 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Batch Size</Typography>
+                                                                <Box sx={appStyles.sliderRow}>
+                                                                    <Slider
+                                                                        value={trainingConfig.batchSize}
+                                                                        onChange={(e, value) => setTrainingConfig({
+                                                                            ...trainingConfig,
+                                                                            batchSize: value
+                                                                        })}
+                                                                        min={1}
+                                                                        max={32}
+                                                                        step={1}
+                                                                        valueLabelDisplay="auto"
+                                                                        sx={appStyles.sliderFlexGrow}
+                                                                    />
+                                                                    <TextField
+                                                                        type="number"
+                                                                        value={trainingConfig.batchSize}
+                                                                        onChange={(e) => {
+                                                                            const val = parseInt(e.target.value, 10) || 1;
+                                                                            setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                batchSize: Math.max(1, Math.min(32, val))
+                                                                            });
+                                                                        }}
+                                                                        inputProps={{ min: 1, max: 32, step: 1 }}
+                                                                        sx={appStyles.sliderInputSmall}
+                                                                        size="small"
+                                                                    />
+                                                                </Box>
+                                                                <Typography variant="caption" color="textSecondary">
+                                                                    Lower this if you hit CUDA out-of-memory; raise it for faster training on large GPUs.
+                                                                </Typography>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Precision</Typography>
+                                                                <FormControl fullWidth size="small">
+                                                                    <Select
+                                                                        value={trainingConfig.precision}
+                                                                        onChange={(e) => setTrainingConfig({
+                                                                            ...trainingConfig,
+                                                                            precision: e.target.value
+                                                                        })}
+                                                                    >
+                                                                        <MenuItem value="auto">Auto (recommended)</MenuItem>
+                                                                        <MenuItem value="bf16-mixed">bf16-mixed (Ampere+ GPUs)</MenuItem>
+                                                                        <MenuItem value="16-mixed">16-mixed (older GPUs)</MenuItem>
+                                                                        <MenuItem value="32">32 (full precision, highest VRAM)</MenuItem>
+                                                                    </Select>
+                                                                </FormControl>
+                                                                <Typography variant="caption" color="textSecondary">
+                                                                    Auto picks bf16-mixed on modern CUDA, 16-mixed on older cards, fp32 on CPU/MPS.
+                                                                </Typography>
                                                             </Grid>
 
                                                         </Grid>
