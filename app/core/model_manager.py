@@ -16,11 +16,24 @@ class ModelManager:
         self.models_dir = config.get_path("models_pretrained")
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
+        # Use fragmenta-models repo on HF Spaces, Stability AI models elsewhere
+        use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
+
+        if use_custom_repo:
+            models_repo = 'MazCodes/fragmenta-models'
+            small_file = 'stable-audio-open-small-model.safetensors'
+            large_file = 'stable-audio-open-model.safetensors'
+        else:
+            models_repo_small = 'stabilityai/stable-audio-open-small'
+            models_repo_large = 'stabilityai/stable-audio-open-1.0'
+            small_file = 'model.safetensors'
+            large_file = 'model.safetensors'
+
         self.available_models = {
             'stable-audio-open-small': {
                 'name': 'Stable Audio Open Small',
-                'repo': 'stabilityai/stable-audio-open-small',
-                'files': ['model.safetensors'],
+                'repo': models_repo if use_custom_repo else models_repo_small,
+                'files': [small_file],
                 'size': '2.1 GB',
                 'description': 'Fast generation, good quality, lower memory usage',
                 'best_for': 'Beginners, quick experiments, limited GPU',
@@ -29,8 +42,8 @@ class ModelManager:
             },
             'stable-audio-open-1.0': {
                 'name': 'Stable Audio Open 1.0',
-                'repo': 'stabilityai/stable-audio-open-1.0',
-                'files': ['model.safetensors'],
+                'repo': models_repo if use_custom_repo else models_repo_large,
+                'files': [large_file],
                 'size': '8.2 GB',
                 'description': 'Highest quality, more detailed audio',
                 'best_for': 'Professional use, high-end GPUs',

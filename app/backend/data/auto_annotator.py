@@ -282,12 +282,20 @@ def download_clap_checkpoint(
         return target
 
     from huggingface_hub import hf_hub_download
+    import os
 
     if progress_cb:
         progress_cb("Downloading CLAP checkpoint (~630 MB)…")
 
+    # Use custom CLAP from fragmenta-models on HF Spaces
+    use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
+    if use_custom_repo:
+        repo_id = "MazCodes/fragmenta-models"
+    else:
+        repo_id = CLAP_REPO
+
     downloaded = hf_hub_download(
-        repo_id=CLAP_REPO,
+        repo_id=repo_id,
         filename=CLAP_CKPT_FILENAME,
         local_dir=str(target.parent),
     )
