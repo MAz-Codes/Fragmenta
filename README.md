@@ -27,9 +27,17 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 - **Docker support** — run as a web app on any machine (GPU or CPU)
 - Audio file processing with automatic dataset creation
 - **Bulk auto-annotation** — automatically generate text prompts for your audio files using DSP analysis (Basic) or AI-powered tagging with LAION-CLAP (Rich)
+  - **User-defined vocabulary** — customize the CLAP tagger with your own terms for more personalized annotation
 - Guided model download and HuggingFace authorisation
 - Model availability updates automatically after download — no restart needed
+- **Advanced generation settings** — fine-tune generation with CFG scale, seed control, and batch generation
+- **Advanced training settings** — customize epochs, learning rate, batch size, checkpoint frequency, and model precision
 - Model fine-tuning, checkpoint saving and unwrapping
+- **Performance Mode** — 4-voice diffusion sampler for real-time performance with:
+  - Independent channel controls (gain, pan, filter, delay, reverb)
+  - Per-channel mute/solo functionality
+  - Master output with peak metering (dBFS)
+  - Model and checkpoint selection
 - Text-to-audio generation (1–47 seconds)
 - Real-time GPU memory monitoring
 
@@ -159,6 +167,8 @@ If you have a folder of audio files without text descriptions, the **Bulk Annota
 | **Basic** | DSP analysis via librosa — extracts tempo (BPM), musical key, brightness, and melodic/percussive character | No download, CPU only |
 | **Rich** | Everything in Basic, plus zero-shot genre, mood, and instrument tagging using [LAION-CLAP](https://github.com/LAION-AI/CLAP) | ~2.35 GB one-time model download, GPU recommended |
 
+**User-Defined Vocabulary (Rich tier only):** Customize the CLAP tagger with your own terms to get more personalized annotations. Add terms that match your musical style, domain, or artistic vocabulary for results tailored to your workflow.
+
 Once annotation finishes, results appear in an editable table — you can review and tweak any prompt before saving. Choosing **"Copy files into data/"** moves everything into the dataset folder in one step; **"Leave files in place"** keeps them where they are and references their original paths.
 
 ### 2. Train Model
@@ -166,13 +176,37 @@ Once annotation finishes, results appear in an editable table — you can review
 Configure training parameters:
 
 - **Base model:** [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) Small (341M) or 1.0 (838M)
-- **Epochs**, **learning rate**, **checkpoint frequency**
+- **Epochs**, **batch size**, **learning rate**, **checkpoint frequency**, **precision** (auto, fp32, fp16)
 
 > **Important:** You must unwrap your trained model before using it for generation. This can be done on the generation page.
 
 ### 3. Generate Audio
 
 Use base or fine-tuned models to generate audio from text prompts (1–47 seconds). After training, select your checkpoint from the dropdown, unwrap it, and generate.
+
+**Advanced Generation Settings:**
+- **CFG Scale** — control how closely the model follows your prompt (higher = stricter adherence)
+- **Seed** — control randomness; same seed produces identical results
+- **Batch generation** — generate multiple variations at once
+- **Duration** — 1–10 seconds for small models, 1–47 seconds for larger models
+
+### 4. Performance Mode (Optional)
+
+Enable Performance Mode to use a 4-voice diffusion sampler for near-real-time musical performance and experimentation.
+
+**Performance Mode Features:**
+- **4 Independent Channels** — each with:
+  - Text prompt input for generation
+  - Pan control (stereo positioning)
+  - Effect chain: low-pass filter, delay with feedback, reverb
+  - Per-channel gain control
+  - Mute and solo buttons
+  - Waveform visualization
+  - Loop toggle
+- **Master Output** — control overall level with dBFS metering and peak hold display
+- **Model Selection** — choose base or fine-tuned models; maximum duration adjusts automatically based on model size
+
+The Performance Mode is lazy-loaded and only activates when enabled via the toggle in the sidebar.
 
 ---
 
