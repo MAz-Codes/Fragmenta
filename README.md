@@ -3,7 +3,7 @@
 # Fragmenta Desktop (beta)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Version](https://img.shields.io/badge/version-0.0.2-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![Version](https://img.shields.io/badge/version-0.0.3-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
