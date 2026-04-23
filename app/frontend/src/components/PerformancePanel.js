@@ -9,11 +9,15 @@ import {
     FormControl,
     Select,
     MenuItem,
+    TextField,
+    IconButton,
+    Tooltip,
 } from '@mui/material';
 import {
     Piano as PerformanceIcon,
     Play as PlayAllIcon,
     Square as StopAllIcon,
+    Trash2 as DeleteIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -26,6 +30,9 @@ const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
 const MASTER_DB_DEFAULT = -1;
 const METER_FLOOR_DB = -60;
+const BPM_MIN = 20;
+const BPM_MAX = 300;
+const BPM_DEFAULT = 120;
 
 const dbToGain = (db) => (db <= MASTER_DB_MIN ? 0 : Math.pow(10, db / 20));
 const ampToDb = (amp) => (amp <= 0 ? -Infinity : 20 * Math.log10(amp));
@@ -42,6 +49,7 @@ export default function PerformancePanel({
     baseModels = [],
     onSelectModel,
     onSelectUnwrappedModel,
+    onRefreshModels,
 }) {
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
@@ -49,6 +57,7 @@ export default function PerformancePanel({
     const meterRafRef = useRef(null);
     const [engineReady, setEngineReady] = useState(false);
     const [masterDb, setMasterDb] = useState(MASTER_DB_DEFAULT);
+    const [bpm, setBpm] = useState(BPM_DEFAULT);
     const [error, setError] = useState(null);
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     const [channelStates, setChannelStates] = useState(() =>
@@ -98,6 +107,16 @@ export default function PerformancePanel({
     const handleMasterChange = (_, value) => {
         setMasterDb(value);
         engineRef.current?.setMasterGain(dbToGain(value));
+    };
+
+    useEffect(() => {
+        engineRef.current?.setBpm(bpm);
+    }, [bpm]);
+
+    const handleBpmChange = (event) => {
+        const raw = Number(event.target.value);
+        if (!Number.isFinite(raw)) return;
+        setBpm(Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(raw))));
     };
 
     const handlePlayAll = () => engineRef.current?.playAll(true);
@@ -156,6 +175,24 @@ export default function PerformancePanel({
         if (onSelectUnwrappedModel) onSelectUnwrappedModel(String(event.target.value));
     };
 
+    const handleDeleteFineTuned = async (modelName) => {
+        const confirmed = window.confirm(
+            `Delete fine-tuned model "${modelName}"? This removes the directory and all its checkpoints. This cannot be undone.`
+        );
+        if (!confirmed) return;
+        try {
+            await api.delete(`/api/models/fine-tuned/${encodeURIComponent(modelName)}`);
+            if (selectedModel === modelName) {
+                onSelectModel?.('');
+                onSelectUnwrappedModel?.('');
+            }
+            onRefreshModels?.();
+        } catch (err) {
+            const msg = err?.response?.data?.error || err.message || 'Delete failed';
+            setError(`Failed to delete "${modelName}": ${msg}`);
+        }
+    };
+
     const selectedFineTuned = selectedModel
         ? availableModels.find((m) => m.name === selectedModel)
         : null;
@@ -180,6 +217,15 @@ export default function PerformancePanel({
                 </Box>
 
                 <Box sx={styles.headerPickers}>
+                    <TextField
+                        size="small"
+                        type="number"
+                        label="BPM"
+                        value={bpm}
+                        onChange={handleBpmChange}
+                        inputProps={{ min: BPM_MIN, max: BPM_MAX, step: 1 }}
+                        sx={{ width: 90, '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                    />
                     <FormControl size="small" sx={styles.headerModelPicker}>
                         <Select
                             value={selectedModel || ''}
@@ -218,8 +264,36 @@ export default function PerformancePanel({
                                 </MenuItem>
                             )}
                             {availableModels.map((model) => (
-                                <MenuItem key={model.name} value={String(model.name)}>
-                                    <Typography variant="body2">{model.name}</Typography>
+                                <MenuItem
+                                    key={model.name}
+                                    value={String(model.name)}
+                                    sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                >
+                                    <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {model.name}
+                                    </Typography>
+                                    <Tooltip title="Delete fine-tuned model">
+                                        <IconButton
+                                            size="small"
+                                            // Prevent the MenuItem's select handler from firing when
+                                            // the user clicks delete. onMouseDown beats Select's onChange.
+                                            onMouseDown={(e) => {
+                                                e.stopPropagation();
+                                                e.preventDefault();
+                                            }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                e.preventDefault();
+                                                handleDeleteFineTuned(model.name);
+                                            }}
+                                            sx={{
+                                                color: 'text.disabled',
+                                                '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                            }}
+                                        >
+                                            <DeleteIcon size={14} />
+                                        </IconButton>
+                                    </Tooltip>
                                 </MenuItem>
                             ))}
                         </Select>
@@ -273,6 +347,7 @@ export default function PerformancePanel({
                             onMuteSoloChange={handleMuteSoloChange}
                             onStateChange={handleChannelStateChange}
                             maxDuration={maxDuration}
+                            bpm={bpm}
                         />
                     ))}
                 </Box>

@@ -123,8 +123,10 @@ export class ChannelStrip {
         this.dryGain = ctx.createGain();
         this.dryGain.gain.value = 1.0;
 
+        // Delay time is tempo-locked to an 8th note. Default seed = 120 BPM
+        // (0.25 s); PerformanceEngine overwrites this once the panel sets BPM.
         this.delayNode = ctx.createDelay(2.0);
-        this.delayNode.delayTime.value = 0.32;
+        this.delayNode.delayTime.value = 0.25;
         this.delayFeedback = ctx.createGain();
         this.delayFeedback.gain.value = 0.42;
         this.delayWet = ctx.createGain();
@@ -214,6 +216,15 @@ export class ChannelStrip {
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
     setImpulseResponse(buffer) {
         if (buffer) this.reverbNode.buffer = buffer;
+    }
+    setDelayTimeForBpm(bpm) {
+        // 8th note in seconds = 60 / bpm / 2 = 30 / bpm.
+        // Glide over ~40 ms so BPM edits slide rather than click.
+        const safeBpm = Math.max(1, bpm);
+        const eighthSec = Math.min(30 / safeBpm, 2.0);
+        this.delayNode.delayTime.setTargetAtTime(
+            eighthSec, this.ctx.currentTime, 0.04
+        );
     }
     setLoop(value) {
         this.isLooping = value;
@@ -337,6 +348,10 @@ export class PerformanceEngine {
         if (!buf || !this.channels[channelIndex]) return false;
         this.channels[channelIndex].setImpulseResponse(buf);
         return true;
+    }
+
+    setBpm(bpm) {
+        this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
     }
 
     setMasterGain(value) {

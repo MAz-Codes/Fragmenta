@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
     Box,
     Typography,
@@ -7,6 +7,9 @@ import {
     Slider,
     CircularProgress,
     Tooltip,
+    Select,
+    MenuItem,
+    ButtonBase,
 } from '@mui/material';
 import {
     Play as PlayIcon,
@@ -30,6 +33,9 @@ const KNOB_DEFS = [
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
 
+const BARS_OPTIONS = [1, 2, 4, 8, 16];
+const BEATS_PER_BAR = 4;
+
 export default function PerformanceChannel({
     index,
     strip,
@@ -38,6 +44,7 @@ export default function PerformanceChannel({
     onMuteSoloChange,
     onStateChange,
     maxDuration = 47,
+    bpm = 120,
 }) {
     const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
     const canvasRef = useRef(null);
@@ -46,6 +53,8 @@ export default function PerformanceChannel({
 
     const [prompt, setPrompt] = useState('');
     const [duration, setDuration] = useState(8);
+    const [durationMode, setDurationMode] = useState('seconds');
+    const [bars, setBars] = useState(4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);
     const [playing, setPlaying] = useState(false);
@@ -57,6 +66,18 @@ export default function PerformanceChannel({
         initial.pan = 0;
         return initial;
     });
+
+    const secondsFromBars = useMemo(
+        () => bars * (60 / Math.max(bpm, 1)) * BEATS_PER_BAR,
+        [bars, bpm]
+    );
+
+    // Only show bar counts whose implied duration fits within the model's max.
+    const availableBars = useMemo(() => {
+        const maxBars = (maxDuration * bpm) / (60 * BEATS_PER_BAR);
+        const opts = BARS_OPTIONS.filter(b => b <= maxBars);
+        return opts.length > 0 ? opts : [BARS_OPTIONS[0]];
+    }, [maxDuration, bpm]);
 
     useEffect(() => {
         const tick = () => {
@@ -85,11 +106,18 @@ export default function PerformanceChannel({
         setDuration(prev => Math.min(prev, maxDuration));
     }, [maxDuration]);
 
+    useEffect(() => {
+        if (!availableBars.includes(bars)) {
+            setBars(availableBars[availableBars.length - 1]);
+        }
+    }, [availableBars, bars]);
+
     const handleGenerate = async () => {
         if (!prompt.trim() || generating) return;
+        const effectiveDuration = durationMode === 'bars' ? secondsFromBars : duration;
         setGenerating(true);
         try {
-            const blob = await onGenerate({ prompt, duration });
+            const blob = await onGenerate({ prompt, duration: effectiveDuration });
             await strip.loadBlob(blob);
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
@@ -171,16 +199,82 @@ export default function PerformanceChannel({
                     disabled={generating}
                 />
                 <Box sx={styles.durationRow}>
-                    <Typography variant="caption" sx={styles.durationLabel}>{duration.toFixed(0)}s</Typography>
-                    <Slider
-                        value={duration}
-                        onChange={(_, v) => setDuration(v)}
-                        min={2}
-                        max={maxDuration}
-                        step={1}
-                        size="small"
-                        sx={styles.durationSlider(color)}
-                    />
+                    <Box
+                        sx={{
+                            display: 'inline-flex',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 0.75,
+                            overflow: 'hidden',
+                        }}
+                    >
+                        {['sec', 'bars'].map((mode) => {
+                            const value = mode === 'sec' ? 'seconds' : 'bars';
+                            const active = durationMode === value;
+                            return (
+                                <ButtonBase
+                                    key={mode}
+                                    onClick={() => setDurationMode(value)}
+                                    sx={{
+                                        fontSize: '0.58rem',
+                                        letterSpacing: '0.08em',
+                                        textTransform: 'uppercase',
+                                        fontFamily: 'inherit',
+                                        px: 0.7,
+                                        py: 0.3,
+                                        minWidth: 30,
+                                        bgcolor: active ? color : 'transparent',
+                                        color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
+                                        fontWeight: active ? 600 : 400,
+                                        transition: 'background-color 120ms, color 120ms',
+                                        '&:hover': {
+                                            bgcolor: active ? color : 'action.hover',
+                                            color: active ? 'rgba(0,0,0,0.88)' : 'text.secondary',
+                                        },
+                                    }}
+                                >
+                                    {mode}
+                                </ButtonBase>
+                            );
+                        })}
+                    </Box>
+
+                    {durationMode === 'seconds' ? (
+                        <>
+                            <Typography variant="caption" sx={styles.durationLabel}>{duration.toFixed(0)}s</Typography>
+                            <Slider
+                                value={duration}
+                                onChange={(_, v) => setDuration(v)}
+                                min={2}
+                                max={maxDuration}
+                                step={1}
+                                size="small"
+                                sx={styles.durationSlider(color)}
+                            />
+                        </>
+                    ) : (
+                        <>
+                            <Select
+                                value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
+                                onChange={(e) => setBars(Number(e.target.value))}
+                                size="small"
+                                sx={{
+                                    flex: 1,
+                                    fontSize: '0.7rem',
+                                    '& .MuiSelect-select': { py: 0.25, pl: 1 },
+                                }}
+                            >
+                                {availableBars.map(b => (
+                                    <MenuItem key={b} value={b} sx={{ fontSize: '0.75rem' }}>
+                                        {b} {b === 1 ? 'bar' : 'bars'}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                            <Typography variant="caption" sx={styles.durationLabel}>
+                                ≈{secondsFromBars.toFixed(1)}s
+                            </Typography>
+                        </>
+                    )}
                 </Box>
                 <IconButton
                     onClick={handleGenerate}

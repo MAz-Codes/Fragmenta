@@ -1878,6 +1878,7 @@ function App() {
                                             baseModels={baseModels}
                                             onSelectModel={setSelectedModel}
                                             onSelectUnwrappedModel={setSelectedUnwrappedModel}
+                                            onRefreshModels={fetchAvailableModels}
                                         />
                                     </Suspense>
                                 ) : (
