@@ -10,17 +10,94 @@ export function getAudioContext() {
     return sharedCtx;
 }
 
+// Real impulse responses served from /public/ir/. `id` is the stable key used
+// by the UI / setChannelImpulseResponse(); `file` is the actual filename.
+export const IMPULSE_RESPONSES = [
+    { id: 'hall',   name: 'Opera Hall',    file: 'Scala Milan Opera Hall.wav' },
+    { id: 'room',   name: 'Drum Room',     file: 'Nice Drum Room.wav' },
+    { id: 'narrow', name: 'Narrow Space',  file: 'Narrow Bumpy Space.wav' },
+];
+const DEFAULT_IR_ID = 'hall';
+
+const irBufferCache = new Map();
+let irLoadPromise = null;
+
+async function fetchAndDecodeIR(ctx, file) {
+    const res = await fetch(`/ir/${encodeURIComponent(file)}`);
+    if (!res.ok) throw new Error(`IR fetch failed (${res.status}): ${file}`);
+    const arr = await res.arrayBuffer();
+    return await ctx.decodeAudioData(arr);
+}
+
+export function loadImpulseResponses(ctx) {
+    if (irLoadPromise) return irLoadPromise;
+    irLoadPromise = Promise.all(
+        IMPULSE_RESPONSES.map(async (ir) => {
+            try {
+                const buf = await fetchAndDecodeIR(ctx, ir.file);
+                irBufferCache.set(ir.id, buf);
+            } catch (e) {
+                console.warn(`[performanceAudio] IR load failed for ${ir.id}:`, e);
+            }
+        })
+    ).then(() => irBufferCache);
+    return irLoadPromise;
+}
+
+export function getImpulseResponseBuffer(id) {
+    return irBufferCache.get(id);
+}
+
+// Synthetic hall IR: early reflections + diffuse noise tail with progressive
+// high-frequency damping and per-channel decorrelation. Swap this out by
+// dropping a real IR WAV into /public/ir/ and fetching it into a ConvolverNode.
+const EARLY_REFLECTIONS_MS = [
+    [7, 0.55], [13, -0.42], [19, 0.36], [28, -0.30],
+    [41, 0.26], [56, 0.22], [73, -0.18], [91, 0.15],
+];
+
 let sharedImpulse = null;
-function getImpulse(ctx, duration = 2.6, decay = 3.0) {
+function getImpulse(ctx, duration = 2.8, decaySeconds = 1.6, damping = 0.55) {
     if (sharedImpulse && sharedImpulse.sampleRate === ctx.sampleRate) {
         return sharedImpulse;
     }
-    const length = Math.floor(ctx.sampleRate * duration);
-    const buf = ctx.createBuffer(2, length, ctx.sampleRate);
+    const sr = ctx.sampleRate;
+    const length = Math.floor(sr * duration);
+    const buf = ctx.createBuffer(2, length, sr);
+
     for (let ch = 0; ch < 2; ch++) {
         const data = buf.getChannelData(ch);
+        const stereoJitter = ch === 0 ? 1.0 : 1.037;
+
+        for (const [timeMs, amp] of EARLY_REFLECTIONS_MS) {
+            const idx = Math.floor(sr * timeMs * 0.001 * stereoJitter);
+            if (idx < length) data[idx] += amp * 0.8;
+        }
+
+        // Diffuse tail: white noise gated by exp decay, through a 1-pole LP
+        // whose cutoff shrinks over time so high freqs die first (natural air).
+        let lpState = 0;
+        const predelaySec = 0.012;
         for (let i = 0; i < length; i++) {
-            data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+            const t = i / sr;
+            if (t < predelaySec) continue;
+            const env = Math.exp(-(t - predelaySec) / decaySeconds);
+            // Damping grows with time: alpha goes from (1 - damping*0.4) → (1 - damping*0.95)
+            const progression = Math.min(1, (t - predelaySec) / decaySeconds);
+            const alpha = 1 - damping * (0.4 + 0.55 * progression);
+            const noise = (Math.random() * 2 - 1) * env;
+            lpState += alpha * (noise - lpState);
+            data[i] += lpState * 0.72;
+        }
+
+        let peak = 0;
+        for (let i = 0; i < length; i++) {
+            const v = Math.abs(data[i]);
+            if (v > peak) peak = v;
+        }
+        if (peak > 0) {
+            const norm = 0.92 / peak;
+            for (let i = 0; i < length; i++) data[i] *= norm;
         }
     }
     sharedImpulse = buf;
@@ -61,6 +138,15 @@ export class ChannelStrip {
         this.channelGain = ctx.createGain();
         this.channelGain.gain.value = 0;
 
+        // Glue compressor on the post-mix channel bus. Gentle defaults —
+        // evens out transients without obvious pumping.
+        this.compressor = ctx.createDynamicsCompressor();
+        this.compressor.threshold.value = -16;
+        this.compressor.knee.value = 8;
+        this.compressor.ratio.value = 2.5;
+        this.compressor.attack.value = 0.006;
+        this.compressor.release.value = 0.14;
+
         this.pan = ctx.createStereoPanner();
         this.pan.pan.value = 0;
 
@@ -81,7 +167,8 @@ export class ChannelStrip {
         this.reverbNode.connect(this.reverbWet);
         this.reverbWet.connect(this.channelGain);
 
-        this.channelGain.connect(this.pan);
+        this.channelGain.connect(this.compressor);
+        this.compressor.connect(this.pan);
         this.pan.connect(this.analyser);
         this.analyser.connect(masterBus);
     }
@@ -125,6 +212,9 @@ export class ChannelStrip {
     setDelayMix(value) { this.delayWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
     setReverbMix(value) { this.reverbWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
+    setImpulseResponse(buffer) {
+        if (buffer) this.reverbNode.buffer = buffer;
+    }
     setLoop(value) {
         this.isLooping = value;
         if (this.source) this.source.loop = value;
@@ -190,6 +280,7 @@ export class ChannelStrip {
             this.reverbNode.disconnect();
             this.reverbWet.disconnect();
             this.channelGain.disconnect();
+            this.compressor.disconnect();
             this.pan.disconnect();
             this.analyser.disconnect();
         } catch (_) { /* already disconnected */ }
@@ -202,13 +293,50 @@ export class PerformanceEngine {
         this.ctx = ctx;
         this.masterBus = ctx.createGain();
         this.masterBus.gain.value = 0.9;
+
+        // Master limiter: brick-wall style defaults to catch sums that push
+        // past 0 dBFS when many channels play at once. DynamicsCompressor
+        // with a high ratio + fast attack is the best built-in approximation
+        // of a look-ahead limiter that Web Audio offers.
+        this.masterLimiter = ctx.createDynamicsCompressor();
+        this.masterLimiter.threshold.value = -1.0;
+        this.masterLimiter.knee.value = 0;
+        this.masterLimiter.ratio.value = 20;
+        this.masterLimiter.attack.value = 0.002;
+        this.masterLimiter.release.value = 0.1;
+
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 1024;
         this.masterAnalyserData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
-        this.masterBus.connect(this.masterAnalyser);
+        this.masterBus.connect(this.masterLimiter);
+        this.masterLimiter.connect(this.masterAnalyser);
         this.masterAnalyser.connect(ctx.destination);
         this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
         this.channels.forEach(ch => { ch._lastUserGain = 0; });
+
+        // Load real IRs asynchronously and swap them in when ready. Until
+        // they arrive (or if loading fails), channels keep using the
+        // synthetic fallback set in ChannelStrip's constructor.
+        this.currentImpulseId = DEFAULT_IR_ID;
+        loadImpulseResponses(ctx).then(() => {
+            const buf = getImpulseResponseBuffer(this.currentImpulseId);
+            if (buf) this.channels.forEach(ch => ch.setImpulseResponse(buf));
+        });
+    }
+
+    setImpulseResponse(id) {
+        const buf = getImpulseResponseBuffer(id);
+        if (!buf) return false;
+        this.currentImpulseId = id;
+        this.channels.forEach(ch => ch.setImpulseResponse(buf));
+        return true;
+    }
+
+    setChannelImpulseResponse(channelIndex, id) {
+        const buf = getImpulseResponseBuffer(id);
+        if (!buf || !this.channels[channelIndex]) return false;
+        this.channels[channelIndex].setImpulseResponse(buf);
+        return true;
     }
 
     setMasterGain(value) {
@@ -251,6 +379,7 @@ export class PerformanceEngine {
     dispose() {
         this.channels.forEach(ch => ch.dispose());
         try { this.masterBus.disconnect(); } catch (_) { /* already disconnected */ }
+        try { this.masterLimiter.disconnect(); } catch (_) { /* already disconnected */ }
         try { this.masterAnalyser.disconnect(); } catch (_) { /* already disconnected */ }
     }
 }
