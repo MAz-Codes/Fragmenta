@@ -1,3 +1,8 @@
+// Default per-channel gain = -6 dBFS. Keeps the summed mix from clipping the
+// master limiter at four channels playing together, while leaving headroom to
+// push a single channel hot.
+export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
+
 let sharedCtx = null;
 
 export function getAudioContext() {
@@ -138,7 +143,8 @@ export class ChannelStrip {
         this.reverbWet.gain.value = 0.0;
 
         this.channelGain = ctx.createGain();
-        this.channelGain.gain.value = 0;
+        this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
+        this._lastUserGain = DEFAULT_CHANNEL_GAIN;
 
         // Glue compressor on the post-mix channel bus. Gentle defaults —
         // evens out transients without obvious pumping.
@@ -323,7 +329,6 @@ export class PerformanceEngine {
         this.masterLimiter.connect(this.masterAnalyser);
         this.masterAnalyser.connect(ctx.destination);
         this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
-        this.channels.forEach(ch => { ch._lastUserGain = 0; });
 
         // Load real IRs asynchronously and swap them in when ready. Until
         // they arrive (or if loading fails), channels keep using the

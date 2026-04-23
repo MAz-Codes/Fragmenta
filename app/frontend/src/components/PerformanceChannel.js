@@ -26,12 +26,18 @@ const CHANNEL_COLORS = [
     '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
 ];
 
+// -6 dBFS in linear amplitude — must match DEFAULT_CHANNEL_GAIN in performanceAudio.js
+const DEFAULT_GAIN = Math.pow(10, -6 / 20);
+
 const KNOB_DEFS = [
-    { key: 'gain', label: 'GAIN', min: 0, max: 1.5, step: 0.01, default: 0 },
+    { key: 'gain', label: 'GAIN', min: 0, max: 1.5, step: 0.01, default: DEFAULT_GAIN },
     { key: 'filter', label: 'LPF', min: 200, max: 18000, step: 1, default: 18000, log: true },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
+
+// Snap pan to center when within this fraction of full travel from 0.
+const PAN_CENTER_SNAP = 0.06;
 
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
@@ -198,7 +204,10 @@ export default function PerformanceChannel({
                     sx={styles.promptField}
                     disabled={generating}
                 />
-                <Box sx={styles.durationRow}>
+                {/* Fixed height keeps the strip stable when swapping between
+                    sec (slider) and bars (Select) modes — the Select would
+                    otherwise be taller and push everything below it up/down. */}
+                <Box sx={{ ...styles.durationRow, minHeight: 26, height: 26 }}>
                     <Box
                         sx={{
                             display: 'inline-flex',
@@ -206,6 +215,7 @@ export default function PerformanceChannel({
                             borderColor: 'divider',
                             borderRadius: 0.75,
                             overflow: 'hidden',
+                            height: '100%',
                         }}
                     >
                         {['sec', 'bars'].map((mode) => {
@@ -221,7 +231,6 @@ export default function PerformanceChannel({
                                         textTransform: 'uppercase',
                                         fontFamily: 'inherit',
                                         px: 0.7,
-                                        py: 0.3,
                                         minWidth: 30,
                                         bgcolor: active ? color : 'transparent',
                                         color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
@@ -253,27 +262,32 @@ export default function PerformanceChannel({
                             />
                         </>
                     ) : (
-                        <>
-                            <Select
-                                value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
-                                onChange={(e) => setBars(Number(e.target.value))}
-                                size="small"
-                                sx={{
-                                    flex: 1,
-                                    fontSize: '0.7rem',
-                                    '& .MuiSelect-select': { py: 0.25, pl: 1 },
-                                }}
-                            >
-                                {availableBars.map(b => (
-                                    <MenuItem key={b} value={b} sx={{ fontSize: '0.75rem' }}>
-                                        {b} {b === 1 ? 'bar' : 'bars'}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                            <Typography variant="caption" sx={styles.durationLabel}>
-                                ≈{secondsFromBars.toFixed(1)}s
-                            </Typography>
-                        </>
+                        <Select
+                            value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
+                            onChange={(e) => setBars(Number(e.target.value))}
+                            size="small"
+                            sx={{
+                                flex: 1,
+                                fontSize: '0.7rem',
+                                height: '100%',
+                                '& .MuiOutlinedInput-input': {
+                                    py: 0,
+                                    pl: 1,
+                                    minHeight: 'unset',
+                                },
+                                '& .MuiSelect-select': {
+                                    py: 0,
+                                    pl: 1,
+                                    minHeight: 'unset',
+                                },
+                            }}
+                        >
+                            {availableBars.map(b => (
+                                <MenuItem key={b} value={b} sx={{ fontSize: '0.75rem' }}>
+                                    {b} {b === 1 ? 'bar' : 'bars'}
+                                </MenuItem>
+                            ))}
+                        </Select>
                     )}
                 </Box>
                 <IconButton
@@ -305,12 +319,31 @@ export default function PerformanceChannel({
                     <Box component="span" sx={{ fontSize: '0.53rem', color: 'text.secondary', letterSpacing: '0.06em', minWidth: 28 }}>PAN</Box>
                     <Slider
                         value={knobs.pan ?? 0}
-                        onChange={(_, v) => handleKnob('pan', v)}
+                        onChange={(_, v) => {
+                            // Snap to center when close, so "0" isn't fiddly to hit.
+                            const snapped = Math.abs(v) < PAN_CENTER_SNAP ? 0 : v;
+                            handleKnob('pan', snapped);
+                        }}
                         min={-1}
                         max={1}
                         step={0.01}
                         size="small"
-                        sx={{ flex: 1 }}
+                        track={false}
+                        marks={[{ value: 0 }]}
+                        sx={{
+                            flex: 1,
+                            '& .MuiSlider-mark': {
+                                width: 2,
+                                height: 10,
+                                borderRadius: 1,
+                                backgroundColor: 'text.secondary',
+                                opacity: 0.8,
+                            },
+                            '& .MuiSlider-markActive': {
+                                backgroundColor: 'text.secondary',
+                                opacity: 0.8,
+                            },
+                        }}
                     />
                 </Box>
             </Box>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Box,
     Typography,
@@ -12,9 +12,9 @@ import {
     TextField,
     IconButton,
     Tooltip,
+    ButtonBase,
 } from '@mui/material';
 import {
-    Piano as PerformanceIcon,
     Play as PlayAllIcon,
     Square as StopAllIcon,
     Trash2 as DeleteIcon,
@@ -28,7 +28,7 @@ const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
-const MASTER_DB_DEFAULT = -1;
+const MASTER_DB_DEFAULT = -6;
 const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
 const BPM_MAX = 300;
@@ -58,7 +58,20 @@ export default function PerformancePanel({
     const [engineReady, setEngineReady] = useState(false);
     const [masterDb, setMasterDb] = useState(MASTER_DB_DEFAULT);
     const [bpm, setBpm] = useState(BPM_DEFAULT);
+    // Separate "what the field displays" from "what the app commits". Lets
+    // the user type "1" → "11" → "112" without the first keystroke getting
+    // clamped up to BPM_MIN mid-typing (which then produced "201", "211", etc).
+    const [bpmInput, setBpmInput] = useState(String(BPM_DEFAULT));
+    const bpmInputFocusedRef = useRef(false);
     const [error, setError] = useState(null);
+    const [linkAvailable, setLinkAvailable] = useState(false);
+    const [linkEnabled, setLinkEnabled] = useState(false);
+    const [linkPeers, setLinkPeers] = useState(0);
+    const [linkInstalling, setLinkInstalling] = useState(false);
+    // Tracks whether the most recent bpm change came from Link (poll response)
+    // or from the user (typing in the field). Prevents an echo loop where a
+    // Link-driven update gets pushed back to Link as if it were a local edit.
+    const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
@@ -114,10 +127,129 @@ export default function PerformancePanel({
     }, [bpm]);
 
     const handleBpmChange = (event) => {
-        const raw = Number(event.target.value);
-        if (!Number.isFinite(raw)) return;
-        setBpm(Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(raw))));
+        const raw = event.target.value;
+        setBpmInput(raw);
+        // Only commit the numeric bpm if what the user has typed so far is a
+        // complete, in-range value. Intermediate digits ("1" on the way to
+        // "112") are held in bpmInput without disturbing the committed bpm.
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed >= BPM_MIN && parsed <= BPM_MAX) {
+            bpmOriginRef.current = 'user';
+            setBpm(Math.round(parsed));
+        }
     };
+
+    const handleBpmBlur = () => {
+        bpmInputFocusedRef.current = false;
+        const parsed = Number(bpmInput);
+        if (!Number.isFinite(parsed) || bpmInput.trim() === '') {
+            // Non-numeric or empty — restore the committed value.
+            setBpmInput(String(bpm));
+            return;
+        }
+        const clamped = Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(parsed)));
+        bpmOriginRef.current = 'user';
+        setBpm(clamped);
+        setBpmInput(String(clamped));
+    };
+
+    const handleBpmFocus = () => {
+        bpmInputFocusedRef.current = true;
+    };
+
+    // Mirror committed bpm back into the field — but only when the user isn't
+    // currently typing, so Link-driven updates don't overwrite a draft.
+    useEffect(() => {
+        if (!bpmInputFocusedRef.current) setBpmInput(String(bpm));
+    }, [bpm]);
+
+    // Probe whether the backend has an Ableton Link binding installed.
+    useEffect(() => {
+        api.get('/api/link/state')
+            .then((r) => {
+                setLinkAvailable(Boolean(r.data?.available));
+                setLinkEnabled(Boolean(r.data?.enabled));
+            })
+            .catch(() => setLinkAvailable(false));
+    }, []);
+
+    // Poll Link state while enabled; pull BPM and peer count into local state.
+    useEffect(() => {
+        if (!linkEnabled) return undefined;
+        let cancelled = false;
+        const poll = async () => {
+            try {
+                const r = await api.get('/api/link/state');
+                if (cancelled || !r.data?.enabled) return;
+                const serverBpm = Math.round(r.data.bpm);
+                if (serverBpm >= BPM_MIN && serverBpm <= BPM_MAX) {
+                    setBpm((prev) => {
+                        if (prev === serverBpm) return prev;
+                        bpmOriginRef.current = 'link';
+                        return serverBpm;
+                    });
+                }
+                setLinkPeers(Number(r.data.num_peers || 0));
+            } catch {
+                /* transient network blip — next tick will retry */
+            }
+        };
+        poll();
+        const timer = setInterval(poll, 500);
+        return () => { cancelled = true; clearInterval(timer); };
+    }, [linkEnabled]);
+
+    // User-initiated BPM changes are pushed to the Link session. Changes that
+    // originated from a Link poll are suppressed here (see bpmOriginRef).
+    useEffect(() => {
+        if (!linkEnabled) return;
+        if (bpmOriginRef.current === 'link') {
+            bpmOriginRef.current = 'user';
+            return;
+        }
+        api.post('/api/link/bpm', { bpm }).catch(() => {});
+    }, [bpm, linkEnabled]);
+
+    const handleToggleLink = useCallback(async () => {
+        // First click when Link isn't installed: offer to install it.
+        if (!linkAvailable) {
+            const confirmed = window.confirm(
+                'Ableton Link requires the LinkPython-extern package (~1–2 MB, ~30s install).\n\n'
+                + 'Install it now? You\'ll only need to do this once.'
+            );
+            if (!confirmed) return;
+            setLinkInstalling(true);
+            try {
+                await api.post('/api/link/install');
+                setLinkAvailable(true);
+                // Auto-enable after a successful install — the user just asked for Link.
+                await api.post('/api/link/enable');
+                setLinkEnabled(true);
+            } catch (err) {
+                const msg = err?.response?.data?.error || err?.response?.data?.detail || err.message || 'Install failed';
+                setError(`Link install failed: ${msg}`);
+            } finally {
+                setLinkInstalling(false);
+            }
+            return;
+        }
+
+        try {
+            if (linkEnabled) {
+                await api.post('/api/link/disable');
+                setLinkEnabled(false);
+                setLinkPeers(0);
+            } else {
+                await api.post('/api/link/enable');
+                setLinkEnabled(true);
+            }
+        } catch (err) {
+            const status = err?.response?.status;
+            const msg = err?.response?.data?.error || err.message || 'Link toggle failed';
+            if (status === 503) setLinkAvailable(false);
+            setError(msg);
+        }
+    }, [linkEnabled, linkAvailable]);
 
     const handlePlayAll = () => engineRef.current?.playAll(true);
     const handleStopAll = () => engineRef.current?.stopAll();
@@ -205,128 +337,238 @@ export default function PerformancePanel({
 
     return (
         <Box sx={styles.root}>
-            <Paper sx={styles.headerCard}>
-                <Box sx={styles.headerLeft}>
-                    <Box sx={styles.titleRow}>
-                        <PerformanceIcon size={22} />
-                        <Typography variant="h6" sx={styles.title}>Fragmenta Performance</Typography>
-                    </Box>
-                    <Typography variant="caption" sx={styles.subtitle}>
-                        4-voice diffusion sampler
-                    </Typography>
-                </Box>
-
-                <Box sx={styles.headerPickers}>
-                    <TextField
-                        size="small"
-                        type="number"
-                        label="BPM"
-                        value={bpm}
-                        onChange={handleBpmChange}
-                        inputProps={{ min: BPM_MIN, max: BPM_MAX, step: 1 }}
-                        sx={{ width: 90, '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                    />
-                    <FormControl size="small" sx={styles.headerModelPicker}>
-                        <Select
-                            value={selectedModel || ''}
-                            onChange={handleModelChange}
-                            displayEmpty
-                            renderValue={(value) => {
-                                if (!value) return <em style={{ opacity: 0.6 }}>Select a model</em>;
-                                const base = baseModels.find((m) => m.name === value);
-                                if (base) return base.displayName || base.name;
-                                return value;
+            <Paper sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1.25,
+                py: 0.75,
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
+                flexWrap: { xs: 'wrap', md: 'nowrap' },
+            }}>
+                {/* Link — compact rectangle, Ableton-style */}
+                <Tooltip
+                    title={
+                        linkInstalling
+                            ? 'Installing LinkPython-extern…'
+                            : !linkAvailable
+                                ? 'Click to install Ableton Link script'
+                                : linkEnabled
+                                    ? `Link on — ${linkPeers} peer${linkPeers === 1 ? '' : 's'} (click to disable)`
+                                    : 'Click to sync BPM with other Link-enabled apps on this network'
+                    }
+                >
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <ButtonBase
+                            onClick={handleToggleLink}
+                            disabled={linkInstalling}
+                            sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontFamily: 'inherit',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                px: 1,
+                                minWidth: 46,
+                                height: 26,
+                                borderRadius: '2px',
+                                bgcolor: linkEnabled ? '#F5C542' : '#6e6e6e',
+                                color: linkEnabled ? '#000' : '#2a2a2a',
+                                opacity: linkInstalling ? 0.55 : 1,
+                                transition: 'background-color 120ms',
+                                '&:hover': {
+                                    bgcolor: linkEnabled ? '#FFD54F' : '#7d7d7d',
+                                },
+                                '&.Mui-disabled': {
+                                    color: linkEnabled ? '#000' : '#2a2a2a',
+                                },
                             }}
                         >
-                            {baseModels.length > 0 && (
-                                <MenuItem disabled>
-                                    <Typography variant="caption" color="textSecondary">
-                                        ── Base Models ──
-                                    </Typography>
-                                </MenuItem>
-                            )}
-                            {baseModels.map((model) => (
-                                <MenuItem
-                                    key={model.name}
-                                    value={String(model.name)}
-                                    disabled={!model.downloaded}
-                                >
-                                    <Typography variant="body2">
-                                        {model.displayName || model.name}
-                                    </Typography>
-                                </MenuItem>
-                            ))}
-                            {availableModels.length > 0 && (
-                                <MenuItem disabled>
-                                    <Typography variant="caption" color="textSecondary">
-                                        ── Fine-tuned Models ──
-                                    </Typography>
-                                </MenuItem>
-                            )}
-                            {availableModels.map((model) => (
-                                <MenuItem
-                                    key={model.name}
-                                    value={String(model.name)}
-                                    sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                                >
-                                    <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        {model.name}
-                                    </Typography>
-                                    <Tooltip title="Delete fine-tuned model">
-                                        <IconButton
-                                            size="small"
-                                            // Prevent the MenuItem's select handler from firing when
-                                            // the user clicks delete. onMouseDown beats Select's onChange.
-                                            onMouseDown={(e) => {
-                                                e.stopPropagation();
-                                                e.preventDefault();
-                                            }}
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                e.preventDefault();
-                                                handleDeleteFineTuned(model.name);
-                                            }}
-                                            sx={{
-                                                color: 'text.disabled',
-                                                '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                            }}
-                                        >
-                                            <DeleteIcon size={14} />
-                                        </IconButton>
-                                    </Tooltip>
+                            {linkInstalling
+                                ? 'installing…'
+                                : `Link${linkEnabled && linkPeers > 0 ? ` · ${linkPeers}` : ''}`}
+                        </ButtonBase>
+                    </span>
+                </Tooltip>
+
+                {/* Tempo — outlined field matching other inputs. The floating-label
+                    notch looked awkward at this width, so the unit label lives
+                    inline as an endAdornment instead. */}
+                <TextField
+                    size="small"
+                    type="number"
+                    value={bpmInput}
+                    onChange={handleBpmChange}
+                    onFocus={handleBpmFocus}
+                    onBlur={handleBpmBlur}
+                    inputProps={{ step: 1, inputMode: 'numeric', 'aria-label': 'Tempo in BPM' }}
+                    InputProps={{
+                        endAdornment: (
+                            <Typography
+                                component="span"
+                                sx={{
+                                    fontSize: '0.62rem',
+                                    letterSpacing: '0.08em',
+                                    color: 'text.disabled',
+                                    pl: 0.5,
+                                    userSelect: 'none',
+                                }}
+                            >
+                                BPM
+                            </Typography>
+                        ),
+                    }}
+                    sx={{
+                        width: 96,
+                        '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
+                        '& input': {
+                            textAlign: 'right',
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontVariantNumeric: 'tabular-nums',
+                            pr: 0,
+                        },
+                        '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
+                            WebkitAppearance: 'none',
+                            margin: 0,
+                        },
+                        '& input[type=number]': { MozAppearance: 'textfield' },
+                    }}
+                />
+
+                {/* Model picker — half the old width */}
+                <FormControl size="small" sx={{
+                    flex: 1,
+                    minWidth: 110,
+                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                }}>
+                    <Select
+                        value={selectedModel || ''}
+                        onChange={handleModelChange}
+                        displayEmpty
+                        renderValue={(value) => {
+                            if (!value) return <em style={{ opacity: 0.6 }}>Select a model</em>;
+                            const base = baseModels.find((m) => m.name === value);
+                            if (base) return base.displayName || base.name;
+                            return value;
+                        }}
+                    >
+                        {baseModels.length > 0 && (
+                            <MenuItem disabled>
+                                <Typography variant="caption" color="textSecondary">
+                                    ── Base Models ──
+                                </Typography>
+                            </MenuItem>
+                        )}
+                        {baseModels.map((model) => (
+                            <MenuItem
+                                key={model.name}
+                                value={String(model.name)}
+                                disabled={!model.downloaded}
+                            >
+                                <Typography variant="body2">
+                                    {model.displayName || model.name}
+                                </Typography>
+                            </MenuItem>
+                        ))}
+                        {availableModels.length > 0 && (
+                            <MenuItem disabled>
+                                <Typography variant="caption" color="textSecondary">
+                                    ── Fine-tuned Models ──
+                                </Typography>
+                            </MenuItem>
+                        )}
+                        {availableModels.map((model) => (
+                            <MenuItem
+                                key={model.name}
+                                value={String(model.name)}
+                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                            >
+                                <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {model.name}
+                                </Typography>
+                                <Tooltip title="Delete fine-tuned model">
+                                    <IconButton
+                                        size="small"
+                                        onMouseDown={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                        }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            handleDeleteFineTuned(model.name);
+                                        }}
+                                        sx={{
+                                            color: 'text.disabled',
+                                            '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                        }}
+                                    >
+                                        <DeleteIcon size={14} />
+                                    </IconButton>
+                                </Tooltip>
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+
+                {/* Checkpoint picker — also halved */}
+                {unwrappedModels.length > 0 && (
+                    <FormControl size="small" sx={{
+                        flex: 1,
+                        minWidth: 100,
+                        '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                    }}>
+                        <Select
+                            value={checkpointValue}
+                            onChange={handleCheckpointChange}
+                            displayEmpty
+                            renderValue={(value) => {
+                                if (!value) return <em style={{ opacity: 0.6 }}>Checkpoint</em>;
+                                const found = unwrappedModels.find((u) => String(u.path) === value);
+                                return found ? found.name : value;
+                            }}
+                        >
+                            {unwrappedModels.map((unwrapped, index) => (
+                                <MenuItem key={index} value={String(unwrapped.path)}>
+                                    <Box>
+                                        <Typography variant="body2">{unwrapped.name}</Typography>
+                                        {unwrapped.size_mb && (
+                                            <Typography variant="caption" color="textSecondary">
+                                                {unwrapped.size_mb} MB
+                                            </Typography>
+                                        )}
+                                    </Box>
                                 </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
+                )}
 
-                    {unwrappedModels.length > 0 && (
-                        <FormControl size="small" sx={styles.headerCheckpointPicker}>
-                            <Select
-                                value={checkpointValue}
-                                onChange={handleCheckpointChange}
-                                displayEmpty
-                                renderValue={(value) => {
-                                    if (!value) return <em style={{ opacity: 0.6 }}>Select checkpoint</em>;
-                                    const found = unwrappedModels.find((u) => String(u.path) === value);
-                                    return found ? found.name : value;
-                                }}
-                            >
-                                {unwrappedModels.map((unwrapped, index) => (
-                                    <MenuItem key={index} value={String(unwrapped.path)}>
-                                        <Box>
-                                            <Typography variant="body2">{unwrapped.name}</Typography>
-                                            {unwrapped.size_mb && (
-                                                <Typography variant="caption" color="textSecondary">
-                                                    {unwrapped.size_mb} MB
-                                                </Typography>
-                                            )}
-                                        </Box>
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    )}
-                </Box>
+                {/* Transport */}
+                <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<PlayAllIcon size={14} />}
+                    onClick={handlePlayAll}
+                    disabled={!anyLoaded}
+                    sx={styles.masterBtn(MASTER_COLOR, 'play')}
+                >
+                    Play All
+                </Button>
+                <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<StopAllIcon size={14} />}
+                    onClick={handleStopAll}
+                    disabled={!anyPlaying}
+                    sx={styles.masterBtn(MASTER_COLOR, 'stop')}
+                >
+                    Stop All
+                </Button>
             </Paper>
 
             {error && (
@@ -380,31 +622,6 @@ export default function PerformancePanel({
                         <Typography variant="caption" sx={styles.masterPeakValue}>
                             pk {formatDb(peakLabelDb)}
                         </Typography>
-                    </Box>
-
-                    <Box sx={styles.masterTransport}>
-                        <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<PlayAllIcon size={14} />}
-                            onClick={handlePlayAll}
-                            disabled={!anyLoaded}
-                            sx={styles.masterBtn(MASTER_COLOR, 'play')}
-                            fullWidth
-                        >
-                            Play All
-                        </Button>
-                        <Button
-                            size="small"
-                            variant="outlined"
-                            startIcon={<StopAllIcon size={14} />}
-                            onClick={handleStopAll}
-                            disabled={!anyPlaying}
-                            sx={styles.masterBtn(MASTER_COLOR, 'stop')}
-                            fullWidth
-                        >
-                            Stop All
-                        </Button>
                     </Box>
                 </Box>
             </Box>

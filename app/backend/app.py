@@ -745,6 +745,127 @@ def delete_model(model_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/link/state', methods=['GET'])
+def link_state():
+    from app.core.audio.link_sync import get_link_bridge
+    return jsonify(get_link_bridge().get_state())
+
+
+@app.route('/api/link/enable', methods=['POST'])
+def link_enable():
+    from app.core.audio.link_sync import get_link_bridge
+    bridge = get_link_bridge()
+    ok = bridge.enable()
+    state = bridge.get_state()
+    if not ok:
+        # 503 so the frontend can distinguish "not installed" from "normal reply"
+        return jsonify({**state, 'error': 'Ableton Link binding not installed. Run: pip install LinkPython-extern'}), 503
+    return jsonify(state)
+
+
+@app.route('/api/link/disable', methods=['POST'])
+def link_disable():
+    from app.core.audio.link_sync import get_link_bridge
+    bridge = get_link_bridge()
+    bridge.disable()
+    return jsonify(bridge.get_state())
+
+
+@app.route('/api/link/bpm', methods=['POST'])
+def link_set_bpm():
+    from app.core.audio.link_sync import get_link_bridge
+    data = request.get_json(silent=True) or {}
+    try:
+        bpm = float(data.get('bpm', 120))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'bpm must be numeric'}), 400
+    if bpm < 20 or bpm > 300:
+        return jsonify({'error': 'bpm out of range [20, 300]'}), 400
+    bridge = get_link_bridge()
+    bridge.set_bpm(bpm)
+    return jsonify(bridge.get_state())
+
+
+@app.route('/api/link/install', methods=['POST'])
+def link_install():
+    """Install LinkPython-extern via pip, on-demand and with user consent.
+
+    Restricted to localhost — running pip as a side effect of an HTTP call is
+    only reasonable when the caller is the local user. In frozen PyInstaller
+    builds there's no pip, so we report that clearly instead of failing weirdly.
+    """
+    # Localhost-only: prevents a remote attacker on the same Flask host (e.g. a
+    # Docker image bound to 0.0.0.0) from installing arbitrary packages.
+    remote = request.remote_addr or ''
+    if remote not in ('127.0.0.1', '::1', 'localhost'):
+        return jsonify({'error': 'install endpoint is only accessible from localhost'}), 403
+
+    if getattr(sys, 'frozen', False):
+        return jsonify({
+            'success': False,
+            'error': 'Automatic install is not available in the packaged desktop build. '
+                     'Run from source (pip install LinkPython-extern) or use a Docker image '
+                     'that includes it.',
+        }), 400
+
+    try:
+        import subprocess
+        import importlib
+        logger.info("Installing LinkPython-extern via pip...")
+        proc = subprocess.run(
+            [sys.executable, '-m', 'pip', 'install',
+             '--disable-pip-version-check', '--quiet',
+             'LinkPython-extern'],
+            capture_output=True, text=True, timeout=240,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or '').strip().splitlines()[-10:]
+            return jsonify({
+                'success': False,
+                'error': 'pip install failed',
+                'detail': '\n'.join(tail),
+            }), 500
+
+        # Force get_link_bridge() to re-probe imports next call.
+        importlib.invalidate_caches()
+        from app.core.audio import link_sync
+        link_sync._bridge = None
+
+        bridge = link_sync.get_link_bridge()
+        if not bridge.available:
+            return jsonify({
+                'success': False,
+                'error': 'Package installed but module did not import. Restart the backend.',
+            }), 500
+
+        return jsonify({'success': True, 'available': True})
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'pip install timed out (>4 min)'}), 500
+    except Exception as e:
+        logger.error(f"Link install failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/models/fine-tuned/<model_name>', methods=['DELETE'])
+def delete_fine_tuned_model(model_name):
+    try:
+        import shutil
+        config = get_config()
+        models_dir = config.get_path("models_fine_tuned").resolve()
+        target = (models_dir / model_name).resolve()
+        # Path-traversal guard: target must be a direct child of models_fine_tuned.
+        if target.parent != models_dir:
+            return jsonify({'error': 'Invalid model name'}), 400
+        if not target.exists() or not target.is_dir():
+            return jsonify({'error': f'Fine-tuned model not found: {model_name}'}), 404
+        shutil.rmtree(target)
+        logger.info(f"Deleted fine-tuned model: {model_name}")
+        return jsonify({'success': True, 'message': f'Deleted {model_name}'})
+    except Exception as e:
+        logger.error(f"Failed to delete fine-tuned model {model_name}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/models/storage', methods=['GET'])
 def get_model_storage():
     try:
