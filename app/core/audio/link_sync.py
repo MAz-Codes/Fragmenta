@@ -61,10 +61,31 @@ class LinkBridge:
             if ctor is not None:
                 try:
                     self._link = ctor(self._last_bpm)
+                    # Tempo sync works without this; transport (play/stop) sync
+                    # is opt-in per peer. Live exposes the same toggle as
+                    # "Start Stop Sync" in its Link/Tempo/MIDI prefs.
+                    self._set_start_stop_sync(True)
                     return
                 except Exception as exc:
                     logger.warning(f"Link ctor {ctor_name} failed: {exc}")
         logger.warning("Loaded Link module but no known constructor was found")
+
+    def _set_start_stop_sync(self, value: bool) -> None:
+        if self._link is None:
+            return
+        try:
+            self._link.startStopSyncEnabled = value
+            return
+        except AttributeError:
+            pass
+        for setter_name in ("setStartStopSyncEnabled", "set_start_stop_sync_enabled"):
+            setter = getattr(self._link, setter_name, None)
+            if setter:
+                try:
+                    setter(value)
+                    return
+                except Exception as exc:
+                    logger.warning(f"Link {setter_name} failed: {exc}")
 
     def _set_enabled_on_link(self, value: bool) -> None:
         if self._link is None:
@@ -114,17 +135,43 @@ class LinkBridge:
                 "enabled": self._enabled,
                 "bpm": self._last_bpm,
                 "num_peers": 0,
+                "is_playing": False,
+                "beat": 0.0,
+                "time_micros": 0,
             }
             if not self._enabled or self._link is None:
                 return state
             try:
                 session = self._capture_session()
-                if session is not None and hasattr(session, "tempo"):
+                if session is None:
+                    return state
+                if hasattr(session, "tempo"):
                     state["bpm"] = float(session.tempo())
                     self._last_bpm = state["bpm"]
                 num_peers = getattr(self._link, "numPeers", None)
                 if callable(num_peers):
                     state["num_peers"] = int(num_peers())
+
+                for name in ("isPlaying", "is_playing"):
+                    fn = getattr(session, name, None)
+                    if callable(fn):
+                        state["is_playing"] = bool(fn())
+                        break
+
+                # Sample beat + host time together so the client can extrapolate
+                # forward by (now - capturedAt) when scheduling launches.
+                clock_fn = getattr(self._link, "clock", None)
+                if callable(clock_fn):
+                    micros = int(clock_fn().micros())
+                    state["time_micros"] = micros
+                    # Quantum value here only affects phase wrapping for peers
+                    # that just joined; for an existing session the absolute
+                    # beat is stable. 4 = one bar in 4/4, a sane default.
+                    for name in ("beatAtTime", "beat_at_time"):
+                        fn = getattr(session, name, None)
+                        if callable(fn):
+                            state["beat"] = float(fn(micros, 4.0))
+                            break
             except Exception as exc:
                 logger.warning(f"Link state read failed: {exc}")
         return state
