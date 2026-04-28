@@ -3,7 +3,7 @@
 # Fragmenta Desktop (beta)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Version](https://img.shields.io/badge/version-0.0.3-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
@@ -30,15 +30,21 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
   - **User-defined vocabulary** — customize the CLAP tagger with your own terms for more personalized annotation
 - Guided model download and HuggingFace authorisation
 - Model availability updates automatically after download — no restart needed
-- **Advanced generation settings** — fine-tune generation with CFG scale, seed control, and batch generation
+- **Advanced generation settings** — CFG scale, inference steps (50–250), seed control, and batch generation
 - **Advanced training settings** — customize epochs, learning rate, batch size, checkpoint frequency, and model precision
 - Model fine-tuning, checkpoint saving and unwrapping
 - **Performance Mode** — 4-voice diffusion sampler for real-time performance with:
   - Independent channel controls (gain, pan, filter, delay, reverb)
   - Per-channel mute/solo functionality
   - Master output with peak metering (dBFS)
+  - Master tempo (BPM) with quantized, bar-aligned generation
+  - **Ableton Link** integration — sync tempo with other Link-enabled apps on the network
+  - **MIDI mapping** with learn mode and persisted mappings — control any UI element from a hardware controller
+  - **Auto-BPM prompt injection** — the master tempo is added to each prompt automatically (toggleable)
+  - Shared inference steps and seed with the Generation page
   - Model and checkpoint selection
-- Text-to-audio generation (1–47 seconds)
+- Text-to-audio generation (1–47 seconds for the 1.0 model, 1–11 seconds for the small model)
+- Both Stable Audio Open Small (fast, distilled) and 1.0 (higher quality) fully supported
 - Real-time GPU memory monitoring
 
 ---
@@ -186,9 +192,10 @@ Use base or fine-tuned models to generate audio from text prompts (1–47 second
 
 **Advanced Generation Settings:**
 - **CFG Scale** — control how closely the model follows your prompt (higher = stricter adherence)
+- **Inference Steps** — diffusion steps per generation (50/100/150/200/250). More steps = higher quality, proportionally slower. Locked to 8 for the distilled small model.
 - **Seed** — control randomness; same seed produces identical results
 - **Batch generation** — generate multiple variations at once
-- **Duration** — 1–10 seconds for small models, 1–47 seconds for larger models
+- **Duration** — 1–11 seconds for the small model, 1–47 seconds for the 1.0 model
 
 ### 4. Performance Mode (Optional)
 
@@ -204,6 +211,11 @@ Enable Performance Mode to use a 4-voice diffusion sampler for near-real-time mu
   - Waveform visualization
   - Loop toggle
 - **Master Output** — control overall level with dBFS metering and peak hold display
+- **Master Tempo (BPM)** — drives quantized, bar-aligned generation across all channels
+- **Ableton Link** — sync tempo with any Link-enabled app on the local network; peer count is shown when active
+- **MIDI Mapping** — enter learn mode and assign any hardware control to any UI element (faders, knobs, buttons, transport). Mappings persist across sessions
+- **Auto-BPM Prompt Injection** — the current master tempo is appended to each prompt automatically before generation (skipped if the prompt already mentions a tempo). Toggleable from the bottom bar
+- **Shared Inference Steps and Seed** — both controls are unified with the Generation page, so changes in one place apply everywhere
 - **Model Selection** — choose base or fine-tuned models; maximum duration adjusts automatically based on model size
 
 The Performance Mode is lazy-loaded and only activates when enabled via the toggle in the sidebar.
@@ -224,12 +236,9 @@ fragmenta/
 ├── models/                 # Model configs and checkpoints
 ├── utils/                  # Utility modules
 ├── config/                 # Configuration files
-├── fragmenta.sh              # Linux — first-time setup + launch
-├── fragmenta.bat             # Windows — first-time setup + launch
-├── fragmenta.command         # macOS — first-time setup + launch
-├── fragmenta.sh         # Linux — launch after installation (double-click)
-├── fragmenta.command      # macOS — launch after installation (double-click)
-├── fragmenta.bat      # Windows — launch after installation (double-click)
+├── fragmenta.sh            # Linux — first-time setup and subsequent launches
+├── fragmenta.bat           # Windows — first-time setup and subsequent launches
+├── fragmenta.command       # macOS — first-time setup and subsequent launches
 └── start.py                # App entry point (called by launch scripts)
 ```
 
