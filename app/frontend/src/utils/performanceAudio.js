@@ -1,6 +1,3 @@
-// Default per-channel gain = -6 dBFS. Keeps the summed mix from clipping the
-// master limiter at four channels playing together, while leaving headroom to
-// push a single channel hot.
 export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
 
 let sharedCtx = null;
@@ -15,8 +12,6 @@ export function getAudioContext() {
     return sharedCtx;
 }
 
-// Real impulse responses served from /public/ir/. `id` is the stable key used
-// by the UI / setChannelImpulseResponse(); `file` is the actual filename.
 export const IMPULSE_RESPONSES = [
     { id: 'hall',   name: 'Opera Hall',    file: 'Scala Milan Opera Hall.wav' },
     { id: 'room',   name: 'Drum Room',     file: 'Nice Drum Room.wav' },
@@ -53,9 +48,6 @@ export function getImpulseResponseBuffer(id) {
     return irBufferCache.get(id);
 }
 
-// Synthetic hall IR: early reflections + diffuse noise tail with progressive
-// high-frequency damping and per-channel decorrelation. Swap this out by
-// dropping a real IR WAV into /public/ir/ and fetching it into a ConvolverNode.
 const EARLY_REFLECTIONS_MS = [
     [7, 0.55], [13, -0.42], [19, 0.36], [28, -0.30],
     [41, 0.26], [56, 0.22], [73, -0.18], [91, 0.15],
@@ -79,15 +71,12 @@ function getImpulse(ctx, duration = 2.8, decaySeconds = 1.6, damping = 0.55) {
             if (idx < length) data[idx] += amp * 0.8;
         }
 
-        // Diffuse tail: white noise gated by exp decay, through a 1-pole LP
-        // whose cutoff shrinks over time so high freqs die first (natural air).
         let lpState = 0;
         const predelaySec = 0.012;
         for (let i = 0; i < length; i++) {
             const t = i / sr;
             if (t < predelaySec) continue;
             const env = Math.exp(-(t - predelaySec) / decaySeconds);
-            // Damping grows with time: alpha goes from (1 - damping*0.4) → (1 - damping*0.95)
             const progression = Math.min(1, (t - predelaySec) / decaySeconds);
             const alpha = 1 - damping * (0.4 + 0.55 * progression);
             const noise = (Math.random() * 2 - 1) * env;
@@ -127,9 +116,6 @@ export class ChannelStrip {
 
         this.dryGain = ctx.createGain();
         this.dryGain.gain.value = 1.0;
-
-        // Delay time is tempo-locked to an 8th note. Default seed = 120 BPM
-        // (0.25 s); PerformanceEngine overwrites this once the panel sets BPM.
         this.delayNode = ctx.createDelay(2.0);
         this.delayNode.delayTime.value = 0.25;
         this.delayFeedback = ctx.createGain();
@@ -146,8 +132,6 @@ export class ChannelStrip {
         this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
         this._lastUserGain = DEFAULT_CHANNEL_GAIN;
 
-        // Glue compressor on the post-mix channel bus. Gentle defaults —
-        // evens out transients without obvious pumping.
         this.compressor = ctx.createDynamicsCompressor();
         this.compressor.threshold.value = -16;
         this.compressor.knee.value = 8;
@@ -187,7 +171,7 @@ export class ChannelStrip {
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
     }
 
-    play(loop = this.isLooping) {
+    play(loop = this.isLooping, startTime = 0) {
         if (!this.buffer) return;
         this.stop();
         this.isLooping = loop;
@@ -201,7 +185,8 @@ export class ChannelStrip {
                 this.isPlaying = false;
             }
         };
-        src.start(0);
+
+        src.start(Math.max(0, startTime));
         this.source = src;
         this.isPlaying = true;
     }
@@ -224,8 +209,6 @@ export class ChannelStrip {
         if (buffer) this.reverbNode.buffer = buffer;
     }
     setDelayTimeForBpm(bpm) {
-        // 8th note in seconds = 60 / bpm / 2 = 30 / bpm.
-        // Glide over ~40 ms so BPM edits slide rather than click.
         const safeBpm = Math.max(1, bpm);
         const eighthSec = Math.min(30 / safeBpm, 2.0);
         this.delayNode.delayTime.setTargetAtTime(
@@ -310,11 +293,6 @@ export class PerformanceEngine {
         this.ctx = ctx;
         this.masterBus = ctx.createGain();
         this.masterBus.gain.value = 0.9;
-
-        // Master limiter: brick-wall style defaults to catch sums that push
-        // past 0 dBFS when many channels play at once. DynamicsCompressor
-        // with a high ratio + fast attack is the best built-in approximation
-        // of a look-ahead limiter that Web Audio offers.
         this.masterLimiter = ctx.createDynamicsCompressor();
         this.masterLimiter.threshold.value = -1.0;
         this.masterLimiter.knee.value = 0;
@@ -330,9 +308,11 @@ export class PerformanceEngine {
         this.masterAnalyser.connect(ctx.destination);
         this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
 
-        // Load real IRs asynchronously and swap them in when ready. Until
-        // they arrive (or if loading fails), channels keep using the
-        // synthetic fallback set in ChannelStrip's constructor.
+
+        this.linkSnapshot = null;
+        this.launchQuantum = 0;
+
+
         this.currentImpulseId = DEFAULT_IR_ID;
         loadImpulseResponses(ctx).then(() => {
             const buf = getImpulseResponseBuffer(this.currentImpulseId);
@@ -357,6 +337,33 @@ export class PerformanceEngine {
 
     setBpm(bpm) {
         this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
+    }
+
+    setLinkSnapshot(snapshot) {
+        this.linkSnapshot = snapshot;
+    }
+
+    setLaunchQuantum(beats) {
+        const v = Number(beats);
+        this.launchQuantum = Number.isFinite(v) && v > 0 ? v : 0;
+    }
+
+    getNextQuantizedAudioTime() {
+        const quantum = this.launchQuantum;
+        const snap = this.linkSnapshot;
+        if (!quantum || !snap || !snap.bpm) return 0;
+        const elapsedSec = (performance.now() - snap.capturedAt) / 1000;
+        const currentBeat = snap.beat + elapsedSec * (snap.bpm / 60);
+        let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
+        if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
+        const secondsUntil = (nextBeat - currentBeat) * 60 / snap.bpm;
+        return this.ctx.currentTime + secondsUntil;
+    }
+
+    playChannel(index, loop) {
+        const ch = this.channels[index];
+        if (!ch || !ch.buffer) return;
+        ch.play(loop, this.getNextQuantizedAudioTime());
     }
 
     setMasterGain(value) {
@@ -389,7 +396,8 @@ export class PerformanceEngine {
     }
 
     playAll(loop = true) {
-        this.channels.forEach(ch => { if (ch.buffer) ch.play(loop); });
+        const startTime = this.getNextQuantizedAudioTime();
+        this.channels.forEach(ch => { if (ch.buffer) ch.play(loop, startTime); });
     }
 
     stopAll() {
