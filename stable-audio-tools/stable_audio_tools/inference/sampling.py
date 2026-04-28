@@ -135,6 +135,30 @@ def sample_rk4(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **e
     return x
 
 @torch.no_grad()
+def sample_flow_pingpong(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **extra_args):
+    """Draws samples from a model given starting noise. Ping-pong sampling for distilled RF models."""
+
+    # Make tensor of ones to broadcast the single t values
+    ts = x.new_ones([x.shape[0]])
+
+    # Create the noise schedule
+    t = torch.linspace(sigma_max, 0, steps + 1)
+
+    if dist_shift is not None:
+        t = dist_shift.time_shift(t, x.shape[-1])
+
+    for i in trange(len(t) - 1, disable=False):
+        denoised = x - t[i] * model(x, t[i] * ts, **extra_args)
+        if callback is not None:
+            callback({'x': x, 'i': i, 't': t[i], 'sigma': t[i], 'sigma_hat': t[i], 'denoised': denoised})
+
+        t_next = t[i + 1]
+        x = (1 - t_next) * denoised + t_next * torch.randn_like(x)
+
+    return x
+
+
+@torch.no_grad()
 def sample_flow_dpmpp(model, x, steps, sigma_max=1, callback=None, dist_shift=None, **extra_args):
     """Draws samples from a model given starting noise. DPM-Solver++ for RF models"""
 
@@ -372,3 +396,5 @@ def sample_rf(
         return sample_rk4(model_fn, x, steps, sigma_max, callback=callback, **extra_args)
     elif sampler_type == "dpmpp":
         return sample_flow_dpmpp(model_fn, x, steps, sigma_max, callback=callback, **extra_args)
+    elif sampler_type == "pingpong":
+        return sample_flow_pingpong(model_fn, x, steps, sigma_max, callback=callback, **extra_args)

@@ -46,6 +46,7 @@ class AudioGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.current_model_name = None
         self.current_model_path = None
+        self.is_distilled_small = False
         self._stop_event = threading.Event()
         logger.info(f"Using device: {self.device}")
 
@@ -67,7 +68,8 @@ class AudioGenerator:
                 config_file = "model_config_small.json"
             else:
                 config_file = "model_config.json"
-            
+            self.is_distilled_small = "small" in model_name.lower()
+
             config_path = Path(__file__).parent.parent.parent.parent / "models" / "config" / config_file
             logger.info(f"Using config file: {config_path}")
             
@@ -136,6 +138,7 @@ class AudioGenerator:
             from stable_audio_tools.models.utils import load_ckpt_state_dict
             if config_file is None:
                 config_file = "model_config_small.json"
+            self.is_distilled_small = "small" in config_file.lower()
 
             config_path = Path(__file__).parent.parent.parent.parent / \
                 "models" / "config" / config_file
@@ -222,8 +225,26 @@ class AudioGenerator:
                 raise GenerationStopped("Stop requested mid-diffusion")
 
         try:
+            # Stable Audio Open Small is an adversarially-distilled checkpoint
+            # that requires the pingpong sampler at 8 steps with CFG 1.0.
+            # Running the dpmpp-3m-sde recipe on it produces noise.
+            if self.is_distilled_small:
+                effective_sampler = "pingpong"
+                effective_steps = 8
+                effective_cfg = 1.0
+                sigma_kwargs = {}
+            else:
+                effective_sampler = "dpmpp-3m-sde"
+                effective_steps = steps
+                effective_cfg = cfg_scale
+                sigma_kwargs = {"sigma_min": 0.03, "sigma_max": 1000}
+
             print(f"Generating audio for prompt: '{prompt}'")
-            print(f"Duration: {duration}s, CFG scale: {cfg_scale}, Steps: {steps}")
+            print(
+                f"Duration: {duration}s, CFG scale: {effective_cfg}, "
+                f"Steps: {effective_steps}, Sampler: {effective_sampler}"
+                + (" (distilled small overrides applied)" if self.is_distilled_small else "")
+            )
             requested_sample_size = int(duration * self.model.sample_rate)
             max_sample_size = None
             try:
@@ -295,17 +316,16 @@ class AudioGenerator:
 
                 audio = generate_diffusion_cond(
                     model=self.model,
-                    steps=steps,
-                    cfg_scale=cfg_scale,
+                    steps=effective_steps,
+                    cfg_scale=effective_cfg,
                     conditioning=conditioning,
                     batch_size=1,
                     sample_size=requested_sample_size,
                     seed=seed,
                     device=str(device),
-                    sigma_min=0.03,
-                    sigma_max=1000,
-                    sampler_type="dpmpp-3m-sde",
-                    callback=_stop_callback
+                    sampler_type=effective_sampler,
+                    callback=_stop_callback,
+                    **sigma_kwargs,
                 )
 
             print(f"Generation complete, audio shape: {audio.shape}")

@@ -87,6 +87,7 @@
             "cond_dim": 768
         },
         "diffusion": {
+            "diffusion_objective": "rectified_flow",
             "cross_attention_cond_ids": [
                 "prompt",
                 "seconds_total"
