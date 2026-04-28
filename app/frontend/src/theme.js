@@ -2119,6 +2119,28 @@ export const lossChartStyles = {
     },
 };
 
+// Shared visual tokens for the Performance page (panel, channels, MIDI menu).
+// One source of truth for the size/spacing/height scale so similar elements
+// match. The previous code carried 9+ distinct font sizes and 5+ letter
+// spacings across these surfaces; anything new should pick from this set.
+export const perfTokens = {
+    fontSize: {
+        knob: '0.58rem',   // knob labels, pan label, master peak readout
+        small: '0.66rem',  // small labels: BPM unit, mute/solo, durationLabel, footer notes
+        body: '0.72rem',   // primary text: buttons, dropdowns, prompt field, mapping rows
+        badge: '0.78rem',  // section badges (MASTER, channel numbers)
+    },
+    letterSpacing: {
+        wide: '0.08em',    // uppercase labels and badges
+    },
+    height: {
+        compact: 26,       // primary compact controls (Link, MIDI, Q, BPM, transport, generate)
+        sub: 22,           // small subordinate square buttons (mute, solo, loop)
+    },
+    // Sharp 2px radius is the deliberate Ableton-style accent on Link/MIDI.
+    // Everything else lives on the MUI scale via shape.borderRadius (= 1.5).
+};
+
 export const performancePanelStyles = {
     root: {
         display: 'flex',
@@ -2157,7 +2179,7 @@ export const performancePanelStyles = {
     },
     subtitle: {
         color: 'text.secondary',
-        fontSize: '0.72rem',
+        fontSize: perfTokens.fontSize.body,
     },
     headerPickers: {
         display: 'flex',
@@ -2221,10 +2243,10 @@ export const performancePanelStyles = {
         color,
     }),
     masterBadge: (color) => ({
-        fontSize: '0.72rem',
+        fontSize: perfTokens.fontSize.badge,
         fontWeight: 600,
         color,
-        letterSpacing: '0.14em',
+        letterSpacing: perfTokens.letterSpacing.wide,
         px: 0.75,
         py: 0.25,
         borderRadius: 1,
@@ -2283,13 +2305,13 @@ export const performancePanelStyles = {
     masterValue: {
         textAlign: 'center',
         color: 'primary.main',
-        fontSize: '0.68rem',
+        fontSize: perfTokens.fontSize.small,
         letterSpacing: '0.04em',
     },
     masterPeakValue: {
         textAlign: 'center',
         color: 'text.disabled',
-        fontSize: '0.58rem',
+        fontSize: perfTokens.fontSize.knob,
         letterSpacing: '0.04em',
     },
     masterTransport: {
@@ -2303,7 +2325,7 @@ export const performancePanelStyles = {
     masterBtn: (color, variant) => (theme) => ({
         textTransform: 'none',
         borderRadius: 1.5,
-        fontSize: '0.72rem',
+        fontSize: perfTokens.fontSize.body,
         py: 0.5,
         ...(variant === 'play'
             ? {
@@ -2348,10 +2370,10 @@ export const performanceChannelStyles = {
     }),
     channelBadge: (color) => ({
         fontFamily: 'inherit',
-        fontSize: '0.78rem',
+        fontSize: perfTokens.fontSize.badge,
         fontWeight: 600,
         color,
-        letterSpacing: '0.08em',
+        letterSpacing: perfTokens.letterSpacing.wide,
         px: 0.75,
         py: 0.25,
         borderRadius: 1,
@@ -2363,9 +2385,9 @@ export const performanceChannelStyles = {
         gap: 0.5,
     },
     muteBtn: (active) => ({
-        width: 22,
-        height: 22,
-        fontSize: '0.65rem',
+        width: perfTokens.height.sub,
+        height: perfTokens.height.sub,
+        fontSize: perfTokens.fontSize.small,
         fontWeight: 700,
         borderRadius: 1,
         color: active ? '#fff' : 'text.secondary',
@@ -2377,9 +2399,9 @@ export const performanceChannelStyles = {
         },
     }),
     soloBtn: (active) => ({
-        width: 22,
-        height: 22,
-        fontSize: '0.65rem',
+        width: perfTokens.height.sub,
+        height: perfTokens.height.sub,
+        fontSize: perfTokens.fontSize.small,
         fontWeight: 700,
         borderRadius: 1,
         color: active ? '#0c1018' : 'text.secondary',
@@ -2397,7 +2419,7 @@ export const performanceChannelStyles = {
     },
     promptField: (theme) => ({
         '& .MuiOutlinedInput-root': {
-            fontSize: '0.75rem',
+            fontSize: perfTokens.fontSize.body,
             backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.5)' : 'rgba(0, 0, 0, 0.04)',
             borderRadius: 1.5,
             '& textarea': { lineHeight: 1.3 },
@@ -2411,7 +2433,7 @@ export const performanceChannelStyles = {
     },
     durationLabel: {
         fontFamily: 'inherit',
-        fontSize: '0.65rem',
+        fontSize: perfTokens.fontSize.small,
         color: 'text.secondary',
         minWidth: 22,
     },
@@ -2423,8 +2445,8 @@ export const performanceChannelStyles = {
     }),
     generateBtn: (color) => (theme) => ({
         alignSelf: 'flex-end',
-        width: 28,
-        height: 28,
+        width: perfTokens.height.compact,
+        height: perfTokens.height.compact,
         borderRadius: 1.5,
         color,
         border: `1px solid ${color}55`,
@@ -2449,8 +2471,8 @@ export const performanceChannelStyles = {
         justifyContent: 'center',
         color: 'text.disabled',
         fontFamily: 'inherit',
-        fontSize: '0.65rem',
-        letterSpacing: '0.1em',
+        fontSize: perfTokens.fontSize.small,
+        letterSpacing: perfTokens.letterSpacing.wide,
         pointerEvents: 'none',
     },
     knobsGrid: {
@@ -2466,19 +2488,21 @@ export const performanceChannelStyles = {
         gap: 0.25,
         height: 70,
     },
-    knobSlider: (color) => ({
+    knobSlider: (color, fat = false) => ({
         height: 50,
         color,
-        '& .MuiSlider-thumb': { width: 10, height: 10 },
-        '& .MuiSlider-rail': { opacity: 0.3, width: 2 },
-        '& .MuiSlider-track': { width: 2, border: 'none' },
+        // Gain is visually fattened (wider track + bigger thumb) so it stands
+        // out from LPF/DLY/REV — it's the dBFS-scaled "fader" of the four.
+        '& .MuiSlider-thumb': { width: fat ? 12 : 10, height: fat ? 12 : 10 },
+        '& .MuiSlider-rail': { opacity: 0.3, width: fat ? 4 : 2 },
+        '& .MuiSlider-track': { width: fat ? 4 : 2, border: 'none' },
     }),
     knobLabel: {
         display: 'block',
         fontFamily: 'inherit',
-        fontSize: '0.53rem',
+        fontSize: perfTokens.fontSize.knob,
         color: 'text.secondary',
-        letterSpacing: '0.06em',
+        letterSpacing: perfTokens.letterSpacing.wide,
         mt: 0.75,
     },
     transportRow: {
@@ -2491,8 +2515,8 @@ export const performanceChannelStyles = {
         borderTopColor: 'divider',
     },
     transportBtn: (color, playing) => (theme) => ({
-        width: 26,
-        height: 26,
+        width: perfTokens.height.compact,
+        height: perfTokens.height.compact,
         borderRadius: 1.5,
         color: playing ? '#0c1018' : color,
         backgroundColor: playing ? color : `${color}14`,
@@ -2501,8 +2525,8 @@ export const performanceChannelStyles = {
         '&.Mui-disabled': theme.palette.mode === 'dark' ? { opacity: 0.3 } : {},
     }),
     loopBtn: (color, active) => ({
-        width: 22,
-        height: 22,
+        width: perfTokens.height.sub,
+        height: perfTokens.height.sub,
         borderRadius: 1,
         color: active ? color : 'text.secondary',
         backgroundColor: active ? `${color}1F` : 'transparent',
