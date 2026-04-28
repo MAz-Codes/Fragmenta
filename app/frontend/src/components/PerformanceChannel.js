@@ -20,6 +20,7 @@ import {
     VolumeX as MuteIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles } from '../theme';
+import { MidiMappable } from './MidiContext';
 
 const CHANNEL_COLORS = [
     '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
@@ -177,17 +178,35 @@ export default function PerformanceChannel({
         else if (key === 'reverb') strip.setReverbMix(value);
     };
 
+    const handlePan = (v) => {
+        const snapped = Math.abs(v) < PAN_CENTER_SNAP ? 0 : v;
+        handleKnob('pan', snapped);
+    };
+
+    const handleTransportToggle = () => {
+        if (!loaded) return;
+        if (playing) handleStop();
+        else handlePlay();
+    };
+
+    const ctrlId = (suffix) => `channel.${index}.${suffix}`;
+    const ctrlLabel = (name) => `Ch ${index + 1} · ${name}`;
+
     return (
         <Box sx={styles.strip(color, playing)}>
             <Box sx={styles.stripHeader(color)}>
                 <Box sx={styles.channelBadge(color)}>{String(index + 1).padStart(2, '0')}</Box>
                 <Box sx={styles.muteSoloRow}>
-                    <Tooltip title="Mute">
-                        <IconButton size="small" onClick={handleMuteToggle} sx={styles.muteBtn(muted)}>M</IconButton>
-                    </Tooltip>
-                    <Tooltip title="Solo">
-                        <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
-                    </Tooltip>
+                    <MidiMappable id={ctrlId('mute')} label={ctrlLabel('Mute')} kind="trigger" onChange={handleMuteToggle}>
+                        <Tooltip title="Mute">
+                            <IconButton size="small" onClick={handleMuteToggle} sx={styles.muteBtn(muted)}>M</IconButton>
+                        </Tooltip>
+                    </MidiMappable>
+                    <MidiMappable id={ctrlId('solo')} label={ctrlLabel('Solo')} kind="trigger" onChange={handleSoloToggle}>
+                        <Tooltip title="Solo">
+                            <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
+                        </Tooltip>
+                    </MidiMappable>
                 </Box>
             </Box>
 
@@ -290,14 +309,16 @@ export default function PerformanceChannel({
                         </Select>
                     )}
                 </Box>
-                <IconButton
-                    onClick={handleGenerate}
-                    disabled={!canGenerate || !prompt.trim() || generating}
-                    sx={styles.generateBtn(color)}
-                    size="small"
-                >
-                    {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
-                </IconButton>
+                <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
+                    <IconButton
+                        onClick={handleGenerate}
+                        disabled={!canGenerate || !prompt.trim() || generating}
+                        sx={styles.generateBtn(color)}
+                        size="small"
+                    >
+                        {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
+                    </IconButton>
+                </MidiMappable>
             </Box>
 
             <Box sx={styles.waveformWrap}>
@@ -317,71 +338,94 @@ export default function PerformanceChannel({
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                     <Box component="span" sx={{ fontSize: '0.53rem', color: 'text.secondary', letterSpacing: '0.06em', minWidth: 28 }}>PAN</Box>
-                    <Slider
-                        value={knobs.pan ?? 0}
-                        onChange={(_, v) => {
-                            // Snap to center when close, so "0" isn't fiddly to hit.
-                            const snapped = Math.abs(v) < PAN_CENTER_SNAP ? 0 : v;
-                            handleKnob('pan', snapped);
-                        }}
+                    <MidiMappable
+                        id={ctrlId('pan')}
+                        label={ctrlLabel('Pan')}
+                        kind="continuous"
                         min={-1}
                         max={1}
-                        step={0.01}
-                        size="small"
-                        track={false}
-                        marks={[{ value: 0 }]}
-                        sx={{
-                            flex: 1,
-                            '& .MuiSlider-mark': {
-                                width: 2,
-                                height: 10,
-                                borderRadius: 1,
-                                backgroundColor: 'text.secondary',
-                                opacity: 0.8,
-                            },
-                            '& .MuiSlider-markActive': {
-                                backgroundColor: 'text.secondary',
-                                opacity: 0.8,
-                            },
-                        }}
-                    />
+                        value={knobs.pan ?? 0}
+                        onChange={handlePan}
+                        sx={{ flex: 1, flexDirection: 'row' }}
+                    >
+                        <Slider
+                            value={knobs.pan ?? 0}
+                            onChange={(_, v) => handlePan(v)}
+                            min={-1}
+                            max={1}
+                            step={0.01}
+                            size="small"
+                            track={false}
+                            marks={[{ value: 0 }]}
+                            sx={{
+                                flex: 1,
+                                '& .MuiSlider-mark': {
+                                    width: 2,
+                                    height: 10,
+                                    borderRadius: 1,
+                                    backgroundColor: 'text.secondary',
+                                    opacity: 0.8,
+                                },
+                                '& .MuiSlider-markActive': {
+                                    backgroundColor: 'text.secondary',
+                                    opacity: 0.8,
+                                },
+                            }}
+                        />
+                    </MidiMappable>
                 </Box>
             </Box>
 
             <Box sx={styles.knobsGrid}>
                 {KNOB_DEFS.map((k) => (
                     <Box key={k.key} sx={styles.knobCell}>
-                        <Slider
-                            orientation="vertical"
-                            value={knobs[k.key]}
-                            onChange={(_, v) => handleKnob(k.key, v)}
+                        <MidiMappable
+                            id={ctrlId(k.key)}
+                            label={ctrlLabel(k.label)}
+                            kind="continuous"
+                            curve={k.log ? 'log' : 'linear'}
                             min={k.min}
                             max={k.max}
-                            step={k.step}
-                            size="small"
-                            sx={styles.knobSlider(color)}
-                        />
+                            value={knobs[k.key]}
+                            onChange={(v) => handleKnob(k.key, v)}
+                            sx={{ alignItems: 'center' }}
+                        >
+                            <Slider
+                                orientation="vertical"
+                                value={knobs[k.key]}
+                                onChange={(_, v) => handleKnob(k.key, v)}
+                                min={k.min}
+                                max={k.max}
+                                step={k.step}
+                                size="small"
+                                sx={styles.knobSlider(color)}
+                            />
+                        </MidiMappable>
                         <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
                     </Box>
                 ))}
             </Box>
 
             <Box sx={styles.transportRow}>
-                <IconButton
-                    onClick={playing ? handleStop : handlePlay}
-                    disabled={!loaded}
-                    sx={styles.transportBtn(color, playing)}
-                    size="small"
-                >
-                    {playing ? <StopIcon size={16} /> : <PlayIcon size={16} />}
-                </IconButton>
-                <IconButton
-                    onClick={handleLoopToggle}
-                    sx={styles.loopBtn(color, looping)}
-                    size="small"
-                >
-                    <LoopIcon size={14} />
-                </IconButton>
+                <MidiMappable id={ctrlId('transport')} label={ctrlLabel('Play/Stop')} kind="trigger" onChange={handleTransportToggle}>
+                    <IconButton
+                        onClick={playing ? handleStop : handlePlay}
+                        disabled={!loaded}
+                        sx={styles.transportBtn(color, playing)}
+                        size="small"
+                    >
+                        {playing ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                    </IconButton>
+                </MidiMappable>
+                <MidiMappable id={ctrlId('loop')} label={ctrlLabel('Loop')} kind="trigger" onChange={handleLoopToggle}>
+                    <IconButton
+                        onClick={handleLoopToggle}
+                        sx={styles.loopBtn(color, looping)}
+                        size="small"
+                    >
+                        <LoopIcon size={14} />
+                    </IconButton>
+                </MidiMappable>
                 <Box sx={styles.meterTrack}>
                     <Box ref={meterRef} sx={styles.meterFill(color)} />
                 </Box>

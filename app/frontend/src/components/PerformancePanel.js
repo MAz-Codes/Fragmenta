@@ -18,11 +18,14 @@ import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
     Trash2 as DeleteIcon,
+    Settings as SettingsIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine } from '../utils/performanceAudio';
 import { performancePanelStyles as styles } from '../theme';
+import { MidiProvider, MidiMappable, useMidi } from './MidiContext';
+import MidiConfigMenu from './MidiConfigMenu';
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
@@ -42,7 +45,15 @@ const formatDb = (db) => {
     return db.toFixed(1);
 };
 
-export default function PerformancePanel({
+export default function PerformancePanel(props) {
+    return (
+        <MidiProvider>
+            <PerformancePanelInner {...props} />
+        </MidiProvider>
+    );
+}
+
+function PerformancePanelInner({
     selectedModel,
     selectedUnwrappedModel,
     availableModels = [],
@@ -254,6 +265,30 @@ export default function PerformancePanel({
     const handlePlayAll = () => engineRef.current?.playAll(true);
     const handleStopAll = () => engineRef.current?.stopAll();
 
+    // Apply a BPM value coming from MIDI (or any non-typing source). Clamps,
+    // rounds, and routes through the same origin tracking the input field uses.
+    const applyExternalBpm = useCallback((value) => {
+        const next = Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(value)));
+        bpmOriginRef.current = 'user';
+        setBpm(next);
+    }, []);
+
+    const midi = useMidi();
+    const [midiMenuAnchor, setMidiMenuAnchor] = useState(null);
+
+    // Esc exits MIDI learn mode without dismissing the panel.
+    useEffect(() => {
+        if (!midi?.learnMode) return undefined;
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                midi.exitLearnMode();
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [midi?.learnMode, midi?.exitLearnMode]);
+
     const generateForChannel = async ({ prompt, duration }) => {
         setError(null);
         if (!selectedModel) {
@@ -395,49 +430,117 @@ export default function PerformancePanel({
                     </span>
                 </Tooltip>
 
+                {/* MIDI learn toggle — same compact rectangle style as Link. */}
+                <Tooltip
+                    title={
+                        !midi?.supported
+                            ? (midi?.permissionError || 'Web MIDI is not available')
+                            : midi.learnMode
+                                ? 'Exit MIDI mode (Esc)'
+                                : 'Enter MIDI mode — click a control then move a hardware knob/button to bind'
+                    }
+                >
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <ButtonBase
+                            onClick={() => midi?.toggleLearnMode()}
+                            disabled={!midi?.supported}
+                            sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontFamily: 'inherit',
+                                fontSize: '0.72rem',
+                                fontWeight: 600,
+                                px: 1,
+                                minWidth: 46,
+                                height: 26,
+                                borderRadius: '2px',
+                                bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
+                                color: midi?.learnMode ? '#000' : '#2a2a2a',
+                                opacity: midi?.supported ? 1 : 0.45,
+                                transition: 'background-color 120ms',
+                                '&:hover': {
+                                    bgcolor: midi?.learnMode ? '#FFD54F' : '#7d7d7d',
+                                },
+                                '&.Mui-disabled': {
+                                    color: '#2a2a2a',
+                                },
+                            }}
+                        >
+                            MIDI
+                        </ButtonBase>
+                    </span>
+                </Tooltip>
+                <Tooltip title="MIDI settings & mappings">
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <IconButton
+                            size="small"
+                            onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
+                            sx={{ width: 26, height: 26, color: 'text.secondary' }}
+                        >
+                            <SettingsIcon size={14} />
+                        </IconButton>
+                    </span>
+                </Tooltip>
+                <MidiConfigMenu
+                    anchorEl={midiMenuAnchor}
+                    open={Boolean(midiMenuAnchor)}
+                    onClose={() => setMidiMenuAnchor(null)}
+                />
+
                 {/* Tempo — outlined field matching other inputs. The floating-label
                     notch looked awkward at this width, so the unit label lives
                     inline as an endAdornment instead. */}
-                <TextField
-                    size="small"
-                    type="number"
-                    value={bpmInput}
-                    onChange={handleBpmChange}
-                    onFocus={handleBpmFocus}
-                    onBlur={handleBpmBlur}
-                    inputProps={{ step: 1, inputMode: 'numeric', 'aria-label': 'Tempo in BPM' }}
-                    InputProps={{
-                        endAdornment: (
-                            <Typography
-                                component="span"
-                                sx={{
-                                    fontSize: '0.62rem',
-                                    letterSpacing: '0.08em',
-                                    color: 'text.disabled',
-                                    pl: 0.5,
-                                    userSelect: 'none',
-                                }}
-                            >
-                                BPM
-                            </Typography>
-                        ),
-                    }}
-                    sx={{
-                        width: 96,
-                        '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
-                        '& input': {
-                            textAlign: 'right',
-                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                            fontVariantNumeric: 'tabular-nums',
-                            pr: 0,
-                        },
-                        '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
-                            WebkitAppearance: 'none',
-                            margin: 0,
-                        },
-                        '& input[type=number]': { MozAppearance: 'textfield' },
-                    }}
-                />
+                <MidiMappable
+                    id="master.bpm"
+                    label="Tempo (BPM)"
+                    kind="continuous"
+                    min={BPM_MIN}
+                    max={BPM_MAX}
+                    value={bpm}
+                    onChange={applyExternalBpm}
+                >
+                    <TextField
+                        size="small"
+                        type="number"
+                        value={bpmInput}
+                        onChange={handleBpmChange}
+                        onFocus={handleBpmFocus}
+                        onBlur={handleBpmBlur}
+                        inputProps={{ step: 1, inputMode: 'numeric', 'aria-label': 'Tempo in BPM' }}
+                        InputProps={{
+                            endAdornment: (
+                                <Typography
+                                    component="span"
+                                    sx={{
+                                        fontSize: '0.62rem',
+                                        letterSpacing: '0.08em',
+                                        color: 'text.disabled',
+                                        pl: 0.5,
+                                        userSelect: 'none',
+                                    }}
+                                >
+                                    BPM
+                                </Typography>
+                            ),
+                        }}
+                        sx={{
+                            width: 96,
+                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
+                            '& input': {
+                                textAlign: 'right',
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                fontVariantNumeric: 'tabular-nums',
+                                pr: 0,
+                            },
+                            '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
+                                WebkitAppearance: 'none',
+                                margin: 0,
+                            },
+                            '& input[type=number]': { MozAppearance: 'textfield' },
+                        }}
+                    />
+                </MidiMappable>
 
                 {/* Model picker — half the old width */}
                 <FormControl size="small" sx={{
@@ -549,26 +652,30 @@ export default function PerformancePanel({
                 )}
 
                 {/* Transport */}
-                <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<PlayAllIcon size={14} />}
-                    onClick={handlePlayAll}
-                    disabled={!anyLoaded}
-                    sx={styles.masterBtn(MASTER_COLOR, 'play')}
-                >
-                    Play All
-                </Button>
-                <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<StopAllIcon size={14} />}
-                    onClick={handleStopAll}
-                    disabled={!anyPlaying}
-                    sx={styles.masterBtn(MASTER_COLOR, 'stop')}
-                >
-                    Stop All
-                </Button>
+                <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<PlayAllIcon size={14} />}
+                        onClick={handlePlayAll}
+                        disabled={!anyLoaded}
+                        sx={styles.masterBtn(MASTER_COLOR, 'play')}
+                    >
+                        Play All
+                    </Button>
+                </MidiMappable>
+                <MidiMappable id="master.stopAll" label="Stop All" kind="trigger" onChange={handleStopAll}>
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<StopAllIcon size={14} />}
+                        onClick={handleStopAll}
+                        disabled={!anyPlaying}
+                        sx={styles.masterBtn(MASTER_COLOR, 'stop')}
+                    >
+                        Stop All
+                    </Button>
+                </MidiMappable>
             </Paper>
 
             {error && (
@@ -604,15 +711,26 @@ export default function PerformancePanel({
                             <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
                             <Box sx={styles.masterMeterSegments} />
                         </Box>
-                        <Slider
-                            orientation="vertical"
-                            value={masterDb}
-                            onChange={handleMasterChange}
+                        <MidiMappable
+                            id="master.fader"
+                            label="Master Fader"
+                            kind="continuous"
                             min={MASTER_DB_MIN}
                             max={MASTER_DB_MAX}
-                            step={0.1}
-                            sx={styles.masterFader(MASTER_COLOR)}
-                        />
+                            value={masterDb}
+                            onChange={(v) => handleMasterChange(null, v)}
+                            sx={{ flex: 1, alignSelf: 'stretch' }}
+                        >
+                            <Slider
+                                orientation="vertical"
+                                value={masterDb}
+                                onChange={handleMasterChange}
+                                min={MASTER_DB_MIN}
+                                max={MASTER_DB_MAX}
+                                step={0.1}
+                                sx={styles.masterFader(MASTER_COLOR)}
+                            />
+                        </MidiMappable>
                     </Box>
 
                     <Box sx={styles.masterReadouts}>
