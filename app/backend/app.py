@@ -339,6 +339,8 @@ def generate_audio():
             data.get('duration', 10.0), 'duration', min_value=1, max_value=60)
         cfg_scale = Validator.number(
             data.get('cfg_scale', 7.0), 'cfg_scale', min_value=0.1, max_value=20.0)
+        steps = Validator.number(
+            data.get('steps', 100), 'steps', min_value=1, max_value=500, integer_only=True)
         seed = Validator.number(
             data.get('seed', -1), 'seed', min_value=-1, max_value=2**32 - 1, integer_only=True)
         batch_index = Validator.number(
@@ -404,6 +406,7 @@ def generate_audio():
                 config_file=config_file,
                 duration=duration,
                 cfg_scale=cfg_scale,
+                steps=steps,
                 seed=seed,
                 batch_index=batch_index,
                 batch_total=batch_total
@@ -427,6 +430,7 @@ def generate_audio():
                 config_file=config_file,
                 duration=duration,
                 cfg_scale=cfg_scale,
+                steps=steps,
                 seed=seed,
                 batch_index=batch_index,
                 batch_total=batch_total
@@ -438,13 +442,13 @@ def generate_audio():
 
             output_path = generator.generate_audio(
                 prompt, fine_tuned_path, duration=duration,
-                cfg_scale=cfg_scale, seed=seed,
+                cfg_scale=cfg_scale, steps=steps, seed=seed,
                 batch_index=batch_index, batch_total=batch_total)
         else:
             logger.debug("Using default model")
             output_path = generator.generate_audio(
-                prompt, duration=duration, cfg_scale=cfg_scale, seed=seed,
-                batch_index=batch_index, batch_total=batch_total)
+                prompt, duration=duration, cfg_scale=cfg_scale, steps=steps,
+                seed=seed, batch_index=batch_index, batch_total=batch_total)
 
         if not output_path.exists():
             raise GenerationError(prompt, model_name, "Generated audio file not found")

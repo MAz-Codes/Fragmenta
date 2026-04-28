@@ -137,6 +137,7 @@ function App() {
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
+    const [steps, setSteps] = useState(100);
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');
@@ -523,7 +524,8 @@ function App() {
         const baseRequestData = {
             prompt: generationPrompt,
             duration: generationDuration,
-            cfg_scale: cfgScale
+            cfg_scale: cfgScale,
+            steps: steps
         };
 
         const baseModel = baseModels.find(m => m.name === selectedModel);
@@ -631,6 +633,7 @@ function App() {
                     prompt: generationPrompt,
                     duration: generationDuration,
                     cfgScale,
+                    steps,
                     seed: seedForRun,
                     batchIndex,
                     batchTotal: totalRuns,
@@ -1642,6 +1645,29 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Inference Steps</Typography>
+                                                                <Box sx={appStyles.sliderRow}>
+                                                                    <Slider
+                                                                        value={steps}
+                                                                        onChange={(e, value) => setSteps(value)}
+                                                                        min={50}
+                                                                        max={250}
+                                                                        step={null}
+                                                                        marks={[
+                                                                            { value: 50, label: '50' },
+                                                                            { value: 100, label: '100' },
+                                                                            { value: 150, label: '150' },
+                                                                            { value: 200, label: '200' },
+                                                                            { value: 250, label: '250' },
+                                                                        ]}
+                                                                        valueLabelDisplay="auto"
+                                                                        sx={appStyles.sliderFlexGrow}
+                                                                    />
+                                                                </Box>
+                                                                
                                                             </Grid>
 
                                                             <Grid item xs={12}>
