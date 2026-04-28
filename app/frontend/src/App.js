@@ -137,7 +137,7 @@ function App() {
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
-    const [steps, setSteps] = useState(100);
+    const [steps, setSteps] = useState(250);
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');
@@ -253,6 +253,16 @@ function App() {
 
         return 10;
     };
+
+    const isSmallModel = (() => {
+        if (selectedModel === 'stable-audio-open-small') return true;
+        const model = availableModels.find(m => m.name === selectedModel);
+        if (model && selectedUnwrappedModel) {
+            const u = model.unwrapped_models?.find(x => x.path === selectedUnwrappedModel);
+            return u ? (u.size_mb || 0) < 2000 : false;
+        }
+        return false;
+    })();
 
     useEffect(() => {
         const maxDuration = getMaxDuration();
@@ -1624,27 +1634,34 @@ function App() {
                                                                 <Typography gutterBottom>CFG Scale</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
-                                                                        value={cfgScale}
+                                                                        value={isSmallModel ? 1.0 : cfgScale}
                                                                         onChange={(e, value) => setCfgScale(value)}
                                                                         min={0.1}
                                                                         max={20}
                                                                         step={0.1}
                                                                         valueLabelDisplay="auto"
+                                                                        disabled={isSmallModel}
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                     <TextField
                                                                         type="number"
-                                                                        value={cfgScale}
+                                                                        value={isSmallModel ? 1.0 : cfgScale}
                                                                         onChange={(e) => {
                                                                             const val = parseFloat(e.target.value);
                                                                             if (Number.isNaN(val)) return;
                                                                             setCfgScale(Math.max(0.1, Math.min(20, val)));
                                                                         }}
                                                                         inputProps={{ min: 0.1, max: 20, step: 0.1 }}
+                                                                        disabled={isSmallModel}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                {isSmallModel && (
+                                                                    <Typography variant="caption" color="textSecondary">
+                                                                        Locked at 1.0 for the distilled small model.
+                                                                    </Typography>
+                                                                )}
                                                             </Grid>
 
                                                             <Grid item xs={12}>
@@ -1664,10 +1681,15 @@ function App() {
                                                                             { value: 250, label: '250' },
                                                                         ]}
                                                                         valueLabelDisplay="auto"
+                                                                        disabled={isSmallModel}
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                 </Box>
-                                                                
+                                                                {isSmallModel && (
+                                                                    <Typography variant="caption" color="textSecondary">
+                                                                        Locked at 8 steps (pingpong sampler) for the distilled small model.
+                                                                    </Typography>
+                                                                )}
                                                             </Grid>
 
                                                             <Grid item xs={12}>
@@ -1905,6 +1927,12 @@ function App() {
                                             onSelectModel={setSelectedModel}
                                             onSelectUnwrappedModel={setSelectedUnwrappedModel}
                                             onRefreshModels={fetchAvailableModels}
+                                            steps={steps}
+                                            onStepsChange={setSteps}
+                                            randomSeed={randomSeed}
+                                            seedValue={seedValue}
+                                            onRandomSeedChange={setRandomSeed}
+                                            onSeedValueChange={setSeedValue}
                                         />
                                     </Suspense>
                                 ) : (

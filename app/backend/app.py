@@ -340,7 +340,7 @@ def generate_audio():
         cfg_scale = Validator.number(
             data.get('cfg_scale', 7.0), 'cfg_scale', min_value=0.1, max_value=20.0)
         steps = Validator.number(
-            data.get('steps', 100), 'steps', min_value=1, max_value=500, integer_only=True)
+            data.get('steps', 250), 'steps', min_value=1, max_value=500, integer_only=True)
         seed = Validator.number(
             data.get('seed', -1), 'seed', min_value=-1, max_value=2**32 - 1, integer_only=True)
         batch_index = Validator.number(

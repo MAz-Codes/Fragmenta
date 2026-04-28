@@ -7,6 +7,8 @@ import {
     Button,
     Alert,
     FormControl,
+    FormControlLabel,
+    Switch,
     Select,
     MenuItem,
     TextField,
@@ -61,6 +63,12 @@ function PerformancePanelInner({
     onSelectModel,
     onSelectUnwrappedModel,
     onRefreshModels,
+    steps = 250,
+    onStepsChange,
+    randomSeed = true,
+    seedValue = '',
+    onRandomSeedChange,
+    onSeedValueChange,
 }) {
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
@@ -87,6 +95,17 @@ function PerformancePanelInner({
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
+    const [injectBpm, setInjectBpm] = useState(true);
+
+    const isSmallModel = (() => {
+        if (selectedModel === 'stable-audio-open-small') return true;
+        const model = availableModels.find((m) => m.name === selectedModel);
+        if (model && selectedUnwrappedModel) {
+            const u = model.unwrapped_models?.find((x) => x.path === selectedUnwrappedModel);
+            return u ? (u.size_mb || 0) < 2000 : false;
+        }
+        return false;
+    })();
 
     if (!engineRef.current) {
         engineRef.current = new PerformanceEngine(CHANNEL_COUNT);
@@ -296,11 +315,35 @@ function PerformancePanelInner({
             setError(msg);
             throw new Error(msg);
         }
+
+        // Auto-inject the panel BPM into the prompt unless the user opted out
+        // or already mentioned a tempo. Keeps generations in sync with the
+        // master tempo without requiring the user to type it every time.
+        const trimmed = (prompt || '').trim();
+        const hasExplicitBpm = /\b\d{2,3}\s*bpm\b/i.test(trimmed);
+        const finalPrompt = injectBpm && !hasExplicitBpm
+            ? `${trimmed}${trimmed ? ', ' : ''}${Math.round(bpm)} BPM`
+            : trimmed;
+
+        let resolvedSeed;
+        if (randomSeed) {
+            resolvedSeed = Math.floor(Math.random() * 0xffffffff);
+        } else {
+            const parsed = parseInt(seedValue, 10);
+            if (Number.isNaN(parsed) || parsed < 0) {
+                const msg = 'Enter a valid seed (0 or greater) or enable Random.';
+                setError(msg);
+                throw new Error(msg);
+            }
+            resolvedSeed = parsed;
+        }
+
         const requestData = {
-            prompt,
+            prompt: finalPrompt,
             duration,
             cfg_scale: 7.0,
-            seed: Math.floor(Math.random() * 0xffffffff),
+            steps,
+            seed: resolvedSeed,
             model_name: selectedModel,
             ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
         };
@@ -743,6 +786,107 @@ function PerformancePanelInner({
                     </Box>
                 </Box>
             </Box>
+
+            <Paper sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2.5,
+                px: 1.5,
+                py: 0.75,
+                mt: 1,
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor: 'divider',
+                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.04) 0%, rgba(159, 138, 230, 0.03) 100%)',
+                flexWrap: { xs: 'wrap', md: 'nowrap' },
+            }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                        STEPS
+                    </Typography>
+                    <Tooltip
+                        placement="right"
+                        title={
+                            isSmallModel
+                                ? 'Locked at 8 steps for the distilled small model'
+                                : 'Diffusion steps per generation (more = higher quality, slower)'
+                        }
+                    >
+                        <FormControl
+                            size="small"
+                            sx={{ minWidth: 96, '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
+                        >
+                            <Select
+                                value={isSmallModel ? 8 : steps}
+                                onChange={(e) => onStepsChange?.(Number(e.target.value))}
+                                disabled={isSmallModel}
+                                renderValue={(value) => `${value} steps`}
+                            >
+                                {isSmallModel && (
+                                    <MenuItem value={8}>
+                                        <Typography variant="body2">8 (locked)</Typography>
+                                    </MenuItem>
+                                )}
+                                {[50, 100, 150, 200, 250].map((n) => (
+                                    <MenuItem key={n} value={n}>
+                                        <Typography variant="body2">{n} steps</Typography>
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                    </Tooltip>
+                </Box>
+
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                        SEED
+                    </Typography>
+                    <FormControlLabel
+                        sx={{ mr: 0 }}
+                        control={
+                            <Switch
+                                size="small"
+                                checked={randomSeed}
+                                onChange={(e) => onRandomSeedChange?.(e.target.checked)}
+                            />
+                        }
+                        label={<Typography variant="caption">Random</Typography>}
+                    />
+                    <TextField
+                        size="small"
+                        type="number"
+                        placeholder="e.g. 42"
+                        value={seedValue}
+                        onChange={(e) => onSeedValueChange?.(e.target.value)}
+                        disabled={randomSeed}
+                        inputProps={{ min: 0, max: 4294967295, step: 1 }}
+                        sx={{
+                            width: 130,
+                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                            '& input': {
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                fontVariantNumeric: 'tabular-nums',
+                            },
+                        }}
+                    />
+                </Box>
+
+                <Tooltip
+                    placement="right"
+                    title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
+                >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                            AUTO BPM
+                        </Typography>
+                        <Switch
+                            size="small"
+                            checked={injectBpm}
+                            onChange={(e) => setInjectBpm(e.target.checked)}
+                        />
+                    </Box>
+                </Tooltip>
+            </Paper>
         </Box>
     );
 }
