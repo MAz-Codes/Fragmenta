@@ -572,7 +572,7 @@ function PerformancePanelInner({
                     onClose={() => setMidiMenuAnchor(null)}
                 />
 
-                <Tooltip title="Launch quantization — match Live's">
+                <Tooltip placement="right" title="Launch quantization — match Live's">
                     <FormControl
                         size="small"
                         sx={{
