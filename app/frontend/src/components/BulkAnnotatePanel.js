@@ -118,8 +118,6 @@ export default function BulkAnnotatePanel({ onCommitted }) {
             const resp = await api.get('/api/bulk-annotate/status');
             data = resp.data;
         } catch (exc) {
-            // Transient errors (e.g. Flask auto-reload) must not kill polling —
-            // the download/annotation keeps running on the backend side.
             return;
         }
         setStatus(data);
@@ -265,13 +263,13 @@ export default function BulkAnnotatePanel({ onCommitted }) {
         <Paper sx={{ p: 2, mt: 3 }} variant="outlined">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <TagsIcon size={20} />
-                <Typography variant="h6">Bulk Auto-Annotate</Typography>
+                <Typography variant="h6">Bulk Auto-Annotation</Typography>
             </Box>
             <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                 Point at a folder of audio files and auto-generate prompts.
                 Basic uses librosa (tempo + key). Rich adds CLAP tagging (genre, mood, instruments).
             </Typography>
-
+            
             <Accordion sx={{ mb: 2 }}>
                 <AccordionSummary expandIcon={<ExpandMoreIcon size={18} />}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

@@ -695,9 +695,6 @@ function App() {
 
     const stopGeneration = () => {
         stopGenerationRef.current = true;
-        // Tell the backend first so the in-flight diffusion loop bails out at
-        // the next step, then abort the HTTP request on our side. Fire-and-
-        // forget; we deliberately do not pass the abort signal here.
         api.post('/api/stop-generation').catch(() => {});
         if (generationAbortRef.current) {
             try { generationAbortRef.current.abort(); } catch (_) {}
@@ -1093,10 +1090,10 @@ function App() {
                                             <Paper sx={{ p: 2 }} variant="outlined">
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                                                     <UploadIcon size={20} />
-                                                    <Typography variant="h6">Manual Annotate</Typography>
+                                                    <Typography variant="h6">Manual Annotation</Typography>
                                                 </Box>
                                                 <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                                                    Upload audio files one by one and write each prompt yourself.
+                                                    Upload audio files one by one and annotate them yourself.
                                                     Use this when you want full control over every annotation.
                                                 </Typography>
 
