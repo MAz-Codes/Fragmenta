@@ -67,7 +67,7 @@ export default function WelcomePage({ open, onClose }) {
                             variant="body2"
                             sx={welcomePageStyles.version}
                         >
-                            Version 0.1.0
+                            Version 0.1.1
                         </Typography>
                         <Button
                             variant="contained"
