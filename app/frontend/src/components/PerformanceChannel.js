@@ -37,7 +37,10 @@ const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
     { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT },
-    { key: 'filter', label: 'LPF', min: 200, max: 18000, step: 1, default: 18000, log: true },
+    // LPF range goes from 20 Hz (full kill) to 20 kHz (bypass). We render the
+    // slider on a log axis so each octave gets equal travel — without this
+    // the bottom 5% of the knob does all the audible work.
+    { key: 'filter', label: 'LPF', min: 20, max: 20000, step: 1, default: 20000, scale: 'log' },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
@@ -425,33 +428,46 @@ export default function PerformanceChannel({
             </Box>
 
             <Box sx={styles.knobsGrid}>
-                {KNOB_DEFS.map((k) => (
-                    <Box key={k.key} sx={styles.knobCell}>
-                        <MidiMappable
-                            id={ctrlId(k.key)}
-                            label={ctrlLabel(k.label)}
-                            kind="continuous"
-                            curve={k.log ? 'log' : 'linear'}
-                            min={k.min}
-                            max={k.max}
-                            value={knobs[k.key]}
-                            onChange={(v) => handleKnob(k.key, v)}
-                            sx={{ alignItems: 'center' }}
-                        >
-                            <Slider
-                                orientation="vertical"
-                                value={knobs[k.key]}
-                                onChange={(_, v) => handleKnob(k.key, v)}
+                {KNOB_DEFS.map((k) => {
+                    const isLog = k.scale === 'log';
+                    // For log knobs, the slider drives a 0..1 position and we
+                    // convert to/from the underlying value (Hz) on the audio
+                    // boundary. The knob value stored in state stays in the
+                    // domain unit (Hz here) so persistence and MIDI keep working.
+                    const valueToPos = isLog
+                        ? (v) => Math.log(Math.max(v, k.min) / k.min) / Math.log(k.max / k.min)
+                        : (v) => v;
+                    const posToValue = isLog
+                        ? (p) => k.min * Math.pow(k.max / k.min, p)
+                        : (v) => v;
+                    return (
+                        <Box key={k.key} sx={styles.knobCell}>
+                            <MidiMappable
+                                id={ctrlId(k.key)}
+                                label={ctrlLabel(k.label)}
+                                kind="continuous"
+                                curve={isLog ? 'log' : 'linear'}
                                 min={k.min}
                                 max={k.max}
-                                step={k.step}
-                                size="small"
-                                sx={styles.knobSlider(color, k.key === 'gain')}
-                            />
-                        </MidiMappable>
-                        <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
-                    </Box>
-                ))}
+                                value={knobs[k.key]}
+                                onChange={(v) => handleKnob(k.key, v)}
+                                sx={{ alignItems: 'center' }}
+                            >
+                                <Slider
+                                    orientation="vertical"
+                                    value={valueToPos(knobs[k.key])}
+                                    onChange={(_, v) => handleKnob(k.key, posToValue(v))}
+                                    min={isLog ? 0 : k.min}
+                                    max={isLog ? 1 : k.max}
+                                    step={isLog ? 0.001 : k.step}
+                                    size="small"
+                                    sx={styles.knobSlider(color, k.key === 'gain')}
+                                />
+                            </MidiMappable>
+                            <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
+                        </Box>
+                    );
+                })}
             </Box>
 
             <Box sx={styles.transportRow}>
