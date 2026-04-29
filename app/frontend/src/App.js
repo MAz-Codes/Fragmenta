@@ -1909,7 +1909,7 @@ function App() {
                                 </Grid>
                             </TabPanel>
 
-                            <TabPanel value={tabValue} index={3}>
+                            <TabPanel value={tabValue} index={3} keepMounted>
                                 {performanceEnabled ? (
                                     <Suspense fallback={
                                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
