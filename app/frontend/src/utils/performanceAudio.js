@@ -374,6 +374,21 @@ export class PerformanceEngine {
         const quantum = this.launchQuantum;
         if (!quantum) return 0;
 
+        // First-launch shortcut: if nothing is currently playing, fire
+        // immediately and (re)anchor the internal transport at "now". This
+        // matches Live's Session View — the user pressed Play, they expect
+        // audio, not silence until the next bar. Subsequent launches see at
+        // least one channel playing and quantize as normal. Link's clock is
+        // external so we leave its snapshot alone.
+        const anythingPlaying = this.channels.some(c => c.isPlaying);
+        if (!anythingPlaying) {
+            if (!this.linkSnapshot) {
+                this.internalTransport.originAudioTime = this.ctx.currentTime;
+                this.internalTransport.anchorBeat = 0;
+            }
+            return 0;
+        }
+
         // Prefer the Link snapshot when active so the app stays in phase with
         // external peers. Falls through to the internal transport when Link
         // isn't running so 'Q' still works standalone.
