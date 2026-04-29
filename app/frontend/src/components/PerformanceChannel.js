@@ -19,7 +19,7 @@ import {
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
 } from 'lucide-react';
-import { performanceChannelStyles as styles } from '../theme';
+import { performanceChannelStyles as styles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
 
 const CHANNEL_COLORS = [
@@ -27,17 +27,21 @@ const CHANNEL_COLORS = [
     '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
 ];
 
-// -6 dBFS in linear amplitude — must match DEFAULT_CHANNEL_GAIN in performanceAudio.js
-const DEFAULT_GAIN = Math.pow(10, -6 / 20);
+// Channel gain runs on the same dBFS scale as the master fader so the two
+// scales line up: -60 dB floor, 0 dB ceiling, default at -6 dB. The knob's
+// dB value is converted to linear before reaching the audio graph.
+const GAIN_DB_MIN = -60;
+const GAIN_DB_MAX = 0;
+const GAIN_DB_DEFAULT = -6;
+const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
-    { key: 'gain', label: 'GAIN', min: 0, max: 1.5, step: 0.01, default: DEFAULT_GAIN },
+    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT },
     { key: 'filter', label: 'LPF', min: 200, max: 18000, step: 1, default: 18000, log: true },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
 
-// Snap pan to center when within this fraction of full travel from 0.
 const PAN_CENTER_SNAP = 0.06;
 
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
@@ -46,6 +50,8 @@ const BEATS_PER_BAR = 4;
 export default function PerformanceChannel({
     index,
     strip,
+    engine,
+    playing = false,
     onGenerate,
     canGenerate,
     onMuteSoloChange,
@@ -64,7 +70,6 @@ export default function PerformanceChannel({
     const [bars, setBars] = useState(4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);
-    const [playing, setPlaying] = useState(false);
     const [looping, setLooping] = useState(true);
     const [muted, setMuted] = useState(false);
     const [soloed, setSoloed] = useState(false);
@@ -79,7 +84,6 @@ export default function PerformanceChannel({
         [bars, bpm]
     );
 
-    // Only show bar counts whose implied duration fits within the model's max.
     const availableBars = useMemo(() => {
         const maxBars = (maxDuration * bpm) / (60 * BEATS_PER_BAR);
         const opts = BARS_OPTIONS.filter(b => b <= maxBars);
@@ -138,14 +142,13 @@ export default function PerformanceChannel({
 
     const handlePlay = () => {
         if (!loaded) return;
-        strip.play(looping);
-        setPlaying(true);
+        if (engine) engine.playChannel(index, looping);
+        else strip.play(looping);
         onStateChange?.(index, { playing: true });
     };
 
     const handleStop = () => {
         strip.stop();
-        setPlaying(false);
         onStateChange?.(index, { playing: false });
     };
 
@@ -171,7 +174,7 @@ export default function PerformanceChannel({
 
     const handleKnob = (key, value) => {
         setKnobs(prev => ({ ...prev, [key]: value }));
-        if (key === 'gain') strip.setUserGain(value);
+        if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
         else if (key === 'pan') strip.setPan(value);
         else if (key === 'filter') strip.setFilter(value);
         else if (key === 'delay') strip.setDelayMix(value);
@@ -223,9 +226,6 @@ export default function PerformanceChannel({
                     sx={styles.promptField}
                     disabled={generating}
                 />
-                {/* Fixed height keeps the strip stable when swapping between
-                    sec (slider) and bars (Select) modes — the Select would
-                    otherwise be taller and push everything below it up/down. */}
                 <Box sx={{ ...styles.durationRow, minHeight: 26, height: 26 }}>
                     <Box
                         sx={{
@@ -245,8 +245,8 @@ export default function PerformanceChannel({
                                     key={mode}
                                     onClick={() => setDurationMode(value)}
                                     sx={{
-                                        fontSize: '0.58rem',
-                                        letterSpacing: '0.08em',
+                                        fontSize: perfTokens.fontSize.small,
+                                        letterSpacing: perfTokens.letterSpacing.wide,
                                         textTransform: 'uppercase',
                                         fontFamily: 'inherit',
                                         px: 0.7,
@@ -287,7 +287,7 @@ export default function PerformanceChannel({
                             size="small"
                             sx={{
                                 flex: 1,
-                                fontSize: '0.7rem',
+                                fontSize: perfTokens.fontSize.body,
                                 height: '100%',
                                 '& .MuiOutlinedInput-input': {
                                     py: 0,
@@ -302,7 +302,7 @@ export default function PerformanceChannel({
                             }}
                         >
                             {availableBars.map(b => (
-                                <MenuItem key={b} value={b} sx={{ fontSize: '0.75rem' }}>
+                                <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.body }}>
                                     {b} {b === 1 ? 'bar' : 'bars'}
                                 </MenuItem>
                             ))}
@@ -337,7 +337,7 @@ export default function PerformanceChannel({
 
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Box component="span" sx={{ fontSize: '0.53rem', color: 'text.secondary', letterSpacing: '0.06em', minWidth: 28 }}>PAN</Box>
+                    <Box component="span" sx={{ fontSize: perfTokens.fontSize.knob, color: 'text.secondary', letterSpacing: perfTokens.letterSpacing.wide, minWidth: 28 }}>PAN</Box>
                     <MidiMappable
                         id={ctrlId('pan')}
                         label={ctrlLabel('Pan')}
@@ -398,7 +398,7 @@ export default function PerformanceChannel({
                                 max={k.max}
                                 step={k.step}
                                 size="small"
-                                sx={styles.knobSlider(color)}
+                                sx={styles.knobSlider(color, k.key === 'gain')}
                             />
                         </MidiMappable>
                         <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
