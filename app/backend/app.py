@@ -383,6 +383,16 @@ def generate_audio():
         model_path = data.get('model_path')
         unwrapped_model_path = data.get('unwrapped_model_path')
 
+        align_bars_raw = data.get('align_bars')
+        align_bpm_raw = data.get('align_bpm')
+        align_bars = Validator.number(
+            align_bars_raw, 'align_bars', min_value=1, max_value=64,
+            integer_only=True) if align_bars_raw is not None else None
+        align_bpm = Validator.number(
+            align_bpm_raw, 'align_bpm', min_value=20, max_value=300
+        ) if align_bpm_raw is not None else None
+        do_align = align_bars is not None and align_bpm is not None
+
     except ValidationError as e:
         return jsonify(APIResponse.validation_error({e.details['field']: [str(e)]})), 400
 
@@ -429,6 +439,19 @@ def generate_audio():
     config_file, determined_model_path = determine_model_config(
         model_name, model_path, unwrapped_model_path)
     logger.info(f"Starting generation with config: {config_file}")
+
+    # In bars mode we need a little extra audio so the post-processor can
+    # onset-trim and tempo-warp without running short of the requested length.
+    # The generator caps duration to model.sample_size internally, so this
+    # never overshoots the model's natural length.
+    ALIGN_HEADROOM_SECONDS = 1.5
+    if do_align:
+        duration = duration + ALIGN_HEADROOM_SECONDS
+        logger.debug(
+            f"Bars-mode alignment requested: bars={align_bars}, bpm={align_bpm}; "
+            f"requesting {duration:.2f}s with headroom"
+        )
+
     try:
         if determined_model_path and determined_model_path.exists():
             output_path = generator.generate_audio(
@@ -484,6 +507,22 @@ def generate_audio():
 
         if not output_path.exists():
             raise GenerationError(prompt, model_name, "Generated audio file not found")
+
+        if do_align:
+            try:
+                from app.core.generation.audio_post_process import align_to_grid
+                align_to_grid(
+                    output_path,
+                    target_bpm=float(align_bpm),
+                    target_bars=int(align_bars),
+                )
+                logger.info(
+                    f"Aligned to grid: bars={align_bars}, bpm={align_bpm}"
+                )
+            except Exception as exc:
+                # Never fail the request because alignment failed — the user
+                # would rather have the raw clip than an error toast.
+                logger.warning(f"Grid alignment skipped after error: {exc}")
 
         logger.info(f"Audio generation completed: {output_path.name} ({output_path.stat().st_size} bytes)")
         return send_file(

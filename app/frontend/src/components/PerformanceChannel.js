@@ -125,10 +125,17 @@ export default function PerformanceChannel({
 
     const handleGenerate = async () => {
         if (!prompt.trim() || generating) return;
-        const effectiveDuration = durationMode === 'bars' ? secondsFromBars : duration;
+        const inBarsMode = durationMode === 'bars';
+        const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
         try {
-            const blob = await onGenerate({ prompt, duration: effectiveDuration });
+            const blob = await onGenerate({
+                prompt,
+                duration: effectiveDuration,
+                // Only forward alignment params in bars mode — seconds mode
+                // generates raw audio with no post-processing.
+                ...(inBarsMode ? { alignBars: bars, alignBpm: bpm } : {}),
+            });
             await strip.loadBlob(blob);
             setLoaded(true);
             onStateChange?.(index, { loaded: true });

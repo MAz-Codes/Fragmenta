@@ -338,7 +338,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -373,6 +373,7 @@ function PerformancePanelInner({
             seed: resolvedSeed,
             model_name: selectedModel,
             ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
+            ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
         };
         const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
         return response.data;
