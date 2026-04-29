@@ -307,30 +307,59 @@ class FineTuner:
             learning_rate = self.config.get("learningRate", 1e-4)
             print(f"LEARNING RATE: {learning_rate}")
 
-            import json
-            config_path = Path(model_config)
-            if config_path.exists():
-                with open(config_path, 'r') as f:
-                    config_data = json.load(f)
-
-                if 'training' in config_data and 'optimizer_configs' in config_data['training']:
-                    if 'diffusion' in config_data['training']['optimizer_configs']:
-                        if 'optimizer' in config_data['training']['optimizer_configs']['diffusion']:
-                            if 'config' in config_data['training']['optimizer_configs']['diffusion']['optimizer']:
-                                old_lr = config_data['training']['optimizer_configs']['diffusion']['optimizer']['config']['lr']
-                                config_data['training']['optimizer_configs']['diffusion']['optimizer']['config']['lr'] = learning_rate
-                                print(f"Updated learning rate from {old_lr} to {learning_rate} in model config")
-
-                with open(config_path, 'w') as f:
-                    json.dump(config_data, f, indent=4)
-                print(f"Updated model config saved to: {config_path}")
-            else:
-                print(f"WARNING: Model config file not found: {config_path}")
-
             config = get_config()
             dataset_config = config.get_dataset_config_path()
             save_dir = str(config.get_path("models_fine_tuned") / model_name)
             os.makedirs(save_dir, exist_ok=True)
+
+            # Write a per-run copy of the model config into save_dir with the LR
+            # override applied. This avoids mutating the shared base config on
+            # disk and makes the fine-tuned model folder self-describing for
+            # later loading/unwrapping.
+            import json
+            base_config_path = Path(model_config)
+            run_config_path = Path(save_dir) / "model_config.json"
+            if base_config_path.exists():
+                with open(base_config_path, 'r') as f:
+                    config_data = json.load(f)
+
+                try:
+                    optimizer_config = (
+                        config_data['training']['optimizer_configs']['diffusion']['optimizer']['config']
+                    )
+                    old_lr = optimizer_config.get('lr')
+                    optimizer_config['lr'] = learning_rate
+                    print(f"Updated learning rate from {old_lr} to {learning_rate} in run config")
+                except (KeyError, TypeError):
+                    print(f"WARNING: Could not locate optimizer.lr in base config; LR override skipped")
+
+                with open(run_config_path, 'w') as f:
+                    json.dump(config_data, f, indent=4)
+                print(f"Per-run model config written to: {run_config_path}")
+                model_config = str(run_config_path)
+            else:
+                print(f"WARNING: Base model config file not found: {base_config_path}")
+
+            # Drop a metadata breadcrumb so the read side (app.py /api/models)
+            # knows which base architecture this fine-tune is paired with,
+            # instead of guessing.
+            metadata_path = Path(save_dir) / "training_metadata.json"
+            try:
+                base_config_rel = str(base_config_path.relative_to(project_root))
+            except ValueError:
+                base_config_rel = str(base_config_path)
+            try:
+                pretrained_ckpt_rel = str(Path(pretrained_ckpt).relative_to(project_root))
+            except ValueError:
+                pretrained_ckpt_rel = pretrained_ckpt
+            with open(metadata_path, 'w') as f:
+                json.dump({
+                    "base_model": base_model,
+                    "base_config_path": base_config_rel,
+                    "pretrained_ckpt_path": pretrained_ckpt_rel,
+                    "learning_rate": learning_rate,
+                }, f, indent=4)
+            print(f"Training metadata written to: {metadata_path}")
 
             batch_size = self.config.get("batchSize", 4)
             accum_batches = 1

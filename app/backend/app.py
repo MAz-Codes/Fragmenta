@@ -66,6 +66,38 @@ _components_initialised = False
 _init_error = None
 
 
+_LEGACY_FINETUNED_CONFIG_PATH = "models/config/model_config_small.json"
+
+
+def _resolve_finetuned_config_path(model_dir: Path, config) -> str:
+    """Pick the architecture config for a fine-tuned model.
+
+    New runs drop a per-run model_config.json (and a training_metadata.json
+    breadcrumb) into the model folder. Older runs from before that change have
+    neither, so fall back to the small base config to preserve existing
+    behavior.
+    """
+    per_run_config = model_dir / "model_config.json"
+    if per_run_config.exists():
+        try:
+            return str(per_run_config.relative_to(config.project_root))
+        except ValueError:
+            return str(per_run_config)
+
+    metadata_path = model_dir / "training_metadata.json"
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            base_config = metadata.get("base_config_path")
+            if base_config and (config.project_root / base_config).exists():
+                return base_config
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return _LEGACY_FINETUNED_CONFIG_PATH
+
+
 def _ensure_components():
     global config, audio_processor, generator, model_manager
     global _components_initialised, _init_error
@@ -603,8 +635,10 @@ def get_models():
                     unwrapped_models.sort(
                         key=lambda x: x['created'], reverse=True)
 
-                # Fine-tuned models reuse the base model's config for unwrapping.
-                base_config_path = "models/config/model_config_small.json"
+                # Resolve the architecture config for this fine-tuned model.
+                # Order: per-run copy in the model folder, then training_metadata
+                # breadcrumb, then legacy fallback to the small base config.
+                base_config_path = _resolve_finetuned_config_path(model_dir, config)
 
                 models.append({
                     'name': model_dir.name,
