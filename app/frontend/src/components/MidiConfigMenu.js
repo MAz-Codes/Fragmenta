@@ -16,6 +16,7 @@ import {
 } from '@mui/material';
 import { Trash2 as DeleteIcon, X as CloseIcon } from 'lucide-react';
 import { useMidi, formatMidi } from './MidiContext';
+import { perfTokens } from '../theme';
 
 const CHANNEL_OPTIONS = [
     { value: 0, label: 'Any' },
@@ -139,8 +140,8 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                             fullWidth
                             sx={{ height: 40 }}
                         >
-                            <ToggleButton value="jump" sx={{ fontSize: '0.7rem' }}>Jump</ToggleButton>
-                            <ToggleButton value="pickup" sx={{ fontSize: '0.7rem' }}>Pickup</ToggleButton>
+                            <ToggleButton value="jump" sx={{ fontSize: perfTokens.fontSize.body }}>Jump</ToggleButton>
+                            <ToggleButton value="pickup" sx={{ fontSize: perfTokens.fontSize.body }}>Pickup</ToggleButton>
                         </ToggleButtonGroup>
                     </Box>
                 </Box>
@@ -155,7 +156,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                         size="small"
                         onClick={clearAll}
                         disabled={config.mappings.length === 0}
-                        sx={{ fontSize: '0.65rem', textTransform: 'none' }}
+                        sx={{ fontSize: perfTokens.fontSize.small, textTransform: 'none' }}
                     >
                         Clear all
                     </Button>
@@ -193,10 +194,10 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                 }}
                             >
                                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="body2" sx={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <Typography variant="body2" sx={{ fontSize: perfTokens.fontSize.body, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                         {m.label}
                                     </Typography>
-                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: perfTokens.fontSize.small, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
                                         {formatMidi(m.midi)}
                                     </Typography>
                                 </Box>
@@ -214,7 +215,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     )}
                 </Box>
 
-                <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.62rem', lineHeight: 1.4 }}>
+                <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: perfTokens.fontSize.small, lineHeight: 1.4 }}>
                     Pickup = ignore the hardware until its position matches the on-screen value (no jumps).
                     Right-click a control while in MIDI mode to clear its mapping.
                 </Typography>
