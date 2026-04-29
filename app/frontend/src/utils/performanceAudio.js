@@ -312,7 +312,6 @@ export class PerformanceEngine {
         this.linkSnapshot = null;
         this.launchQuantum = 0;
 
-
         this.currentImpulseId = DEFAULT_IR_ID;
         loadImpulseResponses(ctx).then(() => {
             const buf = getImpulseResponseBuffer(this.currentImpulseId);

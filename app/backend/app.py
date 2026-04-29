@@ -394,7 +394,9 @@ def generate_audio():
         do_align = align_bars is not None and align_bpm is not None
 
     except ValidationError as e:
-        return jsonify(APIResponse.validation_error({e.details['field']: [str(e)]})), 400
+        field = e.details.get('field', 'unknown') if e.details else 'unknown'
+        logger.warning(f"/api/generate validation failed on '{field}': {e}")
+        return jsonify(APIResponse.validation_error({field: [str(e)]})), 400
 
     logger.info(f"Audio generation request received")
     logger.debug(f"Request details: prompt='{prompt[:50]}...', duration={duration}s, model={model_name}")
