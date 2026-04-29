@@ -25,7 +25,7 @@ def _slugify_prompt(text: str, max_len: int = 40) -> str:
 sys.path.append(
     str(Path(__file__).parent.parent.parent.parent / "stable-audio-tools"))
 
-# Third-party package noise (clip/pkg_resources) is non-actionable for runtime.
+
 warnings.filterwarnings(
     "ignore",
     message=r"pkg_resources is deprecated as an API.*",
