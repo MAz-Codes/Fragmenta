@@ -466,7 +466,8 @@ def generate_audio():
                 steps=steps,
                 seed=seed,
                 batch_index=batch_index,
-                batch_total=batch_total
+                batch_total=batch_total,
+                loop_mode=do_align,
             )
         elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
             model_file_mapping = {
@@ -490,7 +491,8 @@ def generate_audio():
                 steps=steps,
                 seed=seed,
                 batch_index=batch_index,
-                batch_total=batch_total
+                batch_total=batch_total,
+                loop_mode=do_align,
             )
         elif model_name and model_name != 'default':
             fine_tuned_path = config.get_path("models_fine_tuned") / model_name
@@ -500,12 +502,14 @@ def generate_audio():
             output_path = generator.generate_audio(
                 prompt, fine_tuned_path, duration=duration,
                 cfg_scale=cfg_scale, steps=steps, seed=seed,
-                batch_index=batch_index, batch_total=batch_total)
+                batch_index=batch_index, batch_total=batch_total,
+                loop_mode=do_align)
         else:
             logger.debug("Using default model")
             output_path = generator.generate_audio(
                 prompt, duration=duration, cfg_scale=cfg_scale, steps=steps,
-                seed=seed, batch_index=batch_index, batch_total=batch_total)
+                seed=seed, batch_index=batch_index, batch_total=batch_total,
+                loop_mode=do_align)
 
         if not output_path.exists():
             raise GenerationError(prompt, model_name, "Generated audio file not found")

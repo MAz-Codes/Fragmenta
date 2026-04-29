@@ -306,10 +306,23 @@ class AudioGenerator:
                 seed = np.random.randint(0, 2**32 - 1, dtype=np.int64)
 
             print(f"Using seed: {seed}")
+
+            # In loop_mode (bars mode in the performance panel), tell the model
+            # the song is much longer than what we render. SAO 1.0 was trained
+            # to fade out as it approaches `seconds_total`, so matching it to
+            # the requested duration bakes a song-ending fade into the clip.
+            # We still get back exactly `requested_sample_size` samples — the
+            # model just thinks they're the opening of a longer piece.
+            if loop_mode and max_sample_size:
+                song_seconds = max(int(duration),
+                                   int(max_sample_size / self.model.sample_rate))
+            else:
+                song_seconds = int(duration)
+
             conditioning = [{
                 "prompt": prompt,
                 "seconds_start": 0,
-                "seconds_total": int(duration)
+                "seconds_total": song_seconds,
             }]
 
             device = next(self.model.parameters()).device
