@@ -1,17 +1,11 @@
 """Beat-align and tempo-conform a generated WAV to a target BPM and bar count.
-
-Used by the performance panel's BARS mode so each clip starts on a downbeat
-and runs at exactly the global tempo, regardless of what the model rendered.
-The Stable Audio Open family treats "120 BPM" in the prompt as a hint, not a
-constraint, so the rendered audio is rarely sample-accurate to the grid;
-this pass fixes that after the fact.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import librosa
 import numpy as np
@@ -26,32 +20,29 @@ def align_to_grid(
     target_bars: int,
     beats_per_bar: int = 4,
 ) -> Path:
-    """Onset-trim, tempo-warp, and length-trim a WAV to fit a bar grid.
-
-    Writes the aligned audio back to `input_path`. Falls back gracefully when
-    onset / beat detection finds nothing usable: the file is still trimmed to
-    the exact target sample count, so playback length stays correct even if
-    the musical content can't be locked to the grid.
-    """
     audio, sr = sf.read(str(input_path), always_2d=True)
     audio = audio.astype(np.float32, copy=False)
     target_samples = int(round(target_bars * beats_per_bar * 60.0 / target_bpm * sr))
 
     mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
 
-    head_offset = _detect_first_onset_sample(mono, sr)
+    detected_bpm, first_beat = _detect_grid_anchor(mono, sr)
+
+    head_offset = 0
+    if first_beat is not None and 0 < first_beat < sr * 1.5:
+        head_offset = first_beat
+        logger.info(f"align_to_grid: trimmed {head_offset / sr * 1000:.1f} ms to first beat")
+    elif first_beat is None:
+        head_offset = _detect_first_onset_sample(mono, sr)
+        if head_offset > 0:
+            logger.info(f"align_to_grid: trimmed {head_offset / sr * 1000:.1f} ms (onset fallback)")
+
     if head_offset > 0:
         audio = audio[head_offset:]
         mono = mono[head_offset:]
-        logger.info(f"align_to_grid: trimmed {head_offset / sr * 1000:.1f} ms of head")
 
-    detected_bpm = _detect_tempo(mono, sr)
     if detected_bpm is not None:
-        # rate>1 means "play faster" in librosa — i.e. shorten the audio.
-        # To move 124 BPM down to 120 we need rate = 120/124 < 1.
         rate = target_bpm / detected_bpm
-        # Reject absurd ratios — likely half/double-time tracking error or
-        # non-rhythmic content. Stay inside a musical stretch range.
         if 0.7 <= rate <= 1.4:
             audio = _time_stretch_multichannel(audio, rate)
             logger.info(
@@ -88,32 +79,26 @@ def _detect_first_onset_sample(mono: np.ndarray, sr: int) -> int:
     if onsets is None or len(onsets) == 0:
         return 0
     first = int(onsets[0])
-    # If the first onset is more than ~1 s in, the detector probably caught a
-    # pad swell rather than a real downbeat — don't chop into the user's content.
     if first > sr * 1.0:
         return 0
     return first
 
 
-def _detect_tempo(mono: np.ndarray, sr: int) -> Optional[float]:
-    """Return a single BPM estimate, or None if tracking is unreliable."""
+def _detect_grid_anchor(mono: np.ndarray, sr: int) -> Tuple[Optional[float], Optional[int]]:
     try:
         tempo, beats = librosa.beat.beat_track(y=mono, sr=sr, units="samples")
     except Exception as exc:
         logger.warning(f"beat tracking failed: {exc}")
-        return None
+        return None, None
     if beats is None or len(beats) < 4:
-        return None
+        return None, None
     bpm = float(np.atleast_1d(tempo).flatten()[0])
     if not (40.0 <= bpm <= 240.0):
-        return None
-    return bpm
+        return None, None
+    return bpm, int(beats[0])
 
 
 def _time_stretch_multichannel(audio: np.ndarray, rate: float) -> np.ndarray:
     """Phase-vocoder time stretch, applied per channel and re-stacked."""
-    # librosa stretches each row independently when given (channels, samples);
-    # per-channel processing is good enough for the model's stereo content and
-    # avoids the rubberband-cli system dependency.
     stretched = librosa.effects.time_stretch(audio.T, rate=rate)
     return np.ascontiguousarray(stretched.T)
