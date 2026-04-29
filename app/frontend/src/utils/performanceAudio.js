@@ -312,6 +312,16 @@ export class PerformanceEngine {
         this.linkSnapshot = null;
         this.launchQuantum = 0;
 
+        // Internal transport: an always-running beat clock anchored in audio
+        // time. Used for launch quantization when Ableton Link isn't active,
+        // so 'Q' still lines launches up to the bar even with no peer.
+        // BPM changes rebase the anchor (see setBpm) so phase is preserved.
+        this.internalTransport = {
+            originAudioTime: ctx.currentTime,
+            anchorBeat: 0,
+            bpm: 120,
+        };
+
         this.currentImpulseId = DEFAULT_IR_ID;
         loadImpulseResponses(ctx).then(() => {
             const buf = getImpulseResponseBuffer(this.currentImpulseId);
@@ -335,6 +345,19 @@ export class PerformanceEngine {
     }
 
     setBpm(bpm) {
+        const safe = Number(bpm);
+        if (Number.isFinite(safe) && safe > 0) {
+            // Rebase the internal transport so its current beat position is
+            // preserved across the BPM change. Without rebasing, switching
+            // 120→140 would jump the next-quantized beat by minutes' worth
+            // of time in the wrong direction.
+            const tr = this.internalTransport;
+            const now = this.ctx.currentTime;
+            const elapsed = now - tr.originAudioTime;
+            tr.anchorBeat += elapsed * tr.bpm / 60;
+            tr.originAudioTime = now;
+            tr.bpm = safe;
+        }
         this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
     }
 
@@ -349,13 +372,28 @@ export class PerformanceEngine {
 
     getNextQuantizedAudioTime() {
         const quantum = this.launchQuantum;
+        if (!quantum) return 0;
+
+        // Prefer the Link snapshot when active so the app stays in phase with
+        // external peers. Falls through to the internal transport when Link
+        // isn't running so 'Q' still works standalone.
         const snap = this.linkSnapshot;
-        if (!quantum || !snap || !snap.bpm) return 0;
-        const elapsedSec = (performance.now() - snap.capturedAt) / 1000;
-        const currentBeat = snap.beat + elapsedSec * (snap.bpm / 60);
+        if (snap && snap.bpm) {
+            const elapsedSec = (performance.now() - snap.capturedAt) / 1000;
+            const currentBeat = snap.beat + elapsedSec * (snap.bpm / 60);
+            let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
+            if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
+            const secondsUntil = (nextBeat - currentBeat) * 60 / snap.bpm;
+            return this.ctx.currentTime + secondsUntil;
+        }
+
+        const tr = this.internalTransport;
+        if (!tr.bpm) return 0;
+        const elapsedSec = this.ctx.currentTime - tr.originAudioTime;
+        const currentBeat = tr.anchorBeat + elapsedSec * (tr.bpm / 60);
         let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
         if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
-        const secondsUntil = (nextBeat - currentBeat) * 60 / snap.bpm;
+        const secondsUntil = (nextBeat - currentBeat) * 60 / tr.bpm;
         return this.ctx.currentTime + secondsUntil;
     }
 
