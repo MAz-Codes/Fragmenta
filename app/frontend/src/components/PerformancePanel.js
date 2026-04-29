@@ -15,19 +15,31 @@ import {
     IconButton,
     Tooltip,
     ButtonBase,
+    Menu,
+    ListItemText,
 } from '@mui/material';
 import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
     Trash2 as DeleteIcon,
     Settings as SettingsIcon,
+    Save as SaveIcon,
+    X as CloseXIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
-import { MidiProvider, MidiMappable, useMidi } from './MidiContext';
+import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
+import {
+    usePerformanceSession,
+    listPresetNames,
+    savePreset,
+    deletePreset,
+    loadPresetIntoSession,
+    clearPerformanceSession,
+} from './usePerformanceSession';
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
@@ -84,29 +96,139 @@ function PerformancePanelInner({
     seedValue = '',
     onRandomSeedChange,
     onSeedValueChange,
+    onPresetLoaded,
 }) {
+    const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
+
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
     const peakHoldRef = useRef({ db: METER_FLOOR_DB, decayedAt: performance.now() });
     const meterRafRef = useRef(null);
     const [engineReady, setEngineReady] = useState(false);
-    const [masterDb, setMasterDb] = useState(MASTER_DB_DEFAULT);
-    const [bpm, setBpm] = useState(BPM_DEFAULT);
-    const [bpmInput, setBpmInput] = useState(String(BPM_DEFAULT));
+    const [masterDb, setMasterDb] = useState(session.masterDb ?? MASTER_DB_DEFAULT);
+    const [bpm, setBpm] = useState(session.bpm ?? BPM_DEFAULT);
+    const [bpmInput, setBpmInput] = useState(String(session.bpm ?? BPM_DEFAULT));
     const bpmInputFocusedRef = useRef(false);
     const [error, setError] = useState(null);
     const [linkAvailable, setLinkAvailable] = useState(false);
-    const [linkEnabled, setLinkEnabled] = useState(false);
+    const [linkEnabled, setLinkEnabled] = useState(session.linkEnabled ?? false);
     const [linkPeers, setLinkPeers] = useState(0);
     const [linkInstalling, setLinkInstalling] = useState(false);
-    const [launchQuantum, setLaunchQuantum] = useState(LAUNCH_Q_DEFAULT);
+    const [launchQuantum, setLaunchQuantum] = useState(session.launchQuantum ?? LAUNCH_Q_DEFAULT);
     const wasPlayingRef = useRef(false);
     const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
-    const [injectBpm, setInjectBpm] = useState(true);
+    const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
+
+    // Restore App-level state (model, steps, seed) once on mount via the setter
+    // props the panel was given. The panel doesn't own those, so this is the
+    // only point at which we push session into App state. Subsequent changes
+    // flow normally through the prop callbacks.
+    const appStateRestoredRef = useRef(false);
+    useEffect(() => {
+        if (appStateRestoredRef.current) return;
+        appStateRestoredRef.current = true;
+        if (session.selectedModel && session.selectedModel !== selectedModel) {
+            onSelectModel?.(session.selectedModel);
+        }
+        if (session.selectedUnwrappedModel && session.selectedUnwrappedModel !== selectedUnwrappedModel) {
+            onSelectUnwrappedModel?.(session.selectedUnwrappedModel);
+        }
+        if (typeof session.steps === 'number' && session.steps !== steps) {
+            onStepsChange?.(session.steps);
+        }
+        if (typeof session.randomSeed === 'boolean' && session.randomSeed !== randomSeed) {
+            onRandomSeedChange?.(session.randomSeed);
+        }
+        if (typeof session.seedValue === 'string' && session.seedValue !== seedValue) {
+            onSeedValueChange?.(session.seedValue);
+        }
+        // Intentionally only run on first mount.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Push panel + App-level state into the session whenever any of it changes.
+    useEffect(() => { updateGlobal('bpm', bpm); }, [bpm, updateGlobal]);
+    useEffect(() => { updateGlobal('launchQuantum', launchQuantum); }, [launchQuantum, updateGlobal]);
+    useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
+    useEffect(() => { updateGlobal('injectBpm', injectBpm); }, [injectBpm, updateGlobal]);
+    useEffect(() => { updateGlobal('linkEnabled', linkEnabled); }, [linkEnabled, updateGlobal]);
+    useEffect(() => { updateGlobal('selectedModel', selectedModel || ''); }, [selectedModel, updateGlobal]);
+    useEffect(() => { updateGlobal('selectedUnwrappedModel', selectedUnwrappedModel || ''); }, [selectedUnwrappedModel, updateGlobal]);
+    useEffect(() => { updateGlobal('steps', steps); }, [steps, updateGlobal]);
+    useEffect(() => { updateGlobal('randomSeed', randomSeed); }, [randomSeed, updateGlobal]);
+    useEffect(() => { updateGlobal('seedValue', seedValue); }, [seedValue, updateGlobal]);
+
+    const handleChannelFormChange = useCallback((index, partial) => {
+        updateChannel(index, partial);
+    }, [updateChannel]);
+
+    // ---- Preset menu state ----
+    const [presetMenuAnchor, setPresetMenuAnchor] = useState(null);
+    const [presetNames, setPresetNames] = useState(() => listPresetNames());
+    const [saveAsName, setSaveAsName] = useState('');
+    const [restoreArmed, setRestoreArmed] = useState(false);
+    const restoreArmTimerRef = useRef(null);
+
+    const refreshPresetNames = useCallback(() => {
+        setPresetNames(listPresetNames());
+    }, []);
+
+    const openPresetMenu = (e) => {
+        refreshPresetNames();
+        setSaveAsName('');
+        setRestoreArmed(false);
+        setPresetMenuAnchor(e.currentTarget);
+    };
+    const closePresetMenu = () => {
+        setPresetMenuAnchor(null);
+        setRestoreArmed(false);
+        if (restoreArmTimerRef.current) {
+            clearTimeout(restoreArmTimerRef.current);
+            restoreArmTimerRef.current = null;
+        }
+    };
+
+    const handleRestoreDefaults = () => {
+        if (!restoreArmed) {
+            // First click arms; second click within 3 s commits. Disarms
+            // automatically so the destructive path is never one accidental
+            // click away.
+            setRestoreArmed(true);
+            if (restoreArmTimerRef.current) clearTimeout(restoreArmTimerRef.current);
+            restoreArmTimerRef.current = setTimeout(() => setRestoreArmed(false), 3000);
+            return;
+        }
+        clearPerformanceSession();
+        clearMidiConfig();
+        closePresetMenu();
+        onPresetLoaded?.();
+    };
+
+    const handleSaveAs = () => {
+        const name = saveAsName.trim();
+        if (!name) return;
+        savePreset(name, session);
+        setSaveAsName('');
+        refreshPresetNames();
+    };
+
+    const handleLoadPreset = (name) => {
+        if (!loadPresetIntoSession(name)) return;
+        closePresetMenu();
+        // Force-remount via the App-level reset key. Same pathway as Fresh
+        // Start, just with a different localStorage payload pre-loaded.
+        onPresetLoaded?.();
+    };
+
+    const handleDeletePreset = (name, e) => {
+        e?.stopPropagation();
+        deletePreset(name);
+        refreshPresetNames();
+    };
 
     const isSmallModel = (() => {
         if (selectedModel === 'stable-audio-open-small') return true;
@@ -573,6 +695,175 @@ function PerformancePanelInner({
                     onClose={() => setMidiMenuAnchor(null)}
                 />
 
+                <Tooltip title="Save / load presets">
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <IconButton
+                            size="small"
+                            onClick={openPresetMenu}
+                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                        >
+                            <SaveIcon size={14} />
+                        </IconButton>
+                    </span>
+                </Tooltip>
+                <Menu
+                    anchorEl={presetMenuAnchor}
+                    open={Boolean(presetMenuAnchor)}
+                    onClose={closePresetMenu}
+                    MenuListProps={{ sx: { py: 0 } }}
+                    PaperProps={{
+                        sx: {
+                            minWidth: 240,
+                            borderRadius: 1.5,
+                        },
+                    }}
+                >
+                    {/* SAVE section — type a name and click save (or press Enter) */}
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
+                        <Typography
+                            sx={{
+                                fontSize: perfTokens.fontSize.badge,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                                fontWeight: 700,
+                                color: 'text.secondary',
+                                textTransform: 'uppercase',
+                            }}
+                        >
+                            Save
+                        </Typography>
+                    </Box>
+                    <Box sx={{ px: 1.5, pb: 1.25, display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <TextField
+                            autoFocus
+                            size="small"
+                            placeholder="Preset name"
+                            value={saveAsName}
+                            onChange={(e) => setSaveAsName(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveAs();
+                                e.stopPropagation();
+                            }}
+                            sx={{
+                                flex: 1,
+                                '& .MuiOutlinedInput-root': {
+                                    borderRadius: 1.5,
+                                    height: perfTokens.height.compact,
+                                    fontSize: perfTokens.fontSize.body,
+                                },
+                            }}
+                        />
+                        <Button
+                            size="small"
+                            variant="contained"
+                            onClick={handleSaveAs}
+                            disabled={!saveAsName.trim()}
+                            sx={{
+                                height: perfTokens.height.compact,
+                                fontSize: perfTokens.fontSize.body,
+                                fontWeight: 600,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                                borderRadius: 1.5,
+                                minWidth: 56,
+                                px: 1.25,
+                            }}
+                        >
+                            Save
+                        </Button>
+                    </Box>
+                    {saveAsName.trim() && presetNames.includes(saveAsName.trim()) && (
+                        <Box sx={{ px: 1.5, pb: 0.75 }}>
+                            <Typography
+                                variant="caption"
+                                color="warning.main"
+                                sx={{ fontSize: perfTokens.fontSize.small }}
+                            >
+                                Will overwrite existing preset.
+                            </Typography>
+                        </Box>
+                    )}
+
+                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
+
+                    {/* LOAD section — list of saved presets */}
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
+                        <Typography
+                            sx={{
+                                fontSize: perfTokens.fontSize.badge,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                                fontWeight: 700,
+                                color: 'text.secondary',
+                                textTransform: 'uppercase',
+                            }}
+                        >
+                            Load
+                        </Typography>
+                    </Box>
+                    {presetNames.length === 0 ? (
+                        <Box sx={{ px: 1.5, pb: 1.25 }}>
+                            <Typography
+                                variant="caption"
+                                color="text.disabled"
+                                sx={{ fontSize: perfTokens.fontSize.small }}
+                            >
+                                No presets saved yet.
+                            </Typography>
+                        </Box>
+                    ) : (
+                        <Box sx={{ pb: 0.5 }}>
+                            {presetNames.map((name) => (
+                                <MenuItem
+                                    key={name}
+                                    onClick={() => handleLoadPreset(name)}
+                                    sx={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        gap: 1,
+                                        fontSize: perfTokens.fontSize.body,
+                                        fontWeight: 600,
+                                        letterSpacing: perfTokens.letterSpacing.wide,
+                                    }}
+                                >
+                                    <ListItemText primary={name} primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }} />
+                                    <Tooltip title="Delete preset">
+                                        <IconButton
+                                            size="small"
+                                            onClick={(e) => handleDeletePreset(name, e)}
+                                            sx={{ ml: 1, width: perfTokens.height.sub, height: perfTokens.height.sub }}
+                                        >
+                                            <CloseXIcon size={12} />
+                                        </IconButton>
+                                    </Tooltip>
+                                </MenuItem>
+                            ))}
+                        </Box>
+                    )}
+
+                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
+
+                    {/* Destructive: wipes session + MIDI mappings. Two-click arm
+                        prevents accidental clicks; the menu auto-disarms after 3 s. */}
+                    <Tooltip
+                        title={restoreArmed
+                            ? 'Click again within 3s to confirm — this clears all panel settings AND MIDI mappings'
+                            : 'Reset panel settings and clear MIDI mappings'}
+                    >
+                        <MenuItem
+                            onClick={handleRestoreDefaults}
+                            sx={{
+                                fontSize: perfTokens.fontSize.body,
+                                fontWeight: 600,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                                color: restoreArmed ? 'error.main' : 'text.secondary',
+                            }}
+                        >
+                            <ListItemText
+                                primary={restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
+                                primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }}
+                            />
+                        </MenuItem>
+                    </Tooltip>
+                </Menu>
+
                 <Tooltip placement="right" title="Launch quantization — match Live's">
                     <FormControl
                         size="small"
@@ -807,6 +1098,8 @@ function PerformancePanelInner({
                             canGenerate={Boolean(selectedModel)}
                             onMuteSoloChange={handleMuteSoloChange}
                             onStateChange={handleChannelStateChange}
+                            onFormStateChange={handleChannelFormChange}
+                            initialFormState={session.channels[i]}
                             maxDuration={maxDuration}
                             bpm={bpm}
                         />

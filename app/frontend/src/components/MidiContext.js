@@ -46,6 +46,13 @@ function saveConfig(config) {
     } catch { /* quota or serialization — non-fatal */ }
 }
 
+// Wipes the persisted MIDI device + mappings. The provider will pick up the
+// reset on its next mount (caller is expected to remount).
+export function clearMidiConfig() {
+    try { localStorage.removeItem(STORAGE_KEY); }
+    catch { /* non-fatal */ }
+}
+
 function midiKey(midi) {
     return `${midi.type}:${midi.channel}:${midi.number}`;
 }

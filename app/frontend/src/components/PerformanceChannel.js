@@ -56,6 +56,8 @@ export default function PerformanceChannel({
     canGenerate,
     onMuteSoloChange,
     onStateChange,
+    onFormStateChange,
+    initialFormState,
     maxDuration = 47,
     bpm = 120,
 }) {
@@ -64,20 +66,37 @@ export default function PerformanceChannel({
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
 
-    const [prompt, setPrompt] = useState('');
-    const [duration, setDuration] = useState(8);
-    const [durationMode, setDurationMode] = useState('seconds');
-    const [bars, setBars] = useState(4);
+    const init = initialFormState || {};
+    const initKnobs = init.knobs || {};
+    const defaultKnobs = (() => {
+        const d = Object.fromEntries(KNOB_DEFS.map(k => [k.key, k.default]));
+        d.pan = 0;
+        return d;
+    })();
+
+    const [prompt, setPrompt] = useState(init.prompt ?? '');
+    const [duration, setDuration] = useState(init.duration ?? 8);
+    const [durationMode, setDurationMode] = useState(init.durationMode ?? 'seconds');
+    const [bars, setBars] = useState(init.bars ?? 4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);
-    const [looping, setLooping] = useState(true);
-    const [muted, setMuted] = useState(false);
-    const [soloed, setSoloed] = useState(false);
-    const [knobs, setKnobs] = useState(() => {
-        const initial = Object.fromEntries(KNOB_DEFS.map(k => [k.key, k.default]));
-        initial.pan = 0;
-        return initial;
-    });
+    const [looping, setLooping] = useState(init.looping ?? true);
+    const [muted, setMuted] = useState(init.muted ?? false);
+    const [soloed, setSoloed] = useState(init.soloed ?? false);
+    const [knobs, setKnobs] = useState(() => ({ ...defaultKnobs, ...initKnobs }));
+
+    // Mirror form state up to the panel so it can persist the session. Skip the
+    // first render so we don't re-write what we just loaded from localStorage.
+    const initialReportSkippedRef = useRef(false);
+    useEffect(() => {
+        if (!initialReportSkippedRef.current) {
+            initialReportSkippedRef.current = true;
+            return;
+        }
+        onFormStateChange?.(index, {
+            prompt, duration, durationMode, bars, looping, muted, soloed, knobs,
+        });
+    }, [prompt, duration, durationMode, bars, looping, muted, soloed, knobs, index, onFormStateChange]);
 
     const secondsFromBars = useMemo(
         () => bars * (60 / Math.max(bpm, 1)) * BEATS_PER_BAR,
@@ -112,6 +131,28 @@ export default function PerformanceChannel({
     }, [strip, color]);
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
+
+    // One-shot: push restored knob/loop values into the audio strip when it
+    // first becomes available, so the persisted session matches what's heard.
+    // Mute/solo applies through the parent's mix handler so the panel can
+    // recompute the "any-soloed" cross-channel state.
+    const stripStateAppliedRef = useRef(false);
+    useEffect(() => {
+        if (!strip || stripStateAppliedRef.current) return;
+        stripStateAppliedRef.current = true;
+        strip.setUserGain(gainDbToLinear(knobs.gain));
+        strip.setPan(knobs.pan);
+        strip.setFilter(knobs.filter);
+        strip.setDelayMix(knobs.delay);
+        strip.setReverbMix(knobs.reverb);
+        strip.setLoop(looping);
+        if (muted || soloed) {
+            onMuteSoloChange?.(index, { mute: muted, solo: soloed });
+        }
+        // Initial values are intentionally only applied once; subsequent edits
+        // flow through the normal handlers below.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [strip]);
 
     useEffect(() => {
         setDuration(prev => Math.min(prev, maxDuration));

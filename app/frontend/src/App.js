@@ -59,6 +59,7 @@ import ModelUnwrapButton from './components/ModelUnwrapButton';
 import CheckpointManager from './components/CheckpointManager';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
+import { clearPerformanceSession } from './components/usePerformanceSession';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
@@ -207,6 +208,10 @@ function App() {
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
     const [isStartingFresh, setIsStartingFresh] = useState(false);
     const [uploadKey, setUploadKey] = useState(0);
+    // Bumping this key forces the performance panel to remount, which is how
+    // we flush its in-memory session state on Fresh Start (clearing localStorage
+    // alone wouldn't reset the mounted panel's useState mirrors).
+    const [performanceResetKey, setPerformanceResetKey] = useState(0);
     const [isFreeingGPU, setIsFreeingGPU] = useState(false);
     const [showFreeGPUDialog, setShowFreeGPUDialog] = useState(false);
     const [modelWarning, setModelWarning] = useState({
@@ -718,6 +723,12 @@ function App() {
             setProcessingStatus('');
             setGenerationPrompt('');
             setUploadKey(prev => prev + 1);
+
+            // Wipe persisted performance session and force-remount the panel so
+            // its in-memory state resets to defaults along with localStorage.
+            // (MIDI mappings and other app preferences are intentionally kept.)
+            clearPerformanceSession();
+            setPerformanceResetKey(prev => prev + 1);
 
             setProcessingStatus(response.data.message);
 
@@ -1917,6 +1928,7 @@ function App() {
                                         </Box>
                                     }>
                                         <PerformancePanel
+                                            key={performanceResetKey}
                                             selectedModel={selectedModel}
                                             selectedUnwrappedModel={selectedUnwrappedModel}
                                             availableModels={availableModels}
@@ -1930,6 +1942,7 @@ function App() {
                                             seedValue={seedValue}
                                             onRandomSeedChange={setRandomSeed}
                                             onSeedValueChange={setSeedValue}
+                                            onPresetLoaded={() => setPerformanceResetKey(prev => prev + 1)}
                                         />
                                     </Suspense>
                                 ) : (
