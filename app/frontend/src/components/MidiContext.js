@@ -14,9 +14,9 @@ const STORAGE_KEY = 'fragmenta.midi.config.v1';
 const DEFAULT_CONFIG = {
     deviceId: null,
     deviceName: null,
-    channelFilter: 0,           // 0 = any, 1..16 = specific
-    takeover: 'jump',           // 'jump' | 'pickup'
-    mappings: [],               // [{ controlId, label, kind, curve, min, max, midi:{type,channel,number} }]
+    channelFilter: 0,           
+    takeover: 'jump',           
+    mappings: [],              
 };
 
 const MIDI_MODE = {
@@ -68,8 +68,6 @@ export function MidiProvider({ children }) {
 
     const accessRef = useRef(null);
     const subscribersRef = useRef(new Map());
-    // Per-control latch state for pickup takeover. Reset whenever the
-    // mapping is rewritten or the device changes.
     const pickupArmedRef = useRef(new Map());
     const configRef = useRef(config);
     const learnTargetRef = useRef(learnTarget);
@@ -95,7 +93,6 @@ export function MidiProvider({ children }) {
         setInputs(list);
     }, []);
 
-    // Acquire MIDI access once. Permissions persist for the page.
     useEffect(() => {
         if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
             setSupported(false);
@@ -116,8 +113,6 @@ export function MidiProvider({ children }) {
         return () => { cancelled = true; };
     }, [refreshInputs]);
 
-    // If a saved deviceId no longer exists but a device with the same name
-    // appears (common when re-plugging USB MIDI), re-bind to it.
     useEffect(() => {
         if (!inputs.length || !config.deviceName) return;
         const stillThere = config.deviceId && inputs.some(i => i.id === config.deviceId);
@@ -184,15 +179,12 @@ export function MidiProvider({ children }) {
                 if (!isCC) continue;
                 applyContinuous(sub, m, data2, cfg.takeover);
             } else if (sub.opts.kind === 'trigger') {
-                // Notes fire on rising edge. CCs (some controllers send buttons as CC)
-                // also fire on rising edge — treat ≥64 as "pressed", ignore release.
                 if (isNoteOn) sub.handler();
                 else if (isCC && data2 >= 64) sub.handler();
             }
         }
     }, [captureLearn]);
 
-    // Bind onmidimessage to selected input only.
     useEffect(() => {
         const access = accessRef.current;
         if (!access) return undefined;
@@ -205,7 +197,7 @@ export function MidiProvider({ children }) {
                 input.onmidimessage = null;
             }
         });
-        // Reset pickup state when the device changes.
+
         pickupArmedRef.current = new Map();
         return () => {
             bound.forEach((i) => { i.onmidimessage = null; });
@@ -340,15 +332,7 @@ export function useMidi() {
 
 export { formatMidi };
 
-/**
- * Wraps a control with MIDI-learn affordances. While learn mode is on, an
- * overlay covers the child and clicks arm the control for capture. When a
- * mapping exists, a small badge shows on the wrapper.
- *
- * Pass the same min/max/curve you want incoming MIDI to map to. For trigger
- * controls (buttons), set kind="trigger" and onChange will be invoked with
- * no arguments on the rising edge.
- */
+
 export function MidiMappable({
     id,
     label,
