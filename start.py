@@ -15,6 +15,13 @@ BACKEND_URL = "http://127.0.0.1:5001"
 HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
+# Windows: a multi-res .ico is generated from the PNG on first launch and the
+# process gets its own AppUserModelID so the taskbar treats Fragmenta as a
+# distinct app instead of grouping it under (and inheriting the icon of)
+# python.exe.
+WINDOWS_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta.ico"
+WINDOWS_APP_ID = "Fragmenta.Desktop.1"
+WINDOWS_WINDOW_TITLE = "Fragmenta Desktop"
 CHROMIUM_CANDIDATES = (
     "google-chrome",
     "google-chrome-stable",
@@ -142,7 +149,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             chromium_path,
             f"--app={BACKEND_URL}",
             f"--class={APP_WM_CLASS}",
-            "--window-size=1200,800",
+            "--window-size=1280,820",
             "--no-first-run",
             "--no-default-browser-check",
         ]
@@ -208,12 +215,88 @@ def check_linux_webview_deps() -> tuple[bool, str]:
         return False, f"Missing GTK/WebKit: {e}"
 
 
+def _ensure_windows_icon() -> bool:
+    """Generate a multi-resolution .ico from the source PNG if it's missing.
+
+    Cached on disk after first run; relies on Pillow, which is already part of
+    the project's dependency footprint. Returns False if generation fails.
+    """
+    if WINDOWS_ICON_PATH.exists():
+        return True
+    try:
+        from PIL import Image
+        img = Image.open(APP_ICON_PATH)
+        WINDOWS_ICON_PATH.parent.mkdir(parents=True, exist_ok=True)
+        img.save(
+            WINDOWS_ICON_PATH,
+            format="ICO",
+            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        )
+        return True
+    except Exception as exc:
+        print(f"Could not generate Windows icon: {exc}")
+        return False
+
+
+def _windows_set_app_id() -> None:
+    """Give the host process its own AppUserModelID. Without this, Windows
+    looks up the taskbar icon by the host executable (python.exe) and groups
+    Fragmenta under "Python" in the taskbar/alt-tab list."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    except Exception as exc:
+        print(f"Could not set AppUserModelID: {exc}")
+
+
+def _windows_apply_window_icon() -> None:
+    """Replace the pywebview window's titlebar/taskbar icon with Fragmenta's.
+    Called from the window's `shown` event so the HWND is guaranteed to exist.
+    """
+    if sys.platform != "win32":
+        return
+    if not _ensure_windows_icon():
+        return
+    try:
+        import ctypes
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x00000010
+
+        hwnd = ctypes.windll.user32.FindWindowW(None, WINDOWS_WINDOW_TITLE)
+        if not hwnd:
+            return
+        icon_path = str(WINDOWS_ICON_PATH)
+        # Load both 16×16 (titlebar) and 32×32 (alt-tab/taskbar) sizes from
+        # the multi-res .ico so each surface gets a crisp image.
+        h_small = ctypes.windll.user32.LoadImageW(
+            None, icon_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE
+        )
+        h_big = ctypes.windll.user32.LoadImageW(
+            None, icon_path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE
+        )
+        if h_small:
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+        if h_big:
+            ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+    except Exception as exc:
+        print(f"Could not set Windows window icon: {exc}")
+
+
 def run_pywebview_mode() -> int:
     try:
         import webview
     except ImportError:
         print("pywebview is unavailable; falling back to browser mode.")
         return run_browser_mode()
+
+    # Must run before the window is created — AppUserModelID is sticky per
+    # process and Windows reads it when registering the new top-level window.
+    _windows_set_app_id()
 
     # Pre-check Linux dependencies for better error messages
     if sys.platform == "linux":
@@ -249,13 +332,22 @@ def run_pywebview_mode() -> int:
 
         try:
             window = webview.create_window(
-                title="Fragmenta Desktop",
+                title=WINDOWS_WINDOW_TITLE,
                 url=BACKEND_URL,
-                width=1200,
-                height=800,
+                # Just over the App's md→lg breakpoint (1200px) so the
+                # Performance-mode toggle in the sidebar isn't hidden by the
+                # icon-only collapse. Window chrome eats some pixels, hence
+                # the buffer above 1200.
+                width=1280,
+                height=820,
                 min_size=(1000, 700),
                 background_color="#0D1117",
             )
+            # On Windows, swap python.exe's icon for Fragmenta's once the
+            # window is ready. Other platforms ignore this — the icon comes
+            # from the .desktop file (Linux) or the bundle (macOS).
+            if sys.platform == "win32":
+                window.events.shown += _windows_apply_window_icon
             webview.start()
             return 0 if window else 1
         except Exception as exc:
