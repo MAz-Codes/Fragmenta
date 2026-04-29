@@ -79,19 +79,6 @@ build/fragmenta/
 build/fragmenta.spec
 build/windows_source/
 
-dist/
-dist/Fragmenta.app/
-distribution/builds/
-*.dmg
-*.app
-*.exe
-*.iss
-*.pkg
-*.deb
-*.rpm
-*.AppImage
-*.spec
-
 scripts/__pycache__/
 
 tmp/
