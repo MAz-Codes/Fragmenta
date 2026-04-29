@@ -46,6 +46,10 @@ class AudioGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.current_model_name = None
         self.current_model_path = None
+        # Caller-facing key for the currently loaded weights. Used to short-
+        # circuit reloads when generate_audio is invoked repeatedly with the
+        # same model — without this, every Generate click reloads from disk.
+        self.current_model_key = None
         self.is_distilled_small = False
         self._stop_event = threading.Event()
         logger.info(f"Using device: {self.device}")
@@ -179,13 +183,25 @@ class AudioGenerator:
         seed: int = -1,
         output_path: Optional[Path] = None,
         batch_index: int = 1,
-        batch_total: int = 1
+        batch_total: int = 1,
+        loop_mode: bool = False,
     ) -> Path:
         print(f"\nAUDIO GENERATOR: generate_audio called")
         print(f"   - Prompt: '{prompt}'")
         print(f"   - Duration: {duration}s")
 
-        if self.model is None or model_path is not None or unwrapped_model_path is not None:
+        # Build a cache key for the requested model so we can reuse weights
+        # across consecutive Generate clicks on the same model.
+        if unwrapped_model_path:
+            target_key = ('unwrapped', str(unwrapped_model_path))
+        elif model_path:
+            target_key = ('path', str(model_path))
+        else:
+            target_key = ('default', 'stable-audio-open-small')
+
+        if self.model is not None and self.current_model_key == target_key:
+            print(f"AUDIO GENERATOR: Reusing already-loaded model")
+        else:
             print(f"AUDIO GENERATOR: Loading new model")
 
             if unwrapped_model_path:
@@ -212,8 +228,8 @@ class AudioGenerator:
                 print(f"AUDIO GENERATOR: Loading default local small base model")
                 if not self.load_local_base_model("stable-audio-open-small"):
                     raise ValueError("Failed to load default local base model")
-        else:
-            print(f"AUDIO GENERATOR: Using existing model")
+
+            self.current_model_key = target_key
 
         print(f"AUDIO GENERATOR: Model loaded successfully")
 
