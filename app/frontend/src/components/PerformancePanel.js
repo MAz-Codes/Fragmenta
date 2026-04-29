@@ -25,7 +25,7 @@ import {
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine } from '../utils/performanceAudio';
-import { performancePanelStyles as styles } from '../theme';
+import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
 
@@ -38,6 +38,21 @@ const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
 const BPM_MAX = 300;
 const BPM_DEFAULT = 120;
+
+
+const LAUNCH_QUANTIZE_OPTIONS = [
+    { value: 0,     label: 'None' },
+    { value: 32,    label: '8 Bars' },
+    { value: 16,    label: '4 Bars' },
+    { value: 8,     label: '2 Bars' },
+    { value: 4,     label: '1 Bar' },
+    { value: 2,     label: '1/2' },
+    { value: 1,     label: '1/4' },
+    { value: 0.5,   label: '1/8' },
+    { value: 0.25,  label: '1/16' },
+    { value: 0.125, label: '1/32' },
+];
+const LAUNCH_Q_DEFAULT = 4;
 
 const dbToGain = (db) => (db <= MASTER_DB_MIN ? 0 : Math.pow(10, db / 20));
 const ampToDb = (amp) => (amp <= 0 ? -Infinity : 20 * Math.log10(amp));
@@ -77,9 +92,6 @@ function PerformancePanelInner({
     const [engineReady, setEngineReady] = useState(false);
     const [masterDb, setMasterDb] = useState(MASTER_DB_DEFAULT);
     const [bpm, setBpm] = useState(BPM_DEFAULT);
-    // Separate "what the field displays" from "what the app commits". Lets
-    // the user type "1" → "11" → "112" without the first keystroke getting
-    // clamped up to BPM_MIN mid-typing (which then produced "201", "211", etc).
     const [bpmInput, setBpmInput] = useState(String(BPM_DEFAULT));
     const bpmInputFocusedRef = useRef(false);
     const [error, setError] = useState(null);
@@ -87,9 +99,8 @@ function PerformancePanelInner({
     const [linkEnabled, setLinkEnabled] = useState(false);
     const [linkPeers, setLinkPeers] = useState(0);
     const [linkInstalling, setLinkInstalling] = useState(false);
-    // Tracks whether the most recent bpm change came from Link (poll response)
-    // or from the user (typing in the field). Prevents an echo loop where a
-    // Link-driven update gets pushed back to Link as if it were a local edit.
+    const [launchQuantum, setLaunchQuantum] = useState(LAUNCH_Q_DEFAULT);
+    const wasPlayingRef = useRef(false);
     const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     const [channelStates, setChannelStates] = useState(() =>
@@ -159,9 +170,6 @@ function PerformancePanelInner({
     const handleBpmChange = (event) => {
         const raw = event.target.value;
         setBpmInput(raw);
-        // Only commit the numeric bpm if what the user has typed so far is a
-        // complete, in-range value. Intermediate digits ("1" on the way to
-        // "112") are held in bpmInput without disturbing the committed bpm.
         const parsed = Number(raw);
         if (Number.isFinite(parsed) && parsed >= BPM_MIN && parsed <= BPM_MAX) {
             bpmOriginRef.current = 'user';
@@ -187,13 +195,10 @@ function PerformancePanelInner({
         bpmInputFocusedRef.current = true;
     };
 
-    // Mirror committed bpm back into the field — but only when the user isn't
-    // currently typing, so Link-driven updates don't overwrite a draft.
     useEffect(() => {
         if (!bpmInputFocusedRef.current) setBpmInput(String(bpm));
     }, [bpm]);
 
-    // Probe whether the backend has an Ableton Link binding installed.
     useEffect(() => {
         api.get('/api/link/state')
             .then((r) => {
@@ -203,11 +208,16 @@ function PerformancePanelInner({
             .catch(() => setLinkAvailable(false));
     }, []);
 
-    // Poll Link state while enabled; pull BPM and peer count into local state.
+
     useEffect(() => {
-        if (!linkEnabled) return undefined;
+        if (!linkEnabled) {
+            engineRef.current?.setLinkSnapshot(null);
+            wasPlayingRef.current = false;
+            return undefined;
+        }
         let cancelled = false;
         const poll = async () => {
+            const capturedAt = performance.now();
             try {
                 const r = await api.get('/api/link/state');
                 if (cancelled || !r.data?.enabled) return;
@@ -220,6 +230,22 @@ function PerformancePanelInner({
                     });
                 }
                 setLinkPeers(Number(r.data.num_peers || 0));
+
+                const isPlaying = Boolean(r.data.is_playing);
+                const beat = Number(r.data.beat) || 0;
+                const bpmFloat = Number(r.data.bpm) || 120;
+                engineRef.current?.setLinkSnapshot({
+                    beat,
+                    bpm: bpmFloat,
+                    isPlaying,
+                    capturedAt,
+                });
+                
+                if (wasPlayingRef.current && !isPlaying) {
+                    engineRef.current?.stopAll();
+                    setChannelStates(prev => prev.map(s => ({ ...s, playing: false })));
+                }
+                wasPlayingRef.current = isPlaying;
             } catch {
                 /* transient network blip — next tick will retry */
             }
@@ -229,8 +255,10 @@ function PerformancePanelInner({
         return () => { cancelled = true; clearInterval(timer); };
     }, [linkEnabled]);
 
-    // User-initiated BPM changes are pushed to the Link session. Changes that
-    // originated from a Link poll are suppressed here (see bpmOriginRef).
+    useEffect(() => {
+        engineRef.current?.setLaunchQuantum(launchQuantum);
+    }, [launchQuantum]);
+
     useEffect(() => {
         if (!linkEnabled) return;
         if (bpmOriginRef.current === 'link') {
@@ -252,7 +280,6 @@ function PerformancePanelInner({
             try {
                 await api.post('/api/link/install');
                 setLinkAvailable(true);
-                // Auto-enable after a successful install — the user just asked for Link.
                 await api.post('/api/link/enable');
                 setLinkEnabled(true);
             } catch (err) {
@@ -281,11 +308,15 @@ function PerformancePanelInner({
         }
     }, [linkEnabled, linkAvailable]);
 
-    const handlePlayAll = () => engineRef.current?.playAll(true);
-    const handleStopAll = () => engineRef.current?.stopAll();
+    const handlePlayAll = () => {
+        engineRef.current?.playAll(true);
+        setChannelStates(prev => prev.map(s => (s.loaded ? { ...s, playing: true } : s)));
+    };
+    const handleStopAll = () => {
+        engineRef.current?.stopAll();
+        setChannelStates(prev => prev.map(s => ({ ...s, playing: false })));
+    };
 
-    // Apply a BPM value coming from MIDI (or any non-typing source). Clamps,
-    // rounds, and routes through the same origin tracking the input field uses.
     const applyExternalBpm = useCallback((value) => {
         const next = Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(value)));
         bpmOriginRef.current = 'user';
@@ -295,7 +326,6 @@ function PerformancePanelInner({
     const midi = useMidi();
     const [midiMenuAnchor, setMidiMenuAnchor] = useState(null);
 
-    // Esc exits MIDI learn mode without dismissing the panel.
     useEffect(() => {
         if (!midi?.learnMode) return undefined;
         const onKey = (e) => {
@@ -316,9 +346,6 @@ function PerformancePanelInner({
             throw new Error(msg);
         }
 
-        // Auto-inject the panel BPM into the prompt unless the user opted out
-        // or already mentioned a tempo. Keeps generations in sync with the
-        // master tempo without requiring the user to type it every time.
         const trimmed = (prompt || '').trim();
         const hasExplicitBpm = /\b\d{2,3}\s*bpm\b/i.test(trimmed);
         const finalPrompt = injectBpm && !hasExplicitBpm
@@ -448,18 +475,30 @@ function PerformancePanelInner({
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 fontFamily: 'inherit',
-                                fontSize: '0.72rem',
+                                fontSize: perfTokens.fontSize.body,
                                 fontWeight: 600,
                                 px: 1,
                                 minWidth: 46,
-                                height: 26,
+                                height: perfTokens.height.compact,
                                 borderRadius: '2px',
-                                bgcolor: linkEnabled ? '#F5C542' : '#6e6e6e',
+                                // Three states matching Ableton Live's button:
+                                // off → gray, on/no peers → yellow (broadcasting,
+                                // alone), on/peers → teal (sync'd with at least
+                                // one other app).
+                                bgcolor: !linkEnabled
+                                    ? '#6e6e6e'
+                                    : linkPeers > 0
+                                        ? MASTER_COLOR
+                                        : '#F5C542',
                                 color: linkEnabled ? '#000' : '#2a2a2a',
                                 opacity: linkInstalling ? 0.55 : 1,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
-                                    bgcolor: linkEnabled ? '#FFD54F' : '#7d7d7d',
+                                    bgcolor: !linkEnabled
+                                        ? '#7d7d7d'
+                                        : linkPeers > 0
+                                            ? '#4DD0DE'
+                                            : '#FFD54F',
                                 },
                                 '&.Mui-disabled': {
                                     color: linkEnabled ? '#000' : '#2a2a2a',
@@ -468,7 +507,9 @@ function PerformancePanelInner({
                         >
                             {linkInstalling
                                 ? 'installing…'
-                                : `Link${linkEnabled && linkPeers > 0 ? ` · ${linkPeers}` : ''}`}
+                                : linkEnabled && linkPeers > 0
+                                    ? `${linkPeers} Link`
+                                    : 'Link'}
                         </ButtonBase>
                     </span>
                 </Tooltip>
@@ -492,11 +533,11 @@ function PerformancePanelInner({
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 fontFamily: 'inherit',
-                                fontSize: '0.72rem',
+                                fontSize: perfTokens.fontSize.body,
                                 fontWeight: 600,
                                 px: 1,
                                 minWidth: 46,
-                                height: 26,
+                                height: perfTokens.height.compact,
                                 borderRadius: '2px',
                                 bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
                                 color: midi?.learnMode ? '#000' : '#2a2a2a',
@@ -519,7 +560,7 @@ function PerformancePanelInner({
                         <IconButton
                             size="small"
                             onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
-                            sx={{ width: 26, height: 26, color: 'text.secondary' }}
+                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
                         >
                             <SettingsIcon size={14} />
                         </IconButton>
@@ -531,9 +572,37 @@ function PerformancePanelInner({
                     onClose={() => setMidiMenuAnchor(null)}
                 />
 
-                {/* Tempo — outlined field matching other inputs. The floating-label
-                    notch looked awkward at this width, so the unit label lives
-                    inline as an endAdornment instead. */}
+                <Tooltip title="Launch quantization — match Live's">
+                    <FormControl
+                        size="small"
+                        sx={{
+                            minWidth: 92,
+                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, height: perfTokens.height.compact },
+                            '& .MuiSelect-select': {
+                                py: 0,
+                                fontSize: perfTokens.fontSize.body,
+                                fontWeight: 600,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                            },
+                        }}
+                    >
+                        <Select
+                            value={launchQuantum}
+                            onChange={(e) => setLaunchQuantum(Number(e.target.value))}
+                            renderValue={(val) => {
+                                const opt = LAUNCH_QUANTIZE_OPTIONS.find((o) => o.value === val);
+                                return `Q · ${opt?.label ?? 'None'}`;
+                            }}
+                        >
+                            {LAUNCH_QUANTIZE_OPTIONS.map((opt) => (
+                                <MenuItem key={opt.value} value={opt.value}>
+                                    <Typography variant="body2">{opt.label}</Typography>
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Tooltip>
+
                 <MidiMappable
                     id="master.bpm"
                     label="Tempo (BPM)"
@@ -556,8 +625,8 @@ function PerformancePanelInner({
                                 <Typography
                                     component="span"
                                     sx={{
-                                        fontSize: '0.62rem',
-                                        letterSpacing: '0.08em',
+                                        fontSize: perfTokens.fontSize.small,
+                                        letterSpacing: perfTokens.letterSpacing.wide,
                                         color: 'text.disabled',
                                         pl: 0.5,
                                         userSelect: 'none',
@@ -572,7 +641,6 @@ function PerformancePanelInner({
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
                             '& input': {
                                 textAlign: 'right',
-                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                                 fontVariantNumeric: 'tabular-nums',
                                 pr: 0,
                             },
@@ -585,7 +653,6 @@ function PerformancePanelInner({
                     />
                 </MidiMappable>
 
-                {/* Model picker — half the old width */}
                 <FormControl size="small" sx={{
                     flex: 1,
                     minWidth: 110,
@@ -661,7 +728,7 @@ function PerformancePanelInner({
                     </Select>
                 </FormControl>
 
-                {/* Checkpoint picker — also halved */}
+
                 {unwrappedModels.length > 0 && (
                     <FormControl size="small" sx={{
                         flex: 1,
@@ -694,7 +761,6 @@ function PerformancePanelInner({
                     </FormControl>
                 )}
 
-                {/* Transport */}
                 <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
                     <Button
                         size="small"
@@ -734,6 +800,8 @@ function PerformancePanelInner({
                             key={i}
                             index={i}
                             strip={strip}
+                            engine={engineRef.current}
+                            playing={channelStates[i]?.playing || false}
                             onGenerate={generateForChannel}
                             canGenerate={Boolean(selectedModel)}
                             onMuteSoloChange={handleMuteSoloChange}
@@ -801,7 +869,7 @@ function PerformancePanelInner({
                 flexWrap: { xs: 'wrap', md: 'nowrap' },
             }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
                         STEPS
                     </Typography>
                     <Tooltip
@@ -838,7 +906,7 @@ function PerformancePanelInner({
                 </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
                         SEED
                     </Typography>
                     <FormControlLabel
@@ -864,7 +932,6 @@ function PerformancePanelInner({
                             width: 130,
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             '& input': {
-                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                                 fontVariantNumeric: 'tabular-nums',
                             },
                         }}
@@ -876,7 +943,7 @@ function PerformancePanelInner({
                     title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
                 >
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: '0.06em' }}>
+                        <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
                             AUTO BPM
                         </Typography>
                         <Switch
