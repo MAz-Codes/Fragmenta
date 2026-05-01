@@ -5,6 +5,8 @@ async function request(method, url, body, config = {}) {
     if (body !== undefined && body !== null) {
         if (body instanceof FormData) {
             init.body = body;
+            // Let the browser set Content-Type so the multipart boundary is included.
+            delete headers['Content-Type'];
         } else {
             init.body = JSON.stringify(body);
             if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
