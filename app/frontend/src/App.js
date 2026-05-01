@@ -54,6 +54,7 @@ import HfAuthDialog from './components/HfAuthDialog';
 import TabPanel from './components/TabPanel';
 import AudioUploadRow from './components/AudioUploadRow';
 import BulkAnnotatePanel from './components/BulkAnnotatePanel';
+import CsvImportPanel from './components/CsvImportPanel';
 import TrainingMonitor from './components/TrainingMonitor';
 import ModelUnwrapButton from './components/ModelUnwrapButton';
 import CheckpointManager from './components/CheckpointManager';
@@ -112,7 +113,8 @@ function App() {
 
     const [trainingConfig, setTrainingConfig] = useState({
         epochs: 30,
-        checkpointSteps: 50,
+        checkpointSteps: 500,
+        checkpointAuto: true,
         batchSize: 4,
         learningRate: 1e-4,
         modelName: 'my_fine_tuned_model',
@@ -120,6 +122,7 @@ function App() {
         saveWrappedCheckpoint: false,
         precision: 'auto'
     });
+    const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [isTraining, setIsTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [trainingStatus, setTrainingStatus] = useState(null);
@@ -181,6 +184,7 @@ function App() {
     };
 
     const [systemStatus, setSystemStatus] = useState(null);
+    const [isStatusLoading, setIsStatusLoading] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
@@ -296,11 +300,14 @@ function App() {
     };
 
     const fetchSystemStatus = async () => {
+        setIsStatusLoading(true);
         try {
             const response = await api.get('/api/status');
             setSystemStatus(response.data);
         } catch (error) {
             console.error('Error fetching system status:', error);
+        } finally {
+            setIsStatusLoading(false);
         }
     };
 
@@ -365,6 +372,29 @@ function App() {
 
         return () => clearInterval(interval);
     }, [isTraining]);
+
+    useEffect(() => {
+        // Debounced preview of total_steps + resolved checkpoint cadence so the
+        // user sees what "Auto" picks before launching training.
+        const handle = setTimeout(async () => {
+            try {
+                const { checkpointAuto, ...rest } = trainingConfig;
+                const { data } = await api.post('/api/training/checkpoint-preview', {
+                    ...rest,
+                    checkpointSteps: checkpointAuto ? null : trainingConfig.checkpointSteps,
+                });
+                setCheckpointPreview(data);
+            } catch {
+                setCheckpointPreview(null);
+            }
+        }, 300);
+        return () => clearTimeout(handle);
+    }, [
+        trainingConfig.epochs,
+        trainingConfig.batchSize,
+        trainingConfig.checkpointSteps,
+        trainingConfig.checkpointAuto,
+    ]);
 
     useEffect(() => {
         let statusInterval;
@@ -500,7 +530,12 @@ function App() {
         await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
 
         try {
-            const response = await api.post('/api/start-training', trainingConfig);
+            const { checkpointAuto, ...rest } = trainingConfig;
+            const payload = {
+                ...rest,
+                checkpointSteps: checkpointAuto ? null : trainingConfig.checkpointSteps,
+            };
+            const response = await api.post('/api/start-training', payload);
             setProcessingStatus('Training started successfully!');
         } catch (error) {
             const errorData = error.response?.data;
@@ -1140,6 +1175,8 @@ function App() {
                                             </Paper>
 
                                             <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
+
+                                            <CsvImportPanel key={`csv-${uploadKey}`} onCommitted={fetchSystemStatus} />
                                         </Box>
                                     </Grid>
 
@@ -1151,6 +1188,23 @@ function App() {
                                             </Alert>
                                         )}
 
+                                        {!systemStatus && (
+                                            <Paper sx={appStyles.elevatedInfoCard}>
+                                                <Box sx={appStyles.sectionCardHeader}>
+                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
+                                                        <FolderOpenIcon size={20} />
+                                                    </Box>
+                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
+                                                </Box>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
+                                                    <CircularProgress size={18} />
+                                                    <Typography variant="body2" color="textSecondary">
+                                                        Scanning dataset…
+                                                    </Typography>
+                                                </Box>
+                                            </Paper>
+                                        )}
+
                                         {systemStatus && (
                                             <Paper sx={appStyles.elevatedInfoCard}>
                                                 <Box sx={appStyles.sectionCardHeader}>
@@ -1158,6 +1212,9 @@ function App() {
                                                         <FolderOpenIcon size={20} />
                                                     </Box>
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
+                                                    {isStatusLoading && (
+                                                        <CircularProgress size={14} sx={{ ml: 1 }} />
+                                                    )}
                                                 </Box>
                                                 <Typography variant="body2">Raw Files: {systemStatus.raw_files}</Typography>
                                                 <Typography variant="body2" sx={appStyles.emphasizedPrimaryBody2}>
@@ -1296,35 +1353,72 @@ function App() {
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Checkpoint Interval (steps)</Typography>
+                                                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                                                                    <Typography>Checkpoint Interval (steps)</Typography>
+                                                                    <FormControlLabel
+                                                                        sx={{ m: 0 }}
+                                                                        control={
+                                                                            <Switch
+                                                                                size="small"
+                                                                                checked={trainingConfig.checkpointAuto}
+                                                                                onChange={(e) => setTrainingConfig({
+                                                                                    ...trainingConfig,
+                                                                                    checkpointAuto: e.target.checked,
+                                                                                    ...(e.target.checked ? {} : {
+                                                                                        checkpointSteps: checkpointPreview?.checkpoint_every || trainingConfig.checkpointSteps,
+                                                                                    }),
+                                                                                })}
+                                                                            />
+                                                                        }
+                                                                        label="Auto"
+                                                                        labelPlacement="start"
+                                                                    />
+                                                                </Box>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
-                                                                        value={trainingConfig.checkpointSteps}
+                                                                        value={
+                                                                            trainingConfig.checkpointAuto
+                                                                                ? (checkpointPreview?.checkpoint_every || trainingConfig.checkpointSteps)
+                                                                                : trainingConfig.checkpointSteps
+                                                                        }
                                                                         onChange={(e, value) => setTrainingConfig({
                                                                             ...trainingConfig,
                                                                             checkpointSteps: value
                                                                         })}
                                                                         min={10}
-                                                                        max={1000}
+                                                                        max={Math.max(1000, checkpointPreview?.total_steps || 0)}
                                                                         step={10}
                                                                         valueLabelDisplay="auto"
+                                                                        disabled={trainingConfig.checkpointAuto}
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                     <TextField
                                                                         type="number"
-                                                                        value={trainingConfig.checkpointSteps}
+                                                                        value={
+                                                                            trainingConfig.checkpointAuto
+                                                                                ? (checkpointPreview?.checkpoint_every ?? '')
+                                                                                : trainingConfig.checkpointSteps
+                                                                        }
                                                                         onChange={(e) => {
                                                                             const val = parseInt(e.target.value) || 10;
+                                                                            const cap = Math.max(1000, checkpointPreview?.total_steps || 0);
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                checkpointSteps: Math.max(10, Math.min(1000, val))
+                                                                                checkpointSteps: Math.max(10, Math.min(cap, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 10, max: 1000, step: 10 }}
+                                                                        inputProps={{ min: 10, step: 10 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
+                                                                        disabled={trainingConfig.checkpointAuto}
                                                                     />
                                                                 </Box>
+                                                                {checkpointPreview?.valid && checkpointPreview.checkpoint_every > 0 && (
+                                                                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5 }}>
+                                                                        ≈ {Math.max(1, Math.round(checkpointPreview.total_steps / checkpointPreview.checkpoint_every))} checkpoints across {checkpointPreview.total_steps} total steps
+                                                                        {trainingConfig.checkpointAuto ? ' (auto)' : ''}
+                                                                    </Typography>
+                                                                )}
                                                             </Grid>
 
                                                             <Grid item xs={12}>
@@ -2091,8 +2185,8 @@ function App() {
                 </DialogTitle>
                 <DialogContent>
                     <Typography sx={appStyles.infoDialogIntro}>
-                        Fragmenta is a local-first workflow for audio data preparation, fine-tuning, and generation.
-                        Use the quick links below for About and Documentation.
+                        Fragmenta is an open source, local-first pipeline to fine-tune, train, generate and perform with text-to-audio diffusion models.
+                        Made by the composer and researcher Misagh Azimi. 
                     </Typography>
 
                     <Typography variant="subtitle2" sx={appStyles.infoDialogSectionTitle}>

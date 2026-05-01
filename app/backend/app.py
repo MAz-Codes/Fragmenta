@@ -3,7 +3,7 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
-from app.core.training.fine_tuner import start_training as start_training_func, get_training_status, stop_training
+from app.core.training.fine_tuner import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.backend.data.simple_audio_processor import SimpleAudioProcessor
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -250,7 +250,7 @@ def process_files():
             existing_files[filename] = {
                 "file_name": filename,
                 "prompt": prompt,
-                "path": f"app/backend/data/{filename}"
+                "path": str(data_dir / filename)
             }
         
         # Convert back to list and save
@@ -556,13 +556,9 @@ def get_status():
     try:
         config = get_config()
         data_dir = config.get_path("data")
-
-        audio_files = list(data_dir.glob("*.wav")) + \
-            list(data_dir.glob("*.mp3")) + list(data_dir.glob("*.flac"))
-        config = get_config()
         metadata_json = Path(config.get_metadata_json_path())
         custom_metadata = Path(config.get_custom_metadata_path())
-        total_duration = 0.0
+
         try:
             import torchaudio
         except ImportError:
@@ -572,23 +568,67 @@ def get_status():
         except ImportError:
             sf = None
 
-        for audio_file in audio_files:
+        def _duration(path: Path) -> float:
+            import warnings
             try:
-                if torchaudio is not None:
-                    info = torchaudio.info(str(audio_file))
-                    total_duration += info.num_frames / info.sample_rate
-                elif sf is not None:
-                    f = sf.SoundFile(str(audio_file))
-                    total_duration += len(f) / f.samplerate
-            except Exception as e:
-                print(f"Error reading {audio_file}: {e}")
-                continue
+                with warnings.catch_warnings():
+                    # /api/status polls every few seconds; without this, every
+                    # torchaudio.info call spams pages of deprecation noise.
+                    warnings.simplefilter("ignore")
+                    if torchaudio is not None:
+                        info = torchaudio.info(str(path))
+                        return info.num_frames / info.sample_rate
+                    if sf is not None:
+                        f = sf.SoundFile(str(path))
+                        return len(f) / f.samplerate
+            except Exception as exc:
+                print(f"Error reading {path}: {exc}")
+            return 0.0
+
+        # Prefer metadata.json as the source of truth for "the dataset" — it spans
+        # files that may live outside data/ (e.g. CSV import with copy_files=false).
+        # Fall back to scanning data/ if metadata is absent.
+        file_names = []
+        total_duration = 0.0
+        if metadata_json.exists():
+            try:
+                with open(metadata_json, 'r', encoding='utf-8') as f:
+                    entries = json.load(f) or []
+            except Exception as exc:
+                print(f"Could not read metadata.json: {exc}")
+                entries = []
+            for item in entries:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get('file_name')
+                if not name:
+                    continue
+                file_names.append(name)
+                # Files are staged into data/ (copy or symlink) at commit time, so
+                # resolve by basename rather than trusting the stored `path` field
+                # (legacy entries may use an incorrect prefix).
+                p = data_dir / name
+                if not p.exists():
+                    stored = item.get('path') or ''
+                    candidate = Path(stored)
+                    if not candidate.is_absolute():
+                        candidate = config.project_root / stored
+                    if candidate.is_file():
+                        p = candidate
+                if p.is_file():
+                    total_duration += _duration(p)
+        else:
+            audio_files = list(data_dir.glob("*.wav")) + \
+                list(data_dir.glob("*.mp3")) + list(data_dir.glob("*.flac"))
+            for audio_file in audio_files:
+                total_duration += _duration(audio_file)
+            file_names = [f.name for f in audio_files]
 
         status_response = {
             'status': 'running',
-            'raw_files': len(audio_files),
-            'processed_segments': len(audio_files),
-            'raw_file_names': [f.name for f in audio_files[:10]],
+            'raw_files': len(file_names),
+            'processed_segments': len(file_names),
+            'raw_file_names': file_names[:10],
             'total_duration': total_duration,
             'has_metadata_json': metadata_json.exists(),
             'has_custom_metadata': custom_metadata.exists(),
@@ -599,6 +639,22 @@ def get_status():
         return jsonify(status_response)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/checkpoint-preview', methods=['POST'])
+def training_checkpoint_preview():
+    """Resolve checkpoint cadence + step counts for the current training config.
+
+    Body: trainingConfig dict (epochs, batchSize, checkpointSteps, ...). Send
+    checkpointSteps as null/0 to request the auto value.
+    """
+    payload = request.json or {}
+    try:
+        plan = preview_training_plan(payload)
+    except Exception as exc:
+        logger.warning("checkpoint preview failed: %s", exc)
+        return jsonify({'valid': False, 'error': str(exc)}), 200
+    return jsonify(plan)
 
 
 @app.route('/api/training-status', methods=['GET'])
@@ -1955,7 +2011,6 @@ def bulk_annotate_commit():
             existing_metadata = []
     existing_files = {item['file_name']: item for item in existing_metadata}
 
-    import shutil
     committed = 0
     for entry in entries:
         file_name = entry.get('file_name')
@@ -1965,17 +2020,19 @@ def bulk_annotate_commit():
             continue
 
         src = Path(src_path)
-        if copy_files and src.exists() and src.parent.resolve() != data_dir.resolve():
+        if not src.exists():
+            logger.warning("Source missing for %s: %s", file_name, src)
+            continue
+
+        if src.parent.resolve() != data_dir.resolve():
             dst = data_dir / file_name
-            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
-                try:
-                    shutil.copy2(src, dst)
-                except Exception as exc:
-                    logger.warning("Copy failed for %s: %s", src, exc)
-                    continue
-            stored_path = f"app/backend/data/{file_name}"
-        else:
-            stored_path = str(src)
+            try:
+                _stage_into_data_dir(src, dst, copy_files=copy_files)
+            except Exception as exc:
+                logger.warning("Stage failed for %s: %s", src, exc)
+                continue
+
+        stored_path = str(data_dir / file_name)
 
         existing_files[file_name] = {
             'file_name': file_name,
@@ -1996,6 +2053,262 @@ def bulk_annotate_commit():
     return jsonify({
         'message': f'Committed {committed} annotations.',
         'committed': committed,
+        'metadata_json': str(json_path),
+    })
+
+
+def _stage_into_data_dir(src: Path, dst: Path, copy_files: bool) -> str:
+    """Place an audio file into the data dir so the trainer's scan picks it up.
+
+    Trainer reads `dataset-config.json` -> a single `audio_dir` path (data/),
+    so files referenced only by absolute paths in metadata.json are invisible.
+    Copying duplicates disk; symlinking is the cheap alternative.
+
+    Returns 'copy' | 'symlink' to describe what was done.
+    """
+    import shutil
+
+    if dst.is_symlink() or dst.exists():
+        try:
+            dst.unlink()
+        except IsADirectoryError:
+            shutil.rmtree(dst)
+
+    if not copy_files:
+        try:
+            dst.symlink_to(src.resolve())
+            return 'symlink'
+        except (OSError, NotImplementedError) as exc:
+            # Windows without developer mode disallows symlinks; fall back.
+            logger.info("Symlink failed for %s, falling back to copy: %s", src, exc)
+
+    shutil.copy2(src, dst)
+    return 'copy'
+
+
+@app.route('/api/import-csv/preview', methods=['POST'])
+def import_csv_preview():
+    """Parse a CSV upload + audio folder, return rows with conflict status.
+
+    Form fields:
+      - csv: file upload (text/csv) with at least file_name, prompt columns
+      - audio_folder: server-side path to a folder containing the audio files
+    """
+    import csv as _csv
+    from io import StringIO
+
+    csv_file = request.files.get('csv')
+    audio_folder = (request.form.get('audio_folder') or '').strip()
+
+    if not csv_file:
+        return jsonify({'error': 'CSV file is required.'}), 400
+    if not audio_folder:
+        return jsonify({'error': 'Audio folder path is required.'}), 400
+
+    audio_dir = Path(audio_folder).expanduser()
+    if not audio_dir.exists() or not audio_dir.is_dir():
+        return jsonify({'error': f'Audio folder does not exist: {audio_folder}'}), 400
+    audio_dir_resolved = audio_dir.resolve()
+
+    try:
+        text = csv_file.read().decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return jsonify({'error': 'CSV must be UTF-8 encoded.'}), 400
+
+    reader = _csv.DictReader(StringIO(text))
+    fieldnames = reader.fieldnames or []
+    if 'file_name' not in fieldnames or 'prompt' not in fieldnames:
+        return jsonify({
+            'error': "CSV must include 'file_name' and 'prompt' columns.",
+            'found_columns': fieldnames,
+        }), 400
+
+    config = get_config()
+    json_path = Path(config.get_metadata_json_path())
+    existing_files = set()
+    if json_path.exists():
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+            existing_files = {item['file_name'] for item in existing if isinstance(item, dict)}
+        except Exception as exc:
+            logger.warning("Could not load existing metadata: %s", exc)
+
+    rows = []
+    seen_keys = set()
+    for line_no, raw in enumerate(reader, start=2):
+        file_name_csv = (raw.get('file_name') or '').strip()
+        prompt = (raw.get('prompt') or '').strip()
+        if not file_name_csv and not prompt:
+            continue
+
+        row_errors = []
+        if not file_name_csv:
+            row_errors.append('missing file_name')
+        if not prompt:
+            row_errors.append('missing prompt')
+
+        src_path = None
+        audio_found = False
+        if file_name_csv:
+            rel = file_name_csv.replace('\\', '/').lstrip('/')
+            if '..' in rel.split('/'):
+                row_errors.append('file_name contains ".."')
+            else:
+                candidate = (audio_dir / rel).resolve()
+                try:
+                    candidate.relative_to(audio_dir_resolved)
+                    if candidate.is_file():
+                        src_path = str(candidate)
+                        audio_found = True
+                    else:
+                        row_errors.append('audio file not found in folder')
+                except ValueError:
+                    row_errors.append('file_name resolves outside audio folder')
+
+        key_name = Path(file_name_csv).name if file_name_csv else ''
+        duplicate_in_csv = key_name and key_name in seen_keys
+        if duplicate_in_csv:
+            row_errors.append('duplicate file_name within this CSV')
+        if key_name:
+            seen_keys.add(key_name)
+
+        rows.append({
+            'line': line_no,
+            'file_name': key_name,
+            'csv_path': file_name_csv,
+            'prompt': prompt,
+            'src_path': src_path,
+            'audio_found': audio_found,
+            'conflict': bool(key_name) and key_name in existing_files,
+            'errors': row_errors,
+        })
+
+    return jsonify({
+        'rows': rows,
+        'total': len(rows),
+        'conflicts': sum(1 for r in rows if r['conflict']),
+        'missing_audio': sum(1 for r in rows if not r['audio_found']),
+        'existing_count': len(existing_files),
+    })
+
+
+@app.route('/api/import-csv/commit', methods=['POST'])
+def import_csv_commit():
+    """Merge reviewed CSV import entries into metadata.json with a conflict policy.
+
+    Body: {
+      entries: [{ file_name, prompt, src_path }, ...],
+      conflict_policy: 'skip' | 'overwrite' | 'rename',
+      copy_files: bool
+    }
+    """
+    payload = request.json or {}
+    entries = payload.get('entries') or []
+    policy = payload.get('conflict_policy') or 'skip'
+    copy_files = bool(payload.get('copy_files', True))
+
+    if policy not in {'skip', 'overwrite', 'rename'}:
+        return jsonify({'error': "conflict_policy must be one of 'skip', 'overwrite', 'rename'."}), 400
+    if not entries:
+        return jsonify({'error': 'No entries to commit.'}), 400
+
+    config = get_config()
+    data_dir = config.get_path('data')
+    data_dir.mkdir(exist_ok=True, parents=True)
+    data_dir_resolved = data_dir.resolve()
+
+    json_path = Path(config.get_metadata_json_path())
+    existing_metadata = []
+    if json_path.exists():
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                existing_metadata = json.load(f)
+        except Exception as exc:
+            logger.warning("Could not load existing metadata: %s", exc)
+            existing_metadata = []
+    existing_files = {item['file_name']: item for item in existing_metadata if isinstance(item, dict)}
+
+    def unique_name(base_name: str) -> str:
+        stem = Path(base_name).stem
+        suffix = Path(base_name).suffix
+        n = 2
+        while True:
+            candidate = f"{stem}_{n}{suffix}"
+            if candidate not in existing_files and not (data_dir / candidate).exists():
+                return candidate
+            n += 1
+
+    committed = 0
+    skipped = 0
+    renamed = 0
+    overwritten = 0
+    errors = []
+
+    for entry in entries:
+        file_name = Path((entry.get('file_name') or '').strip()).name
+        prompt = (entry.get('prompt') or '').strip()
+        src_path = entry.get('src_path') or entry.get('path')
+
+        if not file_name or not prompt or not src_path:
+            errors.append({'file_name': file_name, 'reason': 'missing required field'})
+            continue
+
+        src = Path(src_path)
+        if not src.is_file():
+            errors.append({'file_name': file_name, 'reason': 'source audio missing'})
+            continue
+
+        target_name = file_name
+        had_conflict = file_name in existing_files
+        force_copy = False
+        if had_conflict:
+            if policy == 'skip':
+                skipped += 1
+                continue
+            if policy == 'rename':
+                target_name = unique_name(file_name)
+                renamed += 1
+                # Rename only makes sense if a renamed file actually lands in data/.
+                force_copy = True
+            elif policy == 'overwrite':
+                overwritten += 1
+
+        if src.parent.resolve() != data_dir_resolved:
+            dst = data_dir / target_name
+            try:
+                _stage_into_data_dir(src, dst, copy_files=(copy_files or force_copy))
+            except Exception as exc:
+                errors.append({'file_name': file_name, 'reason': f'stage failed: {exc}'})
+                continue
+        stored_path = str(data_dir / target_name)
+
+        existing_files[target_name] = {
+            'file_name': target_name,
+            'prompt': prompt,
+            'path': stored_path,
+        }
+        committed += 1
+
+    final_metadata = list(existing_files.values())
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(final_metadata, f, indent=2)
+
+    try:
+        config.update_dataset_config()
+    except Exception as exc:
+        logger.warning("Failed to refresh dataset-config.json: %s", exc)
+
+    return jsonify({
+        'message': (
+            f'Imported {committed} entries '
+            f'(skipped: {skipped}, renamed: {renamed}, overwritten: {overwritten}).'
+        ),
+        'committed': committed,
+        'skipped': skipped,
+        'renamed': renamed,
+        'overwritten': overwritten,
+        'errors': errors,
         'metadata_json': str(json_path),
     })
 

@@ -497,7 +497,7 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                                 onChange={(e) => setCopyFiles(e.target.value === 'copy')}
                             >
                                 <MenuItem value="copy">Copy files into data/</MenuItem>
-                                <MenuItem value="link">Leave files in place</MenuItem>
+                                <MenuItem value="link">Symlink files into data/</MenuItem>
                             </Select>
                         </FormControl>
                         <Button

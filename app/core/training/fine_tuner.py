@@ -127,6 +127,13 @@ class FineTuner:
         }
 
     @staticmethod
+    def _auto_checkpoint_interval(total_steps: int) -> int:
+        """Default checkpoint cadence: ~10 checkpoints across the run, floored at 100."""
+        if total_steps <= 0:
+            return 100
+        return max(100, total_steps // 10)
+
+    @staticmethod
     def _resolve_checkpoint_interval(total_steps: int, requested_interval: int) -> int:
         """Choose a checkpoint interval that lands exactly on the final step."""
         requested = max(1, int(requested_interval))
@@ -158,8 +165,18 @@ class FineTuner:
             
             file_count = len(audio_files)
             batch_size = self.config.get("batchSize", 4)
-            
+
             if file_count == 0:
+                metadata_json = data_dir / "metadata.json"
+                if metadata_json.exists():
+                    return {
+                        "valid": False,
+                        "error": (
+                            f"metadata.json exists but no audio files were found in {data_dir}. "
+                            "The trainer reads files from this directory only. Re-import with "
+                            "Copy or Symlink so the audio is staged into data/."
+                        ),
+                    }
                 return {
                     "valid": False,
                     "error": "No audio files found in the data directory. Please upload some audio files first."
@@ -182,7 +199,13 @@ class FineTuner:
             steps_per_epoch = max(1, file_count // batch_size)
             total_epochs = self.config.get("epochs", DEFAULT_EPOCHS)
             total_steps = steps_per_epoch * total_epochs
-            requested_checkpoint_every = self.config.get("checkpointSteps", DEFAULT_CHECKPOINT_STEPS)
+
+            raw_requested = self.config.get("checkpointSteps", DEFAULT_CHECKPOINT_STEPS)
+            auto_checkpoint = raw_requested in (None, 0, "", "0")
+            if auto_checkpoint:
+                requested_checkpoint_every = self._auto_checkpoint_interval(total_steps)
+            else:
+                requested_checkpoint_every = int(raw_requested)
             checkpoint_every = self._resolve_checkpoint_interval(total_steps, requested_checkpoint_every)
 
             checkpoint_adjustment = None
@@ -191,7 +214,7 @@ class FineTuner:
                     f"Adjusted checkpoint interval from {requested_checkpoint_every} to {checkpoint_every} "
                     f"so the final step ({total_steps}) is always checkpointed."
                 )
-            
+
             return {
                 "valid": True,
                 "file_count": file_count,
@@ -201,6 +224,7 @@ class FineTuner:
                 "checkpoint_every": checkpoint_every,
                 "requested_checkpoint_every": requested_checkpoint_every,
                 "checkpoint_adjustment": checkpoint_adjustment,
+                "checkpoint_auto": auto_checkpoint,
             }
             
         except Exception as e:
@@ -751,16 +775,22 @@ class FineTuner:
 
             if self.training_process:
                 return_code = self.training_process.returncode
-                
+
                 reached_target = self.training_status.get("stop_initiated", False)
                 final_loss = self.training_status.get("loss")
                 completed_steps = self.training_status.get("global_step", 0)
-                
-                had_training_activity = elapsed_time > 30 and (last_checkpoint_count > 0 or final_loss is not None or completed_steps > 0)
-                
+                target_steps = self.training_status.get("total_steps", 0) or 0
+
+                # Trainers can exit cleanly (return_code == 0) very early — model
+                # load failures, dataloader issues, custom_metadata errors, etc. —
+                # while still emitting a stray step or loss line. So a clean exit
+                # alone isn't proof of success; require that we actually finished
+                # the work we were told to do (allow 1 step of slack for rounding).
+                ran_all_steps = target_steps > 0 and completed_steps >= target_steps - 1
+
                 training_actually_succeeded = (
-                    (return_code == 0 or reached_target) and 
-                    had_training_activity
+                    (reached_target and completed_steps > 0) or
+                    (return_code == 0 and ran_all_steps)
                 )
                 
                 if training_actually_succeeded:
@@ -825,6 +855,17 @@ class FineTuner:
                             if summary:
                                 error_msg = f"Training crashed: {summary}"
                                 failure_reason = "TRAINING_CRASHED"
+                            elif return_code == 0:
+                                # Clean exit but the run didn't actually finish.
+                                error_msg = (
+                                    f"Training process exited at step "
+                                    f"{completed_steps}/{target_steps} without completing the run. "
+                                    f"This usually means the dataloader produced no samples "
+                                    f"(check that data/ contains readable audio matching "
+                                    f"metadata.json) or the trainer hit an early-stop condition. "
+                                    f"See the backend log for the full subprocess output."
+                                )
+                                failure_reason = "TRAINING_INCOMPLETE"
                             else:
                                 error_msg = (
                                     f"Training process exited unexpectedly "
@@ -1126,3 +1167,13 @@ def stop_training() -> Dict[str, Any]:
         return _trainer_instance.stop_training()
     else:
         return {"error": "No training to stop"}
+
+
+def preview_training_plan(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Run dataset validation without starting training.
+
+    Returns the same shape as `_validate_dataset_before_training` so the UI can
+    surface the resolved checkpoint interval (and other derived numbers) before
+    the user commits to a training run.
+    """
+    return FineTuner(config)._validate_dataset_before_training()
