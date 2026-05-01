@@ -1236,6 +1236,9 @@ export const appStyles = {
     },
     recentFilesBlock: {
         mt: 1,
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
     },
     responsiveGrid: {
         height: 'auto',

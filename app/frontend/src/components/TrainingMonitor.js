@@ -55,16 +55,15 @@ export default function TrainingMonitor({
 
             {trainingStatus?.device_info && (
                 <Box sx={trainingMonitorStyles.deviceSection}>
-                    <Typography variant="body2" color="textSecondary" gutterBottom>
-                        <strong>Device Used for Training</strong>
-                    </Typography>
-                    <Typography variant="body2">
-                        Device: {trainingStatus.device_info.device} ({trainingStatus.device_info.memory_gb?.toFixed(2)}GB VRAM)
-                    </Typography>
-                    <Typography variant="body2" color="textSecondary" sx={trainingMonitorStyles.deviceInfo}>
-                        Info: {trainingStatus.device_info.type === 'cuda' ? 'CUDA GPU available and selected for training' :
-                            trainingStatus.device_info.type === 'cpu' ? 'Using CPU (no CUDA GPU available or compatible)' :
-                                'Using MPS (Apple Silicon GPU)'}
+                    <Typography variant="body2" color="textSecondary">
+                        <strong>{
+                            trainingStatus.device_info.type === 'cuda' ? 'CUDA' :
+                                trainingStatus.device_info.type === 'mps' ? 'MPS' : 'CPU'
+                        }</strong>
+                        {' · '}{trainingStatus.device_info.device}
+                        {trainingStatus.device_info.memory_gb
+                            ? ` · ${trainingStatus.device_info.memory_gb.toFixed(1)} GB`
+                            : ''}
                     </Typography>
                 </Box>
             )}
