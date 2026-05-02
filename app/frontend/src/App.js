@@ -239,46 +239,46 @@ function App() {
         console.log('Model changed:', selectedModel);
     }, [selectedModel]);
 
-    const getMaxDuration = () => {
-        if (!selectedModel) return 10;
-
-        const baseModel = baseModels.find(m => m.name === selectedModel);
-        if (baseModel) {
-            if (baseModel.name === 'stable-audio-open-small') {
-                return 11;
-            } else if (baseModel.name === 'stable-audio-open-1.0') {
-                return 47;
-            }
+    // Resolve the base model identity for the currently-selected entry. Works
+    // for both base-model selections (selectedModel === 'stable-audio-open-...')
+    // and fine-tunes (where the API returns base_model from training_metadata).
+    const resolvedBaseModel = (() => {
+        if (!selectedModel) return null;
+        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
+            return selectedModel;
         }
-
         const model = availableModels.find(m => m.name === selectedModel);
-        if (model && selectedUnwrappedModel) {
-            const selectedUnwrapped = model.unwrapped_models?.find(u => u.path === selectedUnwrappedModel);
-            if (selectedUnwrapped) {
-                const sizeMB = selectedUnwrapped.size_mb || 0;
-                return sizeMB < 2000 ? 11 : 47;
-            }
-        }
-
-        return 10;
-    };
-
-    const isSmallModel = (() => {
-        if (selectedModel === 'stable-audio-open-small') return true;
-        const model = availableModels.find(m => m.name === selectedModel);
+        if (model?.base_model) return model.base_model;
+        // Legacy fine-tunes without base_model metadata: fall back to the
+        // unwrapped-file size heuristic.
         if (model && selectedUnwrappedModel) {
             const u = model.unwrapped_models?.find(x => x.path === selectedUnwrappedModel);
-            return u ? (u.size_mb || 0) < 2000 : false;
+            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
         }
-        return false;
+        return null;
     })();
+
+    const isSmallModel = resolvedBaseModel === 'stable-audio-open-small';
+
+    const getMaxDuration = () => {
+        if (!selectedModel) return 10;
+        if (resolvedBaseModel === 'stable-audio-open-small') return 11;
+        if (resolvedBaseModel === 'stable-audio-open-1.0') return 47;
+        return 10;
+    };
 
     useEffect(() => {
         const maxDuration = getMaxDuration();
         if (generationDuration > maxDuration) {
             setGenerationDuration(maxDuration);
         }
-    }, [selectedModel, selectedUnwrappedModel]);
+        // The distilled small model is hard-coded to 8 steps + pingpong sampler
+        // at the backend regardless of slider value; snap the slider so the UI
+        // reflects what will actually run.
+        if (isSmallModel && steps !== 8) {
+            setSteps(8);
+        }
+    }, [selectedModel, selectedUnwrappedModel, isSmallModel]);
 
     const handleTabChange = (event, newValue) => {
         setTabValue(newValue);

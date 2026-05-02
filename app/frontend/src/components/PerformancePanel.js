@@ -230,15 +230,24 @@ function PerformancePanelInner({
         refreshPresetNames();
     };
 
-    const isSmallModel = (() => {
-        if (selectedModel === 'stable-audio-open-small') return true;
+    // Resolve which base model the current selection actually is. Fine-tuned
+    // models carry `base_model` from training_metadata.json via /api/models;
+    // legacy fine-tunes without that field fall back to the size heuristic.
+    const resolvedBaseModel = (() => {
+        if (!selectedModel) return null;
+        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
+            return selectedModel;
+        }
         const model = availableModels.find((m) => m.name === selectedModel);
+        if (model?.base_model) return model.base_model;
         if (model && selectedUnwrappedModel) {
             const u = model.unwrapped_models?.find((x) => x.path === selectedUnwrappedModel);
-            return u ? (u.size_mb || 0) < 2000 : false;
+            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
         }
-        return false;
+        return null;
     })();
+
+    const isSmallModel = resolvedBaseModel === 'stable-audio-open-small';
 
     if (!engineRef.current) {
         engineRef.current = new PerformanceEngine(CHANNEL_COUNT);
@@ -511,7 +520,7 @@ function PerformancePanelInner({
 
     const anyLoaded = channelStates.some(s => s.loaded);
     const anyPlaying = channelStates.some(s => s.playing);
-    const maxDuration = selectedModel && selectedModel.includes('small') ? 10 : 47;
+    const maxDuration = isSmallModel ? 10 : 47;
 
     const handleMuteSoloChange = (index, change) => {
         const engine = engineRef.current;

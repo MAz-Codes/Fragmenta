@@ -15,6 +15,7 @@ import threading
 import time
 import json
 import logging
+from typing import Dict, Optional
 from werkzeug.serving import WSGIRequestHandler
 
 sys.path.append(os.path.abspath(
@@ -69,33 +70,54 @@ _init_error = None
 _LEGACY_FINETUNED_CONFIG_PATH = "models/config/model_config_small.json"
 
 
-def _resolve_finetuned_config_path(model_dir: Path, config) -> str:
-    """Pick the architecture config for a fine-tuned model.
+def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[str]]:
+    """Pick the architecture config + base-model identity for a fine-tuned model.
 
-    New runs drop a per-run model_config.json (and a training_metadata.json
-    breadcrumb) into the model folder. Older runs from before that change have
-    neither, so fall back to the small base config to preserve existing
-    behavior.
+    New runs drop a per-run model_config.json and a training_metadata.json
+    breadcrumb (with `base_model`) into the model folder. Older runs from
+    before that change have neither, so fall back to the small base config
+    and infer the base model from the config filename.
     """
+    config_path: Optional[str] = None
     per_run_config = model_dir / "model_config.json"
     if per_run_config.exists():
         try:
-            return str(per_run_config.relative_to(config.project_root))
+            config_path = str(per_run_config.relative_to(config.project_root))
         except ValueError:
-            return str(per_run_config)
+            config_path = str(per_run_config)
 
+    base_model: Optional[str] = None
     metadata_path = model_dir / "training_metadata.json"
     if metadata_path.exists():
         try:
             with open(metadata_path, 'r') as f:
                 metadata = json.load(f)
-            base_config = metadata.get("base_config_path")
-            if base_config and (config.project_root / base_config).exists():
-                return base_config
+            base_model = metadata.get("base_model")
+            if config_path is None:
+                base_config = metadata.get("base_config_path")
+                if base_config and (config.project_root / base_config).exists():
+                    config_path = base_config
         except (OSError, json.JSONDecodeError):
             pass
 
-    return _LEGACY_FINETUNED_CONFIG_PATH
+    if config_path is None:
+        config_path = _LEGACY_FINETUNED_CONFIG_PATH
+
+    if base_model is None:
+        # Best-effort fallback for legacy runs: infer from the config filename
+        # (the small base config has "_small" in its name).
+        base_model = (
+            "stable-audio-open-small"
+            if "small" in config_path.lower()
+            else "stable-audio-open-1.0"
+        )
+
+    return {"config_path": config_path, "base_model": base_model}
+
+
+def _resolve_finetuned_config_path(model_dir: Path, config) -> str:
+    """Back-compat shim — call sites that only need the config path."""
+    return _resolve_finetuned_metadata(model_dir, config)["config_path"]
 
 
 def _ensure_components():
@@ -736,10 +758,11 @@ def get_models():
                     unwrapped_models.sort(
                         key=lambda x: x['created'], reverse=True)
 
-                # Resolve the architecture config for this fine-tuned model.
-                # Order: per-run copy in the model folder, then training_metadata
-                # breadcrumb, then legacy fallback to the small base config.
-                base_config_path = _resolve_finetuned_config_path(model_dir, config)
+                # Resolve the architecture config + base-model identity for
+                # this fine-tuned model. Order: per-run copy in the model
+                # folder, then training_metadata breadcrumb, then legacy
+                # fallback to the small base config.
+                resolved = _resolve_finetuned_metadata(model_dir, config)
 
                 models.append({
                     'name': model_dir.name,
@@ -747,7 +770,8 @@ def get_models():
                     'has_checkpoint': has_checkpoint,
                     'has_config': has_config,
                     'ckpt_path': str(latest_checkpoint.relative_to(config.project_root)) if latest_checkpoint else None,
-                    'config_path': base_config_path,
+                    'config_path': resolved['config_path'],
+                    'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,
                     'unwrapped_models': unwrapped_models,
                     'created': model_dir.stat().st_mtime if model_dir.exists() else None
