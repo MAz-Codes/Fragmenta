@@ -52,20 +52,19 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 | **Models** | The app guides you through downloading; use the larger model for more coherent results |
 | **Offline** | After initial setup, everything runs locally — your data stays on your device |
 | **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 if auto-installed) |
+| **Python** | **Python 3.11 required** for local installs (Options 3) — [download here](https://www.python.org/downloads/release/python-3119/). Newer versions (3.12, 3.13) will fail to install dependencies. Not needed for the Docker option. |
 
 ---
 
 ## Option 1: Run on Hugging Face 🤗
 
-To showcase the pipeline, Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs. No coding or installation needed, but generation is very slow. Limited GPU-accelerated sessions are available — please get in touch and I can turn them on for you.
+If you only want to get to know the pipeline, Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs. No coding or installation needed, but generation is very slow. Limited GPU-accelerated sessions are available — please get in touch and I can turn them on for you.
 
 ## Option 2: Run Locally with Docker
 
-The fastest way to get started locally — no Python installation needed. Pull the image from [Docker Hub](https://hub.docker.com/r/mazcode/fragmenta/tags) or use the commands below.
+The fastest way to get started locally — no Python installation needed. Use the commands below, then open **http://localhost:5001** in your browser. 
 
 ### GPU (NVIDIA)
-
-> **Windows users:** run from PowerShell or CMD, not Docker Desktop's GUI "Run" button — the GUI doesn't pass the GPU flag. After the first run the container will appear in Docker Desktop as normal.
 
 **Linux:**
 ```bash
@@ -87,6 +86,8 @@ docker run -d -p 5001:5001 --gpus all `
 
 ### CPU (Mac / Linux / Windows — no GPU required)
 
+> Audio generation is significantly slower on CPU. The `-v` volume mounts make sure downloaded models and generated audio persist across container restarts.
+
 **Mac / Linux:**
 ```bash
 docker run -d -p 5001:5001 \
@@ -105,13 +106,13 @@ docker run -d -p 5001:5001 `
   mazcode/fragmenta:cpu
 ```
 
-Then open **http://localhost:5001** in your browser.
-
-> Audio generation is significantly slower on CPU. The `-v` volume mounts make sure downloaded models and generated audio persist across container restarts.
-
 ---
 
 ## Option 3: Run the App Locally
+
+> **Requires Python 3.11.** > - **Download:** [python.org → Python 3.11.9](https://www.python.org/downloads/release/python-3119/) (on Windows, tick **"Add python.exe to PATH"**).
+> - **macOS:** the installer auto-installs via Homebrew if Python 3.11 is missing.
+> - **Linux:** the installer auto-installs via `apt` / `dnf`. On Ubuntu 24.04+ it adds the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) (since `python3.11` was dropped from default repos). Arch users need `python311` from the AUR.
 
 ```bash
 git clone https://github.com/MAz-Codes/fragmenta.git
@@ -123,10 +124,10 @@ Run the installer for your platform:
 | Platform | Command |
 |---|---|
 | **Linux** | `./fragmenta.sh` |
-| **macOS** | `fragmenta.command` (double-click in Finder, or run from terminal) |
+| **macOS** | `fragmenta.command` |
 | **Windows** | `./fragmenta.bat` |
 
-The installer sets up a Python virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a few minutes; subsequent launches are faster — re-run the same script to start the app.
+The installer verifies Python 3.11 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a few minutes; subsequent launches are faster — re-run the same script to start the app.
 
 ---
 
@@ -240,7 +241,7 @@ fragmenta/
 | Flash-Attention won't install | Optional dependency — app works without it. Not available on Windows |
 | GPU memory issues | Use the **Free GPU** button in the header, or reduce batch size |
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
-| Import errors | Verify Python 3.11 is installed |
+| Import errors | Verify Python 3.11 is installed — newer versions are not supported. [Download Python 3.11.9](https://www.python.org/downloads/release/python-3119/). If you previously ran the installer with the wrong Python version, delete the `venv/` folder and rerun. |
 
 ---
 
