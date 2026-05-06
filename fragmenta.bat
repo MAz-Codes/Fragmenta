@@ -99,7 +99,8 @@ echo Installing remaining dependencies from requirements.txt...
 echo This may take a few minutes...
 echo Note: skipping flash-attn on Windows (Linux-only optimization).
 findstr /V "flash-attn" requirements.txt > "%TEMP%\requirements_windows.txt"
-python -m pip install -r "%TEMP%\requirements_windows.txt"
+python -m pip install -r "%TEMP%\requirements_windows.txt" ^
+    --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
 set "PIP_RESULT=%ERRORLEVEL%"
 del "%TEMP%\requirements_windows.txt" >nul 2>&1
 if not "%PIP_RESULT%"=="0" (
@@ -110,7 +111,7 @@ echo Dependencies installed successfully.
 
 echo Installing bundled stable-audio-tools...
 pushd "%PROJECT_ROOT%\stable-audio-tools"
-python -m pip install -e .
+python -m pip install -e . --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
 set "SAT_RESULT=%ERRORLEVEL%"
 popd
 if not "%SAT_RESULT%"=="0" (

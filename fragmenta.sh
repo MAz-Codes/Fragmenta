@@ -177,7 +177,8 @@ pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" \
 echo "Installing remaining dependencies (flash-attn handled separately)..."
 REQ_TMP="$(mktemp)"
 grep -v "^flash-attn" requirements.txt > "$REQ_TMP"
-pip install -r "$REQ_TMP" --progress-bar on
+pip install -r "$REQ_TMP" --progress-bar on \
+    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
 REQ_STATUS=$?
 rm -f "$REQ_TMP"
 if [ $REQ_STATUS -ne 0 ]; then
@@ -193,7 +194,8 @@ echo "Installing bundled stable-audio-tools..."
 if [ -d "$PROJECT_ROOT/stable-audio-tools" ]; then
     (
         cd "$PROJECT_ROOT/stable-audio-tools" || exit 1
-        pip install -e . --quiet
+        pip install -e . --quiet \
+            --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
     ) || {
         echo "ERROR: Failed to install bundled stable-audio-tools"
         exit 1

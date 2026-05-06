@@ -115,9 +115,11 @@ echo "This may take several minutes on first install..."
 
 # Install everything except flash-attn first
 grep -v "flash-attn" requirements.txt > /tmp/requirements_temp.txt
-pip install -r /tmp/requirements_temp.txt --quiet || {
+pip install -r /tmp/requirements_temp.txt --quiet \
+    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary || {
     echo "Retrying with verbose output..."
-    pip install -r /tmp/requirements_temp.txt
+    pip install -r /tmp/requirements_temp.txt \
+        --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
 }
 rm /tmp/requirements_temp.txt
 
@@ -131,7 +133,8 @@ echo "Dependencies installed"
 echo ""
 
 echo "Installing audio generation engine..."
-cd stable-audio-tools && pip install -e . --quiet && cd ..
+cd stable-audio-tools && pip install -e . --quiet \
+    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary && cd ..
 echo "Audio engine installed"
 echo ""
 
