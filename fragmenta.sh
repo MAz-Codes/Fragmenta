@@ -10,6 +10,57 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+is_python_311() {
+    "$1" -c 'import sys; sys.exit(0 if sys.version_info[:2] == (3,11) else 1)' >/dev/null 2>&1
+}
+
+PYTHON_CMD=""
+
+find_python_311() {
+    for cmd in python3.11 python3 python; do
+        if command_exists "$cmd" && is_python_311 "$cmd"; then
+            PYTHON_CMD="$cmd"
+            return 0
+        fi
+    done
+    return 1
+}
+
+install_python311() {
+    if command_exists apt-get; then
+        echo "Attempting to install Python 3.11 via apt..."
+        # Native python3.11 only exists on Ubuntu 22.04 / Debian 12.
+        # Newer releases need the deadsnakes PPA.
+        sudo apt update -qq
+        if ! sudo apt install -y python3.11 python3.11-venv python3.11-dev 2>/dev/null; then
+            if command_exists add-apt-repository; then
+                echo "python3.11 not in default repos — adding deadsnakes PPA..."
+                sudo add-apt-repository -y ppa:deadsnakes/ppa
+                sudo apt update -qq
+                sudo apt install -y python3.11 python3.11-venv python3.11-dev || return 1
+            else
+                echo "deadsnakes PPA needed but 'add-apt-repository' is not available."
+                echo "Install software-properties-common, or install Python 3.11 manually."
+                return 1
+            fi
+        fi
+    elif command_exists dnf; then
+        sudo dnf install -y python3.11 || return 1
+    elif command_exists brew; then
+        brew install python@3.11 || return 1
+        export PATH="/opt/homebrew/opt/python@3.11/bin:/usr/local/opt/python@3.11/bin:$PATH"
+    elif command_exists pacman; then
+        # Arch only ships the latest python; 3.11 lives in AUR (python311).
+        echo "Arch Linux does not ship Python 3.11 in core repos."
+        echo "Install it from the AUR (e.g. 'yay -S python311') or build from source, then rerun."
+        return 1
+    else
+        echo "No supported package manager detected for auto-installation."
+        return 1
+    fi
+    return 0
+}
+
 install_linux_webview_deps() {
     if ! command_exists pkg-config; then
         return
@@ -47,21 +98,43 @@ install_linux_webview_deps() {
     fi
 }
 
-echo "Installing system dependencies..."
+echo "Installing system build dependencies..."
 if command_exists apt-get; then
     sudo apt update -qq
     sudo apt install -y \
         pkg-config \
-        python3.11-venv \
         build-essential \
-        python3-dev \
         ninja-build
-elif command_exists brew; then
-    brew install python@3.11
-elif command_exists pacman; then
-    sudo pacman -S python
-else
-    echo "Please install Python 3.11+ manually"
+fi
+
+echo "Checking for Python 3.11..."
+if ! find_python_311; then
+    echo "Python 3.11 not found — attempting auto-install..."
+    if ! install_python311 || ! find_python_311; then
+        echo ""
+        echo "ERROR: Python 3.11 is required but could not be installed automatically."
+        echo ""
+        echo "Fragmenta pins numpy 1.23.5 / pandas 2.0.2, which only have wheels for"
+        echo "Python 3.11. Newer Pythons (3.12, 3.13) will fail to install dependencies."
+        echo ""
+        echo "Install Python 3.11 manually, then rerun this script:"
+        echo "  - Ubuntu 22.04 / Debian 12: sudo apt install python3.11 python3.11-venv python3.11-dev"
+        echo "  - Ubuntu 24.04+:            sudo add-apt-repository ppa:deadsnakes/ppa"
+        echo "                              sudo apt install python3.11 python3.11-venv python3.11-dev"
+        echo "  - Fedora:                   sudo dnf install python3.11"
+        echo "  - Arch (AUR):               yay -S python311"
+        echo "  - From source:              https://www.python.org/downloads/release/python-3119/"
+        echo ""
+        exit 1
+    fi
+fi
+echo "Using Python 3.11 via: $PYTHON_CMD ($($PYTHON_CMD --version))"
+
+# Some distros split the venv module into a separate package; verify before continuing.
+if ! "$PYTHON_CMD" -m venv --help >/dev/null 2>&1; then
+    echo "ERROR: $PYTHON_CMD is missing the 'venv' module."
+    echo "On Debian/Ubuntu install: sudo apt install python3.11-venv"
+    exit 1
 fi
 
 if [ "$(uname -s)" = "Linux" ]; then
@@ -69,9 +142,17 @@ if [ "$(uname -s)" = "Linux" ]; then
 fi
 
 VENV_PATH="$PROJECT_ROOT/venv"
+if [ -d "$VENV_PATH" ]; then
+    # Refuse to reuse a venv built with the wrong Python.
+    if [ -x "$VENV_PATH/bin/python" ] && ! is_python_311 "$VENV_PATH/bin/python"; then
+        echo "Existing venv was not built with Python 3.11 — removing and recreating..."
+        rm -rf "$VENV_PATH"
+    fi
+fi
+
 if [ ! -d "$VENV_PATH" ]; then
     echo "Creating Python virtual environment..."
-    python3.11 -m venv "$VENV_PATH" || python3 -m venv "$VENV_PATH"
+    "$PYTHON_CMD" -m venv "$VENV_PATH"
 fi
 
 echo "Activating virtual environment..."
