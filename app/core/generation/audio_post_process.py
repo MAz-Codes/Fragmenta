@@ -95,7 +95,54 @@ def _detect_grid_anchor(mono: np.ndarray, sr: int) -> Tuple[Optional[float], Opt
     bpm = float(np.atleast_1d(tempo).flatten()[0])
     if not (40.0 <= bpm <= 240.0):
         return None, None
-    return bpm, int(beats[0])
+    anchor = _pick_downbeat_anchor(mono, sr, beats)
+    return bpm, anchor
+
+
+def _pick_downbeat_anchor(
+    mono: np.ndarray,
+    sr: int,
+    beats: np.ndarray,
+    beats_per_bar: int = 4,
+) -> int:
+    """Among the first `beats_per_bar` detected beats, pick the one with the
+    most sub-bass energy. librosa returns beats (any strong onset) not
+    downbeats, so anchoring on beats[0] often lands on the snare. Kicks have
+    most of their energy in 30–180 Hz, so picking the band-energy peak biases
+    the anchor toward the kick / downbeat in beat-driven material.
+    """
+    candidates = [int(b) for b in beats[:beats_per_bar]]
+    if len(candidates) <= 1:
+        return candidates[0] if candidates else 0
+
+    try:
+        from scipy.signal import butter, sosfiltfilt
+        nyq = sr / 2
+        low_hz, high_hz = 30.0, min(180.0, nyq - 1.0)
+        sos = butter(4, [low_hz / nyq, high_hz / nyq], btype="band", output="sos")
+        kick_band = sosfiltfilt(sos, mono)
+    except Exception as exc:
+        logger.warning(f"kick-band filter failed, falling back to beats[0]: {exc}")
+        return candidates[0]
+
+    half_window = int(0.03 * sr)  # 30 ms each side
+    best_idx, best_energy = 0, -1.0
+    for i, b in enumerate(candidates):
+        start = max(0, b - half_window)
+        end = min(len(kick_band), b + half_window)
+        if end <= start:
+            continue
+        energy = float(np.sum(kick_band[start:end] ** 2))
+        if energy > best_energy:
+            best_energy = energy
+            best_idx = i
+
+    if best_idx != 0:
+        logger.info(
+            f"align_to_grid: picked beat {best_idx + 1}/{len(candidates)} as downbeat "
+            f"(sub-bass energy {best_energy:.4g})"
+        )
+    return candidates[best_idx]
 
 
 def _time_stretch_multichannel(audio: np.ndarray, rate: float) -> np.ndarray:
