@@ -46,11 +46,9 @@ class AudioGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.current_model_name = None
         self.current_model_path = None
-        # Caller-facing key for the currently loaded weights. Used to short-
-        # circuit reloads when generate_audio is invoked repeatedly with the
-        # same model — without this, every Generate click reloads from disk.
         self.current_model_key = None
         self.is_distilled_small = False
+        self.is_fine_tuned = False
         self._stop_event = threading.Event()
         logger.info(f"Using device: {self.device}")
 
@@ -73,6 +71,7 @@ class AudioGenerator:
             else:
                 config_file = "model_config.json"
             self.is_distilled_small = "small" in model_name.lower()
+            self.is_fine_tuned = False
 
             config_path = Path(__file__).parent.parent.parent.parent / "models" / "config" / config_file
             logger.info(f"Using config file: {config_path}")
@@ -144,6 +143,15 @@ class AudioGenerator:
                 config_file = "model_config_small.json"
             self.is_distilled_small = "small" in config_file.lower()
 
+           
+            metadata_path = Path(unwrapped_model_path).parent.parent / "training_metadata.json"
+            self.is_fine_tuned = metadata_path.exists()
+            if self.is_fine_tuned:
+                logger.info(
+                    f"Detected fine-tuned model via {metadata_path}; "
+                    f"using full diffusion sampler recipe instead of distilled 8-step pingpong"
+                )
+
             config_path = Path(__file__).parent.parent.parent.parent / \
                 "models" / "config" / config_file
             print(f"Using config file: {config_path}")
@@ -190,8 +198,7 @@ class AudioGenerator:
         print(f"   - Prompt: '{prompt}'")
         print(f"   - Duration: {duration}s")
 
-        # Build a cache key for the requested model so we can reuse weights
-        # across consecutive Generate clicks on the same model.
+        
         if unwrapped_model_path:
             target_key = ('unwrapped', str(unwrapped_model_path))
         elif model_path:
@@ -233,7 +240,6 @@ class AudioGenerator:
 
         print(f"AUDIO GENERATOR: Model loaded successfully")
 
-        # A new generation invalidates any prior stop request.
         self._stop_event.clear()
 
         def _stop_callback(state):
@@ -241,14 +247,25 @@ class AudioGenerator:
                 raise GenerationStopped("Stop requested mid-diffusion")
 
         try:
-            # Stable Audio Open Small is an adversarially-distilled checkpoint
-            # that requires the pingpong sampler at 8 steps with CFG 1.0.
-            # Running the dpmpp-3m-sde recipe on it produces noise.
-            if self.is_distilled_small:
+            # Three recipes, picked by what the loaded weights actually are:
+            #   1. Original distilled small — rectified-flow + CFG distillation
+            #      baked in. Requires pingpong / 8 steps / CFG 1.0.
+            #   2. Fine-tuned small — distillation destroyed by SFT but the
+            #      objective is still rectified-flow, so the sampler name must
+            #      come from the rectified-flow family (euler|rk4|dpmpp|pingpong),
+            #      NOT from the v-diffusion family. Use external CFG.
+            #   3. Large model — standard v-diffusion, accepts dpmpp-3m-sde.
+            use_distilled_recipe = self.is_distilled_small and not self.is_fine_tuned
+            if use_distilled_recipe:
                 effective_sampler = "pingpong"
                 effective_steps = 8
                 effective_cfg = 1.0
                 sigma_kwargs = {}
+            elif self.is_distilled_small:
+                effective_sampler = "dpmpp"
+                effective_steps = steps
+                effective_cfg = cfg_scale
+                sigma_kwargs = {"sigma_max": 1.0}
             else:
                 effective_sampler = "dpmpp-3m-sde"
                 effective_steps = steps
@@ -256,10 +273,15 @@ class AudioGenerator:
                 sigma_kwargs = {"sigma_min": 0.03, "sigma_max": 1000}
 
             print(f"Generating audio for prompt: '{prompt}'")
+            recipe_note = ""
+            if use_distilled_recipe:
+                recipe_note = " (distilled small overrides applied)"
+            elif self.is_fine_tuned and self.is_distilled_small:
+                recipe_note = " (fine-tuned small: rectified-flow dpmpp + external CFG)"
             print(
                 f"Duration: {duration}s, CFG scale: {effective_cfg}, "
                 f"Steps: {effective_steps}, Sampler: {effective_sampler}"
-                + (" (distilled small overrides applied)" if self.is_distilled_small else "")
+                + recipe_note
             )
             requested_sample_size = int(duration * self.model.sample_rate)
             max_sample_size = None
@@ -307,12 +329,6 @@ class AudioGenerator:
 
             print(f"Using seed: {seed}")
 
-            # In loop_mode (bars mode in the performance panel), tell the model
-            # the song is much longer than what we render. SAO 1.0 was trained
-            # to fade out as it approaches `seconds_total`, so matching it to
-            # the requested duration bakes a song-ending fade into the clip.
-            # We still get back exactly `requested_sample_size` samples — the
-            # model just thinks they're the opening of a longer piece.
             if loop_mode and max_sample_size:
                 song_seconds = max(int(duration),
                                    int(max_sample_size / self.model.sample_rate))

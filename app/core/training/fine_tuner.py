@@ -14,6 +14,20 @@ from app.core.config import get_config
 DEFAULT_EPOCHS = 30
 DEFAULT_CHECKPOINT_STEPS = 50
 
+_BASE_TRAINING_DEFAULTS = {
+    "stable-audio-open-small": {"epochs": 10, "learningRate": 1e-5},
+    "stable-audio-open-1.0":   {"epochs": 30, "learningRate": 1e-4},
+}
+_FALLBACK_TRAINING_DEFAULTS = {"epochs": DEFAULT_EPOCHS, "learningRate": 1e-4}
+
+
+def _default_for(config: Optional[Dict[str, Any]], key: str) -> Any:
+    """Per-base default for a training config key (epochs|learningRate)."""
+    base = (config or {}).get("baseModel", "stable-audio-open-small")
+    table = _BASE_TRAINING_DEFAULTS.get(base, _FALLBACK_TRAINING_DEFAULTS)
+    return table[key]
+
+
 VALID_PRECISIONS = {"auto", "32", "32-true", "16-mixed", "bf16-mixed", "16-true", "bf16-true"}
 
 
@@ -22,13 +36,10 @@ def _auto_precision(device_info: Dict[str, Any]) -> str:
     device_type = device_info.get('type')
     if device_type == 'cuda':
         capability = device_info.get('cuda_capability') or (0, 0)
-        # Ampere (8.0) and newer have first-class bf16 support; on older
-        # cards bf16 falls back to slow paths so use fp16 mixed instead.
+        
         if capability and capability[0] >= 8:
             return "bf16-mixed"
         return "16-mixed"
-    # CPU and MPS: Lightning's mixed-precision plugins are not supported,
-    # so fp32 is the only safe choice.
     return "32"
 
 
@@ -73,8 +84,7 @@ def _summarize_training_error(stderr_text: str, max_chars: int = 300) -> str:
         return ""
 
     raw_lines = stderr_text.splitlines()
-    # Strip the "Stderr: " prefix the monitor adds and skip framework noise so
-    # the actual exception isn't buried under deprecation warnings.
+
     cleaned = []
     for line in raw_lines:
         s = line.strip()
@@ -89,14 +99,10 @@ def _summarize_training_error(stderr_text: str, max_chars: int = 300) -> str:
     if not cleaned:
         return ""
 
-    # Walk bottom-up looking for a Python exception line ("XxxError: ..."),
-    # which is what the user actually needs to act on.
     for line in reversed(cleaned):
         if _PYTHON_ERROR_RE.match(line):
             return line[:max_chars]
 
-    # Fall back to the last non-noisy line so we never serve a generic
-    # "process exited unexpectedly" when there's *something* to report.
     return cleaned[-1][:max_chars]
 
 def get_base_model_configs():
@@ -113,7 +119,7 @@ class FineTuner:
             "is_training": False,
             "progress": 0,
             "current_epoch": 0,
-            "total_epochs": config.get("epochs", DEFAULT_EPOCHS),
+            "total_epochs": config.get("epochs", _default_for(config, "epochs")),
             "loss": None,
             "loss_history": [],
             "error": None,
@@ -144,13 +150,11 @@ class FineTuner:
         if total_steps % requested == 0:
             return requested
 
-        # Prefer a nearby lower divisor to keep cadence similar to user input.
         min_reasonable = max(10, requested // 3)
         for candidate in range(requested - 1, min_reasonable - 1, -1):
             if total_steps % candidate == 0:
                 return candidate
 
-        # Fall back to one checkpoint at the exact final step.
         return total_steps
 
     def _validate_dataset_before_training(self) -> Dict[str, Any]:
@@ -158,11 +162,14 @@ class FineTuner:
             from app.core.config import get_config
             config = get_config()
             data_dir = config.get_path("data")
-            
-            audio_files = []
-            for ext in ['.wav', '.mp3', '.flac', '.m4a']:
-                audio_files.extend(list(data_dir.glob(f"*{ext}")))
-            
+
+            # Case-insensitive match. Without `.lower()` this misses .WAV on
+            # Linux (case-sensitive FS) and reports a smaller dataset than
+            # stable-audio-tools actually trains on.
+            audio_exts = {'.wav', '.mp3', '.flac', '.m4a'}
+            audio_files = [p for p in data_dir.iterdir()
+                           if p.is_file() and p.suffix.lower() in audio_exts]
+
             file_count = len(audio_files)
             batch_size = self.config.get("batchSize", 4)
 
@@ -197,7 +204,7 @@ class FineTuner:
                 }
             
             steps_per_epoch = max(1, file_count // batch_size)
-            total_epochs = self.config.get("epochs", DEFAULT_EPOCHS)
+            total_epochs = self.config.get("epochs", _default_for(self.config, "epochs"))
             total_steps = steps_per_epoch * total_epochs
 
             raw_requested = self.config.get("checkpointSteps", DEFAULT_CHECKPOINT_STEPS)
@@ -260,9 +267,9 @@ class FineTuner:
         print(f"RECEIVED TRAINING CONFIG:")
         print(f"- Model Name: {self.config.get('modelName', 'untitled')}")
         print(f"- Base Model: {base_model}")
-        print(f"- Epochs: {self.config.get('epochs', DEFAULT_EPOCHS)}")
+        print(f"- Epochs: {self.config.get('epochs', _default_for(self.config, 'epochs'))}")
         print(f"- Batch Size: {self.config.get('batchSize', 1)}")
-        print(f"- Learning Rate: {self.config.get('learningRate', 1e-4)}")
+        print(f"- Learning Rate: {self.config.get('learningRate', _default_for(self.config, 'learningRate'))}")
         base_model_configs = get_base_model_configs()
 
         if base_model not in base_model_configs:
@@ -328,7 +335,7 @@ class FineTuner:
                     project_root / self.config["pretrainedCkptPath"])
                 print(f"OVERRIDE: Checkpoint path overridden to: {pretrained_ckpt}")
 
-            learning_rate = self.config.get("learningRate", 1e-4)
+            learning_rate = self.config.get("learningRate", _default_for(self.config, "learningRate"))
             print(f"LEARNING RATE: {learning_rate}")
 
             config = get_config()
@@ -336,10 +343,6 @@ class FineTuner:
             save_dir = str(config.get_path("models_fine_tuned") / model_name)
             os.makedirs(save_dir, exist_ok=True)
 
-            # Write a per-run copy of the model config into save_dir with the LR
-            # override applied. This avoids mutating the shared base config on
-            # disk and makes the fine-tuned model folder self-describing for
-            # later loading/unwrapping.
             import json
             base_config_path = Path(model_config)
             run_config_path = Path(save_dir) / "model_config.json"
@@ -364,9 +367,6 @@ class FineTuner:
             else:
                 print(f"WARNING: Base model config file not found: {base_config_path}")
 
-            # Drop a metadata breadcrumb so the read side (app.py /api/models)
-            # knows which base architecture this fine-tune is paired with,
-            # instead of guessing.
             metadata_path = Path(save_dir) / "training_metadata.json"
             try:
                 base_config_rel = str(base_config_path.relative_to(project_root))
@@ -410,8 +410,6 @@ class FineTuner:
             print(f"- Precision: {precision_source}")
             print(f"- Workers: {num_workers}")
 
-            # Stash for the monitor's failure-translation path; precision is
-            # picked here in start_training but consumed by _monitor_training.
             self.training_status["precision_used"] = precision
 
             memory_flags = [
@@ -515,13 +513,13 @@ class FineTuner:
 
             config_obj = get_config()
             data_dir = config_obj.get_path("data")
-            
-            audio_files = []
-            for ext in ['.wav', '.mp3', '.flac', '.m4a']:
-                audio_files.extend(list(data_dir.glob(f"*{ext}")))
-            
+
+            audio_exts = {'.wav', '.mp3', '.flac', '.m4a'}
+            audio_files = [p for p in data_dir.iterdir()
+                           if p.is_file() and p.suffix.lower() in audio_exts]
+
             num_files = len(audio_files)
-            total_epochs = self.config.get("epochs", DEFAULT_EPOCHS)
+            total_epochs = self.config.get("epochs", _default_for(self.config, "epochs"))
             steps_per_epoch = max(1, num_files // batch_size)
             total_steps = steps_per_epoch * total_epochs
             
@@ -544,7 +542,7 @@ class FineTuner:
                 "error": None,
                 "device_info": device_info,
                 "steps_per_epoch": steps_per_epoch,
-                "total_steps_per_epoch": steps_per_epoch,  # Frontend expects this name
+                "total_steps_per_epoch": steps_per_epoch, 
                 "total_steps": total_steps,
                 "total_epochs": total_epochs,
                 "checkpoint_every": checkpoint_every,
@@ -781,11 +779,6 @@ class FineTuner:
                 completed_steps = self.training_status.get("global_step", 0)
                 target_steps = self.training_status.get("total_steps", 0) or 0
 
-                # Trainers can exit cleanly (return_code == 0) very early — model
-                # load failures, dataloader issues, custom_metadata errors, etc. —
-                # while still emitting a stray step or loss line. So a clean exit
-                # alone isn't proof of success; require that we actually finished
-                # the work we were told to do (allow 1 step of slack for rounding).
                 ran_all_steps = target_steps > 0 and completed_steps >= target_steps - 1
 
                 training_actually_succeeded = (
@@ -795,7 +788,7 @@ class FineTuner:
                 
                 if training_actually_succeeded:
                     completed_epoch = self.training_status.get("current_epoch", 0)
-                    target_epochs = self.training_status.get("total_epochs", self.config.get("epochs", DEFAULT_EPOCHS))
+                    target_epochs = self.training_status.get("total_epochs", self.config.get("epochs", _default_for(self.config, "epochs")))
                     total_steps = self.training_status.get("total_steps", 0)
                     
                     print(f"\n{'='*80}")
@@ -828,9 +821,6 @@ class FineTuner:
                         )
                         failure_reason = "INSUFFICIENT_DATA"
                     else:
-                        # The reader threads have already drained stdout/stderr
-                        # into queues, so communicate() returns empty. Use the
-                        # error_messages buffer those threads populated instead.
                         captured_stderr = "\n".join(
                             self.training_status.get("error_messages") or []
                         )
@@ -856,7 +846,6 @@ class FineTuner:
                                 error_msg = f"Training crashed: {summary}"
                                 failure_reason = "TRAINING_CRASHED"
                             elif return_code == 0:
-                                # Clean exit but the run didn't actually finish.
                                 error_msg = (
                                     f"Training process exited at step "
                                     f"{completed_steps}/{target_steps} without completing the run. "
@@ -914,7 +903,7 @@ class FineTuner:
                 
                 steps_per_epoch = self.training_status.get("steps_per_epoch", 1)
                 total_steps = self.training_status.get("total_steps", 1)
-                target_epochs = self.training_status.get("total_epochs", DEFAULT_EPOCHS)
+                target_epochs = self.training_status.get("total_epochs", _default_for(self.config, "epochs"))
                 
                 current_epoch = (global_step - 1) // steps_per_epoch
                 current_step = ((global_step - 1) % steps_per_epoch) + 1
@@ -972,8 +961,9 @@ class FineTuner:
                 }
                 self.training_status["loss_history"].append(loss_entry)
 
-                if len(self.training_status["loss_history"]) > 1000:
-                    self.training_status["loss_history"] = self.training_status["loss_history"][-1000:]
+                MAX_LOSS_HISTORY = 50000
+                if len(self.training_status["loss_history"]) > MAX_LOSS_HISTORY:
+                    self.training_status["loss_history"] = self.training_status["loss_history"][::2]
                 
                 return
 
@@ -1124,7 +1114,7 @@ def start_training(config: Dict[str, Any]) -> Dict[str, Any]:
             "is_training": False,
             "progress": 0,
             "current_epoch": 0,
-            "total_epochs": config.get("epochs", DEFAULT_EPOCHS),
+            "total_epochs": config.get("epochs", _default_for(config, "epochs")),
             "loss": None,
             "loss_history": [],
             "error": None,

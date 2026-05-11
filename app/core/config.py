@@ -43,12 +43,18 @@ class ProjectConfig:
 
         # Writable paths live under user_data_dir (diverges from project_root in frozen mode);
         # read-only code/assets stay under project_root.
+        fine_tuned_override = os.environ.get("FRAGMENTA_FINE_TUNED_DIR")
+        fine_tuned_dir = Path(fine_tuned_override) if fine_tuned_override else self.user_data_dir / "models" / "fine_tuned"
+
+        data_override = os.environ.get("FRAGMENTA_DATA_DIR")
+        data_dir = Path(data_override) if data_override else self.user_data_dir / "data"
+
         self.paths: Dict[str, Path] = {
             "models": self.user_data_dir / "models",
             "models_config": self.user_data_dir / "models" / "config",
             "models_pretrained": self.user_data_dir / "models" / "pretrained",
-            "models_fine_tuned": self.user_data_dir / "models" / "fine_tuned",
-            "data": self.user_data_dir / "data",
+            "models_fine_tuned": fine_tuned_dir,
+            "data": data_dir,
             "logs": self.user_data_dir / "logs",
             "output": self.user_data_dir / "output",
 

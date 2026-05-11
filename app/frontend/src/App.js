@@ -122,6 +122,16 @@ function App() {
         saveWrappedCheckpoint: false,
         precision: 'auto'
     });
+    // Per-base training defaults. The distilled small mode-collapses under the
+    // original stable-audio-tools recipe (LR 1e-4 / 30 epochs); the large
+    // model is robust to it. Keep in sync with _BASE_TRAINING_DEFAULTS in
+    // app/core/training/fine_tuner.py.
+    const BASE_TRAINING_DEFAULTS = {
+        'stable-audio-open-small': { learningRate: 1e-5, epochs: 10 },
+        'stable-audio-open-1.0':   { learningRate: 1e-4, epochs: 30 },
+    };
+    const getBaseTrainingDefaults = (baseName) =>
+        BASE_TRAINING_DEFAULTS[baseName] || { learningRate: 1e-4, epochs: 30 };
     const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [isTraining, setIsTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
@@ -258,7 +268,10 @@ function App() {
         return null;
     })();
 
-    const isSmallModel = resolvedBaseModel === 'stable-audio-open-small';
+    // True only for the original distilled small base, NOT for fine-tunes of
+    // it. Fine-tuning destroys the CFG distillation, so the 8-step / CFG-1.0
+    // lock no longer applies — the user controls steps and CFG normally.
+    const isDistilledBase = selectedModel === 'stable-audio-open-small';
 
     const getMaxDuration = () => {
         if (!selectedModel) return 10;
@@ -275,10 +288,10 @@ function App() {
         // The distilled small model is hard-coded to 8 steps + pingpong sampler
         // at the backend regardless of slider value; snap the slider so the UI
         // reflects what will actually run.
-        if (isSmallModel && steps !== 8) {
+        if (isDistilledBase && steps !== 8) {
             setSteps(8);
         }
-    }, [selectedModel, selectedUnwrappedModel, isSmallModel]);
+    }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
 
     const handleTabChange = (event, newValue) => {
         setTabValue(newValue);
@@ -888,9 +901,12 @@ function App() {
 
     const handleTrainingBaseModelChange = (event) => {
         const newBaseModel = event.target.value;
+        const defaults = getBaseTrainingDefaults(newBaseModel);
         setTrainingConfig({
             ...trainingConfig,
             baseModel: newBaseModel,
+            learningRate: defaults.learningRate,
+            epochs: defaults.epochs,
         });
 
         const selectedBaseModel = baseModels.find(m => m.name === newBaseModel);
@@ -1736,30 +1752,30 @@ function App() {
                                                                 <Typography gutterBottom>CFG Scale</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
-                                                                        value={isSmallModel ? 1.0 : cfgScale}
+                                                                        value={isDistilledBase ? 1.0 : cfgScale}
                                                                         onChange={(e, value) => setCfgScale(value)}
                                                                         min={0.1}
                                                                         max={20}
                                                                         step={0.1}
                                                                         valueLabelDisplay="auto"
-                                                                        disabled={isSmallModel}
+                                                                        disabled={isDistilledBase}
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                     <TextField
                                                                         type="number"
-                                                                        value={isSmallModel ? 1.0 : cfgScale}
+                                                                        value={isDistilledBase ? 1.0 : cfgScale}
                                                                         onChange={(e) => {
                                                                             const val = parseFloat(e.target.value);
                                                                             if (Number.isNaN(val)) return;
                                                                             setCfgScale(Math.max(0.1, Math.min(20, val)));
                                                                         }}
                                                                         inputProps={{ min: 0.1, max: 20, step: 0.1 }}
-                                                                        disabled={isSmallModel}
+                                                                        disabled={isDistilledBase}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
-                                                                {isSmallModel && (
+                                                                {isDistilledBase && (
                                                                     <Typography variant="caption" color="textSecondary">
                                                                         Locked at 1.0 for the distilled small model.
                                                                     </Typography>
@@ -1783,11 +1799,11 @@ function App() {
                                                                             { value: 250, label: '250' },
                                                                         ]}
                                                                         valueLabelDisplay="auto"
-                                                                        disabled={isSmallModel}
+                                                                        disabled={isDistilledBase}
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                 </Box>
-                                                                {isSmallModel && (
+                                                                {isDistilledBase && (
                                                                     <Typography variant="caption" color="textSecondary">
                                                                         Locked at 8 steps (pingpong sampler) for the distilled small model.
                                                                     </Typography>

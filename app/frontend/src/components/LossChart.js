@@ -1,12 +1,6 @@
 import React, { useState } from 'react';
 import { lossChartStyles } from '../theme';
 
-function fmtTime(sec) {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-}
-
 export default function LossChart({ data, width = 600, height = 200 }) {
     const [hover, setHover] = useState(null);
     const padding = lossChartStyles.padding;
@@ -19,7 +13,7 @@ export default function LossChart({ data, width = 600, height = 200 }) {
     const innerW = width - padding.left - padding.right;
     const innerH = height - padding.top - padding.bottom;
 
-    const xs = data.map(d => d.time);
+    const xs = data.map(d => d.step);
     const ys = data.map(d => d.loss);
     const xMin = Math.min(...xs);
     const xMax = Math.max(...xs);
@@ -31,7 +25,7 @@ export default function LossChart({ data, width = 600, height = 200 }) {
     const xScale = v => padding.left + ((v - xMin) / xRange) * innerW;
     const yScale = v => padding.top + innerH - ((v - yMin) / yRange) * innerH;
 
-    const points = data.map(d => `${xScale(d.time)},${yScale(d.loss)}`).join(' ');
+    const points = data.map(d => `${xScale(d.step)},${yScale(d.loss)}`).join(' ');
 
     const yTicks = 4;
     const xTicks = Math.min(5, data.length);
@@ -42,7 +36,7 @@ export default function LossChart({ data, width = 600, height = 200 }) {
         let nearest = data[0];
         let bestDist = Infinity;
         for (const d of data) {
-            const dist = Math.abs(xScale(d.time) - px);
+            const dist = Math.abs(xScale(d.step) - px);
             if (dist < bestDist) { bestDist = dist; nearest = d; }
         }
         setHover(nearest);
@@ -75,7 +69,7 @@ export default function LossChart({ data, width = 600, height = 200 }) {
                 return (
                     <text key={`x${i}`} x={x} y={height - padding.bottom + 16}
                           textAnchor="middle" fontSize={axisFontSize} fill={colors.axis}>
-                        {fmtTime(v)}
+                        {Math.round(v)}
                     </text>
                 );
             })}
@@ -83,18 +77,18 @@ export default function LossChart({ data, width = 600, height = 200 }) {
             <polyline fill="none" stroke={colors.line} strokeWidth="2" points={points} />
 
             {data.map((d, i) => (
-                <circle key={i} cx={xScale(d.time)} cy={yScale(d.loss)} r="2" fill={colors.point} />
+                <circle key={i} cx={xScale(d.step)} cy={yScale(d.loss)} r="2" fill={colors.point} />
             ))}
 
             {hover && (
                 <g>
-                    <line x1={xScale(hover.time)} x2={xScale(hover.time)}
+                    <line x1={xScale(hover.step)} x2={xScale(hover.step)}
                           y1={padding.top} y2={height - padding.bottom}
                           stroke={colors.axis} strokeDasharray="2 2" />
-                    <circle cx={xScale(hover.time)} cy={yScale(hover.loss)} r="4" fill={colors.line} />
-                    <g transform={`translate(${Math.min(xScale(hover.time) + 8, width - (tooltip.width + 10))}, ${padding.top + 6})`}>
+                    <circle cx={xScale(hover.step)} cy={yScale(hover.loss)} r="4" fill={colors.line} />
+                    <g transform={`translate(${Math.min(xScale(hover.step) + 8, width - (tooltip.width + 10))}, ${padding.top + 6})`}>
                         <rect width={tooltip.width} height={tooltip.height} rx={tooltip.rx} fill={colors.tooltipBg} stroke={colors.tooltipBorder} />
-                        <text x={tooltip.textX} y={tooltip.timeY} fontSize={axisFontSize} fill={colors.tooltipText}>Time: {fmtTime(hover.time)}</text>
+                        <text x={tooltip.textX} y={tooltip.timeY} fontSize={axisFontSize} fill={colors.tooltipText}>Step: {hover.step}</text>
                         <text x={tooltip.textX} y={tooltip.lossY} fontSize={axisFontSize} fill={colors.tooltipText}>Loss: {hover.loss.toFixed(4)}</text>
                     </g>
                 </g>
