@@ -1,36 +1,21 @@
 --extra-index-url https://download.pytorch.org/whl/cu128
 
-# --- Web stack ---
-# Flask 3.x is fine; cap below the next major to avoid surprise breakage.
 Flask>=2.3.0,<4.0
-# Flask-CORS jumped to 6.x with API changes; cap below the next major.
 Flask-CORS>=4.0.0,<7.0
 requests>=2.28.0,<3.0
 
-# --- PyTorch (CUDA 12.8 wheels) ---
 torch>=2.5,<=2.8
 torchvision<0.24
 torchaudio>=2.5,<=2.8
 
-# --- HuggingFace stack ---
-# transformers 5.x and huggingface-hub 1.x are major rewrites that break
-# stable-audio-tools' import paths (e.g. T5EncoderModel, AutoTokenizer).
-# Stay on the 4.x / 0.x lines that SAO was written against.
 transformers>=4.41.0,<5.0
 huggingface-hub>=0.23.0,<1.0
-# safetensors 0.8.0rc0 is a pre-release; pip occasionally selected it under
-# the old loose pin. Cap below 1.0 and avoid rc tags.
 safetensors>=0.4.3,<1.0
 diffusers>=0.27.0,<1.0
 accelerate>=0.30.0,<2.0
 peft>=0.10.0,<1.0
-# datasets 4.x dropped some legacy loaders; stay on 3.x/2.x.
 datasets>=2.18.0,<4.0
 
-# --- Audio / DSP ---
-# numba and scipy interact tightly. numba 0.61+ requires Python>=3.10 and
-# narrows the scipy window; pinning both ranges stops pip from backtracking
-# through 6+ scipy versions on every install.
 librosa>=0.10.0,<0.12
 soundfile>=0.12.0,<0.14
 scipy>=1.10.0,<1.14
@@ -38,9 +23,6 @@ numba>=0.59,<0.61
 numpy==1.23.5
 pandas==2.0.2
 
-# --- Build / runtime utilities ---
-# setuptools<70 is required because stable-audio-tools' build chain pulls in
-# a few packages that still use deprecated setuptools APIs.
 setuptools<70
 tqdm>=4.65.0,<5.0
 psutil>=5.9.0,<8.0
@@ -49,7 +31,6 @@ click>=8.1.0,<9.0
 Pillow>=9.0.0,<13.0
 python-dotenv>=1.0.0,<2.0
 
-# --- Desktop / native ---
 pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
