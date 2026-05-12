@@ -25,6 +25,7 @@ import {
     Settings as SettingsIcon,
     Save as SaveIcon,
     X as CloseXIcon,
+    Headphones as CueIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -32,6 +33,7 @@ import { PerformanceEngine } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
+import { isCueSupported, listOutputDevices, setCueDevice } from '../utils/cueAudio';
 import {
     usePerformanceSession,
     listPresetNames,
@@ -122,6 +124,43 @@ function PerformancePanelInner({
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
     const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
+
+    // Cue / audition output device. cueSupported is a runtime check —
+    // setSinkId on AudioContext requires Chromium ≥ 110. On unsupported
+    // browsers the menu is disabled and audition falls back to default output.
+    const cueSupported = useMemo(() => isCueSupported(), []);
+    const [cueDeviceId, setCueDeviceId] = useState(session.cueDeviceId ?? '');
+    const [cueDevices, setCueDevices] = useState([]);
+    const [cueMenuAnchor, setCueMenuAnchor] = useState(null);
+
+    useEffect(() => { updateGlobal('cueDeviceId', cueDeviceId); }, [cueDeviceId, updateGlobal]);
+
+    // Push the chosen sinkId to the cue context whenever it changes (and once
+    // on mount). Falls through silently on unsupported browsers.
+    useEffect(() => {
+        if (!cueSupported) return;
+        setCueDevice(cueDeviceId).catch(() => { /* logged in cueAudio */ });
+    }, [cueSupported, cueDeviceId]);
+
+    const refreshCueDevices = useCallback(async () => {
+        if (!cueSupported) return;
+        try {
+            const devices = await listOutputDevices();
+            setCueDevices(devices);
+        } catch (err) {
+            console.warn('[PerformancePanel] device enumeration failed', err);
+        }
+    }, [cueSupported]);
+
+    const handleOpenCueMenu = (e) => {
+        setCueMenuAnchor(e.currentTarget);
+        refreshCueDevices();
+    };
+    const handleCloseCueMenu = () => setCueMenuAnchor(null);
+    const handlePickCueDevice = (id) => {
+        setCueDeviceId(id);
+        handleCloseCueMenu();
+    };
 
     // Restore App-level state (model, steps, seed) once on mount via the setter
     // props the panel was given. The panel doesn't own those, so this is the
@@ -469,7 +508,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, batchSize = 1 }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -483,9 +522,9 @@ function PerformancePanelInner({
             ? `${trimmed}${trimmed ? ', ' : ''}${Math.round(bpm)} BPM`
             : trimmed;
 
-        let resolvedSeed;
+        let baseSeed;
         if (randomSeed) {
-            resolvedSeed = Math.floor(Math.random() * 0xffffffff);
+            baseSeed = Math.floor(Math.random() * 0xffffffff);
         } else {
             const parsed = parseInt(seedValue, 10);
             if (Number.isNaN(parsed) || parsed < 0) {
@@ -493,21 +532,34 @@ function PerformancePanelInner({
                 setError(msg);
                 throw new Error(msg);
             }
-            resolvedSeed = parsed;
+            baseSeed = parsed;
         }
 
-        const requestData = {
-            prompt: finalPrompt,
-            duration,
-            cfg_scale: 7.0,
-            steps,
-            seed: resolvedSeed,
-            model_name: selectedModel,
-            ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
-            ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
-        };
-        const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
-        return response.data;
+        const count = Math.max(1, Math.min(4, batchSize | 0));
+        const blobs = [];
+        for (let i = 0; i < count; i++) {
+            // Sequential rather than parallel — the backend serves one
+            // generation at a time anyway, and parallelizing would just
+            // queue them server-side with no time saved. Each take gets a
+            // distinct seed so the batch produces actual variations rather
+            // than the same audio repeated.
+            const seed = (baseSeed + i * 0x9e3779b1) >>> 0;
+            const requestData = {
+                prompt: finalPrompt,
+                duration,
+                cfg_scale: 7.0,
+                steps,
+                seed,
+                model_name: selectedModel,
+                batch_index: i + 1,
+                batch_total: count,
+                ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
+                ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
+            };
+            const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
+            blobs.push(response.data);
+        }
+        return blobs;
     };
 
     const handleChannelStateChange = (index, change) => {
@@ -703,6 +755,56 @@ function PerformancePanelInner({
                     open={Boolean(midiMenuAnchor)}
                     onClose={() => setMidiMenuAnchor(null)}
                 />
+
+                <Tooltip
+                    title={cueSupported
+                        ? 'Cue / audition output device'
+                        : 'Cue output requires Chrome/Edge (AudioContext.setSinkId). Auditions will play through main output.'}
+                >
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                        <IconButton
+                            size="small"
+                            onClick={handleOpenCueMenu}
+                            disabled={!cueSupported}
+                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                        >
+                            <CueIcon size={14} />
+                        </IconButton>
+                    </span>
+                </Tooltip>
+                <Menu
+                    anchorEl={cueMenuAnchor}
+                    open={Boolean(cueMenuAnchor)}
+                    onClose={handleCloseCueMenu}
+                    MenuListProps={{ sx: { py: 0 } }}
+                    PaperProps={{ sx: { minWidth: 260, borderRadius: 1.5 } }}
+                >
+                    <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.small, color: 'text.disabled' }}>
+                        Cue output device
+                    </MenuItem>
+                    <MenuItem
+                        onClick={() => handlePickCueDevice('')}
+                        selected={cueDeviceId === ''}
+                        sx={{ fontSize: perfTokens.fontSize.body }}
+                    >
+                        <ListItemText primary="System default" />
+                    </MenuItem>
+                    {cueDevices.length === 0 && (
+                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.small }}>
+                            No additional output devices detected
+                        </MenuItem>
+                    )}
+                    {cueDevices.map(d => (
+                        <MenuItem
+                            key={d.deviceId}
+                            onClick={() => handlePickCueDevice(d.deviceId)}
+                            selected={cueDeviceId === d.deviceId}
+                            sx={{ fontSize: perfTokens.fontSize.body }}
+                        >
+                            <ListItemText primary={d.label || `Output (${d.deviceId.slice(0, 6)}…)`} />
+                        </MenuItem>
+                    ))}
+                </Menu>
 
                 <Tooltip title="Save / load presets">
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>

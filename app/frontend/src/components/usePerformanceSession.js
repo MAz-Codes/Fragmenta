@@ -71,6 +71,7 @@ const CHANNEL_DEFAULT = {
     looping: true,
     muted: false,
     soloed: false,
+    batchSize: 1,
     knobs: { gain: -6, pan: 0, filter: 18000, delay: 0, reverb: 0 },
 };
 
@@ -86,6 +87,7 @@ function defaultSession(channelCount) {
         steps: 250,
         randomSeed: true,
         seedValue: '',
+        cueDeviceId: '',
         channels: Array.from({ length: channelCount }, () => ({
             ...CHANNEL_DEFAULT,
             knobs: { ...CHANNEL_DEFAULT.knobs },

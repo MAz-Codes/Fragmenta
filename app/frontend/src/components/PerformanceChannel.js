@@ -18,9 +18,12 @@ import {
     Sparkles as GenerateIcon,
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
+    Headphones as CueIcon,
+    Check as CommitIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
+import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 
 const CHANNEL_COLORS = [
     '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
@@ -49,6 +52,7 @@ const PAN_CENTER_SNAP = 0.06;
 
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
+const BATCH_OPTIONS = [1, 2, 3, 4];
 
 export default function PerformanceChannel({
     index,
@@ -86,7 +90,19 @@ export default function PerformanceChannel({
     const [looping, setLooping] = useState(init.looping ?? true);
     const [muted, setMuted] = useState(init.muted ?? false);
     const [soloed, setSoloed] = useState(init.soloed ?? false);
+    const [batchSize, setBatchSize] = useState(init.batchSize ?? 1);
     const [knobs, setKnobs] = useState(() => ({ ...defaultKnobs, ...initKnobs }));
+
+    // Candidates from the latest batch generation. Held in component state
+    // because they don't survive a page reload — the blob URLs would be dead.
+    // `committedIndex` tracks which one is currently loaded into the strip.
+    const [candidates, setCandidates] = useState([]);
+    const [auditioningIndex, setAuditioningIndex] = useState(null);
+    const [committedIndex, setCommittedIndex] = useState(null);
+    const cueSupported = useMemo(() => isCueSupported(), []);
+
+    // Stop any active cue audition when the channel unmounts.
+    useEffect(() => () => stopCue(), []);
 
     // Mirror form state up to the panel so it can persist the session. Skip the
     // first render so we don't re-write what we just loaded from localStorage.
@@ -97,9 +113,9 @@ export default function PerformanceChannel({
             return;
         }
         onFormStateChange?.(index, {
-            prompt, duration, durationMode, bars, looping, muted, soloed, knobs,
+            prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
         });
-    }, [prompt, duration, durationMode, bars, looping, muted, soloed, knobs, index, onFormStateChange]);
+    }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs, index, onFormStateChange]);
 
     const secondsFromBars = useMemo(
         () => bars * (60 / Math.max(bpm, 1)) * BEATS_PER_BAR,
@@ -172,15 +188,26 @@ export default function PerformanceChannel({
         const inBarsMode = durationMode === 'bars';
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
+        // Stop any in-flight cue audition and clear stale candidate state so
+        // the audition strip doesn't keep playing the old generation.
+        stopCue();
+        setAuditioningIndex(null);
         try {
-            const blob = await onGenerate({
+            const result = await onGenerate({
                 prompt,
                 duration: effectiveDuration,
+                batchSize,
                 // Only forward alignment params in bars mode — seconds mode
                 // generates raw audio with no post-processing.
                 ...(inBarsMode ? { alignBars: bars, alignBpm: bpm } : {}),
             });
-            await strip.loadBlob(blob);
+            const blobs = Array.isArray(result) ? result : [result];
+            const next = blobs.map((b, i) => ({ index: i, blob: b }));
+            setCandidates(next);
+            // First candidate auto-loads into the channel strip; the rest sit
+            // in the audition row until the user commits a different one.
+            await strip.loadBlob(blobs[0]);
+            setCommittedIndex(0);
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
             requestAnimationFrame(drawWave);
@@ -189,6 +216,37 @@ export default function PerformanceChannel({
         } finally {
             setGenerating(false);
         }
+    };
+
+    const handleAudition = async (i) => {
+        const candidate = candidates[i];
+        if (!candidate) return;
+        if (auditioningIndex === i) {
+            stopCue();
+            setAuditioningIndex(null);
+            return;
+        }
+        setAuditioningIndex(i);
+        try {
+            await playCueBlob(candidate.blob, {
+                onEnded: () => setAuditioningIndex(prev => (prev === i ? null : prev)),
+            });
+        } catch (err) {
+            console.warn(`Channel ${index + 1} audition failed:`, err);
+            setAuditioningIndex(null);
+        }
+    };
+
+    const handleCommit = async (i) => {
+        const candidate = candidates[i];
+        if (!candidate || committedIndex === i) return;
+        // Stop the live channel before swapping the buffer so we don't get a
+        // glitch in the middle of a loop iteration.
+        try { strip.stop(); } catch { /* not playing */ }
+        onStateChange?.(index, { playing: false });
+        await strip.loadBlob(candidate.blob);
+        setCommittedIndex(i);
+        requestAnimationFrame(drawWave);
     };
 
     const handlePlay = () => {
@@ -360,16 +418,52 @@ export default function PerformanceChannel({
                         </Select>
                     )}
                 </Box>
-                <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
-                    <IconButton
-                        onClick={handleGenerate}
-                        disabled={!canGenerate || !prompt.trim() || generating}
-                        sx={styles.generateBtn(color)}
-                        size="small"
+                <Box sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 1.5,
+                    mt: 0.5,
+                    width: '100%',
+                }}>
+                    <Tooltip
+                        title="Batch generation: produce N candidates and audition them through the cue output before committing one to this channel."
+                        placement="top"
+                        disableFocusListener
+                        disableTouchListener
+                        enterDelay={500}
                     >
-                        {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
-                    </IconButton>
-                </MidiMappable>
+                        <Select
+                            value={batchSize}
+                            onChange={(e) => setBatchSize(Number(e.target.value))}
+                            size="small"
+                            disabled={generating}
+                            sx={{
+                                fontSize: perfTokens.fontSize.body,
+                                height: 32,
+                                minWidth: 64,
+                                '& .MuiOutlinedInput-input': { py: 0, pl: 1.25, pr: '28px !important', minHeight: 'unset' },
+                                '& .MuiSelect-select': { py: 0, pl: 1.25, pr: '28px !important', minHeight: 'unset' },
+                            }}
+                        >
+                            {BATCH_OPTIONS.map(n => (
+                                <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.body }}>
+                                    ×{n}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </Tooltip>
+                    <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
+                        <IconButton
+                            onClick={handleGenerate}
+                            disabled={!canGenerate || !prompt.trim() || generating}
+                            sx={styles.generateBtn(color)}
+                            size="small"
+                        >
+                            {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
+                        </IconButton>
+                    </MidiMappable>
+                </Box>
             </Box>
 
             <Box sx={styles.waveformWrap}>
@@ -385,6 +479,86 @@ export default function PerformanceChannel({
                     </Typography>
                 )}
             </Box>
+
+            {candidates.length > 1 && (
+                <Box
+                    sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                        px: 1,
+                        py: 0.5,
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    {candidates.map((c, i) => {
+                        const isAuditioning = auditioningIndex === i;
+                        const isCommitted = committedIndex === i;
+                        return (
+                            <Box
+                                key={c.index}
+                                sx={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    border: '1px solid',
+                                    borderColor: isCommitted ? color : 'divider',
+                                    borderRadius: 0.75,
+                                    overflow: 'hidden',
+                                    bgcolor: isCommitted ? `${color}1a` : 'transparent',
+                                }}
+                            >
+                                <Tooltip
+                                    title={
+                                        cueSupported
+                                            ? (isAuditioning ? 'Stop cue audition' : 'Audition this take through cue output')
+                                            : 'Cue audition requires Chrome/Edge. Plays through main output.'
+                                    }
+                                >
+                                    <IconButton
+                                        onClick={() => handleAudition(i)}
+                                        size="small"
+                                        sx={{
+                                            color: isAuditioning ? color : 'text.secondary',
+                                            px: 0.5,
+                                            borderRadius: 0,
+                                        }}
+                                    >
+                                        <CueIcon size={12} />
+                                        <Box
+                                            component="span"
+                                            sx={{
+                                                ml: 0.4,
+                                                fontSize: perfTokens.fontSize.small,
+                                                fontWeight: isAuditioning ? 700 : 500,
+                                            }}
+                                        >
+                                            {i + 1}
+                                        </Box>
+                                    </IconButton>
+                                </Tooltip>
+                                <Tooltip title={isCommitted ? 'Currently in channel' : 'Use this take in the channel'}>
+                                    <span>
+                                        <IconButton
+                                            onClick={() => handleCommit(i)}
+                                            size="small"
+                                            disabled={isCommitted}
+                                            sx={{
+                                                color: isCommitted ? color : 'text.disabled',
+                                                px: 0.4,
+                                                borderRadius: 0,
+                                                borderLeft: '1px solid',
+                                                borderColor: 'divider',
+                                            }}
+                                        >
+                                            <CommitIcon size={12} />
+                                        </IconButton>
+                                    </span>
+                                </Tooltip>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            )}
 
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
