@@ -1,0 +1,11 @@
+wandb/
+artifacts/
+debug/
+checkpoints/
+__pycache__/
+*.wav
+*.ckpt
+*.bat
+*.egg-info/
+/build
+*.ipynb
