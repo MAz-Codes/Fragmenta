@@ -312,13 +312,19 @@ def start_training():
         print("API TRAINING REQUEST RECEIVED")
         print("="*80)
         print(f"RECEIVED CONFIG FROM FRONTEND:")
+        print(f"   - Mode: {training_config.get('mode', 'full')}")
         print(f"   - Model Name: {training_config.get('modelName', 'untitled')}")
         print(f"   - Base Model: {training_config.get('baseModel', 'NOT SET')}")
         print(f"   - Epochs: {training_config.get('epochs', 'NOT SET')}")
         print(f"   - Checkpoint Steps: {training_config.get('checkpointSteps', 'NOT SET')}")
         print(f"   - Batch Size: {training_config.get('batchSize', 'NOT SET')}")
         print(f"   - Learning Rate: {training_config.get('learningRate', 'NOT SET')}")
-        print(f"   - Save Wrapped Checkpoint: {training_config.get('saveWrappedCheckpoint', False)}")
+        if training_config.get('mode') == 'lora':
+            print(f"   - LoRA rank: {training_config.get('loraRank', 16)}")
+            print(f"   - LoRA alpha: {training_config.get('loraAlpha', 16)}")
+            print(f"   - LoRA dropout: {training_config.get('loraDropout', 0)}")
+        else:
+            print(f"   - Save Wrapped Checkpoint: {training_config.get('saveWrappedCheckpoint', False)}")
 
         required_fields = ['modelName', 'baseModel']
         missing_fields = [field for field in required_fields if field not in training_config]
@@ -333,6 +339,12 @@ def start_training():
             error_msg = f"Invalid base model '{base_model}'. Must be one of: {valid_models}"
             print(f"API ERROR: {error_msg}")
             return jsonify({'error': error_msg}), 400
+
+        # Mode validation: 'full' (existing SAO fine-tune) or 'lora' (LoRAW).
+        mode = training_config.get('mode', 'full')
+        if mode not in ('full', 'lora'):
+            return jsonify({'error': f"Invalid mode '{mode}'. Must be 'full' or 'lora'."}), 400
+        training_config['mode'] = mode
 
         if 'epochs' not in training_config:
             training_config['epochs'] = 30
@@ -352,6 +364,12 @@ def start_training():
         if 'precision' not in training_config or not training_config['precision']:
             training_config['precision'] = 'auto'
             print(f"   Setting default precision: auto")
+        # LoRA-specific defaults
+        if mode == 'lora':
+            training_config.setdefault('loraRank', 16)
+            training_config.setdefault('loraAlpha', training_config['loraRank'])
+            training_config.setdefault('loraDropout', 0)
+            training_config.setdefault('loraMultiplier', 1.0)
 
         print(f"\nVALIDATED CONFIG:")
         print(f"   - Model Name: {training_config['modelName']}")

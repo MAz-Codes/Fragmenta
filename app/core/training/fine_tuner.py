@@ -240,7 +240,203 @@ class FineTuner:
                 "error": f"Dataset validation error: {str(e)}"
             }
 
+    def _start_lora_training(self) -> Dict[str, Any]:
+        """Launch a LoRAW LoRA training run via subprocess.
+
+        Mirrors the structure of the full-FT path (`start_training` body) but
+        invokes `loraw_vendor/train.py` with `--use-lora true` and a per-run
+        model_config that has a `lora` section injected. The trainer subprocess
+        runs from the `stable-audio-tools/` directory so `custom_metadata.py`
+        resolves; PYTHONPATH=. ensures the same.
+        """
+        if self.training_status["is_training"]:
+            return {"error": "Training already in progress"}
+
+        device_info = self._detect_best_device()
+        print(f"\n[LoRA] SELECTED DEVICE: {device_info['device']} ({device_info['reason']})")
+
+        if torch.backends.mps.is_available() and device_info['type'] == 'mps':
+            torch.mps.empty_cache()
+        elif torch.cuda.is_available() and device_info['type'] == 'cuda':
+            torch.cuda.empty_cache()
+
+        # Resolve config + paths from baseModel (small/large), same as full FT.
+        base_model = self.config.get("baseModel", "stable-audio-open-small")
+        base_model_configs = get_base_model_configs()
+        if base_model not in base_model_configs:
+            return {"error": f"Unknown base model: {base_model}"}
+        model_info = base_model_configs[base_model]
+
+        project_root = Path(__file__).resolve().parent.parent.parent
+        model_name = self.config["modelName"]
+        base_config_path = project_root / model_info["config"]
+        pretrained_ckpt = project_root / model_info["ckpt"]
+        if not base_config_path.exists():
+            return {"error": f"Base config not found: {base_config_path}"}
+        if not pretrained_ckpt.exists():
+            return {"error": f"Pretrained checkpoint not found: {pretrained_ckpt}"}
+
+        # Dataset validation (reuses existing helper).
+        validation_result = self._validate_dataset_before_training()
+        if not validation_result["valid"]:
+            print(f"[LoRA] DATASET VALIDATION FAILED: {validation_result['error']}")
+            return {
+                "success": False,
+                "error": validation_result["error"],
+                "validation_failed": True,
+            }
+        checkpoint_every = validation_result["checkpoint_every"]
+        steps_per_epoch = validation_result["steps_per_epoch"]
+        total_steps = validation_result["total_steps"]
+
+        # Build per-run model_config.json with `lora` section injected.
+        import json
+        config_obj = get_config()
+        save_dir = config_obj.get_path("models_fine_tuned") / model_name
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        rank = int(self.config.get("loraRank", 16))
+        alpha = int(self.config.get("loraAlpha", rank))
+        dropout = float(self.config.get("loraDropout", 0))
+        multiplier = float(self.config.get("loraMultiplier", 1.0))
+        learning_rate = float(self.config.get("learningRate", _default_for(self.config, "learningRate")))
+        lora_section = {
+            "component_whitelist": ["transformer"],
+            "multiplier": multiplier,
+            "rank": rank,
+            "alpha": alpha,
+            "dropout": dropout,
+            "module_dropout": 0,
+            "lr": learning_rate,
+        }
+        with open(base_config_path, 'r') as f:
+            run_config = json.load(f)
+        run_config["lora"] = lora_section
+        run_config_path = save_dir / "model_config_with_lora.json"
+        with open(run_config_path, 'w') as f:
+            json.dump(run_config, f, indent=2)
+        print(f"[LoRA] Per-run config written: {run_config_path}")
+
+        # Write training metadata breadcrumb (mode=lora).
+        try:
+            base_config_rel = str(base_config_path.relative_to(project_root))
+        except ValueError:
+            base_config_rel = str(base_config_path)
+        try:
+            pretrained_ckpt_rel = str(pretrained_ckpt.relative_to(project_root))
+        except ValueError:
+            pretrained_ckpt_rel = str(pretrained_ckpt)
+        total_epochs = self.config.get("epochs", _default_for(self.config, "epochs"))
+        metadata = {
+            "mode": "lora",
+            "base_model": base_model,
+            "base_config_path": base_config_rel,
+            "pretrained_ckpt_path": pretrained_ckpt_rel,
+            "lora_config": lora_section,
+            "learning_rate": learning_rate,
+            "epochs": total_epochs,
+        }
+        with open(save_dir / "training_metadata.json", 'w') as f:
+            json.dump(metadata, f, indent=4)
+
+        # Precision selection (same logic as full FT).
+        requested_precision = str(self.config.get("precision", "auto") or "auto").lower()
+        if requested_precision not in VALID_PRECISIONS:
+            requested_precision = "auto"
+        precision = _auto_precision(device_info) if requested_precision == "auto" else requested_precision
+        self.training_status["precision_used"] = precision
+
+        # Build trainer command. Verified working on 12 May 2026.
+        batch_size = int(self.config.get("batchSize", 1))
+        venv_python = str(config_obj.get_path("venv") / "bin" / "python")
+        if not os.path.exists(venv_python):
+            venv_python = sys.executable
+
+        cmd = [
+            venv_python, "../loraw_vendor/train.py",
+            "--config-file", "../loraw_vendor/defaults.ini",
+            "--use-lora", "true",
+            "--pretrained-ckpt-path", str(pretrained_ckpt),
+            "--model-config", str(run_config_path),
+            "--dataset-config", str(config_obj.get_dataset_config_path()),
+            "--name", model_name,
+            "--save-dir", str(save_dir),
+            "--checkpoint-every", str(checkpoint_every),
+            "--batch-size", str(batch_size),
+            "--num-workers", "0",
+            "--precision", precision,
+            "--seed", "42",
+            "--strategy", "auto",
+        ]
+        print(f"[LoRA] TRAINING COMMAND:\n  {' '.join(cmd)}")
+
+        env = os.environ.copy()
+        env["WANDB_MODE"] = "disabled"
+        env["WANDB_SILENT"] = "true"
+        env["WANDB_DISABLED"] = "true"
+        env["PYTHONPATH"] = "."  # so loraw_vendor/train.py finds custom_metadata
+        env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+        # Launch subprocess from stable-audio-tools/ (custom_metadata module location).
+        self.training_process = subprocess.Popen(
+            cmd,
+            cwd=str(config_obj.get_path("stable_audio_tools")),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        self.training_start_time = time.time()
+
+        self.training_status.update({
+            "is_training": True,
+            "start_time": self.training_start_time,
+            "progress": 0,
+            "current_epoch": 0,
+            "current_step": 0,
+            "global_step": 0,
+            "checkpoints_saved": 0,
+            "error": None,
+            "device_info": device_info,
+            "steps_per_epoch": steps_per_epoch,
+            "total_steps_per_epoch": steps_per_epoch,
+            "total_steps": total_steps,
+            "total_epochs": total_epochs,
+            "checkpoint_every": checkpoint_every,
+            "training_mode": "lora",
+            "lora_config": lora_section,
+            "error_messages": [],
+            "stop_initiated": False,
+        })
+
+        monitor_thread = threading.Thread(target=self._monitor_training)
+        monitor_thread.daemon = True
+        monitor_thread.start()
+
+        return {
+            "status": "started",
+            "message": (
+                f"LoRA training started: {base_model} + r={rank} adapter on "
+                f"{device_info['type'].upper()}"
+            ),
+            "config": self.config,
+            "model_info": {
+                "base_model": base_model,
+                "mode": "lora",
+                "lora_config": lora_section,
+                "run_config_path": str(run_config_path),
+            },
+            "device_info": device_info,
+        }
+
     def start_training(self) -> Dict[str, Any]:
+        # Dispatch by mode. 'full' = existing SAO full-fine-tune (body below);
+        # 'lora' = LoRAW adapter training (separate method). Default 'full'
+        # preserves pre-LoRA behavior for any caller that doesn't pass mode.
+        mode = self.config.get("mode", "full")
+        if mode == "lora":
+            return self._start_lora_training()
+
         if self.training_status["is_training"]:
             return {"error": "Training already in progress"}
 
