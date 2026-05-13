@@ -24,6 +24,9 @@ def _slugify_prompt(text: str, max_len: int = 40) -> str:
 
 sys.path.append(
     str(Path(__file__).parent.parent.parent.parent / "stable-audio-tools"))
+# LoRAW lives at <project>/loraw_vendor; expose its `loraw` package for inference.
+sys.path.append(
+    str(Path(__file__).parent.parent.parent.parent / "loraw_vendor"))
 
 
 warnings.filterwarnings(
@@ -35,6 +38,7 @@ warnings.filterwarnings(
 from stable_audio_tools.models.utils import load_ckpt_state_dict
 from stable_audio_tools.inference.generation import generate_diffusion_cond
 from stable_audio_tools.models import create_model_from_config
+from loraw.network import create_lora_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +53,37 @@ class AudioGenerator:
         self.current_model_key = None
         self.is_distilled_small = False
         self.is_fine_tuned = False
+        # LoRA state. `lora` holds the LoRAWrapper instance when one is active;
+        # `_active_lora_path` / `_active_lora_multiplier` are used (along with
+        # the base-model identifier) in `current_model_key` so the cache
+        # invalidates whenever the LoRA selection changes — forcing a fresh
+        # base reload because LoRAW's `activate()` is not reversible in-place.
+        self.lora = None
+        self._active_lora_path = None
+        self._active_lora_multiplier = 1.0
         self._stop_event = threading.Event()
         logger.info(f"Using device: {self.device}")
+
+    def _apply_lora(self, lora_path: str, lora_config: Dict[str, Any], multiplier: float = 1.0):
+        """Wrap the currently-loaded base model with a LoRA from LoRAW.
+
+        Caller is responsible for ensuring the base model is fresh (no prior
+        LoRA injected) — typically by routing through `generate_audio`'s cache
+        invalidation, which reloads the base when the LoRA selection changes.
+        """
+        if self.model is None:
+            raise RuntimeError("Base model must be loaded before applying a LoRA")
+        full_config = {
+            "model_type": getattr(self.model, "model_type", "diffusion_cond"),
+            "lora": lora_config,
+        }
+        self.lora = create_lora_from_config(full_config, self.model)
+        state = torch.load(lora_path, map_location=self.device)
+        self.lora.load_weights(state, multiplier=multiplier)
+        self.lora.activate()
+        self._active_lora_path = lora_path
+        self._active_lora_multiplier = multiplier
+        logger.info(f"LoRA applied: {Path(lora_path).name} (multiplier={multiplier})")
 
     def request_stop(self) -> bool:
         """Signal the in-flight diffusion loop (if any) to abort at the next step."""
@@ -193,23 +226,35 @@ class AudioGenerator:
         batch_index: int = 1,
         batch_total: int = 1,
         loop_mode: bool = False,
+        lora_path: Optional[str] = None,
+        lora_config: Optional[Dict[str, Any]] = None,
+        lora_multiplier: float = 1.0,
     ) -> Path:
         print(f"\nAUDIO GENERATOR: generate_audio called")
         print(f"   - Prompt: '{prompt}'")
         print(f"   - Duration: {duration}s")
+        if lora_path:
+            print(f"   - LoRA: {lora_path} (×{lora_multiplier})")
 
-        
+        # The cache key includes LoRA selection so the base reloads whenever
+        # the LoRA changes (LoRAW's activate() is not reversible in-place;
+        # the only safe way to drop or swap a LoRA is to reload the base).
+        lora_signature = (lora_path, lora_multiplier) if lora_path else (None, 1.0)
         if unwrapped_model_path:
-            target_key = ('unwrapped', str(unwrapped_model_path))
+            target_key = ('unwrapped', str(unwrapped_model_path), lora_signature)
         elif model_path:
-            target_key = ('path', str(model_path))
+            target_key = ('path', str(model_path), lora_signature)
         else:
-            target_key = ('default', 'stable-audio-open-small')
+            target_key = ('default', 'stable-audio-open-small', lora_signature)
 
         if self.model is not None and self.current_model_key == target_key:
             print(f"AUDIO GENERATOR: Reusing already-loaded model")
         else:
             print(f"AUDIO GENERATOR: Loading new model")
+            # Reset any prior LoRA state — load_*_model rebuilds self.model fresh.
+            self.lora = None
+            self._active_lora_path = None
+            self._active_lora_multiplier = 1.0
 
             if unwrapped_model_path:
                 print(f"AUDIO GENERATOR: Loading unwrapped model from {unwrapped_model_path}")
@@ -235,6 +280,12 @@ class AudioGenerator:
                 print(f"AUDIO GENERATOR: Loading default local small base model")
                 if not self.load_local_base_model("stable-audio-open-small"):
                     raise ValueError("Failed to load default local base model")
+
+            # Attach the LoRA (if requested) onto the freshly loaded base.
+            if lora_path:
+                if not lora_config:
+                    raise ValueError("lora_config required when lora_path is set")
+                self._apply_lora(lora_path, lora_config, lora_multiplier)
 
             self.current_model_key = target_key
 

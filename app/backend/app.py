@@ -422,6 +422,11 @@ def generate_audio():
         model_name = data.get('model_name', data.get('model', 'default'))
         model_path = data.get('model_path')
         unwrapped_model_path = data.get('unwrapped_model_path')
+        lora_path = data.get('lora_path') or None
+        lora_multiplier = Validator.number(
+            data.get('lora_multiplier', 1.0), 'lora_multiplier',
+            min_value=0.0, max_value=2.0,
+        )
 
         align_bars_raw = data.get('align_bars')
         align_bpm_raw = data.get('align_bpm')
@@ -494,6 +499,47 @@ def generate_audio():
             f"requesting {duration:.2f}s with headroom"
         )
 
+    # Resolve LoRA: read the lora_config section out of the adjacent
+    # training_metadata.json so the inference wrapper knows the rank/alpha/etc.
+    lora_kwargs = {}
+    if lora_path:
+        lora_p = Path(lora_path)
+        if not lora_p.is_absolute():
+            lora_p = config.project_root / lora_p
+        if not lora_p.exists():
+            return jsonify(APIResponse.error(
+                f"LoRA file not found: {lora_p}", status_code=400)), 400
+        metadata_path = None
+        for ancestor in [lora_p.parent, *lora_p.parents]:
+            candidate = ancestor / "training_metadata.json"
+            if candidate.exists():
+                metadata_path = candidate
+                break
+            if ancestor == config.project_root:
+                break
+        if metadata_path is None:
+            return jsonify(APIResponse.error(
+                f"No training_metadata.json found near {lora_p}", status_code=400)), 400
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except Exception as exc:
+            return jsonify(APIResponse.error(
+                f"Failed to read LoRA metadata at {metadata_path}: {exc}",
+                status_code=400)), 400
+        if metadata.get("mode") != "lora":
+            return jsonify(APIResponse.error(
+                f"{metadata_path} is not a LoRA training metadata file",
+                status_code=400)), 400
+        lora_kwargs = {
+            "lora_path": str(lora_p),
+            "lora_config": metadata.get("lora_config", {}),
+            "lora_multiplier": float(lora_multiplier),
+        }
+        logger.info(
+            f"LoRA selected: {lora_p.name} (rank={lora_kwargs['lora_config'].get('rank')}, "
+            f"multiplier={lora_multiplier})"
+        )
+
     try:
         if determined_model_path and determined_model_path.exists():
             output_path = generator.generate_audio(
@@ -508,6 +554,7 @@ def generate_audio():
                 batch_index=batch_index,
                 batch_total=batch_total,
                 loop_mode=do_align,
+                **lora_kwargs,
             )
         elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
             model_file_mapping = {
@@ -533,6 +580,7 @@ def generate_audio():
                 batch_index=batch_index,
                 batch_total=batch_total,
                 loop_mode=do_align,
+                **lora_kwargs,
             )
         elif model_name and model_name != 'default':
             fine_tuned_path = config.get_path("models_fine_tuned") / model_name
@@ -543,13 +591,13 @@ def generate_audio():
                 prompt, fine_tuned_path, duration=duration,
                 cfg_scale=cfg_scale, steps=steps, seed=seed,
                 batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align)
+                loop_mode=do_align, **lora_kwargs)
         else:
             logger.debug("Using default model")
             output_path = generator.generate_audio(
                 prompt, duration=duration, cfg_scale=cfg_scale, steps=steps,
                 seed=seed, batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align)
+                loop_mode=do_align, **lora_kwargs)
 
         if not output_path.exists():
             raise GenerationError(prompt, model_name, "Generated audio file not found")
@@ -588,6 +636,56 @@ def generate_audio():
             return jsonify({'stopped': True, 'message': 'Generation stopped'}), 499
         logger.exception("Unexpected error during audio generation")
         return jsonify(APIResponse.error(f"Unexpected error: {str(e)}", status_code=500)), 500
+
+
+@app.route('/api/loras', methods=['GET'])
+def list_loras():
+    """Enumerate all trained LoRAs under models/fine_tuned/.
+
+    For each model directory that has a `training_metadata.json` with
+    `mode == "lora"`, returns the metadata plus the latest checkpoint file
+    (.ckpt) discovered under the dir. LoRAW writes the LoRA state_dict via
+    pl.callbacks.ModelCheckpoint, so the exact filename depends on
+    Lightning's pattern and the (disabled) wandb logger's run id — we just
+    glob for *.ckpt and return them sorted by mtime.
+    """
+    try:
+        config = get_config()
+        fine_tuned_dir = config.get_path("models_fine_tuned")
+        loras = []
+        if fine_tuned_dir.exists():
+            for model_dir in sorted(fine_tuned_dir.iterdir()):
+                if not model_dir.is_dir():
+                    continue
+                metadata_path = model_dir / "training_metadata.json"
+                if not metadata_path.exists():
+                    continue
+                try:
+                    metadata = json.loads(metadata_path.read_text())
+                except Exception:
+                    continue
+                if metadata.get("mode") != "lora":
+                    continue
+                ckpt_files = sorted(
+                    model_dir.rglob("*.ckpt"),
+                    key=lambda p: p.stat().st_mtime,
+                )
+                if not ckpt_files:
+                    continue
+                latest = ckpt_files[-1]
+                lora_cfg = metadata.get("lora_config", {})
+                loras.append({
+                    "name": model_dir.name,
+                    "path": str(latest),
+                    "base_model": metadata.get("base_model"),
+                    "rank": lora_cfg.get("rank"),
+                    "alpha": lora_cfg.get("alpha"),
+                    "all_checkpoints": [str(p) for p in ckpt_files],
+                })
+        return jsonify({"loras": loras})
+    except Exception as e:
+        logger.exception("Failed to enumerate LoRAs")
+        return jsonify(APIResponse.error(f"Failed to list LoRAs: {e}", status_code=500)), 500
 
 
 @app.route('/api/status', methods=['GET'])
