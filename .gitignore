@@ -34,6 +34,14 @@ main.py
 models/pretrained/*.safetensors
 models/pretrained/*.ckpt
 models/pretrained/*.pth
+# HuggingFace cache layout (left over from ACE-Step migration branch; kept on
+# disk so we can switch branches without redownloading, but never tracked here)
+models/pretrained/models--*/
+models/pretrained/.locks/
+models/pretrained/.cache/
+# Vendored ACE-Step library skeleton from the ace-step-migration branch.
+# On `main` it has no functional role; ignoring it keeps `git status` quiet.
+acestep_vendor/
 models/fine_tuned/*/
 !models/fine_tuned/.gitkeep
 
