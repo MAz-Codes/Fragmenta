@@ -17,6 +17,8 @@
 
 Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA, full fine-tuning, generation and performance capabilities.
 
+**Powered by Stability AI** — Fragmenta uses [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models, which are governed by the [Stability AI Community License](LICENSE-stable-audio.md).
+
 This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Phd Research](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
 
 ---
@@ -275,10 +277,13 @@ If you want to use Fragmenta under different terms (e.g. embedded in a closed-so
 
 ### Third-Party Software
 
-Fragmenta is powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. 
+Fragmenta is **Powered by Stability AI**, using [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models.
+
+> "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
 
 Fragmenta includes and depends on various third-party open-source software. See [NOTICE.md](NOTICE.md) for complete attribution and license information.
 
 - **pywebview** — BSD License
-- **Stable Audio Models** — subject to Stability AI's model license (review when downloading)
+- **Stable Audio Models** — governed by the [Stability AI Community License](LICENSE-stable-audio.md)
 - **stable-audio-tools** — MIT License (included with modifications)
+- **LoRAW** — MIT License (vendored under `loraw_vendor/`)

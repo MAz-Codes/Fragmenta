@@ -137,10 +137,18 @@ The following npm packages are included in the React frontend:
 Fragmenta Desktop uses pywebview as a lightweight native window wrapper for the local web interface.
 
 ### Stable Audio Models
-The pre-trained Stable Audio models are subject to their own license terms from Stability AI. Please review the model license at:
-- https://huggingface.co/stabilityai/stable-audio-open-1.0
 
-Users must accept the model license terms independently when downloading the models through Fragmenta Desktop.
+Fragmenta uses pre-trained Stable Audio Open models from Stability AI. These models are governed by the **Stability AI Community License Agreement** — the full text is in [`LICENSE-stable-audio.md`](LICENSE-stable-audio.md) at the repo root.
+
+Required attribution (per the SACL):
+
+> "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
+
+Users must accept the model license terms independently when downloading the models through Fragmenta Desktop:
+- https://huggingface.co/stabilityai/stable-audio-open-1.0
+- https://huggingface.co/stabilityai/stable-audio-open-small
+
+**Powered by Stability AI** ([stability.ai](https://stability.ai)).
 
 ---
 

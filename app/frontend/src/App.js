@@ -2352,7 +2352,38 @@ function App() {
                 <DialogContent>
                     <Typography sx={appStyles.infoDialogIntro}>
                         Fragmenta is an open source, local-first pipeline to fine-tune, train, generate and perform with text-to-audio diffusion models.
-                        Made by the composer and researcher Misagh Azimi. 
+                        Made by the composer and researcher Misagh Azimi.
+                    </Typography>
+
+                    <Typography variant="subtitle2" sx={appStyles.infoDialogSectionTitle}>
+                        Credits
+                    </Typography>
+                    <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
+                        <strong>Powered by Stability AI</strong> — Fragmenta uses{' '}
+                        <Typography
+                            component="a"
+                            variant="body2"
+                            href="https://huggingface.co/stabilityai/stable-audio-open-1.0"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ color: 'primary.main', textDecoration: 'underline' }}
+                        >
+                            Stable Audio Open
+                        </Typography>{' '}
+                        models, governed by the{' '}
+                        <Typography
+                            component="a"
+                            variant="body2"
+                            href="https://stability.ai/license"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ color: 'primary.main', textDecoration: 'underline' }}
+                        >
+                            Stability AI Community License
+                        </Typography>.
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 2, fontStyle: 'italic' }}>
+                        "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
                     </Typography>
 
                     <Typography variant="subtitle2" sx={appStyles.infoDialogSectionTitle}>
