@@ -1922,34 +1922,6 @@ function App() {
                                                                     </Select>
                                                                 </FormControl>
                                                             )}
-                                                            {selectedLora && (
-                                                                <Box sx={appStyles.formControlMarginBottom}>
-                                                                    <Typography gutterBottom>LoRA Multiplier</Typography>
-                                                                    <Box sx={appStyles.sliderRow}>
-                                                                        <Slider
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e, v) => setLoraMultiplier(v)}
-                                                                            min={0}
-                                                                            max={2}
-                                                                            step={0.05}
-                                                                            valueLabelDisplay="auto"
-                                                                            sx={appStyles.sliderFlexGrow}
-                                                                        />
-                                                                        <TextField
-                                                                            type="number"
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e) => {
-                                                                                const val = parseFloat(e.target.value);
-                                                                                if (Number.isNaN(val)) return;
-                                                                                setLoraMultiplier(Math.max(0, Math.min(2, val)));
-                                                                            }}
-                                                                            inputProps={{ min: 0, max: 2, step: 0.05 }}
-                                                                            sx={appStyles.sliderInputSmall}
-                                                                            size="small"
-                                                                        />
-                                                                    </Box>
-                                                                </Box>
-                                                            )}
                                                         </>
                                                     );
                                                 })()}
@@ -2051,6 +2023,35 @@ function App() {
                                                                     </Typography>
                                                                 )}
                                                             </Grid>
+
+                                                            {selectedLora && (
+                                                                <Grid item xs={12}>
+                                                                    <Typography gutterBottom>LoRA Multiplier</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={loraMultiplier}
+                                                                            onChange={(e, v) => setLoraMultiplier(v)}
+                                                                            min={0}
+                                                                            max={2}
+                                                                            step={0.05}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={loraMultiplier}
+                                                                            onChange={(e) => {
+                                                                                const val = parseFloat(e.target.value);
+                                                                                if (Number.isNaN(val)) return;
+                                                                                setLoraMultiplier(Math.max(0, Math.min(2, val)));
+                                                                            }}
+                                                                            inputProps={{ min: 0, max: 2, step: 0.05 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+                                                                </Grid>
+                                                            )}
 
                                                             <Grid item xs={12}>
                                                                 <Typography gutterBottom>Batch Generation (per prompt)</Typography>
