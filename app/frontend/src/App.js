@@ -51,7 +51,8 @@ import {
     Sun as SunIcon,
     Piano as PerformanceIcon,
     AlertCircle as AlertIcon,
-    Wand2 as WandIcon
+    Wand2 as WandIcon,
+    Trash2 as DeleteIcon
 } from 'lucide-react';
 import api from './api';
 import HfAuthDialog from './components/HfAuthDialog';
@@ -379,6 +380,35 @@ function App() {
             );
         } catch (error) {
             console.error('Error fetching base models status:', error);
+        }
+    };
+
+    // Delete a fine-tuned model OR a LoRA — both live under models/fine_tuned/<name>
+    // so the same endpoint (rmtree on the directory) handles either. After
+    // success, clear any selection that pointed at it and refresh both lists.
+    const handleDeleteFineTunedOrLora = async (name, { isLora } = {}) => {
+        const kind = isLora ? 'LoRA' : 'fine-tuned model';
+        const confirmed = window.confirm(
+            `Delete ${kind} "${name}"? This removes the directory and all its checkpoints. This cannot be undone.`
+        );
+        if (!confirmed) return;
+        try {
+            await api.delete(`/api/models/fine-tuned/${encodeURIComponent(name)}`);
+            if (isLora) {
+                // If the deleted LoRA was selected anywhere, clear it.
+                const deletedLora = availableLoras.find(l => l.name === name);
+                const paths = deletedLora ? (deletedLora.all_checkpoints || [deletedLora.path]) : [];
+                if (paths.includes(selectedLora)) setSelectedLora('');
+            } else {
+                if (selectedModel === name) {
+                    setSelectedModel('');
+                    setSelectedUnwrappedModel('');
+                }
+            }
+            refreshAllModels();
+        } catch (err) {
+            const msg = err?.response?.data?.error || err.message || 'Delete failed';
+            setProcessingStatus(`Failed to delete "${name}": ${msg}`);
         }
     };
 
@@ -1780,8 +1810,13 @@ function App() {
                                                                 </MenuItem>
                                                             )}
                                                             {availableModels.map((model) => (
-                                                                <MenuItem key={model.name} value={String(model.name)} disabled={false}>
-                                                                    <Box>
+                                                                <MenuItem
+                                                                    key={model.name}
+                                                                    value={String(model.name)}
+                                                                    disabled={false}
+                                                                    sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                                                >
+                                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                         <Typography variant="body1">{model.name}</Typography>
                                                                         <Typography variant="caption" color="textSecondary">
                                                                             {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'} |
@@ -1790,6 +1825,23 @@ function App() {
                                                                                 : ' No unwrapped models'}
                                                                         </Typography>
                                                                     </Box>
+                                                                    <Tooltip title="Delete fine-tuned model">
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                e.preventDefault();
+                                                                                handleDeleteFineTunedOrLora(model.name);
+                                                                            }}
+                                                                            sx={{
+                                                                                color: 'text.disabled',
+                                                                                '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                                                            }}
+                                                                        >
+                                                                            <DeleteIcon size={14} />
+                                                                        </IconButton>
+                                                                    </Tooltip>
                                                                 </MenuItem>
                                                             ))}
                                                         </Select>
@@ -1886,8 +1938,12 @@ function App() {
                                                                         <em>No LoRA (base model only)</em>
                                                                     </MenuItem>
                                                                     {compatibleLoras.map((lora) => (
-                                                                        <MenuItem key={lora.name} value={lora.name}>
-                                                                            <Box>
+                                                                        <MenuItem
+                                                                            key={lora.name}
+                                                                            value={lora.name}
+                                                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                                                        >
+                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                                 <Typography variant="body1">{lora.name}</Typography>
                                                                                 <Typography variant="caption" color="textSecondary">
                                                                                     rank={lora.rank}, alpha={lora.alpha}
@@ -1896,6 +1952,23 @@ function App() {
                                                                                         : ''}
                                                                                 </Typography>
                                                                             </Box>
+                                                                            <Tooltip title="Delete LoRA">
+                                                                                <IconButton
+                                                                                    size="small"
+                                                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                                    onClick={(e) => {
+                                                                                        e.stopPropagation();
+                                                                                        e.preventDefault();
+                                                                                        handleDeleteFineTunedOrLora(lora.name, { isLora: true });
+                                                                                    }}
+                                                                                    sx={{
+                                                                                        color: 'text.disabled',
+                                                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                                                                    }}
+                                                                                >
+                                                                                    <DeleteIcon size={14} />
+                                                                                </IconButton>
+                                                                            </Tooltip>
                                                                         </MenuItem>
                                                                     ))}
                                                                 </Select>
