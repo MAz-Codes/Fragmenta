@@ -1202,8 +1202,7 @@ function PerformancePanelInner({
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
                 <FormControl size="small" sx={{
-                    minWidth: 140,
-                    maxWidth: 220,
+                    width: 130,
                     '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                     '& .MuiSelect-select': {
                         overflow: 'hidden',
@@ -1285,8 +1284,7 @@ function PerformancePanelInner({
 
                 {unwrappedModels.length > 0 && (
                     <FormControl size="small" sx={{
-                        minWidth: 140,
-                        maxWidth: 220,
+                        width: 130,
                         '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                         '& .MuiSelect-select': {
                             overflow: 'hidden',
@@ -1320,12 +1318,14 @@ function PerformancePanelInner({
                     </FormControl>
                 )}
 
+                {/* LoRA + its checkpoint sub-picker — always rendered (disabled
+                    when irrelevant) so the bar layout doesn't shift as the user
+                    picks. */}
                 {(() => {
                     const isBaseModel = baseModels.some(m => m.name === selectedModel);
                     const compatibleLoras = isBaseModel
                         ? availableLoras.filter(l => l.base_model === selectedModel)
                         : [];
-                    if (compatibleLoras.length === 0) return null;
                     const currentLora = compatibleLoras.find(
                         l => l.path === selectedLora ||
                              (l.all_checkpoints || []).includes(selectedLora)
@@ -1337,11 +1337,13 @@ function PerformancePanelInner({
                         if (m) return `Ep ${m[1]} · ${m[2]}`;
                         return name.replace(/\.ckpt$/i, '');
                     };
+                    const loraDisabled = compatibleLoras.length === 0;
+                    const ckptCount = currentLora?.all_checkpoints?.length ?? 0;
+                    const ckptDisabled = !currentLora || ckptCount <= 1;
                     return (
                         <>
-                            <FormControl size="small" sx={{
-                                minWidth: 140,
-                                maxWidth: 220,
+                            <FormControl size="small" disabled={loraDisabled} sx={{
+                                width: 130,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
                                     overflow: 'hidden',
@@ -1403,33 +1405,34 @@ function PerformancePanelInner({
                                 </Select>
                             </FormControl>
 
-                            {currentLora && currentLora.all_checkpoints?.length > 1 && (
-                                <FormControl size="small" sx={{
-                                    minWidth: 120,
-                                    maxWidth: 200,
-                                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                    '& .MuiSelect-select': {
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                    },
-                                }}>
-                                    <Select
-                                        value={selectedLora || currentLora.path}
-                                        onChange={(e) => onSelectLora?.(String(e.target.value))}
-                                        renderValue={(value) => parseCheckpointLabel(value)}
-                                    >
-                                        {currentLora.all_checkpoints.map((ckpt, i, arr) => (
-                                            <MenuItem key={ckpt} value={ckpt}>
-                                                <Typography variant="body2">
-                                                    {parseCheckpointLabel(ckpt)}
-                                                    {i === arr.length - 1 ? ' (latest)' : ''}
-                                                </Typography>
-                                            </MenuItem>
-                                        ))}
-                                    </Select>
-                                </FormControl>
-                            )}
+                            <FormControl size="small" disabled={ckptDisabled} sx={{
+                                width: 110,
+                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                '& .MuiSelect-select': {
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                },
+                            }}>
+                                <Select
+                                    value={ckptDisabled ? '' : (selectedLora || currentLora?.path || '')}
+                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                    displayEmpty
+                                    renderValue={(value) => {
+                                        if (!value) return <em style={{ opacity: 0.6 }}>Checkpoint</em>;
+                                        return parseCheckpointLabel(value);
+                                    }}
+                                >
+                                    {(currentLora?.all_checkpoints || []).map((ckpt, i, arr) => (
+                                        <MenuItem key={ckpt} value={ckpt}>
+                                            <Typography variant="body2">
+                                                {parseCheckpointLabel(ckpt)}
+                                                {i === arr.length - 1 ? ' (latest)' : ''}
+                                            </Typography>
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
                         </>
                     );
                 })()}
@@ -1448,13 +1451,13 @@ function PerformancePanelInner({
                     >
                         <FormControl
                             size="small"
-                            sx={{ minWidth: 96, '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
+                            sx={{ width: 72, '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
                         >
                             <Select
                                 value={isSmallModel ? 8 : steps}
                                 onChange={(e) => onStepsChange?.(Number(e.target.value))}
                                 disabled={isSmallModel}
-                                renderValue={(value) => `${value} steps`}
+                                renderValue={(value) => `${value}`}
                             >
                                 {isSmallModel && (
                                     <MenuItem value={8}>
@@ -1463,7 +1466,7 @@ function PerformancePanelInner({
                                 )}
                                 {[50, 100, 150, 200, 250].map((n) => (
                                     <MenuItem key={n} value={n}>
-                                        <Typography variant="body2">{n} steps</Typography>
+                                        <Typography variant="body2">{n}</Typography>
                                     </MenuItem>
                                 ))}
                             </Select>
@@ -1489,13 +1492,13 @@ function PerformancePanelInner({
                     <TextField
                         size="small"
                         type="number"
-                        placeholder="e.g. 42"
+                        placeholder="42"
                         value={seedValue}
                         onChange={(e) => onSeedValueChange?.(e.target.value)}
                         disabled={randomSeed}
                         inputProps={{ min: 0, max: 4294967295, step: 1 }}
                         sx={{
-                            width: 130,
+                            width: 88,
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             '& input': {
                                 fontVariantNumeric: 'tabular-nums',
