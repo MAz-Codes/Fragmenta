@@ -305,7 +305,18 @@ export class PerformanceEngine {
         this.masterAnalyserData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
         this.masterBus.connect(this.masterLimiter);
         this.masterLimiter.connect(this.masterAnalyser);
-        this.masterAnalyser.connect(ctx.destination);
+
+        // Stage 2 multichannel routing. The stereo master bus is split into
+        // two mono lines and merged into a destination sized to the device's
+        // maxChannelCount. The pair selector decides which two merger inputs
+        // the splitter outputs connect to — everything else stays silent.
+        // On stereo-only devices the merger has 2 inputs and only pair 0 is
+        // legal, which is the existing behavior.
+        this.outputSplitter = null;
+        this.outputMerger = null;
+        this.currentMainPair = 0;
+        this._buildOutputGraph();
+
         this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
 
 
@@ -384,6 +395,11 @@ export class PerformanceEngine {
                     `Likely a placeholder/un-permissioned device id — grant mic access once to unlock real ids.`
                 );
             }
+
+            // ChannelMergerNode input count is fixed at construction. Since
+            // maxChannelCount may have changed with the new device, rebuild
+            // the splitter→merger→destination tail to size it correctly.
+            this._buildOutputGraph();
         } catch (err) {
             console.error('[PerformanceEngine] setSinkId failed:', err);
         }
@@ -393,6 +409,49 @@ export class PerformanceEngine {
     /** Current max channel count of the bound output destination. */
     getMaxChannelCount() {
         return this.ctx.destination.maxChannelCount ?? 2;
+    }
+
+    /**
+     * (Re)build the splitter → merger → destination tail of the master path.
+     * Called from the constructor and again whenever the device changes
+     * (since maxChannelCount may change and ChannelMergerNode's input count
+     * is fixed at construction). Restores the current pair after rebuild.
+     */
+    _buildOutputGraph() {
+        // Tear down any prior wiring.
+        try { this.masterAnalyser.disconnect(); } catch { /* ok */ }
+        try { this.outputSplitter?.disconnect(); } catch { /* ok */ }
+        try { this.outputMerger?.disconnect(); } catch { /* ok */ }
+
+        const channels = Math.max(2, this.ctx.destination.maxChannelCount || 2);
+        this.outputSplitter = this.ctx.createChannelSplitter(2);
+        this.outputMerger = this.ctx.createChannelMerger(channels);
+
+        this.masterAnalyser.connect(this.outputSplitter);
+        this.outputMerger.connect(this.ctx.destination);
+        this._wireMainPair(this.currentMainPair);
+    }
+
+    /**
+     * Connect the splitter's L/R outputs to a specific pair of merger inputs.
+     * Pair 0 = channels 1-2, pair 1 = 3-4, etc. Clamps to the available
+     * range so callers can pass stale indices safely.
+     */
+    _wireMainPair(pairIdx) {
+        if (!this.outputSplitter || !this.outputMerger) return;
+        const N = this.ctx.destination.maxChannelCount || 2;
+        const maxPair = Math.max(0, Math.floor(N / 2) - 1);
+        const pair = Math.min(Math.max(0, pairIdx | 0), maxPair);
+
+        try { this.outputSplitter.disconnect(); } catch { /* ok */ }
+        this.outputSplitter.connect(this.outputMerger, 0, pair * 2);
+        this.outputSplitter.connect(this.outputMerger, 1, pair * 2 + 1);
+        this.currentMainPair = pair;
+    }
+
+    /** Public: pick which channel pair the master mix routes to. */
+    setMainOutputPair(pairIdx) {
+        this._wireMainPair(pairIdx);
     }
 
     setChannelImpulseResponse(channelIndex, id) {

@@ -34,7 +34,7 @@ import { PerformanceEngine } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
-import { isCueSupported, listOutputDevices, setCueDevice } from '../utils/cueAudio';
+import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair } from '../utils/cueAudio';
 import {
     usePerformanceSession,
     listPresetNames,
@@ -144,8 +144,14 @@ function PerformancePanelInner({
     const [cueOutputPair, setCueOutputPair] = useState(session.cueOutputPair ?? 0);
 
     useEffect(() => { updateGlobal('outputDeviceId', outputDeviceId); }, [outputDeviceId, updateGlobal]);
-    useEffect(() => { updateGlobal('mainOutputPair', mainOutputPair); }, [mainOutputPair, updateGlobal]);
-    useEffect(() => { updateGlobal('cueOutputPair', cueOutputPair); }, [cueOutputPair, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('mainOutputPair', mainOutputPair);
+        engineRef.current?.setMainOutputPair?.(mainOutputPair);
+    }, [mainOutputPair, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('cueOutputPair', cueOutputPair);
+        setCueOutputPair(cueOutputPair);
+    }, [cueOutputPair, updateGlobal]);
 
     // When the chosen device changes, bind both the main engine context and
     // the (separate) cue context to it. Re-read maxChannelCount afterwards so
