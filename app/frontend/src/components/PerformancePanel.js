@@ -89,9 +89,14 @@ function PerformancePanelInner({
     selectedUnwrappedModel,
     availableModels = [],
     baseModels = [],
+    availableLoras = [],
+    selectedLora = '',
+    loraMultiplier = 1.0,
     onSelectModel,
     onSelectUnwrappedModel,
     onRefreshModels,
+    onSelectLora,
+    onLoraMultiplierChange,
     steps = 250,
     onStepsChange,
     randomSeed = true,
@@ -544,6 +549,10 @@ function PerformancePanelInner({
             // distinct seed so the batch produces actual variations rather
             // than the same audio repeated.
             const seed = (baseSeed + i * 0x9e3779b1) >>> 0;
+            // LoRA only meaningful on top of a base model (the LoRA was bound
+            // to that exact base at training time; applying it to a full-FT
+            // model is undefined).
+            const isBaseModel = baseModels.some(m => m.name === selectedModel);
             const requestData = {
                 prompt: finalPrompt,
                 duration,
@@ -554,6 +563,7 @@ function PerformancePanelInner({
                 batch_index: i + 1,
                 batch_total: count,
                 ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
+                ...(selectedLora && isBaseModel ? { lora_path: selectedLora, lora_multiplier: loraMultiplier } : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
@@ -1163,6 +1173,73 @@ function PerformancePanelInner({
                         </Select>
                     </FormControl>
                 )}
+
+                {/* LoRA picker + multiplier — only meaningful on a base model. */}
+                {(() => {
+                    const isBaseModel = baseModels.some(m => m.name === selectedModel);
+                    const compatibleLoras = isBaseModel
+                        ? availableLoras.filter(l => l.base_model === selectedModel)
+                        : [];
+                    if (compatibleLoras.length === 0) return null;
+                    return (
+                        <>
+                            <FormControl size="small" sx={{
+                                flex: 1,
+                                minWidth: 110,
+                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                            }}>
+                                <Select
+                                    value={selectedLora || ''}
+                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                    displayEmpty
+                                    renderValue={(value) => {
+                                        if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
+                                        const found = compatibleLoras.find(l => l.path === value);
+                                        return found ? found.name : 'LoRA';
+                                    }}
+                                >
+                                    <MenuItem value="">
+                                        <em>No LoRA</em>
+                                    </MenuItem>
+                                    {compatibleLoras.map((lora) => (
+                                        <MenuItem key={lora.path} value={lora.path}>
+                                            <Box>
+                                                <Typography variant="body2">{lora.name}</Typography>
+                                                <Typography variant="caption" color="textSecondary">
+                                                    rank={lora.rank}
+                                                </Typography>
+                                            </Box>
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                            {selectedLora && (
+                                <TextField
+                                    size="small"
+                                    type="number"
+                                    label="×"
+                                    value={loraMultiplier}
+                                    onChange={(e) => {
+                                        const v = parseFloat(e.target.value);
+                                        if (Number.isFinite(v)) {
+                                            onLoraMultiplierChange?.(Math.max(0, Math.min(2, v)));
+                                        }
+                                    }}
+                                    inputProps={{ min: 0, max: 2, step: 0.05 }}
+                                    sx={{
+                                        width: 84,
+                                        '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                        '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
+                                            WebkitAppearance: 'none',
+                                            margin: 0,
+                                        },
+                                        '& input[type=number]': { MozAppearance: 'textfield' },
+                                    }}
+                                />
+                            )}
+                        </>
+                    );
+                })()}
 
                 <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
                     <Button

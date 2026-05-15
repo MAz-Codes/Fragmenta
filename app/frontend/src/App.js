@@ -28,7 +28,10 @@ import {
     Switch,
     CssBaseline,
     ThemeProvider,
-    useMediaQuery
+    useMediaQuery,
+    ToggleButton,
+    ToggleButtonGroup,
+    Tooltip,
 } from '@mui/material';
 import {
     Plus as AddIcon,
@@ -112,6 +115,7 @@ function App() {
     });
 
     const [trainingConfig, setTrainingConfig] = useState({
+        mode: 'lora',                // 'full' = SAO fine-tune, 'lora' = LoRAW adapter
         epochs: 30,
         checkpointSteps: 500,
         checkpointAuto: true,
@@ -120,7 +124,13 @@ function App() {
         modelName: 'my_fine_tuned_model',
         baseModel: '',
         saveWrappedCheckpoint: false,
-        precision: 'auto'
+        precision: 'auto',
+        // LoRA-specific (only used when mode === 'lora'; the backend ignores
+        // these on the full FT path)
+        loraRank: 16,
+        loraAlpha: 16,
+        loraDropout: 0,
+        loraMultiplier: 1.0,
     });
     // Per-base training defaults. The distilled small mode-collapses under the
     // original stable-audio-tools recipe (LR 1e-4 / 30 epochs); the large
@@ -155,6 +165,9 @@ function App() {
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');
+    const [availableLoras, setAvailableLoras] = useState([]);
+    const [selectedLora, setSelectedLora] = useState('');
+    const [loraMultiplier, setLoraMultiplier] = useState(1.0);
     const generationAbortRef = useRef(null);
     const stopGenerationRef = useRef(false);
 
@@ -247,6 +260,9 @@ function App() {
 
     useEffect(() => {
         console.log('Model changed:', selectedModel);
+        // Clear the selected LoRA on any model change — a LoRA is bound to a
+        // specific base, and the dropdown re-filters by resolvedBaseModel.
+        setSelectedLora('');
     }, [selectedModel]);
 
     // Resolve the base model identity for the currently-selected entry. Works
@@ -334,6 +350,15 @@ function App() {
         }
     };
 
+    const fetchAvailableLoras = async () => {
+        try {
+            const response = await api.get('/api/loras');
+            setAvailableLoras(response.data.loras || []);
+        } catch (error) {
+            console.error('Error fetching available LoRAs:', error);
+        }
+    };
+
     const fetchBaseModelsStatus = async () => {
         try {
             const response = await api.get('/api/base-models/status');
@@ -353,7 +378,8 @@ function App() {
     const refreshAllModels = async () => {
         await Promise.all([
             fetchAvailableModels(),
-            fetchBaseModelsStatus()
+            fetchBaseModelsStatus(),
+            fetchAvailableLoras()
         ]);
     };
 
@@ -375,6 +401,7 @@ function App() {
         fetchSystemStatus();
         fetchAvailableModels();
         fetchBaseModelsStatus();
+        fetchAvailableLoras();
         fetchGpuMemoryStatus();
     }, []);
 
@@ -608,6 +635,13 @@ function App() {
         } else {
             setProcessingStatus('Please select a model');
             return;
+        }
+
+        // LoRA only meaningful on top of a base model (the LoRA was trained
+        // against that exact base — applying it to a full-FT model is undefined).
+        if (selectedLora && baseModel) {
+            baseRequestData.lora_path = selectedLora;
+            baseRequestData.lora_multiplier = loraMultiplier;
         }
 
         const parsedSeed = parseInt(seedValue, 10);
@@ -1266,6 +1300,34 @@ function App() {
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Training Configuration</Typography>
                                                 </Box>
 
+                                                <Box sx={{ mb: 2 }}>
+                                                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                        Training mode
+                                                    </Typography>
+                                                    <ToggleButtonGroup
+                                                        value={trainingConfig.mode}
+                                                        exclusive
+                                                        size="small"
+                                                        onChange={(e, newMode) => {
+                                                            if (newMode !== null) {
+                                                                setTrainingConfig({ ...trainingConfig, mode: newMode });
+                                                            }
+                                                        }}
+                                                        fullWidth
+                                                    >
+                                                        <Tooltip title="LoRA adapter — small (~50 MB) trainable layer attached to the frozen base model. Works on 16 GB cards. Recommended for most use cases.">
+                                                            <ToggleButton value="lora">
+                                                                LoRA Adapter
+                                                            </ToggleButton>
+                                                        </Tooltip>
+                                                        <Tooltip title="Full fine-tune — rewrites the entire base model. Produces a ~5 GB checkpoint. Requires ≥24 GB VRAM for the large base.">
+                                                            <ToggleButton value="full">
+                                                                Full Fine-tune
+                                                            </ToggleButton>
+                                                        </Tooltip>
+                                                    </ToggleButtonGroup>
+                                                </Box>
+
                                                 <FormControl fullWidth sx={appStyles.formControlMarginBottom}>
                                                     <Select
                                                         id="base-model-select"
@@ -1525,6 +1587,108 @@ function App() {
                                                                 </Typography>
                                                             </Grid>
 
+                                                            {trainingConfig.mode === 'lora' && (
+                                                                <Grid item xs={12}>
+                                                                    <Typography variant="subtitle2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
+                                                                        LoRA settings
+                                                                    </Typography>
+
+                                                                    <Typography gutterBottom>Rank</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={trainingConfig.loraRank}
+                                                                            onChange={(e, value) => setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                loraRank: value,
+                                                                                // Keep alpha == rank by default (common LoRA practice)
+                                                                                ...(trainingConfig.loraAlpha === trainingConfig.loraRank
+                                                                                    ? { loraAlpha: value } : {}),
+                                                                            })}
+                                                                            min={4}
+                                                                            max={128}
+                                                                            step={4}
+                                                                            marks
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={trainingConfig.loraRank}
+                                                                            onChange={(e) => {
+                                                                                const v = Math.max(4, Math.min(128, parseInt(e.target.value, 10) || 16));
+                                                                                setTrainingConfig({ ...trainingConfig, loraRank: v });
+                                                                            }}
+                                                                            inputProps={{ min: 4, max: 128, step: 4 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+                                                                    <Typography variant="caption" color="textSecondary">
+                                                                        Higher rank = more capacity but more VRAM. r=16 fits comfortably on 16 GB.
+                                                                    </Typography>
+
+                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Alpha</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={trainingConfig.loraAlpha}
+                                                                            onChange={(e, value) => setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                loraAlpha: value,
+                                                                            })}
+                                                                            min={4}
+                                                                            max={256}
+                                                                            step={4}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={trainingConfig.loraAlpha}
+                                                                            onChange={(e) => {
+                                                                                const v = Math.max(4, Math.min(256, parseInt(e.target.value, 10) || 16));
+                                                                                setTrainingConfig({ ...trainingConfig, loraAlpha: v });
+                                                                            }}
+                                                                            inputProps={{ min: 4, max: 256, step: 4 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+                                                                    <Typography variant="caption" color="textSecondary">
+                                                                        Scaling factor for the LoRA update. Conventional choice: alpha = rank.
+                                                                    </Typography>
+
+                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Dropout</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={trainingConfig.loraDropout}
+                                                                            onChange={(e, value) => setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                loraDropout: value,
+                                                                            })}
+                                                                            min={0}
+                                                                            max={0.5}
+                                                                            step={0.05}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={trainingConfig.loraDropout}
+                                                                            onChange={(e) => {
+                                                                                const v = Math.max(0, Math.min(0.5, parseFloat(e.target.value) || 0));
+                                                                                setTrainingConfig({ ...trainingConfig, loraDropout: v });
+                                                                            }}
+                                                                            inputProps={{ min: 0, max: 0.5, step: 0.05 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+                                                                    <Typography variant="caption" color="textSecondary">
+                                                                        Regularization for the LoRA layers. 0 is fine for most cases; raise if overfitting on small datasets.
+                                                                    </Typography>
+                                                                </Grid>
+                                                            )}
+
                                                         </Grid>
                                                     </AccordionDetails>
                                                 </Accordion>
@@ -1711,6 +1875,58 @@ function App() {
                                                         );
                                                     })()
                                                 )}
+
+                                                {/* LoRA picker — only meaningful on a base model. Filters to
+                                                    LoRAs trained against the currently-selected base. */}
+                                                {baseModels.find(m => m.name === selectedModel) && (() => {
+                                                    const compatibleLoras = availableLoras.filter(
+                                                        l => l.base_model === selectedModel
+                                                    );
+                                                    if (compatibleLoras.length === 0) return null;
+                                                    return (
+                                                        <Box sx={appStyles.formControlMarginBottom}>
+                                                            <FormControl fullWidth variant="outlined">
+                                                                <Select
+                                                                    value={selectedLora || ''}
+                                                                    onChange={(e) => setSelectedLora(String(e.target.value))}
+                                                                    displayEmpty
+                                                                >
+                                                                    <MenuItem value="">
+                                                                        <em>No LoRA (base model only)</em>
+                                                                    </MenuItem>
+                                                                    {compatibleLoras.map((lora) => (
+                                                                        <MenuItem key={lora.path} value={lora.path}>
+                                                                            <Box>
+                                                                                <Typography variant="body1">{lora.name}</Typography>
+                                                                                <Typography variant="caption" color="textSecondary">
+                                                                                    rank={lora.rank}, alpha={lora.alpha}
+                                                                                </Typography>
+                                                                            </Box>
+                                                                        </MenuItem>
+                                                                    ))}
+                                                                </Select>
+                                                            </FormControl>
+                                                            {selectedLora && (
+                                                                <Box sx={{ ...appStyles.sliderRow, mt: 1.5 }}>
+                                                                    <Typography variant="body2" color="textSecondary">
+                                                                        LoRA Multiplier:
+                                                                    </Typography>
+                                                                    <Slider
+                                                                        value={loraMultiplier}
+                                                                        onChange={(e, v) => setLoraMultiplier(v)}
+                                                                        min={0}
+                                                                        max={2}
+                                                                        step={0.05}
+                                                                        valueLabelDisplay="auto"
+                                                                    />
+                                                                    <Typography variant="body2" color="textSecondary">
+                                                                        {loraMultiplier.toFixed(2)}x
+                                                                    </Typography>
+                                                                </Box>
+                                                            )}
+                                                        </Box>
+                                                    );
+                                                })()}
 
                                                 <TextField
                                                     fullWidth
@@ -2043,9 +2259,14 @@ function App() {
                                             selectedUnwrappedModel={selectedUnwrappedModel}
                                             availableModels={availableModels}
                                             baseModels={baseModels}
+                                            availableLoras={availableLoras}
+                                            selectedLora={selectedLora}
+                                            loraMultiplier={loraMultiplier}
                                             onSelectModel={setSelectedModel}
                                             onSelectUnwrappedModel={setSelectedUnwrappedModel}
                                             onRefreshModels={fetchAvailableModels}
+                                            onSelectLora={setSelectedLora}
+                                            onLoraMultiplierChange={setLoraMultiplier}
                                             steps={steps}
                                             onStepsChange={setSteps}
                                             randomSeed={randomSeed}

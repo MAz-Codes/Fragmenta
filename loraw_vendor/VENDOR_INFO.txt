@@ -1,0 +1,3 @@
+# LoRAW vendored at 8c01655cd6283d180027cbe4b38bc473e1c89c84
+# Source: https://github.com/NeuralNotW0rk/LoRAW
+# Pinned 2026-05-13. Validation run on this commit confirmed SAO-large + r=16 LoRA fits in 16 GB VRAM.
