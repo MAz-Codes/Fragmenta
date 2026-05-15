@@ -1234,8 +1234,8 @@ def unwrap_model():
             '--use-safetensors'
         ]
 
-        # unwrap_model.py writes next to its CWD, so run from stable-audio-tools/.
-        stable_audio_dir = repo_root / "stable-audio-tools"
+        # unwrap_model.py writes next to its CWD, so run from vendor/stable-audio-tools/.
+        stable_audio_dir = repo_root / "vendor" / "stable-audio-tools"
 
         proc = subprocess.run(cmd, cwd=stable_audio_dir,
                               capture_output=True, text=True)

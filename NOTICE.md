@@ -10,47 +10,47 @@ Fragmenta Desktop uses third-party software and libraries. This document provide
 - **Source**: https://github.com/Stability-AI/stable-audio-tools
 - **Copyright**: Copyright (c) 2023 Stability AI
 - **License**: MIT License
-- **Location**: `stable-audio-tools/`
+- **Location**: `vendor/stable-audio-tools/`
 - **Modifications**: Minor modifications for integration with Fragmenta Desktop
 
-The MIT License text can be found in `stable-audio-tools/LICENSE`.
+The MIT License text can be found in `vendor/stable-audio-tools/LICENSE`.
 
-Stable Audio Tools itself includes code from the following projects (see `stable-audio-tools/LICENSES/`):
+Stable Audio Tools itself includes code from the following projects (see `vendor/stable-audio-tools/LICENSES/`):
 
 #### 1.1 ADP (Audio Diffusion PyTorch)
 - **Copyright**: Copyright (c) 2022 archinet.ai
 - **License**: MIT License
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_ADP.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_ADP.txt`
 
 #### 1.2 AEIOU
 - **Copyright**: Copyright (c) 2022 AEIOU team
 - **License**: MIT License
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_AEIOU.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_AEIOU.txt`
 
 #### 1.3 Auraloss
 - **Copyright**: Copyright (c) Christian Steinmetz
 - **License**: Apache License 2.0
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_AURALOSS.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_AURALOSS.txt`
 
 #### 1.4 Descript Audio Codec
 - **Copyright**: Copyright (c) Descript
 - **License**: MIT License
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_DESCRIPT.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_DESCRIPT.txt`
 
 #### 1.5 Meta AudioCraft
 - **Copyright**: Copyright (c) Meta Platforms, Inc.
 - **License**: MIT License
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_META.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_META.txt`
 
 #### 1.6 NVIDIA NeMo
 - **Copyright**: Copyright (c) NVIDIA Corporation
 - **License**: Apache License 2.0
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_NVIDIA.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_NVIDIA.txt`
 
 #### 1.7 x-transformers
 - **Copyright**: Copyright (c) Phil Wang
 - **License**: MIT License
-- **License File**: `stable-audio-tools/LICENSES/LICENSE_XTRANSFORMERS.txt`
+- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_XTRANSFORMERS.txt`
 
 ---
 
@@ -138,7 +138,7 @@ Fragmenta Desktop uses pywebview as a lightweight native window wrapper for the 
 
 ### Stable Audio Models
 
-Fragmenta uses pre-trained Stable Audio Open models from Stability AI. These models are governed by the **Stability AI Community License Agreement** — the full text is in [`LICENSE-stable-audio.md`](LICENSE-stable-audio.md) at the repo root.
+Fragmenta uses pre-trained Stable Audio Open models from Stability AI. These models are governed by the **Stability AI Community License Agreement** — the full text is in [`vendor/STABLE_AUDIO.md`](vendor/STABLE_AUDIO.md).
 
 Required attribution (per the SACL):
 
@@ -154,14 +154,14 @@ Users must accept the model license terms independently when downloading the mod
 
 ## License Texts
 
-Full license texts for all dependencies can be obtained from their respective repositories or package distributions. For licenses of included code (stable-audio-tools), see the `stable-audio-tools/LICENSES/` directory.
+Full license texts for all dependencies can be obtained from their respective repositories or package distributions. For licenses of included code (stable-audio-tools), see the `vendor/stable-audio-tools/LICENSES/` directory.
 
 ---
 
 ## How to View Full License Information
 
 - **This project's license**: See `LICENSE` file in the root directory
-- **Stable Audio Tools licenses**: See `stable-audio-tools/LICENSE` and `stable-audio-tools/LICENSES/`
+- **Stable Audio Tools licenses**: See `vendor/stable-audio-tools/LICENSE` and `vendor/stable-audio-tools/LICENSES/`
 - **Python package licenses**: Visit the URLs provided above or check package metadata
 - **npm package licenses**: Visit the URLs provided above or run `npm list --depth=0` in `app/frontend/`
 

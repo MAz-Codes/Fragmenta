@@ -244,10 +244,12 @@ class FineTuner:
         """Launch a LoRAW LoRA training run via subprocess.
 
         Mirrors the structure of the full-FT path (`start_training` body) but
-        invokes `loraw_vendor/train.py` with `--use-lora true` and a per-run
-        model_config that has a `lora` section injected. The trainer subprocess
-        runs from the `stable-audio-tools/` directory so `custom_metadata.py`
-        resolves; PYTHONPATH=. ensures the same.
+        invokes `vendor/loraw_vendor/train.py` with `--use-lora true` and a
+        per-run model_config that has a `lora` section injected. The trainer
+        subprocess runs from the `vendor/stable-audio-tools/` directory so
+        `custom_metadata.py` resolves; PYTHONPATH=. ensures the same. Relative
+        `../loraw_vendor/...` paths in the command line still work because
+        both vendor dirs are siblings under `vendor/`.
         """
         if self.training_status["is_training"]:
             return {"error": "Training already in progress"}
@@ -374,10 +376,10 @@ class FineTuner:
         env["WANDB_MODE"] = "disabled"
         env["WANDB_SILENT"] = "true"
         env["WANDB_DISABLED"] = "true"
-        env["PYTHONPATH"] = "."  # so loraw_vendor/train.py finds custom_metadata
+        env["PYTHONPATH"] = "."  # so vendor/loraw_vendor/train.py finds custom_metadata
         env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-        # Launch subprocess from stable-audio-tools/ (custom_metadata module location).
+        # Launch subprocess from vendor/stable-audio-tools/ (custom_metadata module location).
         self.training_process = subprocess.Popen(
             cmd,
             cwd=str(config_obj.get_path("stable_audio_tools")),

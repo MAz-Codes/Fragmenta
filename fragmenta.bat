@@ -110,7 +110,7 @@ if not "%PIP_RESULT%"=="0" (
 echo Dependencies installed successfully.
 
 echo Installing bundled stable-audio-tools...
-pushd "%PROJECT_ROOT%\stable-audio-tools"
+pushd "%PROJECT_ROOT%\vendor\stable-audio-tools"
 python -m pip install -e . --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
 set "SAT_RESULT=%ERRORLEVEL%"
 popd

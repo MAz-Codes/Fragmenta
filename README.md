@@ -236,7 +236,10 @@ fragmenta/
 │   │   ├── build/          # Pre-built React app (served by Flask)
 │   │   └── src/            # React source (only needed for development)
 │   └── core/               # Core logic (generation, training, model management)
-├── stable-audio-tools/     # Stable Audio library (bundled with some modifications)
+├── vendor/                 # Bundled third-party code
+│   ├── stable-audio-tools/ # Stable Audio library (with minor mods)
+│   ├── loraw_vendor/       # LoRAW (LoRA training for stable-audio-tools)
+│   └── STABLE_AUDIO.md     # Stability AI Community License
 ├── models/                 # Model configs and checkpoints
 ├── utils/                  # Utility modules
 ├── config/                 # Configuration files
@@ -282,6 +285,6 @@ Fragmenta is **Powered by Stability AI**, using [Stable Audio Open](https://hugg
 Fragmenta includes and depends on various third-party open-source software. See [NOTICE.md](NOTICE.md) for complete attribution and license information.
 
 - **pywebview** — BSD License
-- **Stable Audio Models** — governed by the [Stability AI Community License](LICENSE-stable-audio.md)
-- **stable-audio-tools** — MIT License (included with modifications)
-- **LoRAW** — MIT License (vendored under `loraw_vendor/`)
+- **Stable Audio Models** — governed by the [Stability AI Community License](vendor/STABLE_AUDIO.md)
+- **stable-audio-tools** — MIT License (vendored under `vendor/stable-audio-tools/`, with minor modifications)
+- **LoRAW** — MIT License (vendored under `vendor/loraw_vendor/`)

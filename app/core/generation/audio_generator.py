@@ -23,10 +23,10 @@ def _slugify_prompt(text: str, max_len: int = 40) -> str:
     return s[:max_len] or 'untitled'
 
 sys.path.append(
-    str(Path(__file__).parent.parent.parent.parent / "stable-audio-tools"))
-# LoRAW lives at <project>/loraw_vendor; expose its `loraw` package for inference.
+    str(Path(__file__).parent.parent.parent.parent / "vendor" / "stable-audio-tools"))
+# LoRAW lives at <project>/vendor/loraw_vendor; expose its `loraw` package for inference.
 sys.path.append(
-    str(Path(__file__).parent.parent.parent.parent / "loraw_vendor"))
+    str(Path(__file__).parent.parent.parent.parent / "vendor" / "loraw_vendor"))
 
 
 warnings.filterwarnings(

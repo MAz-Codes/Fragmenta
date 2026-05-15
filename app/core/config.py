@@ -59,7 +59,8 @@ class ProjectConfig:
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",
             "frontend": self.project_root / "app" / "frontend",
-            "stable_audio_tools": self.project_root / "stable-audio-tools",
+            "stable_audio_tools": self.project_root / "vendor" / "stable-audio-tools",
+            "loraw_vendor": self.project_root / "vendor" / "loraw_vendor",
             "venv": self.project_root / "venv",
         }
 
@@ -104,7 +105,7 @@ class ProjectConfig:
         return str(self.paths["models_config"] / "dataset-config.json")
 
     def get_custom_metadata_path(self) -> str:
-        return str(self.project_root / "stable-audio-tools" / "custom_metadata.py")
+        return str(self.project_root / "vendor" / "stable-audio-tools" / "custom_metadata.py")
 
     def get_metadata_json_path(self) -> str:
         return str(self.paths["data"] / "metadata.json")

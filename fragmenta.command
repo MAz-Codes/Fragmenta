@@ -133,8 +133,8 @@ echo "Dependencies installed"
 echo ""
 
 echo "Installing audio generation engine..."
-cd stable-audio-tools && pip install -e . --quiet \
-    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary && cd ..
+cd vendor/stable-audio-tools && pip install -e . --quiet \
+    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary && cd ../..
 echo "Audio engine installed"
 echo ""
 

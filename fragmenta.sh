@@ -191,9 +191,9 @@ pip install "flash-attn>=2.8.3" --no-build-isolation --progress-bar on || \
     echo "flash-attn install failed — continuing without it (optional optimization)"
 
 echo "Installing bundled stable-audio-tools..."
-if [ -d "$PROJECT_ROOT/stable-audio-tools" ]; then
+if [ -d "$PROJECT_ROOT/vendor/stable-audio-tools" ]; then
     (
-        cd "$PROJECT_ROOT/stable-audio-tools" || exit 1
+        cd "$PROJECT_ROOT/vendor/stable-audio-tools" || exit 1
         pip install -e . --quiet \
             --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
     ) || {
@@ -201,7 +201,7 @@ if [ -d "$PROJECT_ROOT/stable-audio-tools" ]; then
         exit 1
     }
 else
-    echo "ERROR: stable-audio-tools directory not found at $PROJECT_ROOT/stable-audio-tools"
+    echo "ERROR: stable-audio-tools directory not found at $PROJECT_ROOT/vendor/stable-audio-tools"
     exit 1
 fi
 

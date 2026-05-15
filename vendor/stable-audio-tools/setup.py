@@ -8,7 +8,7 @@ setup(
     description='Training and inference tools for generative audio models from Stability AI',
     packages=find_packages(),
     install_requires=[
-        # Inference path (always loaded by Fragmenta)
+
         'alias-free-torch==0.0.6',
         'einops',
         'einops-exts',
@@ -22,7 +22,7 @@ setup(
         'tqdm',
         'transformers',
 
-        # Training subprocess (train.py); top-level imports must resolve
+
         'auraloss==0.4.0',
         'descript-audio-codec==1.0.0',
         'ema-pytorch==0.2.3',
@@ -32,17 +32,10 @@ setup(
         'wandb==0.15.4',
         'webdataset==0.2.100',
 
-        # Lazy-loaded by certain model configs (kept for compatibility with
-        # configs other than SAO 1.0 / Small):
         'encodec==0.1.1',
         'laion-clap==1.1.4',
         'local-attention==1.8.6',
         'vector-quantize-pytorch==1.14.41',
 
-        # Dropped (Fragmenta does not exercise these paths):
-        # 'gradio>=5.20.0'             - run_gradio.py only; Fragmenta uses React
-        # 'v-diffusion-pytorch==0.0.2' - zero imports in this codebase
-        # 'torchmetrics==0.11.4'       - zero imports in this codebase
-        # 'importlib-resources==5.12.0' - stdlib in Python 3.9+
     ],
 )
