@@ -1203,7 +1203,13 @@ function PerformancePanelInner({
                     they only appear when relevant. */}
                 <FormControl size="small" sx={{
                     minWidth: 140,
+                    maxWidth: 220,
                     '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                    '& .MuiSelect-select': {
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    },
                 }}>
                     <Select
                         value={selectedModel || ''}
@@ -1280,7 +1286,13 @@ function PerformancePanelInner({
                 {unwrappedModels.length > 0 && (
                     <FormControl size="small" sx={{
                         minWidth: 140,
+                        maxWidth: 220,
                         '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                        '& .MuiSelect-select': {
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        },
                     }}>
                         <Select
                             value={checkpointValue}
@@ -1329,7 +1341,13 @@ function PerformancePanelInner({
                         <>
                             <FormControl size="small" sx={{
                                 minWidth: 140,
+                                maxWidth: 220,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                '& .MuiSelect-select': {
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                },
                             }}>
                                 <Select
                                     value={currentLoraName}
@@ -1388,7 +1406,13 @@ function PerformancePanelInner({
                             {currentLora && currentLora.all_checkpoints?.length > 1 && (
                                 <FormControl size="small" sx={{
                                     minWidth: 120,
+                                    maxWidth: 200,
                                     '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                    '& .MuiSelect-select': {
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    },
                                 }}>
                                     <Select
                                         value={selectedLora || currentLora.path}
