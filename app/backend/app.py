@@ -844,6 +844,17 @@ def get_models():
         models = []
         for model_dir in models_dir.iterdir():
             if model_dir.is_dir():
+                # Skip LoRA runs — they're surfaced separately via /api/loras.
+                # The training_metadata.json mode field is the source of truth;
+                # full FTs have mode="full" (or no metadata at all on legacy runs).
+                meta_path = model_dir / "training_metadata.json"
+                if meta_path.exists():
+                    try:
+                        if json.loads(meta_path.read_text()).get("mode") == "lora":
+                            continue
+                    except Exception:
+                        pass
+
                 checkpoint_files = list(model_dir.glob("*.ckpt"))
                 config_files = list(model_dir.glob("*.json")) + \
                     list(model_dir.glob("*.yaml"))
