@@ -305,9 +305,14 @@ function App() {
         }
         // The distilled small model is hard-coded to 8 steps + pingpong sampler
         // at the backend regardless of slider value; snap the slider so the UI
-        // reflects what will actually run.
+        // reflects what will actually run. When switching BACK to a non-
+        // distilled model, restore a sensible default — otherwise the slider
+        // is stuck at 8 from the prior selection and the big model runs 8
+        // steps (which produces noise).
         if (isDistilledBase && steps !== 8) {
             setSteps(8);
+        } else if (!isDistilledBase && steps < 50) {
+            setSteps(250);
         }
     }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
 
