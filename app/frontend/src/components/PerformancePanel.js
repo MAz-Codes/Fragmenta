@@ -1086,92 +1086,8 @@ function PerformancePanelInner({
                     />
                 </MidiMappable>
 
-                <FormControl size="small" sx={{
-                    flex: 1,
-                    minWidth: 110,
-                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                }}>
-                    <Select
-                        value={selectedModel || ''}
-                        onChange={handleModelChange}
-                        displayEmpty
-                        renderValue={(value) => {
-                            if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
-                            // Short labels for the cramped Performance row. Full
-                            // names stay in the popup MenuItems below.
-                            const SHORT = {
-                                'stable-audio-open-1.0': 'SAO Full',
-                                'stable-audio-open-small': 'SAO Small',
-                            };
-                            if (SHORT[value]) return SHORT[value];
-                            const base = baseModels.find((m) => m.name === value);
-                            if (base) return base.displayName || base.name;
-                            return value;
-                        }}
-                    >
-                        {baseModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Base Models ──
-                                </Typography>
-                            </MenuItem>
-                        )}
-                        {baseModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                disabled={!model.downloaded}
-                            >
-                                <Typography variant="body2">
-                                    {model.displayName || model.name}
-                                </Typography>
-                            </MenuItem>
-                        ))}
-                        {availableModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Fine-tuned Models ──
-                                </Typography>
-                            </MenuItem>
-                        )}
-                        {availableModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                            >
-                                <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {model.name}
-                                </Typography>
-                                <Tooltip title="Delete fine-tuned model">
-                                    <IconButton
-                                        size="small"
-                                        onMouseDown={(e) => {
-                                            e.stopPropagation();
-                                            e.preventDefault();
-                                        }}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            e.preventDefault();
-                                            handleDeleteFineTuned(model.name);
-                                        }}
-                                        sx={{
-                                            color: 'text.disabled',
-                                            '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                        }}
-                                    >
-                                        <DeleteIcon size={14} />
-                                    </IconButton>
-                                </Tooltip>
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-
-
-                {/* FT-checkpoint picker, LoRA picker, and LoRA-checkpoint
-                    sub-picker now live in the bottom bar so the top row only
-                    holds the primary controls (BPM + model + transport). */}
+                {/* Model picker + FT-checkpoint + LoRA pickers now live in the
+                    bottom bar so the top strip stays just BPM + transport. */}
 
                 <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
                     <Button
@@ -1282,9 +1198,85 @@ function PerformancePanelInner({
                 background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.04) 0%, rgba(159, 138, 230, 0.03) 100%)',
                 flexWrap: { xs: 'wrap', md: 'nowrap' },
             }}>
-                {/* Model-artifact pickers — moved here from the top row so the
-                    primary strip stays uncluttered. Each is gated so they
-                    only appear when relevant. */}
+                {/* Model + artifact pickers — moved here from the top row so the
+                    primary strip stays just BPM + transport. Each is gated so
+                    they only appear when relevant. */}
+                <FormControl size="small" sx={{
+                    minWidth: 140,
+                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                }}>
+                    <Select
+                        value={selectedModel || ''}
+                        onChange={handleModelChange}
+                        displayEmpty
+                        renderValue={(value) => {
+                            if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
+                            const SHORT = {
+                                'stable-audio-open-1.0': 'SAO Full',
+                                'stable-audio-open-small': 'SAO Small',
+                            };
+                            if (SHORT[value]) return SHORT[value];
+                            const base = baseModels.find((m) => m.name === value);
+                            if (base) return base.displayName || base.name;
+                            return value;
+                        }}
+                    >
+                        {baseModels.length > 0 && (
+                            <MenuItem disabled>
+                                <Typography variant="caption" color="textSecondary">
+                                    ── Base Models ──
+                                </Typography>
+                            </MenuItem>
+                        )}
+                        {baseModels.map((model) => (
+                            <MenuItem
+                                key={model.name}
+                                value={String(model.name)}
+                                disabled={!model.downloaded}
+                            >
+                                <Typography variant="body2">
+                                    {model.displayName || model.name}
+                                </Typography>
+                            </MenuItem>
+                        ))}
+                        {availableModels.length > 0 && (
+                            <MenuItem disabled>
+                                <Typography variant="caption" color="textSecondary">
+                                    ── Fine-tuned Models ──
+                                </Typography>
+                            </MenuItem>
+                        )}
+                        {availableModels.map((model) => (
+                            <MenuItem
+                                key={model.name}
+                                value={String(model.name)}
+                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                            >
+                                <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {model.name}
+                                </Typography>
+                                <Tooltip title="Delete fine-tuned model">
+                                    <IconButton
+                                        size="small"
+                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            handleDeleteFineTuned(model.name);
+                                        }}
+                                        sx={{
+                                            color: 'text.disabled',
+                                            '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                        }}
+                                    >
+                                        <DeleteIcon size={14} />
+                                    </IconButton>
+                                </Tooltip>
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+
                 {unwrappedModels.length > 0 && (
                     <FormControl size="small" sx={{
                         minWidth: 140,
