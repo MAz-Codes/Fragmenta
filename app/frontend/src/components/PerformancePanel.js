@@ -1070,11 +1070,12 @@ function PerformancePanelInner({
                             ),
                         }}
                         sx={{
-                            width: 96,
+                            width: 84,
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
                             '& input': {
                                 textAlign: 'right',
                                 fontVariantNumeric: 'tabular-nums',
+                                fontSize: perfTokens.fontSize.body,
                                 pr: 0,
                             },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
@@ -1202,9 +1203,10 @@ function PerformancePanelInner({
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
                 <FormControl size="small" sx={{
-                    width: 130,
+                    width: 120,
                     '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                     '& .MuiSelect-select': {
+                        fontSize: perfTokens.fontSize.body,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -1284,9 +1286,10 @@ function PerformancePanelInner({
 
                 {unwrappedModels.length > 0 && (
                     <FormControl size="small" sx={{
-                        width: 130,
+                        width: 120,
                         '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                         '& .MuiSelect-select': {
+                            fontSize: perfTokens.fontSize.body,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -1297,7 +1300,7 @@ function PerformancePanelInner({
                             onChange={handleCheckpointChange}
                             displayEmpty
                             renderValue={(value) => {
-                                if (!value) return <em style={{ opacity: 0.6 }}>Checkpoint</em>;
+                                if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
                                 const found = unwrappedModels.find((u) => String(u.path) === value);
                                 return found ? found.name : value;
                             }}
@@ -1343,9 +1346,10 @@ function PerformancePanelInner({
                     return (
                         <>
                             <FormControl size="small" disabled={loraDisabled} sx={{
-                                width: 130,
+                                width: 120,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
+                                    fontSize: perfTokens.fontSize.body,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1406,9 +1410,10 @@ function PerformancePanelInner({
                             </FormControl>
 
                             <FormControl size="small" disabled={ckptDisabled} sx={{
-                                width: 110,
+                                width: 100,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
+                                    fontSize: perfTokens.fontSize.body,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1419,7 +1424,7 @@ function PerformancePanelInner({
                                     onChange={(e) => onSelectLora?.(String(e.target.value))}
                                     displayEmpty
                                     renderValue={(value) => {
-                                        if (!value) return <em style={{ opacity: 0.6 }}>Checkpoint</em>;
+                                        if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
                                         return parseCheckpointLabel(value);
                                     }}
                                 >
@@ -1437,8 +1442,15 @@ function PerformancePanelInner({
                     );
                 })()}
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography
+                        component="span"
+                        sx={{
+                            fontSize: perfTokens.fontSize.small,
+                            letterSpacing: perfTokens.letterSpacing.wide,
+                            color: 'text.disabled',
+                        }}
+                    >
                         STEPS
                     </Typography>
                     <Tooltip
@@ -1451,7 +1463,11 @@ function PerformancePanelInner({
                     >
                         <FormControl
                             size="small"
-                            sx={{ width: 72, '& .MuiOutlinedInput-root': { borderRadius: 1.5 } }}
+                            sx={{
+                                width: 64,
+                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                '& .MuiSelect-select': { fontSize: perfTokens.fontSize.body },
+                            }}
                         >
                             <Select
                                 value={isSmallModel ? 8 : steps}
@@ -1474,12 +1490,19 @@ function PerformancePanelInner({
                     </Tooltip>
                 </Box>
 
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography
+                        component="span"
+                        sx={{
+                            fontSize: perfTokens.fontSize.small,
+                            letterSpacing: perfTokens.letterSpacing.wide,
+                            color: 'text.disabled',
+                        }}
+                    >
                         SEED
                     </Typography>
                     <FormControlLabel
-                        sx={{ mr: 0 }}
+                        sx={{ mr: 0, ml: 0.25 }}
                         control={
                             <Switch
                                 size="small"
@@ -1487,7 +1510,11 @@ function PerformancePanelInner({
                                 onChange={(e) => onRandomSeedChange?.(e.target.checked)}
                             />
                         }
-                        label={<Typography variant="caption">Random</Typography>}
+                        label={
+                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.small }}>
+                                Random
+                            </Typography>
+                        }
                     />
                     <TextField
                         size="small"
@@ -1498,10 +1525,11 @@ function PerformancePanelInner({
                         disabled={randomSeed}
                         inputProps={{ min: 0, max: 4294967295, step: 1 }}
                         sx={{
-                            width: 88,
+                            width: 78,
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             '& input': {
                                 fontVariantNumeric: 'tabular-nums',
+                                fontSize: perfTokens.fontSize.body,
                             },
                         }}
                     />
@@ -1511,8 +1539,15 @@ function PerformancePanelInner({
                     placement="right"
                     title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
                 >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography variant="caption" color="textSecondary" sx={{ letterSpacing: perfTokens.letterSpacing.wide }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography
+                            component="span"
+                            sx={{
+                                fontSize: perfTokens.fontSize.small,
+                                letterSpacing: perfTokens.letterSpacing.wide,
+                                color: 'text.disabled',
+                            }}
+                        >
                             AUTO BPM
                         </Typography>
                         <Switch
