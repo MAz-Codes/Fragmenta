@@ -1096,7 +1096,14 @@ function PerformancePanelInner({
                         onChange={handleModelChange}
                         displayEmpty
                         renderValue={(value) => {
-                            if (!value) return <em style={{ opacity: 0.6 }}>Select a model</em>;
+                            if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
+                            // Short labels for the cramped Performance row. Full
+                            // names stay in the popup MenuItems below.
+                            const SHORT = {
+                                'stable-audio-open-1.0': 'SAO Full',
+                                'stable-audio-open-small': 'SAO Small',
+                            };
+                            if (SHORT[value]) return SHORT[value];
                             const base = baseModels.find((m) => m.name === value);
                             if (base) return base.displayName || base.name;
                             return value;
@@ -1301,50 +1308,10 @@ function PerformancePanelInner({
                                     </Select>
                                 </FormControl>
                             )}
-                            {selectedLora && (
-                                <TextField
-                                    size="small"
-                                    type="number"
-                                    value={loraMultiplier}
-                                    onChange={(e) => {
-                                        const v = parseFloat(e.target.value);
-                                        if (Number.isFinite(v)) {
-                                            onLoraMultiplierChange?.(Math.max(0, Math.min(2, v)));
-                                        }
-                                    }}
-                                    inputProps={{ min: 0, max: 2, step: 0.05, 'aria-label': 'LoRA multiplier' }}
-                                    InputProps={{
-                                        endAdornment: (
-                                            <Typography
-                                                component="span"
-                                                sx={{
-                                                    fontSize: perfTokens.fontSize.small,
-                                                    letterSpacing: perfTokens.letterSpacing.wide,
-                                                    color: 'text.disabled',
-                                                    pl: 0.5,
-                                                    userSelect: 'none',
-                                                }}
-                                            >
-                                                ×
-                                            </Typography>
-                                        ),
-                                    }}
-                                    sx={{
-                                        width: 96,
-                                        '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
-                                        '& input': {
-                                            textAlign: 'right',
-                                            fontVariantNumeric: 'tabular-nums',
-                                            pr: 0,
-                                        },
-                                        '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
-                                            WebkitAppearance: 'none',
-                                            margin: 0,
-                                        },
-                                        '& input[type=number]': { MozAppearance: 'textfield' },
-                                    }}
-                                />
-                            )}
+                            {/* Multiplier intentionally omitted from this surface —
+                                set it from the Generation tab's Advanced Settings.
+                                The value flows through props so what's set there
+                                applies to performance generations too. */}
                         </>
                     );
                 })()}
