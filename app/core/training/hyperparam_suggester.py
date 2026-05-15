@@ -111,11 +111,16 @@ def _heuristic(file_count: int, vram_gb: Optional[float], mode: str) -> Dict[str
     }
     target_steps = target_steps_by_bucket[bucket]
 
-    # Rank/LR scale with how much "capacity per data point" the run needs.
+    # Rank/LR/alpha scale with how much "capacity per data point" the run needs.
+    # Small dataset trick: keep rank moderate (16) and conservative LR (1e-4 —
+    # 2e-4 caused overshoot/flat loss in testing), but boost alpha so the
+    # LoRA delta trains at higher effective voltage (scaling = alpha/rank).
+    # This produces a stronger imprint without the parameter bloat of rank=32
+    # or the instability of higher LR.
     if bucket in ("tiny", "small"):
-        rank, lr = 32, 2e-4
+        rank, alpha, lr = 16, 32, 1e-4
     else:
-        rank, lr = 16, 1e-4
+        rank, alpha, lr = 16, 16, 1e-4
 
     # Batch size: smaller on small datasets (more updates per epoch + better
     # gradient noise); larger on medium/large for throughput. VRAM caps the top.
@@ -139,7 +144,7 @@ def _heuristic(file_count: int, vram_gb: Optional[float], mode: str) -> Dict[str
         "learningRate": lr,
         "epochs": epochs,
         "loraRank": rank,
-        "loraAlpha": rank,  # alpha = rank is the conventional starting point
+        "loraAlpha": alpha,
         "loraDropout": 0,
         "loraMultiplier": 1.0,
         "_meta": {
@@ -182,8 +187,9 @@ def _compose_rationale(file_count: int, duration_sec: float, vram_gb: Optional[f
     )
     if meta["bucket"] in ("tiny", "small"):
         bullets.append(
-            "Small dataset → smaller batch + higher LR + rank=32 to push a "
-            "stronger style imprint without overfitting."
+            "Small dataset → conservative 1e-4 LR + rank=16 for stability, "
+            "but alpha=32 (alpha/rank = 2.0) so the LoRA delta trains at "
+            "double voltage. Stronger imprint without overshoot risk."
         )
     else:
         bullets.append(
