@@ -196,7 +196,21 @@ class LoRAWrapper:
         self.is_quantized = True
 
     def configure_optimizers(self):
-        return optim.Adam([*self.residual_modules.parameters()], lr=self.lr)
+        # Fragmenta patch: linear LR warmup over the first 200 steps.
+        # Constant-LR Adam from step 1 lets the first/second moment estimates
+        # wobble during the first ~50-200 updates, which produces the noisy
+        # plateau at the start of every run. Warming from lr/100 → lr over
+        # 200 steps lets the moments stabilize before the model takes
+        # full-strength updates. Required precondition for safely pushing
+        # higher alpha or learning rate.
+        opt = optim.Adam([*self.residual_modules.parameters()], lr=self.lr)
+        sched = torch.optim.lr_scheduler.LinearLR(
+            opt, start_factor=0.01, end_factor=1.0, total_iters=200
+        )
+        return {
+            "optimizer": opt,
+            "lr_scheduler": {"scheduler": sched, "interval": "step"},
+        }
 
     def prepare_for_training(self, training_wrapper):
         assert self.is_active, "LoRA must be activated before training preparation"

@@ -1,3 +1,14 @@
 # LoRAW vendored at 8c01655cd6283d180027cbe4b38bc473e1c89c84
 # Source: https://github.com/NeuralNotW0rk/LoRAW
 # Pinned 2026-05-13. Validation run on this commit confirmed SAO-large + r=16 LoRA fits in 16 GB VRAM.
+
+# Local patches (kept minimal):
+#
+# 1. loraw/network.py — LoRAWrapper.configure_optimizers
+#    Adds 200-step linear LR warmup (start_factor=0.01, end_factor=1.0).
+#    Returns Lightning dict {optimizer, lr_scheduler: {scheduler, interval:'step'}}
+#    so the scheduler steps every train batch.
+#    Rationale: constant-LR Adam wobbles for the first ~50-200 steps while
+#    moment estimates settle; warmup stabilizes the early window, makes the
+#    loss curve readable, and is a precondition for safely pushing higher
+#    alpha / learning rate.
