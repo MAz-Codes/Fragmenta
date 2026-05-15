@@ -356,10 +356,27 @@ export class PerformanceEngine {
                 await this.ctx.resume();
             }
             await this.ctx.setSinkId(deviceId || '');
+
+            // Try to coerce the destination to expose more channels. On
+            // Chromium/Linux/PipeWire, maxChannelCount is computed at
+            // AudioContext-construction time bound to the original sink, and
+            // setSinkId doesn't re-query it — so even on a surround-40 device
+            // it can still report 2. Setting channelCount higher forces a
+            // re-evaluation on some builds. The set is silently clamped to
+            // the true max, so this is safe even if it can't go higher.
+            try {
+                this.ctx.destination.channelCount = 8;
+            } catch { /* clamped to max; no-op */ }
+            try {
+                this.ctx.destination.channelInterpretation = 'discrete';
+            } catch { /* older builds may not allow this — fine */ }
+
             const applied = this.ctx.sinkId;
+            const dest = this.ctx.destination;
             console.log(
                 `[PerformanceEngine] setSinkId requested='${deviceId || '(default)'}' applied='${applied}' ` +
-                `maxChannelCount=${this.ctx.destination.maxChannelCount}`
+                `channelCount=${dest.channelCount} maxChannelCount=${dest.maxChannelCount} ` +
+                `interpretation=${dest.channelInterpretation}`
             );
             if (deviceId && applied !== deviceId) {
                 console.warn(
