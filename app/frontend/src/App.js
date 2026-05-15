@@ -2344,8 +2344,14 @@ function App() {
                 fullWidth
             >
                 <DialogTitle id="about-documentation-dialog-title">
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Box sx={{ ...appStyles.logo, width: 44, height: 44 }} />
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{
+                            ...appStyles.logo,
+                            width: 52, height: 52,
+                            border: 'none',
+                            boxShadow: 'none',
+                            filter: 'none',
+                        }} />
                         <Typography variant="h5" component="span" sx={appStyles.title}>
                             Fragmenta
                         </Typography>
@@ -2364,7 +2370,6 @@ function App() {
                     <Box sx={appStyles.infoDialogActionStack}>
                         <Button
                             variant="contained"
-                            fullWidth
                             size="small"
                             startIcon={<InfoIcon size={16} />}
                             onClick={() => handleOpenDocumentation('about')}
@@ -2375,7 +2380,6 @@ function App() {
                         </Button>
                         <Button
                             variant="outlined"
-                            fullWidth
                             size="small"
                             startIcon={<BookOpenIcon size={16} />}
                             onClick={() => handleOpenDocumentation('documentation')}
@@ -2386,7 +2390,6 @@ function App() {
                         </Button>
                         <Button
                             variant="outlined"
-                            fullWidth
                             size="small"
                             disabled
                             sx={appStyles.infoDocButton}
@@ -2396,16 +2399,16 @@ function App() {
                     </Box>
 
                     {/* SACL attribution — required to be visible on the about page. */}
-                    <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider' }}>
-                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', lineHeight: 1.5 }}>
-                            <strong>Powered by Stability AI</strong> — Fragmenta uses{' '}
+                    <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider', textAlign: 'center' }}>
+                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', lineHeight: 1.5, fontSize: '0.68rem' }}>
+                            <strong>Powered by Stability AI</strong> —{' '}
                             <Typography
                                 component="a"
                                 variant="caption"
                                 href="https://huggingface.co/stabilityai/stable-audio-open-1.0"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                sx={{ color: 'primary.main', textDecoration: 'underline' }}
+                                sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
                             >
                                 Stable Audio Open
                             </Typography>{' '}
@@ -2416,13 +2419,14 @@ function App() {
                                 href="https://stability.ai/license"
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                sx={{ color: 'primary.main', textDecoration: 'underline' }}
+                                sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
                             >
                                 Stability AI Community License
                             </Typography>.
                         </Typography>
-                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.65rem', lineHeight: 1.4 }}>
-                            "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
+                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.6rem', lineHeight: 1.4 }}>
+                            "This Stability AI Model is licensed under the Stability AI Community License,{' '}
+                            Copyright © Stability AI Ltd. All Rights Reserved"
                         </Typography>
                     </Box>
                 </DialogContent>

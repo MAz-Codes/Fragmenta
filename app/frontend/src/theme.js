@@ -1501,13 +1501,14 @@ export const appStyles = {
         gap: 1,
     },
     infoDialogIntro: {
-        mt: 1,
+        mt: 2.5,
         color: 'text.secondary',
     },
     infoDialogSectionTitle: {
         mt: 2.25,
         mb: 1,
         color: 'text.primary',
+        fontFamily: 'Helvetica Neue, Helvetica, Arial, sans-serif',
         fontWeight: 700,
         letterSpacing: '0.03em',
         textTransform: 'uppercase',
@@ -1516,11 +1517,13 @@ export const appStyles = {
     infoDialogActionStack: {
         mt: 0.25,
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
         gap: 1,
     },
     infoDocButton: {
-        justifyContent: 'flex-start',
+        fontFamily: 'Helvetica Neue, Helvetica, Arial, sans-serif',
     },
 };
 
