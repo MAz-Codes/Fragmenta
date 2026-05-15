@@ -337,6 +337,32 @@ export class PerformanceEngine {
         return true;
     }
 
+    /**
+     * Route the engine's master output to a specific audio device. Pass `''`
+     * for the system default. Stage 1: only does setSinkId — channel-pair
+     * routing within the device is a follow-up.
+     *
+     * Returns the device's max channel count so the UI can populate
+     * pair selectors (1-2, 3-4, ...).
+     */
+    async setOutputDevice(deviceId) {
+        if (typeof this.ctx.setSinkId !== 'function') {
+            // Not Chromium ≥ 110 — caller should fall back.
+            return this.ctx.destination.maxChannelCount ?? 2;
+        }
+        try {
+            await this.ctx.setSinkId(deviceId || '');
+        } catch (err) {
+            console.warn('[PerformanceEngine] setSinkId failed', err);
+        }
+        return this.ctx.destination.maxChannelCount ?? 2;
+    }
+
+    /** Current max channel count of the bound output destination. */
+    getMaxChannelCount() {
+        return this.ctx.destination.maxChannelCount ?? 2;
+    }
+
     setChannelImpulseResponse(channelIndex, id) {
         const buf = getImpulseResponseBuffer(id);
         if (!buf || !this.channels[channelIndex]) return false;

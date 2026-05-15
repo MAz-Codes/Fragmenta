@@ -26,6 +26,7 @@ import {
     Save as SaveIcon,
     X as CloseXIcon,
     Headphones as CueIcon,
+    Volume2 as AudioSetupIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -130,41 +131,57 @@ function PerformancePanelInner({
     );
     const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
 
-    // Cue / audition output device. cueSupported is a runtime check —
-    // setSinkId on AudioContext requires Chromium ≥ 110. On unsupported
-    // browsers the menu is disabled and audition falls back to default output.
+    // Audio output device. setSinkId requires Chromium ≥ 110 (cueSupported
+    // is the runtime check). One device drives BOTH main and cue. Per-pair
+    // channel routing within the device is Stage 2 — pair selections are
+    // tracked here but the merger plumbing comes later.
     const cueSupported = useMemo(() => isCueSupported(), []);
-    const [cueDeviceId, setCueDeviceId] = useState(session.cueDeviceId ?? '');
-    const [cueDevices, setCueDevices] = useState([]);
-    const [cueMenuAnchor, setCueMenuAnchor] = useState(null);
+    const [outputDeviceId, setOutputDeviceId] = useState(session.outputDeviceId ?? session.cueDeviceId ?? '');
+    const [audioDevices, setAudioDevices] = useState([]);
+    const [audioMenuAnchor, setAudioMenuAnchor] = useState(null);
+    const [maxChannelCount, setMaxChannelCount] = useState(2);
+    const [mainOutputPair, setMainOutputPair] = useState(session.mainOutputPair ?? 0);
+    const [cueOutputPair, setCueOutputPair] = useState(session.cueOutputPair ?? 0);
 
-    useEffect(() => { updateGlobal('cueDeviceId', cueDeviceId); }, [cueDeviceId, updateGlobal]);
+    useEffect(() => { updateGlobal('outputDeviceId', outputDeviceId); }, [outputDeviceId, updateGlobal]);
+    useEffect(() => { updateGlobal('mainOutputPair', mainOutputPair); }, [mainOutputPair, updateGlobal]);
+    useEffect(() => { updateGlobal('cueOutputPair', cueOutputPair); }, [cueOutputPair, updateGlobal]);
 
-    // Push the chosen sinkId to the cue context whenever it changes (and once
-    // on mount). Falls through silently on unsupported browsers.
+    // When the chosen device changes, bind both the main engine context and
+    // the (separate) cue context to it. Re-read maxChannelCount afterwards so
+    // the pair selectors populate with everything the device exposes.
     useEffect(() => {
         if (!cueSupported) return;
-        setCueDevice(cueDeviceId).catch(() => { /* logged in cueAudio */ });
-    }, [cueSupported, cueDeviceId]);
+        let cancelled = false;
+        (async () => {
+            const engine = engineRef.current;
+            if (engine?.setOutputDevice) {
+                const max = await engine.setOutputDevice(outputDeviceId);
+                if (!cancelled) setMaxChannelCount(max);
+            }
+            await setCueDevice(outputDeviceId).catch(() => { /* logged in cueAudio */ });
+        })();
+        return () => { cancelled = true; };
+    }, [cueSupported, outputDeviceId]);
 
-    const refreshCueDevices = useCallback(async () => {
+    const refreshAudioDevices = useCallback(async () => {
         if (!cueSupported) return;
         try {
             const devices = await listOutputDevices();
-            setCueDevices(devices);
+            setAudioDevices(devices);
         } catch (err) {
             console.warn('[PerformancePanel] device enumeration failed', err);
         }
     }, [cueSupported]);
 
-    const handleOpenCueMenu = (e) => {
-        setCueMenuAnchor(e.currentTarget);
-        refreshCueDevices();
+    const handleOpenAudioMenu = (e) => {
+        setAudioMenuAnchor(e.currentTarget);
+        refreshAudioDevices();
     };
-    const handleCloseCueMenu = () => setCueMenuAnchor(null);
-    const handlePickCueDevice = (id) => {
-        setCueDeviceId(id);
-        handleCloseCueMenu();
+    const handleCloseAudioMenu = () => setAudioMenuAnchor(null);
+    const handlePickAudioDevice = (id) => {
+        setOutputDeviceId(id);
+        handleCloseAudioMenu();
     };
 
     // Restore App-level state (model, steps, seed) once on mount via the setter
@@ -788,47 +805,47 @@ function PerformancePanelInner({
 
                 <Tooltip
                     title={cueSupported
-                        ? 'Cue / audition output device'
-                        : 'Cue output requires Chrome/Edge (AudioContext.setSinkId). Auditions will play through main output.'}
+                        ? 'Audio setup — choose output device'
+                        : 'Audio device selection requires Chrome/Edge (AudioContext.setSinkId). Output falls back to system default.'}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
-                            onClick={handleOpenCueMenu}
+                            onClick={handleOpenAudioMenu}
                             disabled={!cueSupported}
                             sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
                         >
-                            <CueIcon size={14} />
+                            <AudioSetupIcon size={14} />
                         </IconButton>
                     </span>
                 </Tooltip>
                 <Menu
-                    anchorEl={cueMenuAnchor}
-                    open={Boolean(cueMenuAnchor)}
-                    onClose={handleCloseCueMenu}
+                    anchorEl={audioMenuAnchor}
+                    open={Boolean(audioMenuAnchor)}
+                    onClose={handleCloseAudioMenu}
                     MenuListProps={{ sx: { py: 0 } }}
-                    PaperProps={{ sx: { minWidth: 260, borderRadius: 1.5 } }}
+                    PaperProps={{ sx: { minWidth: 280, borderRadius: 1.5 } }}
                 >
                     <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.small, color: 'text.disabled' }}>
-                        Cue output device
+                        Audio Setup
                     </MenuItem>
                     <MenuItem
-                        onClick={() => handlePickCueDevice('')}
-                        selected={cueDeviceId === ''}
+                        onClick={() => handlePickAudioDevice('')}
+                        selected={outputDeviceId === ''}
                         sx={{ fontSize: perfTokens.fontSize.body }}
                     >
-                        <ListItemText primary="System default" />
+                        <ListItemText primary="System device (default)" />
                     </MenuItem>
-                    {cueDevices.length === 0 && (
+                    {audioDevices.length === 0 && (
                         <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.small }}>
                             No additional output devices detected
                         </MenuItem>
                     )}
-                    {cueDevices.map(d => (
+                    {audioDevices.map(d => (
                         <MenuItem
                             key={d.deviceId}
-                            onClick={() => handlePickCueDevice(d.deviceId)}
-                            selected={cueDeviceId === d.deviceId}
+                            onClick={() => handlePickAudioDevice(d.deviceId)}
+                            selected={outputDeviceId === d.deviceId}
                             sx={{ fontSize: perfTokens.fontSize.body }}
                         >
                             <ListItemText primary={d.label || `Output (${d.deviceId.slice(0, 6)}…)`} />
@@ -1183,6 +1200,68 @@ function PerformancePanelInner({
                             pk {formatDb(peakLabelDb)}
                         </Typography>
                     </Box>
+
+                    {/* Main / Cue output channel pair selection. Pairs are
+                        derived from the current device's maxChannelCount.
+                        Stage 1: selections are stored but routing still goes
+                        through the stereo destination — channel-pair routing
+                        via ChannelMergerNode lands in Stage 2. */}
+                    {(() => {
+                        const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
+                        const pairs = Array.from({ length: pairCount }, (_, i) => ({
+                            value: i,
+                            label: `${i * 2 + 1}–${i * 2 + 2}`,
+                        }));
+                        const labelSx = {
+                            fontSize: perfTokens.fontSize.small,
+                            letterSpacing: perfTokens.letterSpacing.wide,
+                            color: 'text.disabled',
+                            display: 'block',
+                            mb: 0.25,
+                        };
+                        const selectSx = {
+                            width: '100%',
+                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                            '& .MuiSelect-select': {
+                                fontSize: perfTokens.fontSize.body,
+                                py: 0.5,
+                            },
+                        };
+                        return (
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.5 }}>
+                                <Box>
+                                    <Typography component="span" sx={labelSx}>MAIN OUT</Typography>
+                                    <FormControl size="small" sx={selectSx}>
+                                        <Select
+                                            value={Math.min(mainOutputPair, pairCount - 1)}
+                                            onChange={(e) => setMainOutputPair(Number(e.target.value))}
+                                        >
+                                            {pairs.map(p => (
+                                                <MenuItem key={p.value} value={p.value}>
+                                                    <Typography variant="body2">Ch {p.label}</Typography>
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                </Box>
+                                <Box>
+                                    <Typography component="span" sx={labelSx}>CUE OUT</Typography>
+                                    <FormControl size="small" sx={selectSx}>
+                                        <Select
+                                            value={Math.min(cueOutputPair, pairCount - 1)}
+                                            onChange={(e) => setCueOutputPair(Number(e.target.value))}
+                                        >
+                                            {pairs.map(p => (
+                                                <MenuItem key={p.value} value={p.value}>
+                                                    <Typography variant="body2">Ch {p.label}</Typography>
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
+                                </Box>
+                            </Box>
+                        );
+                    })()}
                 </Box>
             </Box>
 
