@@ -941,7 +941,9 @@ class FineTuner:
                     print(f"Stderr processing error: {e}")
 
                 if os.path.exists(save_dir):
-                    checkpoint_files = list(Path(save_dir).glob("*.ckpt"))
+                    # rglob so LoRA's nested layout (<save_dir>/<wandb_id>/checkpoints/*.ckpt)
+                    # is counted alongside full-FT's flat <save_dir>/*.ckpt.
+                    checkpoint_files = list(Path(save_dir).rglob("*.ckpt"))
                     current_checkpoint_count = len(checkpoint_files)
 
                     if current_checkpoint_count > last_checkpoint_count:

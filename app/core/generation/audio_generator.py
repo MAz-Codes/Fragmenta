@@ -73,11 +73,17 @@ class AudioGenerator:
         """
         if self.model is None:
             raise RuntimeError("Base model must be loaded before applying a LoRA")
+        # torch.compile wraps in OptimizedModule, which prefixes named_modules()
+        # with `_orig_mod/`. LoRAW's saved state has no such prefix (training
+        # didn't compile). Operate on the underlying module so scan_model keys
+        # match the checkpoint exactly. The compiled wrapper still dispatches
+        # forward through this same module, so the LoRA stays active.
+        target = getattr(self.model, "_orig_mod", self.model)
         full_config = {
-            "model_type": getattr(self.model, "model_type", "diffusion_cond"),
+            "model_type": getattr(target, "model_type", "diffusion_cond"),
             "lora": lora_config,
         }
-        self.lora = create_lora_from_config(full_config, self.model)
+        self.lora = create_lora_from_config(full_config, target)
         state = torch.load(lora_path, map_location=self.device)
         self.lora.load_weights(state, multiplier=multiplier)
         self.lora.activate()
