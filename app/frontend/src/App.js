@@ -122,7 +122,7 @@ function App() {
         batchSize: 4,
         learningRate: 1e-4,
         modelName: 'my_fine_tuned_model',
-        baseModel: '',
+        baseModel: 'stable-audio-open-1.0',
         saveWrappedCheckpoint: false,
         precision: 'auto',
         // LoRA-specific (only used when mode === 'lora'; the backend ignores
@@ -132,16 +132,6 @@ function App() {
         loraDropout: 0,
         loraMultiplier: 1.0,
     });
-    // Per-base training defaults. The distilled small mode-collapses under the
-    // original stable-audio-tools recipe (LR 1e-4 / 30 epochs); the large
-    // model is robust to it. Keep in sync with _BASE_TRAINING_DEFAULTS in
-    // app/core/training/fine_tuner.py.
-    const BASE_TRAINING_DEFAULTS = {
-        'stable-audio-open-small': { learningRate: 1e-5, epochs: 10 },
-        'stable-audio-open-1.0':   { learningRate: 1e-4, epochs: 30 },
-    };
-    const getBaseTrainingDefaults = (baseName) =>
-        BASE_TRAINING_DEFAULTS[baseName] || { learningRate: 1e-4, epochs: 30 };
     const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [isTraining, setIsTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
@@ -933,26 +923,6 @@ function App() {
         }
     };
 
-    const handleTrainingBaseModelChange = (event) => {
-        const newBaseModel = event.target.value;
-        const defaults = getBaseTrainingDefaults(newBaseModel);
-        setTrainingConfig({
-            ...trainingConfig,
-            baseModel: newBaseModel,
-            learningRate: defaults.learningRate,
-            epochs: defaults.epochs,
-        });
-
-        const selectedBaseModel = baseModels.find(m => m.name === newBaseModel);
-        if (selectedBaseModel && !selectedBaseModel.downloaded) {
-            showModelWarning({
-                title: 'Base Model Not Downloaded',
-                message: `The selected base model "${selectedBaseModel.displayName}" is not downloaded.`,
-                canOpenModels: true,
-            });
-        }
-    };
-
     const showModelWarning = ({ title, message, canOpenModels = false }) => {
         setModelWarning({
             open: true,
@@ -1327,60 +1297,6 @@ function App() {
                                                         </Tooltip>
                                                     </ToggleButtonGroup>
                                                 </Box>
-
-                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom}>
-                                                    <Select
-                                                        id="base-model-select"
-                                                        value={trainingConfig.baseModel}
-                                                        onChange={handleTrainingBaseModelChange}
-                                                        displayEmpty
-                                                        inputProps={{ 'aria-label': 'Base model' }}
-                                                    >
-                                                        <MenuItem value="" disabled>
-                                                            <em>Select a model</em>
-                                                        </MenuItem>
-                                                        <MenuItem value="stable-audio-open-1.0">
-                                                            <Box>
-                                                                <Typography variant="body1">Stable Audio Open 1.0</Typography>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Full model (838M parameters)
-                                                                </Typography>
-                                                                {(() => {
-                                                                    const model = baseModels.find(m => m.name === 'stable-audio-open-1.0');
-                                                                    return model?.downloaded ? (
-                                                                        <Typography variant="caption" color="success.main" display="block">
-                                                                            Downloaded and ready
-                                                                        </Typography>
-                                                                    ) : (
-                                                                        <Typography variant="caption" color="error.main" display="block">
-                                                                            Not downloaded
-                                                                        </Typography>
-                                                                    );
-                                                                })()}
-                                                            </Box>
-                                                        </MenuItem>
-                                                        <MenuItem value="stable-audio-open-small">
-                                                            <Box>
-                                                                <Typography variant="body1">Stable Audio Open Small</Typography>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Small model (faster training)
-                                                                </Typography>
-                                                                {(() => {
-                                                                    const model = baseModels.find(m => m.name === 'stable-audio-open-small');
-                                                                    return model?.downloaded ? (
-                                                                        <Typography variant="caption" color="success.main" display="block">
-                                                                            Downloaded and ready
-                                                                        </Typography>
-                                                                    ) : (
-                                                                        <Typography variant="caption" color="error.main" display="block">
-                                                                            Not downloaded
-                                                                        </Typography>
-                                                                    );
-                                                                })()}
-                                                            </Box>
-                                                        </MenuItem>
-                                                    </Select>
-                                                </FormControl>
 
                                                 <TextField
                                                     fullWidth
@@ -1884,10 +1800,13 @@ function App() {
                                                     );
                                                     if (compatibleLoras.length === 0) return null;
                                                     return (
-                                                        <Box sx={appStyles.formControlMarginBottom}>
-                                                            <FormControl fullWidth variant="outlined">
+                                                        <>
+                                                            <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
                                                                 <Select
+                                                                    labelId="lora-select-label"
+                                                                    id="lora-select"
                                                                     value={selectedLora || ''}
+                                                                    label="Select LoRA (optional)"
                                                                     onChange={(e) => setSelectedLora(String(e.target.value))}
                                                                     displayEmpty
                                                                 >
@@ -1907,24 +1826,34 @@ function App() {
                                                                 </Select>
                                                             </FormControl>
                                                             {selectedLora && (
-                                                                <Box sx={{ ...appStyles.sliderRow, mt: 1.5 }}>
-                                                                    <Typography variant="body2" color="textSecondary">
-                                                                        LoRA Multiplier:
-                                                                    </Typography>
-                                                                    <Slider
-                                                                        value={loraMultiplier}
-                                                                        onChange={(e, v) => setLoraMultiplier(v)}
-                                                                        min={0}
-                                                                        max={2}
-                                                                        step={0.05}
-                                                                        valueLabelDisplay="auto"
-                                                                    />
-                                                                    <Typography variant="body2" color="textSecondary">
-                                                                        {loraMultiplier.toFixed(2)}x
-                                                                    </Typography>
+                                                                <Box sx={appStyles.formControlMarginBottom}>
+                                                                    <Typography gutterBottom>LoRA Multiplier</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={loraMultiplier}
+                                                                            onChange={(e, v) => setLoraMultiplier(v)}
+                                                                            min={0}
+                                                                            max={2}
+                                                                            step={0.05}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={loraMultiplier}
+                                                                            onChange={(e) => {
+                                                                                const val = parseFloat(e.target.value);
+                                                                                if (Number.isNaN(val)) return;
+                                                                                setLoraMultiplier(Math.max(0, Math.min(2, val)));
+                                                                            }}
+                                                                            inputProps={{ min: 0, max: 2, step: 0.05 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
                                                                 </Box>
                                                             )}
-                                                        </Box>
+                                                        </>
                                                     );
                                                 })()}
 

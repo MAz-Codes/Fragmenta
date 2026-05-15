@@ -11,13 +11,13 @@
 
 ![Header Image](app/frontend/public/fragmenta_background.png)
 
-**Open-source text-to-audio fine-tuning and generation for musicians.**
+**Open-source text-to-audio LoRA,fine-tuning, generation and performance for musicians.**
 
 </div>
 
-Fragmenta brings GenAI audio generation to musicians, offering intuitive fine-tuning and generation capabilities powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models.
+Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA, full fine-tuning, generation and performance capabilities.
 
-This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Bending the Algorithm](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
+This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Phd Research](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
 
 ---
 
@@ -27,6 +27,7 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 - **Docker images** for GPU and CPU — run as a web app on any machine
 - **Bulk auto-annotation** — generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
 - **Fine-tuning** with configurable epochs, learning rate, batch size, checkpoint frequency, and precision
+- **LoRA adapters** — train a small (~60 MB) adapter on top of the frozen base for consumer GPUs (~12 GB VRAM); swap "flavors" at inference time with a multiplier control
 - **Text-to-audio generation** with CFG scale, inference steps, seed control, and batch generation
 - **Performance Mode** — a 4-channel sampler designed for live performance:
   - Independent channel processing (gain, pan, low-pass filter, delay, reverb)
@@ -36,7 +37,6 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
   - **Persistent session** — every panel setting survives page reloads and app restarts
   - **Named presets** — save and recall full panel snapshots
   - **MIDI learn** — assign any hardware control to any UI element; mappings persist
-- **Stable Audio Open Small** (fast, distilled) and **1.0** (higher quality) both fully supported
 - **Real-time GPU memory monitoring**
 
 ![Interface](app/frontend/public/interface.png)
@@ -49,7 +49,7 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 |---|---|
 | **NVIDIA GPU** | Inference is fast (~3 s for 10 s of audio) |
 | **Apple Silicon** | Works, but slow (~9 min for 10 s of audio on M1) |
-| **Models** | The app guides you through downloading; use the larger model for more coherent results |
+| **Models** | The app guides you through downloading. The Small model is for inference only — training (full or LoRA) runs on Stable Audio Open 1.0. |
 | **Offline** | After initial setup, everything runs locally — your data stays on your device |
 | **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 if auto-installed) |
 | **Python** | **Python 3.11 required** for local installs (Options 3) — [download here](https://www.python.org/downloads/release/python-3119/). Newer versions (3.12, 3.13) will fail to install dependencies. Not needed for the Docker option. |
@@ -145,9 +145,17 @@ The app guides you through downloading models and authenticating with HuggingFac
 
 ### 1. Process Audio Files
 
-Upload audio files with text descriptions. The system saves audio and creates training metadata automatically.
+Three ways to build the dataset, depending on what you're starting with:
 
-#### Auto-Annotate (optional)
+#### a) Upload audio + prompts in the app
+
+Upload audio files with text descriptions directly. The system saves audio and creates training metadata automatically.
+
+#### b) Import CSV + audio folder
+
+If you already have a CSV of `file_name,prompt` rows and a folder of matching audio, use the **Import CSV + Audio Folder** panel. Pick the CSV and the folder, get a preview with conflict status (new / replace / skip) against the existing metadata, then commit. Choose **Copy files into data/** to stage them, or **Leave files in place** to reference their original paths.
+
+#### c) Auto-Annotate (optional)
 
 If you have a folder of audio files without text descriptions, the **Bulk Annotate** panel can generate prompts for you. Point it at a folder and choose a tier:
 
@@ -162,14 +170,14 @@ Once annotation finishes, results appear in an editable table — review and twe
 
 ### 2. Train Model
 
-Pick a base model (**Stable Audio Open Small** 341M, or **1.0** 838M) and a **training mode**:
+Training runs on **Stable Audio Open 1.0** (the Small model is distilled and not a viable fine-tune target — it stays inference-only). Pick a **training mode**:
 
 | Mode | What it produces | VRAM (1.0 model) | When to pick it |
 |---|---|---|---|
 | **Full fine-tune** | A new full model (.safetensors) | ≥ 24 GB | You have the GPU and want the strongest possible imprint |
 | **LoRA adapter** | A small (~60 MB) delta layered on top of the base | ~12 GB | Consumer GPU; want to swap multiple "flavors" without duplicating the base |
 
-Configure epochs, batch size, learning rate, checkpoint frequency, and precision (auto, fp32, fp16). Training runs in the background and progress is shown live. See [TRAINING.md](TRAINING.md) for a deeper guide.
+Configure epochs, batch size, learning rate, checkpoint frequency, and precision (auto, fp32, fp16). Training runs in the background and progress is shown live.
 
 > **Important:** Full fine-tune checkpoints must be unwrapped before use (do this from the Generation page). LoRA checkpoints don't need unwrapping — they appear in the LoRA picker automatically.
 
@@ -259,6 +267,8 @@ Copyright 2025-2026 Misagh Azimi
 Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
 
 ### Third-Party Software
+
+Fragmenta is powered by [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models. 
 
 Fragmenta includes and depends on various third-party open-source software. See [NOTICE.md](NOTICE.md) for complete attribution and license information.
 

@@ -1217,7 +1217,6 @@ function PerformancePanelInner({
                                 <TextField
                                     size="small"
                                     type="number"
-                                    label="×"
                                     value={loraMultiplier}
                                     onChange={(e) => {
                                         const v = parseFloat(e.target.value);
@@ -1225,10 +1224,31 @@ function PerformancePanelInner({
                                             onLoraMultiplierChange?.(Math.max(0, Math.min(2, v)));
                                         }
                                     }}
-                                    inputProps={{ min: 0, max: 2, step: 0.05 }}
+                                    inputProps={{ min: 0, max: 2, step: 0.05, 'aria-label': 'LoRA multiplier' }}
+                                    InputProps={{
+                                        endAdornment: (
+                                            <Typography
+                                                component="span"
+                                                sx={{
+                                                    fontSize: perfTokens.fontSize.small,
+                                                    letterSpacing: perfTokens.letterSpacing.wide,
+                                                    color: 'text.disabled',
+                                                    pl: 0.5,
+                                                    userSelect: 'none',
+                                                }}
+                                            >
+                                                ×
+                                            </Typography>
+                                        ),
+                                    }}
                                     sx={{
-                                        width: 84,
-                                        '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                        width: 96,
+                                        '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
+                                        '& input': {
+                                            textAlign: 'right',
+                                            fontVariantNumeric: 'tabular-nums',
+                                            pr: 0,
+                                        },
                                         '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                             WebkitAppearance: 'none',
                                             margin: 0,
