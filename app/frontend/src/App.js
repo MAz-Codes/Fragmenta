@@ -496,7 +496,11 @@ function App() {
                         }
                         setTimeout(() => {
                             fetchSystemStatus();
-                            fetchAvailableModels();
+                            // refreshAllModels picks up the new LoRA too if
+                            // this was a LoRA run — without it, the LoRA
+                            // picker stays empty until the user manually hits
+                            // refresh.
+                            refreshAllModels();
                         }, 0);
                     }
                 } catch (statusError) {
@@ -1786,8 +1790,8 @@ function App() {
                                                         </Select>
                                                     </FormControl>
                                                     <IconButton
-                                                        onClick={fetchAvailableModels}
-                                                        title="Refresh Models"
+                                                        onClick={refreshAllModels}
+                                                        title="Refresh models & LoRAs"
                                                         sx={appStyles.refreshModelsButton}
                                                     >
                                                         <RefreshIcon />
@@ -2281,7 +2285,7 @@ function App() {
                                             loraMultiplier={loraMultiplier}
                                             onSelectModel={setSelectedModel}
                                             onSelectUnwrappedModel={setSelectedUnwrappedModel}
-                                            onRefreshModels={fetchAvailableModels}
+                                            onRefreshModels={refreshAllModels}
                                             onSelectLora={setSelectedLora}
                                             onLoraMultiplierChange={setLoraMultiplier}
                                             steps={steps}
