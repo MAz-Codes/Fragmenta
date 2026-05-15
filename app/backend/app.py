@@ -1181,7 +1181,10 @@ def start_fresh():
 
         data_files_deleted = 0
         if data_dir.exists():
-            for file_path in data_dir.glob("*"):
+            # iterdir() (vs glob("*")) catches dotfiles too — e.g. the
+            # hyperparam suggester's .duration_cache.json, which should
+            # absolutely be wiped on Fresh Start.
+            for file_path in data_dir.iterdir():
                 if file_path.is_file() and not file_path.name.endswith('.py'):
                     file_path.unlink()
                     data_files_deleted += 1
