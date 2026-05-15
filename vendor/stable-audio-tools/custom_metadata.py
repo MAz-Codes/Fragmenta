@@ -8,8 +8,15 @@ def _load_metadata():
     metadata = {}
     here = os.path.dirname(__file__)
     candidates = [
-        os.path.join(here, '..', 'data', 'metadata.json'),               # current layout
-        os.path.join(here, '..', 'app', 'backend', 'data', 'metadata.json'),  # legacy
+        # Current layout: <repo>/vendor/stable-audio-tools/custom_metadata.py
+        # → metadata at <repo>/data/metadata.json (two levels up).
+        os.path.join(here, '..', '..', 'data', 'metadata.json'),
+        # Pre-vendor-move layout: <repo>/stable-audio-tools/custom_metadata.py
+        # → metadata at <repo>/data/metadata.json (one level up).
+        os.path.join(here, '..', 'data', 'metadata.json'),
+        # Legacy: data was under app/backend/.
+        os.path.join(here, '..', '..', 'app', 'backend', 'data', 'metadata.json'),
+        os.path.join(here, '..', 'app', 'backend', 'data', 'metadata.json'),
     ]
 
     chosen = next((p for p in candidates if os.path.exists(p)), None)
