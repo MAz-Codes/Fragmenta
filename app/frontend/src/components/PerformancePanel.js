@@ -624,6 +624,26 @@ function PerformancePanelInner({
         }
     };
 
+    // LoRAs share the same on-disk layout as fine-tuned models (one dir under
+    // models/fine_tuned/<name>/), so the same DELETE endpoint handles both.
+    const handleDeleteLora = async (loraName) => {
+        const confirmed = window.confirm(
+            `Delete LoRA "${loraName}"? This removes the directory and all its checkpoints. This cannot be undone.`
+        );
+        if (!confirmed) return;
+        try {
+            await api.delete(`/api/models/fine-tuned/${encodeURIComponent(loraName)}`);
+            // Clear the active LoRA if it points anywhere inside the deleted dir.
+            const deleted = availableLoras.find(l => l.name === loraName);
+            const paths = deleted ? (deleted.all_checkpoints || [deleted.path]) : [];
+            if (paths.includes(selectedLora)) onSelectLora?.('');
+            onRefreshModels?.();
+        } catch (err) {
+            const msg = err?.response?.data?.error || err.message || 'Delete failed';
+            setError(`Failed to delete LoRA "${loraName}": ${msg}`);
+        }
+    };
+
     const selectedFineTuned = selectedModel
         ? availableModels.find((m) => m.name === selectedModel)
         : null;
@@ -1222,8 +1242,12 @@ function PerformancePanelInner({
                                         <em>No LoRA</em>
                                     </MenuItem>
                                     {compatibleLoras.map((lora) => (
-                                        <MenuItem key={lora.name} value={lora.name}>
-                                            <Box>
+                                        <MenuItem
+                                            key={lora.name}
+                                            value={lora.name}
+                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                        >
+                                            <Box sx={{ flex: 1, minWidth: 0 }}>
                                                 <Typography variant="body2">{lora.name}</Typography>
                                                 <Typography variant="caption" color="textSecondary">
                                                     rank={lora.rank}
@@ -1232,6 +1256,23 @@ function PerformancePanelInner({
                                                         : ''}
                                                 </Typography>
                                             </Box>
+                                            <Tooltip title="Delete LoRA">
+                                                <IconButton
+                                                    size="small"
+                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        e.preventDefault();
+                                                        handleDeleteLora(lora.name);
+                                                    }}
+                                                    sx={{
+                                                        color: 'text.disabled',
+                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+                                                    }}
+                                                >
+                                                    <DeleteIcon size={14} />
+                                                </IconButton>
+                                            </Tooltip>
                                         </MenuItem>
                                     ))}
                                 </Select>
