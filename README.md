@@ -162,13 +162,20 @@ Once annotation finishes, results appear in an editable table — review and twe
 
 ### 2. Train Model
 
-Pick a base model (**Stable Audio Open Small** 341M, or **1.0** 838M) and configure epochs, batch size, learning rate, checkpoint frequency, and precision (auto, fp32, fp16). Training runs in the background and progress is shown live.
+Pick a base model (**Stable Audio Open Small** 341M, or **1.0** 838M) and a **training mode**:
 
-> **Important:** trained checkpoints must be unwrapped before use. Do this from the Generation page once training completes.
+| Mode | What it produces | VRAM (1.0 model) | When to pick it |
+|---|---|---|---|
+| **Full fine-tune** | A new full model (.safetensors) | ≥ 24 GB | You have the GPU and want the strongest possible imprint |
+| **LoRA adapter** | A small (~60 MB) delta layered on top of the base | ~12 GB | Consumer GPU; want to swap multiple "flavors" without duplicating the base |
+
+Configure epochs, batch size, learning rate, checkpoint frequency, and precision (auto, fp32, fp16). Training runs in the background and progress is shown live. See [TRAINING.md](TRAINING.md) for a deeper guide.
+
+> **Important:** Full fine-tune checkpoints must be unwrapped before use (do this from the Generation page). LoRA checkpoints don't need unwrapping — they appear in the LoRA picker automatically.
 
 ### 3. Generate Audio
 
-Use base or fine-tuned models to generate audio from text prompts (1–11 s for the small model, 1–47 s for the 1.0 model).
+Use base or fine-tuned models to generate audio from text prompts (1–11 s for the small model, 1–47 s for the 1.0 model). If you've trained a LoRA, a LoRA picker appears when you select a compatible base model — pick one and dial in a **multiplier** (0–2×) to control how strongly the adapter biases the output.
 
 **Settings:**
 - **CFG scale** — how closely the model follows your prompt (higher = stricter)
