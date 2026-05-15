@@ -163,6 +163,16 @@ function App() {
     const generationAbortRef = useRef(null);
     const stopGenerationRef = useRef(false);
 
+    // Turn a LoRAW checkpoint filename like
+    //   .../epoch=29-step=1410.ckpt   →   "Epoch 29 · step 1410"
+    // so the checkpoint picker reads as something a musician parses, not a path.
+    const parseCheckpointLabel = (filepath) => {
+        const name = (filepath || '').split('/').pop() || filepath || '';
+        const m = name.match(/epoch=(\d+)-step=(\d+)/);
+        if (m) return `Epoch ${m[1]} · step ${m[2]}`;
+        return name.replace(/\.ckpt$/i, '');
+    };
+
     const slugifyPrompt = (text, maxLen = 40) => {
         const slug = (text || '').trim().toLowerCase()
             .replace(/[^a-z0-9]+/g, '_')
@@ -1830,38 +1840,79 @@ function App() {
                                                 )}
 
                                                 {/* LoRA picker — only meaningful on a base model. Filters to
-                                                    LoRAs trained against the currently-selected base. */}
+                                                    LoRAs trained against the currently-selected base.
+                                                    Two-step: pick LoRA name, then pick which saved checkpoint
+                                                    of that LoRA to load (defaults to latest). */}
                                                 {baseModels.find(m => m.name === selectedModel) && (() => {
                                                     const compatibleLoras = availableLoras.filter(
                                                         l => l.base_model === selectedModel
                                                     );
                                                     if (compatibleLoras.length === 0) return null;
+                                                    // Derive which LoRA the current checkpoint path belongs to,
+                                                    // so the dropdown's `value` stays in sync after the second
+                                                    // picker mutates `selectedLora`.
+                                                    const currentLora = compatibleLoras.find(
+                                                        l => l.path === selectedLora ||
+                                                             (l.all_checkpoints || []).includes(selectedLora)
+                                                    );
+                                                    const currentLoraName = currentLora?.name || '';
                                                     return (
                                                         <>
                                                             <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
                                                                 <Select
                                                                     labelId="lora-select-label"
                                                                     id="lora-select"
-                                                                    value={selectedLora || ''}
+                                                                    value={currentLoraName}
                                                                     label="Select LoRA (optional)"
-                                                                    onChange={(e) => setSelectedLora(String(e.target.value))}
+                                                                    onChange={(e) => {
+                                                                        const name = e.target.value;
+                                                                        if (!name) { setSelectedLora(''); return; }
+                                                                        const lora = compatibleLoras.find(l => l.name === name);
+                                                                        // Default to latest checkpoint when picking a LoRA.
+                                                                        setSelectedLora(lora?.path || '');
+                                                                    }}
                                                                     displayEmpty
                                                                 >
                                                                     <MenuItem value="">
                                                                         <em>No LoRA (base model only)</em>
                                                                     </MenuItem>
                                                                     {compatibleLoras.map((lora) => (
-                                                                        <MenuItem key={lora.path} value={lora.path}>
+                                                                        <MenuItem key={lora.name} value={lora.name}>
                                                                             <Box>
                                                                                 <Typography variant="body1">{lora.name}</Typography>
                                                                                 <Typography variant="caption" color="textSecondary">
                                                                                     rank={lora.rank}, alpha={lora.alpha}
+                                                                                    {lora.all_checkpoints?.length > 1
+                                                                                        ? ` · ${lora.all_checkpoints.length} checkpoints`
+                                                                                        : ''}
                                                                                 </Typography>
                                                                             </Box>
                                                                         </MenuItem>
                                                                     ))}
                                                                 </Select>
                                                             </FormControl>
+
+                                                            {/* Second picker: which checkpoint of the chosen LoRA */}
+                                                            {currentLora && currentLora.all_checkpoints?.length > 1 && (
+                                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
+                                                                    <Select
+                                                                        labelId="lora-checkpoint-select-label"
+                                                                        id="lora-checkpoint-select"
+                                                                        value={selectedLora || currentLora.path}
+                                                                        label="Checkpoint"
+                                                                        onChange={(e) => setSelectedLora(String(e.target.value))}
+                                                                    >
+                                                                        {currentLora.all_checkpoints.map((ckpt, i, arr) => (
+                                                                            <MenuItem key={ckpt} value={ckpt}>
+                                                                                <Typography variant="body2">
+                                                                                    {parseCheckpointLabel(ckpt)}
+                                                                                    {i === arr.length - 1 ? ' (latest)' : ''}
+                                                                                </Typography>
+                                                                            </MenuItem>
+                                                                        ))}
+                                                                    </Select>
+                                                                </FormControl>
+                                                            )}
                                                             {selectedLora && (
                                                                 <Box sx={appStyles.formControlMarginBottom}>
                                                                     <Typography gutterBottom>LoRA Multiplier</Typography>

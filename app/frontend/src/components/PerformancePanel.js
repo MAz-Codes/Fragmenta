@@ -1174,13 +1174,29 @@ function PerformancePanelInner({
                     </FormControl>
                 )}
 
-                {/* LoRA picker + multiplier — only meaningful on a base model. */}
+                {/* LoRA picker (name → checkpoint → multiplier) — only meaningful
+                    on a base model. */}
                 {(() => {
                     const isBaseModel = baseModels.some(m => m.name === selectedModel);
                     const compatibleLoras = isBaseModel
                         ? availableLoras.filter(l => l.base_model === selectedModel)
                         : [];
                     if (compatibleLoras.length === 0) return null;
+
+                    // Which LoRA owns the currently-selected checkpoint path?
+                    const currentLora = compatibleLoras.find(
+                        l => l.path === selectedLora ||
+                             (l.all_checkpoints || []).includes(selectedLora)
+                    );
+                    const currentLoraName = currentLora?.name || '';
+
+                    const parseCheckpointLabel = (filepath) => {
+                        const name = (filepath || '').split('/').pop() || filepath || '';
+                        const m = name.match(/epoch=(\d+)-step=(\d+)/);
+                        if (m) return `Ep ${m[1]} · ${m[2]}`;
+                        return name.replace(/\.ckpt$/i, '');
+                    };
+
                     return (
                         <>
                             <FormControl size="small" sx={{
@@ -1189,30 +1205,61 @@ function PerformancePanelInner({
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             }}>
                                 <Select
-                                    value={selectedLora || ''}
-                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                    value={currentLoraName}
+                                    onChange={(e) => {
+                                        const name = e.target.value;
+                                        if (!name) { onSelectLora?.(''); return; }
+                                        const lora = compatibleLoras.find(l => l.name === name);
+                                        onSelectLora?.(lora?.path || '');
+                                    }}
                                     displayEmpty
                                     renderValue={(value) => {
                                         if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
-                                        const found = compatibleLoras.find(l => l.path === value);
-                                        return found ? found.name : 'LoRA';
+                                        return value;
                                     }}
                                 >
                                     <MenuItem value="">
                                         <em>No LoRA</em>
                                     </MenuItem>
                                     {compatibleLoras.map((lora) => (
-                                        <MenuItem key={lora.path} value={lora.path}>
+                                        <MenuItem key={lora.name} value={lora.name}>
                                             <Box>
                                                 <Typography variant="body2">{lora.name}</Typography>
                                                 <Typography variant="caption" color="textSecondary">
                                                     rank={lora.rank}
+                                                    {lora.all_checkpoints?.length > 1
+                                                        ? ` · ${lora.all_checkpoints.length} ckpts`
+                                                        : ''}
                                                 </Typography>
                                             </Box>
                                         </MenuItem>
                                     ))}
                                 </Select>
                             </FormControl>
+
+                            {/* Checkpoint sub-picker — compact, only when >1 saved */}
+                            {currentLora && currentLora.all_checkpoints?.length > 1 && (
+                                <FormControl size="small" sx={{
+                                    flex: 1,
+                                    minWidth: 110,
+                                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
+                                }}>
+                                    <Select
+                                        value={selectedLora || currentLora.path}
+                                        onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                        renderValue={(value) => parseCheckpointLabel(value)}
+                                    >
+                                        {currentLora.all_checkpoints.map((ckpt, i, arr) => (
+                                            <MenuItem key={ckpt} value={ckpt}>
+                                                <Typography variant="body2">
+                                                    {parseCheckpointLabel(ckpt)}
+                                                    {i === arr.length - 1 ? ' (latest)' : ''}
+                                                </Typography>
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            )}
                             {selectedLora && (
                                 <TextField
                                     size="small"
