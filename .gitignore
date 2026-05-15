@@ -118,16 +118,10 @@ scripts
 /data/
 !/data/.gitkeep
 .dockerignore
-docker-compose.cpu.yml
-docker-compose.yml
-docker-entrypoint.sh
-DOCKER.md
-Dockerfile
-Dockerfile.cpu
-Dockerfile.hf
+# All Docker artifacts live under docker/ (local-only, never committed).
+docker/
 DOCKERHUB.md
 .claude
-docker-push.md
 TRAINING.md
 # ffprobe duration cache for the hyperparam suggester
 data/.duration_cache.json
