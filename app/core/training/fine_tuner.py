@@ -314,6 +314,15 @@ class FineTuner:
         with open(base_config_path, 'r') as f:
             run_config = json.load(f)
         run_config["lora"] = lora_section
+        # Suppress the demo audio callback. It fires at step 0 and every
+        # `demo_every` steps thereafter; on a LoRA run users test via the
+        # app's inference UI, so the ~90s/cycle demo generation is pure
+        # overhead. Pushing demo_every above any plausible total_steps
+        # makes the callback effectively never run.
+        if isinstance(run_config.get("training"), dict):
+            demo_cfg = run_config["training"].get("demo")
+            if isinstance(demo_cfg, dict):
+                demo_cfg["demo_every"] = 10_000_000
         run_config_path = save_dir / "model_config_with_lora.json"
         with open(run_config_path, 'w') as f:
             json.dump(run_config, f, indent=2)
