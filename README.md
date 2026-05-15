@@ -2,7 +2,7 @@
 
 # Fragmenta Desktop (beta)
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Version](https://img.shields.io/badge/version-0.1.1-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
@@ -264,7 +264,14 @@ fragmenta/
 
 Copyright 2025-2026 Misagh Azimi
 
-Licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](LICENSE) for the full text.
+
+**What this means in practice:**
+- You can use, study, modify, and redistribute Fragmenta freely.
+- If you distribute Fragmenta (modified or not), or **run a modified version as a hosted/network service**, you must release your source code under the same AGPL-3.0 license.
+- You must keep the copyright notice and attribution.
+
+If you want to use Fragmenta under different terms (e.g. embedded in a closed-source commercial product), please reach out — as the sole copyright holder I'm open to discussing alternative licensing.
 
 ### Third-Party Software
 

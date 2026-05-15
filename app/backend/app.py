@@ -1690,16 +1690,16 @@ def get_license_info():
                 notice_text = f.read()
         
         return jsonify({
-            "license": "Apache License 2.0",
+            "license": "GNU Affero General Public License v3.0",
             "copyright": "Copyright 2025-2026 Misagh Azimi",
             "license_text": license_text,
             "notice_text": notice_text,
-            "license_url": "http://www.apache.org/licenses/LICENSE-2.0"
+            "license_url": "https://www.gnu.org/licenses/agpl-3.0"
         })
     except Exception as e:
         logger.error(f"Error reading license info: {e}")
         return jsonify({
-            "license": "Apache License 2.0",
+            "license": "GNU Affero General Public License v3.0",
             "copyright": "Copyright 2025-2026 Misagh Azimi",
             "error": str(e)
         }), 500
