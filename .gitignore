@@ -129,3 +129,5 @@ DOCKERHUB.md
 .claude
 docker-push.md
 TRAINING.md
+# ffprobe duration cache for the hyperparam suggester
+data/.duration_cache.json

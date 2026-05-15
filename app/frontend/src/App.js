@@ -50,7 +50,8 @@ import {
     Moon as MoonIcon,
     Sun as SunIcon,
     Piano as PerformanceIcon,
-    AlertCircle as AlertIcon
+    AlertCircle as AlertIcon,
+    Wand2 as WandIcon
 } from 'lucide-react';
 import api from './api';
 import HfAuthDialog from './components/HfAuthDialog';
@@ -115,7 +116,7 @@ function App() {
     });
 
     const [trainingConfig, setTrainingConfig] = useState({
-        mode: 'lora',                // 'full' = SAO fine-tune, 'lora' = LoRAW adapter
+        mode: 'lora',                
         epochs: 30,
         checkpointSteps: 500,
         checkpointAuto: true,
@@ -125,14 +126,15 @@ function App() {
         baseModel: 'stable-audio-open-1.0',
         saveWrappedCheckpoint: false,
         precision: 'auto',
-        // LoRA-specific (only used when mode === 'lora'; the backend ignores
-        // these on the full FT path)
+
         loraRank: 16,
         loraAlpha: 16,
         loraDropout: 0,
         loraMultiplier: 1.0,
     });
     const [checkpointPreview, setCheckpointPreview] = useState(null);
+    const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
+    const [showRationale, setShowRationale] = useState(false);
     const [isTraining, setIsTraining] = useState(false);
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [trainingStatus, setTrainingStatus] = useState(null);
@@ -529,6 +531,28 @@ function App() {
         } finally {
             setIsProcessing(false);
         }
+    };
+
+    const fetchHyperparamSuggestion = async () => {
+        setShowRationale(false);
+        setSuggestionDialog({ open: true, data: null, loading: true });
+        try {
+            const resp = await api.get(`/api/training/suggest-hyperparams?mode=${trainingConfig.mode}`);
+            setSuggestionDialog({ open: true, data: resp.data, loading: false });
+        } catch (e) {
+            setSuggestionDialog({
+                open: true,
+                data: { ok: false, error: e?.response?.data?.error || e.message },
+                loading: false,
+            });
+        }
+    };
+
+    const applyHyperparamSuggestion = () => {
+        const cfg = suggestionDialog.data?.config;
+        if (!cfg) return;
+        setTrainingConfig({ ...trainingConfig, ...cfg });
+        setSuggestionDialog({ open: false, data: null, loading: false });
     };
 
     const startTraining = async () => {
@@ -1611,6 +1635,19 @@ function App() {
 
 
 
+                                                <Box sx={{ mt: 1.5, mb: 1.5 }}>
+                                                    <Button
+                                                        variant="outlined"
+                                                        size="small"
+                                                        fullWidth
+                                                        onClick={fetchHyperparamSuggestion}
+                                                        disabled={isTraining}
+                                                        startIcon={<WandIcon size={16} />}
+                                                    >
+                                                        Suggest hyperparameters for my dataset
+                                                    </Button>
+                                                </Box>
+
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
@@ -2398,7 +2435,6 @@ function App() {
                         </Button>
                     </Box>
 
-                    {/* SACL attribution — required to be visible on the about page. */}
                     <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider', textAlign: 'center' }}>
                         <Typography variant="caption" color="textSecondary" sx={{ display: 'block', lineHeight: 1.5, fontSize: '0.68rem' }}>
                             <strong>Powered by Stability AI</strong> —{' '}
@@ -2433,6 +2469,102 @@ function App() {
                 <DialogActions>
                     <Button onClick={() => setShowInfoDialog(false)}>
                         Close
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={suggestionDialog.open}
+                onClose={() => setSuggestionDialog({ open: false, data: null, loading: false })}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <WandIcon size={18} />
+                        <span>Suggested hyperparameters</span>
+                    </Box>
+                </DialogTitle>
+                <DialogContent>
+                    {suggestionDialog.loading && (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                            <CircularProgress size={28} />
+                        </Box>
+                    )}
+                    {!suggestionDialog.loading && suggestionDialog.data?.ok === false && (
+                        <Typography color="error" variant="body2">
+                            {suggestionDialog.data.error || 'Could not generate a suggestion.'}
+                        </Typography>
+                    )}
+                    {!suggestionDialog.loading && suggestionDialog.data?.ok && (() => {
+                        const { stats, config, rationale } = suggestionDialog.data;
+                        return (
+                            <Box>
+                                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                                    {stats.file_count} files · {stats.duration_human}
+                                    {stats.vram_gb ? ` · GPU ${stats.vram_gb} GB` : ''}
+                                </Typography>
+
+                                <Box sx={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '1fr auto',
+                                    rowGap: 0.75,
+                                    columnGap: 2,
+                                    fontVariantNumeric: 'tabular-nums',
+                                    mb: 2,
+                                }}>
+                                    <Typography variant="body2">Batch size</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.batchSize}</Typography>
+                                    <Typography variant="body2">Learning rate</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.learningRate}</Typography>
+                                    <Typography variant="body2">Epochs</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.epochs}</Typography>
+                                    {trainingConfig.mode === 'lora' && (
+                                        <>
+                                            <Typography variant="body2">LoRA rank / alpha</Typography>
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                {config.loraRank} / {config.loraAlpha}
+                                            </Typography>
+                                        </>
+                                    )}
+                                    <Typography variant="body2" color="textSecondary">Total steps</Typography>
+                                    <Typography variant="body2" color="textSecondary">{stats.total_steps}</Typography>
+                                </Box>
+
+                                <Button
+                                    size="small"
+                                    onClick={() => setShowRationale(v => !v)}
+                                    endIcon={<ExpandMoreIcon
+                                        size={14}
+                                        style={{ transform: showRationale ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+                                    />}
+                                    sx={{ textTransform: 'none', mb: 1, px: 0 }}
+                                >
+                                    Why these values?
+                                </Button>
+                                {showRationale && (
+                                    <Box component="ul" sx={{ pl: 2.5, m: 0 }}>
+                                        {rationale.map((r, i) => (
+                                            <Typography component="li" variant="body2" color="textSecondary" key={i} sx={{ mb: 0.5 }}>
+                                                {r}
+                                            </Typography>
+                                        ))}
+                                    </Box>
+                                )}
+                            </Box>
+                        );
+                    })()}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setSuggestionDialog({ open: false, data: null, loading: false })}>
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="contained"
+                        onClick={applyHyperparamSuggestion}
+                        disabled={!suggestionDialog.data?.ok}
+                    >
+                        Apply
                     </Button>
                 </DialogActions>
             </Dialog>

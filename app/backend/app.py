@@ -779,6 +779,24 @@ def get_status():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/training/suggest-hyperparams', methods=['GET'])
+def training_suggest_hyperparams():
+    """Heuristic hyperparameter suggester for the Training tab's Suggest button.
+
+    Query: mode=lora|full (default lora).
+    Returns: {ok, stats, config, rationale} — see hyperparam_suggester.suggest.
+    """
+    try:
+        from app.core.training.hyperparam_suggester import suggest
+        mode = request.args.get('mode', 'lora')
+        config = get_config()
+        result = suggest(config.get_path('data'), mode=mode)
+        return jsonify(result)
+    except Exception as exc:
+        logger.exception("hyperparam suggestion failed")
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
 @app.route('/api/training/checkpoint-preview', methods=['POST'])
 def training_checkpoint_preview():
     """Resolve checkpoint cadence + step counts for the current training config.
