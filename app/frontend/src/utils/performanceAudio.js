@@ -347,13 +347,28 @@ export class PerformanceEngine {
      */
     async setOutputDevice(deviceId) {
         if (typeof this.ctx.setSinkId !== 'function') {
-            // Not Chromium ≥ 110 — caller should fall back.
+            console.warn('[PerformanceEngine] AudioContext.setSinkId not supported on this build');
             return this.ctx.destination.maxChannelCount ?? 2;
         }
         try {
+            // Some Chromium versions reject setSinkId on a suspended context.
+            if (this.ctx.state === 'suspended') {
+                await this.ctx.resume();
+            }
             await this.ctx.setSinkId(deviceId || '');
+            const applied = this.ctx.sinkId;
+            console.log(
+                `[PerformanceEngine] setSinkId requested='${deviceId || '(default)'}' applied='${applied}' ` +
+                `maxChannelCount=${this.ctx.destination.maxChannelCount}`
+            );
+            if (deviceId && applied !== deviceId) {
+                console.warn(
+                    `[PerformanceEngine] sinkId did not stick (asked='${deviceId}', got='${applied}'). ` +
+                    `Likely a placeholder/un-permissioned device id — grant mic access once to unlock real ids.`
+                );
+            }
         } catch (err) {
-            console.warn('[PerformanceEngine] setSinkId failed', err);
+            console.error('[PerformanceEngine] setSinkId failed:', err);
         }
         return this.ctx.destination.maxChannelCount ?? 2;
     }
