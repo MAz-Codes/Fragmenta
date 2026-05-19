@@ -34,4 +34,5 @@ python-dotenv>=1.0.0,<2.0
 pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
+bitsandbytes>=0.43.0
 flash-attn>=2.8.3 ; sys_platform == 'linux'
