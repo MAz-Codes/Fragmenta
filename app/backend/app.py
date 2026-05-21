@@ -996,6 +996,144 @@ def hf_login():
         return jsonify({'error': str(e)}), 500
 
 
+# ============================================================================
+# Checkpoint Manager — SA3 catalog endpoints (Phase 2a of SA3_INTEGRATION_PLAN)
+# ============================================================================
+
+@app.route('/api/checkpoints', methods=['GET'])
+def list_checkpoints():
+    try:
+        return jsonify({'checkpoints': model_manager.get_catalog()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/storage', methods=['GET'])
+def checkpoints_storage():
+    try:
+        return jsonify(model_manager.get_storage_info())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>', methods=['GET'])
+def get_checkpoint(model_id):
+    try:
+        info = model_manager.get_model_info(model_id)
+        if not info:
+            return jsonify({'error': 'Unknown checkpoint'}), 404
+        info['required_companions'] = model_manager.required_companions(model_id)
+        return jsonify(info)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>/license', methods=['GET'])
+def get_checkpoint_license(model_id):
+    try:
+        text = model_manager.get_license_text(model_id)
+        if text is None:
+            return jsonify({'error': 'License text unavailable'}), 404
+        return jsonify({'license': text})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>/accept-terms', methods=['POST'])
+def accept_checkpoint_terms(model_id):
+    try:
+        if model_manager.accept_terms(model_id):
+            return jsonify({'success': True})
+        return jsonify({'error': 'Unknown checkpoint'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>/download', methods=['POST'])
+def start_checkpoint_download(model_id):
+    try:
+        result = model_manager.start_download(model_id)
+        if 'error' in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>/cancel-download', methods=['POST'])
+def cancel_checkpoint_download(model_id):
+    try:
+        # Cancel every in-flight job for this checkpoint (usually one).
+        jobs = [j for j in model_manager.list_jobs()
+                if j['model_id'] == model_id and j['status'] in ('queued', 'running')]
+        cancelled = [j['job_id'] for j in jobs if model_manager.cancel_job(j['job_id'])]
+        return jsonify({'cancelled': cancelled})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>', methods=['DELETE'])
+def delete_checkpoint_download(model_id):
+    try:
+        if model_manager.delete_model(model_id):
+            return jsonify({'success': True})
+        return jsonify({'error': 'Nothing to delete'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/jobs/<job_id>', methods=['GET'])
+def get_checkpoint_job(job_id):
+    try:
+        job = model_manager.get_job(job_id)
+        if not job:
+            return jsonify({'error': 'Unknown job'}), 404
+        return jsonify(job)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# --- HuggingFace auth -------------------------------------------------------
+
+@app.route('/api/hf-auth/status', methods=['GET'])
+def hf_auth_status():
+    try:
+        return jsonify(model_manager.hf_auth_status())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/hf-auth', methods=['POST'])
+def hf_auth_login():
+    try:
+        data = request.json or {}
+        token = (data.get('token') or '').strip()
+        if not token:
+            return jsonify({'error': 'Token is required'}), 400
+        import huggingface_hub
+        try:
+            huggingface_hub.login(token=token, add_to_git_credential=False)
+            info = huggingface_hub.whoami(token=token)
+            return jsonify({
+                'success': True,
+                'username': info.get('name') or info.get('fullname'),
+            })
+        except Exception as e:
+            return jsonify({'error': f'Invalid token: {e}'}), 401
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/hf-auth', methods=['DELETE'])
+def hf_auth_logout():
+    try:
+        import huggingface_hub
+        huggingface_hub.logout()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/base-models/status', methods=['GET'])
 def get_base_models_status():
     try:
