@@ -1807,7 +1807,7 @@ def get_gpu_memory_status():
             if allocated_memory == 0:
                 try:
                     result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
-                                            capture_output=True, text=True, timeout=1)
+                                            capture_output=True, text=True, timeout=5)
                     if result.stdout.strip():
                         used_mb, total_mb = result.stdout.strip().split(', ')
                         nvidia_used_gb = float(used_mb) / 1024
