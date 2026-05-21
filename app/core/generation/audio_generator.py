@@ -72,6 +72,9 @@ class AudioGenerator:
         self._model_id: Optional[str] = None
         self._device: Optional[str] = None
         self._stop_requested: bool = False
+        # Tracks LoRAs currently injected into self.model. List of
+        # {"path": str, "strength": float}. Empty when no LoRAs are active.
+        self._loaded_loras: list = []
 
     # --- cooperative cancel ---------------------------------------------------
     def request_stop(self) -> bool:
@@ -167,6 +170,64 @@ class AudioGenerator:
         self._model_id = model_id
         self._device = device
 
+    # --- LoRA stack -----------------------------------------------------------
+    def _apply_loras(self, loras: list) -> None:
+        """Inject the given LoRA stack into self.model (idempotent).
+
+        loras: [{"path": str, "strength": float}, ...]
+
+        Strategy:
+          * Same paths in same order → just update strengths in place.
+          * Different paths → remove all, load fresh.
+        """
+        if self.model is None:
+            return
+
+        new_paths = [l["path"] for l in loras]
+        cur_paths = [l["path"] for l in self._loaded_loras]
+
+        if new_paths == cur_paths:
+            # Path-set unchanged; only strengths may have moved.
+            for i, l in enumerate(loras):
+                self.model.set_lora_strength(l["strength"], lora_index=i)
+            self._loaded_loras = list(loras)
+            return
+
+        # Path-set changed. Remove any currently loaded, then load the new set.
+        if cur_paths:
+            try:
+                from stable_audio_3.models.lora import remove_lora_by_index
+                # remove_lora_by_index pops index 0 each time; loop len-times.
+                for _ in range(len(cur_paths)):
+                    remove_lora_by_index(self.model.model, 0)
+                    remove_lora_by_index(self.model.conditioner, 0)
+            except Exception:
+                # If removal API is unavailable, reload the base model entirely
+                # so we don't carry stale adapters.
+                self.model = None
+                self._model_id = None
+
+        if self.model is None:
+            # Forced full reload (only if remove failed above).
+            self._ensure_model(self._model_id, device=self._device, half=True)
+
+        if loras:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.model.load_lora(new_paths)
+            for i, l in enumerate(loras):
+                self.model.set_lora_strength(l["strength"], lora_index=i)
+
+        self._loaded_loras = list(loras)
+
+    def set_lora_strength(self, index: int, strength: float) -> bool:
+        """Live-update one slot's strength. Returns False if index invalid."""
+        if not self.model or index < 0 or index >= len(self._loaded_loras):
+            return False
+        self.model.set_lora_strength(float(strength), lora_index=index)
+        self._loaded_loras[index]["strength"] = float(strength)
+        return True
+
     # --- public entry ---------------------------------------------------------
     def generate_audio(
         self,
@@ -183,6 +244,7 @@ class AudioGenerator:
         half: bool = True,
         chunked_decode: Optional[bool] = None,
         loop_mode: bool = False,                 # bars-mode passthrough
+        loras: Optional[list] = None,            # [{path, strength}, ...]
         **_ignored_legacy_kwargs: Any,
     ) -> Path:
         self._stop_requested = False
@@ -190,6 +252,7 @@ class AudioGenerator:
             raise GenerationStopped()
 
         self._ensure_model(model_id, device=device, half=half)
+        self._apply_loras(loras or [])
 
         _, kind, max_dur = _MODEL_INFO[model_id]
         is_base = (kind == "base")

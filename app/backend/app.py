@@ -487,6 +487,31 @@ def generate_audio():
 
         chunked_decode = data.get('chunked_decode')  # tri-state: True / False / None
 
+        # LoRA stack: list of { path, strength }. Validate each entry.
+        loras_raw = data.get('loras') or []
+        if not isinstance(loras_raw, list):
+            return jsonify(APIResponse.error(
+                "loras must be an array of {path, strength} entries.",
+                status_code=400)), 400
+        loras = []
+        for i, item in enumerate(loras_raw):
+            if not isinstance(item, dict) or 'path' not in item:
+                return jsonify(APIResponse.error(
+                    f"loras[{i}] missing 'path'.", status_code=400)), 400
+            lora_path = str(item['path']).strip()
+            if not lora_path:
+                continue
+            strength = float(item.get('strength', 1.0))
+            strength = max(-2.0, min(2.0, strength))
+            # Resolve relative paths against the project root.
+            lora_abs = Path(lora_path)
+            if not lora_abs.is_absolute():
+                lora_abs = config.project_root / lora_abs
+            if not lora_abs.exists():
+                return jsonify(APIResponse.error(
+                    f"LoRA not found: {lora_path}", status_code=400)), 400
+            loras.append({'path': str(lora_abs), 'strength': strength})
+
     except ValidationError as e:
         field = e.details.get('field', 'unknown') if e.details else 'unknown'
         logger.warning(f"/api/generate validation failed on '{field}': {e}")
@@ -521,6 +546,7 @@ def generate_audio():
             batch_size=int(batch_size),
             chunked_decode=chunked_decode,
             loop_mode=do_align,
+            loras=loras,
         )
 
         if not output_path.exists():
@@ -565,52 +591,120 @@ def generate_audio():
 
 @app.route('/api/loras', methods=['GET'])
 def list_loras():
-    """Enumerate all trained LoRAs under models/fine_tuned/.
+    """Enumerate SA3 LoRAs under models/fine_tuned/<run>/checkpoints/.
 
-    For each model directory that has a `training_metadata.json` with
-    `mode == "lora"`, returns the metadata plus the latest checkpoint file
-    (.ckpt) discovered under the dir. LoRAW writes the LoRA state_dict via
-    pl.callbacks.ModelCheckpoint, so the exact filename depends on
-    Lightning's pattern and the (disabled) wandb logger's run id — we just
-    glob for *.ckpt and return them sorted by mtime.
+    SA3 LoRAs are .safetensors files with config (rank, adapter_type,
+    base_model, etc.) embedded in the safetensors metadata header.
+    `train_lora.py` from vendor/stable-audio-3/scripts/ writes one per
+    checkpoint step. We surface every step so the user can A/B-test
+    checkpoints inside a single run.
+
+    Legacy SA2 LoRAs (.ckpt files) are skipped — they're architecturally
+    incompatible with the SA3 engine and would only confuse the picker.
     """
     try:
         config = get_config()
         fine_tuned_dir = config.get_path("models_fine_tuned")
         loras = []
         if fine_tuned_dir.exists():
-            for model_dir in sorted(fine_tuned_dir.iterdir()):
-                if not model_dir.is_dir():
+            try:
+                from safetensors import safe_open
+            except ImportError:
+                return jsonify({"loras": []})
+
+            for run_dir in sorted(fine_tuned_dir.iterdir()):
+                if not run_dir.is_dir():
                     continue
-                metadata_path = model_dir / "training_metadata.json"
-                if not metadata_path.exists():
-                    continue
-                try:
-                    metadata = json.loads(metadata_path.read_text())
-                except Exception:
-                    continue
-                if metadata.get("mode") != "lora":
-                    continue
-                ckpt_files = sorted(
-                    model_dir.rglob("*.ckpt"),
-                    key=lambda p: p.stat().st_mtime,
-                )
+                # SA3 checkpoints live under <run>/checkpoints/. Fall back
+                # to the run dir itself for runs that don't follow that
+                # convention.
+                search_dirs = [run_dir / "checkpoints", run_dir]
+                ckpt_files = []
+                for d in search_dirs:
+                    if d.is_dir():
+                        ckpt_files = sorted(
+                            d.glob("*.safetensors"),
+                            key=lambda p: p.stat().st_mtime,
+                        )
+                        if ckpt_files:
+                            break
                 if not ckpt_files:
                     continue
-                latest = ckpt_files[-1]
-                lora_cfg = metadata.get("lora_config", {})
-                loras.append({
-                    "name": model_dir.name,
-                    "path": str(latest),
-                    "base_model": metadata.get("base_model"),
-                    "rank": lora_cfg.get("rank"),
-                    "alpha": lora_cfg.get("alpha"),
-                    "all_checkpoints": [str(p) for p in ckpt_files],
-                })
+
+                for ckpt in ckpt_files:
+                    try:
+                        with safe_open(str(ckpt), framework="pt") as f:
+                            meta = f.metadata() or {}
+                    except Exception:
+                        meta = {}
+                    # `train_lora.py` embeds these via get_lora_state_dict;
+                    # missing keys mean we can't safely use the file.
+                    base_model = meta.get("base_model") or meta.get("base_model_id")
+                    if not base_model:
+                        # Best-effort fallback: read the run's metadata json.
+                        run_meta_path = run_dir / "training_metadata.json"
+                        if run_meta_path.exists():
+                            try:
+                                rm = json.loads(run_meta_path.read_text())
+                                base_model = rm.get("base_model")
+                            except Exception:
+                                pass
+                    if not base_model or not str(base_model).startswith("sa3-"):
+                        continue  # not a SA3 LoRA
+
+                    loras.append({
+                        "id": f"{run_dir.name}::{ckpt.stem}",
+                        "name": run_dir.name,
+                        "checkpoint": ckpt.stem,
+                        "path": str(ckpt.relative_to(config.project_root)),
+                        "base_model": base_model,
+                        "rank": _safe_int(meta.get("rank")),
+                        "alpha": _safe_int(meta.get("lora_alpha") or meta.get("alpha")),
+                        "adapter_type": meta.get("adapter_type") or "lora",
+                        "size_bytes": ckpt.stat().st_size,
+                        "mtime": ckpt.stat().st_mtime,
+                    })
+
         return jsonify({"loras": loras})
     except Exception as e:
         logger.exception("Failed to enumerate LoRAs")
         return jsonify(APIResponse.error(f"Failed to list LoRAs: {e}", status_code=500)), 500
+
+
+def _safe_int(v):
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+@app.route('/api/lora-strength', methods=['POST'])
+def update_lora_strength():
+    """Live-update a loaded LoRA's strength without regenerating.
+
+    Performance Mode uses this when the user drags a strength slider —
+    the next generate() picks up the new value, but the model itself
+    doesn't need to be reloaded. Returns 409 if no LoRAs are loaded yet
+    or the index is out of range.
+    """
+    data = request.json or {}
+    try:
+        index = int(data.get('index', -1))
+        strength = float(data.get('strength', 1.0))
+    except (TypeError, ValueError):
+        return jsonify(APIResponse.error("index and strength are required.", status_code=400)), 400
+
+    try:
+        if not getattr(generator, 'model', None):
+            return jsonify(APIResponse.error("No model loaded.", status_code=409)), 409
+        ok = generator.set_lora_strength(index, strength)
+        if not ok:
+            return jsonify(APIResponse.error(
+                f"LoRA index {index} not loaded.", status_code=409)), 409
+        return jsonify({'success': True, 'index': index, 'strength': strength})
+    except Exception as e:
+        logger.exception("set_lora_strength failed")
+        return jsonify(APIResponse.error(str(e), status_code=500)), 500
 
 
 @app.route('/api/status', methods=['GET'])

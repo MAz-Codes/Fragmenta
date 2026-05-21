@@ -64,6 +64,7 @@ import TrainingMonitor from './components/TrainingMonitor';
 import ModelUnwrapButton from './components/ModelUnwrapButton';
 import LoraCheckpointManager from './components/LoraCheckpointManager';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
+import LoraStack from './components/LoraStack';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import { clearPerformanceSession } from './components/usePerformanceSession';
@@ -147,6 +148,7 @@ function App() {
 
     const [generationPrompt, setGenerationPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
+    const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
     const [generationDuration, setGenerationDuration] = useState(10);
     const [generatedAudio, setGeneratedAudio] = useState(null);
     const [generatedAudioBlob, setGeneratedAudioBlob] = useState(null);
@@ -665,6 +667,15 @@ function App() {
         const negTrim = negativePrompt.trim();
         if (negTrim) {
             baseRequestData.negative_prompt = negTrim;
+        }
+
+        // LoRA stack — only attach slots that have a path picked.
+        const activeLoras = (loraStack || []).filter(s => s.path);
+        if (activeLoras.length) {
+            baseRequestData.loras = activeLoras.map(s => ({
+                path: s.path,
+                strength: s.strength,
+            }));
         }
         // SA3 post-trained models bake CFG at 1.0 — only the *-base variants
         // honour cfg_scale. Sending it on a post-trained model is harmless
@@ -2049,6 +2060,14 @@ function App() {
                                                                 />
                                                             </Grid>
 
+                                                            <Grid item xs={12}>
+                                                                <LoraStack
+                                                                    selectedModel={selectedModel}
+                                                                    value={loraStack}
+                                                                    onChange={setLoraStack}
+                                                                />
+                                                            </Grid>
+
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
                                                                 Distilled post-trained models bake cfg=1.0 / steps=8 and
                                                                 ignore overrides, so we hide the controls entirely. */}
@@ -2541,10 +2560,6 @@ function App() {
                     <Typography sx={appStyles.infoDialogIntro}>
                         Fragmenta is an open source, local-first pipeline to fine-tune, LoRA, train, generate and perform with text-to-audio diffusion models.
                         Made by the composer and researcher Misagh Azimi.
-                    </Typography>
-
-                    <Typography variant="subtitle2" sx={appStyles.infoDialogSectionTitle}>
-                        Resources
                     </Typography>
 
                     <Box sx={appStyles.infoDialogActionStack}>
