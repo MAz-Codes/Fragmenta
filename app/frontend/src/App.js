@@ -218,23 +218,26 @@ function App() {
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
     const [baseModels, setBaseModels] = useState([
         {
-            name: 'stable-audio-open-small',
-            displayName: 'Stable Audio Open Small (Recommended)',
-            description: 'Faster - Lower memory usage',
+            name: 'sa3-small-music',
+            displayName: 'Small - Music',
+            description: 'Stable Audio 3 · CPU/GPU · up to 120 s',
             type: 'base',
-            path: '/models/pretrained/stable-audio-open-small-model.safetensors',
-            configPath: '/models/config/model_config_small.json',
-            downloaded: false
+            downloaded: false,
         },
         {
-            name: 'stable-audio-open-1.0',
-            displayName: 'Stable Audio Open 1.0',
-            description: 'Higher quality - Requires more memory',
+            name: 'sa3-small-sfx',
+            displayName: 'Small - SFX',
+            description: 'Stable Audio 3 · CPU/GPU · up to 120 s',
             type: 'base',
-            path: '/models/pretrained/stable-audio-open-model.safetensors',
-            configPath: '/models/config/model_config.json',
-            downloaded: false
-        }
+            downloaded: false,
+        },
+        {
+            name: 'sa3-medium',
+            displayName: 'Medium',
+            description: 'Stable Audio 3 · CUDA + Flash-Attn · up to 380 s',
+            type: 'base',
+            downloaded: false,
+        },
     ]);
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
@@ -270,35 +273,27 @@ function App() {
         setSelectedLora('');
     }, [selectedModel]);
 
-    // Resolve the base model identity for the currently-selected entry. Works
-    // for both base-model selections (selectedModel === 'stable-audio-open-...')
-    // and fine-tunes (where the API returns base_model from training_metadata).
+    // Resolve the base SA3 model identity for the currently-selected entry.
+    // For a direct base pick it's selectedModel itself; for a fine-tune we
+    // read base_model from the training_metadata exposed by /api/models.
     const resolvedBaseModel = (() => {
         if (!selectedModel) return null;
-        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
-            return selectedModel;
-        }
+        if (selectedModel.startsWith('sa3-')) return selectedModel;
         const model = availableModels.find(m => m.name === selectedModel);
-        if (model?.base_model) return model.base_model;
-        // Legacy fine-tunes without base_model metadata: fall back to the
-        // unwrapped-file size heuristic.
-        if (model && selectedUnwrappedModel) {
-            const u = model.unwrapped_models?.find(x => x.path === selectedUnwrappedModel);
-            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
-        }
-        return null;
+        return model?.base_model || null;
     })();
 
-    // True only for the original distilled small base, NOT for fine-tunes of
-    // it. Fine-tuning destroys the CFG distillation, so the 8-step / CFG-1.0
-    // lock no longer applies — the user controls steps and CFG normally.
-    const isDistilledBase = selectedModel === 'stable-audio-open-small';
+    // All three user-visible SA3 models are post-trained (distilled to 8
+    // steps, CFG baked at 1.0). The backend ignores cfg_scale on these and
+    // defaults steps to 8 — the UI just mirrors that so the controls don't
+    // show misleading values.
+    const isDistilledBase = !!selectedModel && selectedModel.startsWith('sa3-') && !selectedModel.endsWith('-base');
 
     const getMaxDuration = () => {
-        if (!selectedModel) return 10;
-        if (resolvedBaseModel === 'stable-audio-open-small') return 11;
-        if (resolvedBaseModel === 'stable-audio-open-1.0') return 47;
-        return 10;
+        if (!selectedModel) return 30;
+        if (resolvedBaseModel === 'sa3-medium' || resolvedBaseModel === 'sa3-medium-base') return 380;
+        if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-')) return 120;
+        return 30;
     };
 
     useEffect(() => {
@@ -306,16 +301,13 @@ function App() {
         if (generationDuration > maxDuration) {
             setGenerationDuration(maxDuration);
         }
-        // The distilled small model is hard-coded to 8 steps + pingpong sampler
-        // at the backend regardless of slider value; snap the slider so the UI
-        // reflects what will actually run. When switching BACK to a non-
-        // distilled model, restore a sensible default — otherwise the slider
-        // is stuck at 8 from the prior selection and the big model runs 8
-        // steps (which produces noise).
+        // SA3 post-trained models run at 8 steps with CFG=1.0; base variants
+        // want ~50 steps with CFG~7. Snap the slider so the UI reflects what
+        // will actually run.
         if (isDistilledBase && steps !== 8) {
             setSteps(8);
         } else if (!isDistilledBase && steps < 50) {
-            setSteps(250);
+            setSteps(50);
         }
     }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
 
@@ -371,17 +363,18 @@ function App() {
 
     const fetchBaseModelsStatus = async () => {
         try {
-            const response = await api.get('/api/base-models/status');
-            const baseModelsStatus = response.data.base_models;
-
+            const response = await api.get('/api/checkpoints');
+            const byId = Object.fromEntries(
+                (response.data.checkpoints || []).map(c => [c.id, c])
+            );
             setBaseModels(prevModels =>
                 prevModels.map(model => ({
                     ...model,
-                    downloaded: baseModelsStatus[model.name]?.downloaded || false
+                    downloaded: byId[model.name]?.downloaded || false,
                 }))
             );
         } catch (error) {
-            console.error('Error fetching base models status:', error);
+            console.error('Error fetching checkpoint status:', error);
         }
     };
 
@@ -679,35 +672,40 @@ function App() {
         const baseRequestData = {
             prompt: generationPrompt,
             duration: generationDuration,
-            cfg_scale: cfgScale,
-            steps: steps
+            steps: steps,
         };
+        // SA3 post-trained models bake CFG at 1.0 — only the *-base variants
+        // honour cfg_scale. Sending it on a post-trained model is harmless
+        // (backend forces 1.0), but we only attach it for base variants so
+        // the UI matches what the backend will use.
+        if (!isDistilledBase) {
+            baseRequestData.cfg_scale = cfgScale;
+        }
 
         const baseModel = baseModels.find(m => m.name === selectedModel);
         if (baseModel) {
             if (!baseModel.downloaded) {
                 showModelWarning({
-                    title: 'Base Model Not Downloaded',
-                    message: `The selected base model "${baseModel.displayName}" is not downloaded.`,
+                    title: 'Model Not Downloaded',
+                    message: `"${baseModel.displayName}" hasn't been downloaded yet. Open the Checkpoint Manager to fetch it.`,
                     canOpenModels: true,
                 });
                 return;
             }
-
-            baseRequestData.model_name = selectedModel;
-        } else if (selectedUnwrappedModel) {
-            baseRequestData.unwrapped_model_path = selectedUnwrappedModel;
+            baseRequestData.model_id = selectedModel;
+        } else if (selectedModel && selectedModel.startsWith('sa3-')) {
+            // Hidden SA3 variant (base or AE) reachable via /api/checkpoints?include=all.
+            baseRequestData.model_id = selectedModel;
         } else {
-            setProcessingStatus('Please select a model');
+            setProcessingStatus(
+                selectedModel
+                    ? `'${selectedModel}' is an SA2 fine-tune; SA3 cannot load it. Pick a Stable Audio 3 model.`
+                    : 'Please select a model'
+            );
             return;
         }
 
-        // LoRA only meaningful on top of a base model (the LoRA was trained
-        // against that exact base — applying it to a full-FT model is undefined).
-        if (selectedLora && baseModel) {
-            baseRequestData.lora_path = selectedLora;
-            baseRequestData.lora_multiplier = loraMultiplier;
-        }
+        // LoRA stacking is Phase 4; ignore selectedLora for now.
 
         const parsedSeed = parseInt(seedValue, 10);
         if (!randomSeed && (Number.isNaN(parsedSeed) || parsedSeed < 0)) {
