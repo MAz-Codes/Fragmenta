@@ -17,10 +17,10 @@ einops>=0.8.2
 einops-exts>=0.0.4
 dill>=0.4.1
 
-librosa>=0.10.0,<0.12
+librosa>=0.11.0,<0.12
 soundfile>=0.13.1
-scipy>=1.10.0,<1.14
-numba>=0.59,<0.61
+scipy>=1.13,<2
+numba>=0.60,<1
 numpy>=2.2.6,<3
 pandas>=2.2,<3
 
@@ -35,5 +35,4 @@ python-dotenv>=1.0.0,<2.0
 pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
-)
 flash-attn>=2.8.3 ; sys_platform == 'linux'
