@@ -65,7 +65,7 @@ export default function PerformanceChannel({
     onStateChange,
     onFormStateChange,
     initialFormState,
-    maxDuration = 47,
+    maxDuration = 380,
     bpm = 120,
 }) {
     const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];

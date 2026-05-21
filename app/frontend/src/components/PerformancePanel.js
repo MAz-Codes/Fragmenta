@@ -600,7 +600,9 @@ function PerformancePanelInner({
 
     const anyLoaded = channelStates.some(s => s.loaded);
     const anyPlaying = channelStates.some(s => s.playing);
-    const maxDuration = isSmallModel ? 10 : 47;
+    // SA3 max-duration limits (match _MODEL_INFO in audio_generator.py and
+    // max_duration_sec in the Checkpoint Manager catalog).
+    const maxDuration = isSmallModel ? 120 : 380;
 
     const handleMuteSoloChange = (index, change) => {
         const engine = engineRef.current;
