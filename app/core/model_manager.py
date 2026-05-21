@@ -16,41 +16,10 @@ class ModelManager:
         self.models_dir = config.get_path("models_pretrained")
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
-        # Use fragmenta-models repo on HF Spaces, Stability AI models elsewhere
-        use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
-
-        if use_custom_repo:
-            models_repo = 'MazCodes/fragmenta-models'
-            small_file = 'stable-audio-open-small-model.safetensors'
-            large_file = 'stable-audio-open-model.safetensors'
-        else:
-            models_repo_small = 'stabilityai/stable-audio-open-small'
-            models_repo_large = 'stabilityai/stable-audio-open-1.0'
-            small_file = 'model.safetensors'
-            large_file = 'model.safetensors'
-
-        self.available_models = {
-            'stable-audio-open-small': {
-                'name': 'Stable Audio Open Small',
-                'repo': models_repo if use_custom_repo else models_repo_small,
-                'files': [small_file],
-                'size': '2.1 GB',
-                'description': 'Fast generation, good quality, lower memory usage',
-                'best_for': 'Beginners, quick experiments, limited GPU',
-                'license': 'Stability AI License',
-                'checksum': 'sha256:abc123...'
-            },
-            'stable-audio-open-1.0': {
-                'name': 'Stable Audio Open 1.0',
-                'repo': models_repo if use_custom_repo else models_repo_large,
-                'files': [large_file],
-                'size': '8.2 GB',
-                'description': 'Highest quality, more detailed audio',
-                'best_for': 'Professional use, high-end GPUs',
-                'license': 'Stability AI License',
-                'checksum': 'sha256:def456...'
-            }
-        }
+        # SA3-TODO(Phase 2): the Checkpoint Manager owns the catalog (see §2.1 of
+        # SA3_INTEGRATION_PLAN.md). Until then the catalog is empty — `/api/models`
+        # returns [] and every per-id endpoint 404s cleanly.
+        self.available_models: Dict[str, Dict] = {}
 
         self.terms_file = Path("config/terms_accepted.json")
         self.terms_file.parent.mkdir(exist_ok=True)
