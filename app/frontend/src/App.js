@@ -146,6 +146,7 @@ function App() {
     const [trainingError, setTrainingError] = useState(null);
 
     const [generationPrompt, setGenerationPrompt] = useState('');
+    const [negativePrompt, setNegativePrompt] = useState('');
     const [generationDuration, setGenerationDuration] = useState(10);
     const [generatedAudio, setGeneratedAudio] = useState(null);
     const [generatedAudioBlob, setGeneratedAudioBlob] = useState(null);
@@ -661,6 +662,10 @@ function App() {
             duration: generationDuration,
             steps: steps,
         };
+        const negTrim = negativePrompt.trim();
+        if (negTrim) {
+            baseRequestData.negative_prompt = negTrim;
+        }
         // SA3 post-trained models bake CFG at 1.0 — only the *-base variants
         // honour cfg_scale. Sending it on a post-trained model is harmless
         // (backend forces 1.0), but we only attach it for base variants so
@@ -2003,6 +2008,18 @@ function App() {
                                                     placeholder="Describe the audio you want to generate..."
                                                     value={generationPrompt}
                                                     onChange={(e) => setGenerationPrompt(e.target.value)}
+                                                    sx={appStyles.fieldMarginBottomLarge}
+                                                />
+
+                                                <TextField
+                                                    fullWidth
+                                                    multiline
+                                                    minRows={1}
+                                                    maxRows={3}
+                                                    label="Negative Prompt (optional)"
+                                                    placeholder="What to avoid: vocals, distortion, silence..."
+                                                    value={negativePrompt}
+                                                    onChange={(e) => setNegativePrompt(e.target.value)}
                                                     sx={appStyles.fieldMarginBottomLarge}
                                                 />
 
