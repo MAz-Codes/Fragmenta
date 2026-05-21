@@ -217,27 +217,14 @@ function App() {
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
     const [baseModels, setBaseModels] = useState([
-        {
-            name: 'sa3-small-music',
-            displayName: 'Small - Music',
-            description: 'Stable Audio 3 · CPU/GPU · up to 120 s',
-            type: 'base',
-            downloaded: false,
-        },
-        {
-            name: 'sa3-small-sfx',
-            displayName: 'Small - SFX',
-            description: 'Stable Audio 3 · CPU/GPU · up to 120 s',
-            type: 'base',
-            downloaded: false,
-        },
-        {
-            name: 'sa3-medium',
-            displayName: 'Medium',
-            description: 'Stable Audio 3 · CUDA + Flash-Attn · up to 380 s',
-            type: 'base',
-            downloaded: false,
-        },
+        // Distilled (post-trained): fast, no cfg / steps control.
+        { name: 'sa3-small-music', displayName: 'Small - Music',     description: 'Distilled · CPU/GPU · up to 120 s · 8 steps, cfg 1.0',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-small-sfx',   displayName: 'Small - SFX',       description: 'Distilled · CPU/GPU · up to 120 s · 8 steps, cfg 1.0',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-medium',      displayName: 'Medium',            description: 'Distilled · CUDA + Flash-Attn · up to 380 s · 8 steps, cfg 1.0', kind: 'post-trained', downloaded: false },
+        // Base (CFG-aware): slower, full artist control.
+        { name: 'sa3-small-music-base', displayName: 'Small - Music (Base)', description: 'Base · CPU/GPU · up to 120 s · cfg + steps live',         kind: 'base', downloaded: false },
+        { name: 'sa3-small-sfx-base',   displayName: 'Small - SFX (Base)',   description: 'Base · CPU/GPU · up to 120 s · cfg + steps live',         kind: 'base', downloaded: false },
+        { name: 'sa3-medium-base',      displayName: 'Medium (Base)',        description: 'Base · CUDA + Flash-Attn · up to 380 s · cfg + steps live', kind: 'base', downloaded: false },
     ]);
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
@@ -1776,31 +1763,39 @@ function App() {
                                                             <MenuItem value="" disabled>
                                                                 <em>Select a model</em>
                                                             </MenuItem>
-                                                            {/* Base Models Section */}
-                                                            <MenuItem disabled>
-                                                                <Typography variant="subtitle2" color="textSecondary">
-                                                                    ── Base Models (Ready for Generation) ──
-                                                                </Typography>
-                                                            </MenuItem>
-                                                            {baseModels.map((model) => (
-                                                                <MenuItem key={model.name} value={String(model.name)}>
-                                                                    <Box>
-                                                                        <Typography variant="body1">{model.displayName}</Typography>
-                                                                        <Typography variant="caption" color="textSecondary">
-                                                                            {model.description}
+                                                            {[
+                                                                { kind: 'post-trained', label: '── Distilled (fast) ──' },
+                                                                { kind: 'base',         label: '── Base (full control) ──' },
+                                                            ].flatMap(group => {
+                                                                const rows = baseModels.filter(m => m.kind === group.kind);
+                                                                if (!rows.length) return [];
+                                                                return [
+                                                                    <MenuItem key={`hdr-${group.kind}`} disabled>
+                                                                        <Typography variant="subtitle2" color="textSecondary">
+                                                                            {group.label}
                                                                         </Typography>
-                                                                        {model.downloaded ? (
-                                                                            <Typography variant="caption" color="success.main" display="block">
-                                                                                Ready for inference
-                                                                            </Typography>
-                                                                        ) : (
-                                                                            <Typography variant="caption" color="error.main" display="block">
-                                                                                Not downloaded
-                                                                            </Typography>
-                                                                        )}
-                                                                    </Box>
-                                                                </MenuItem>
-                                                            ))}
+                                                                    </MenuItem>,
+                                                                    ...rows.map(model => (
+                                                                        <MenuItem key={model.name} value={String(model.name)}>
+                                                                            <Box>
+                                                                                <Typography variant="body1">{model.displayName}</Typography>
+                                                                                <Typography variant="caption" color="textSecondary">
+                                                                                    {model.description}
+                                                                                </Typography>
+                                                                                {model.downloaded ? (
+                                                                                    <Typography variant="caption" color="success.main" display="block">
+                                                                                        Ready for inference
+                                                                                    </Typography>
+                                                                                ) : (
+                                                                                    <Typography variant="caption" color="error.main" display="block">
+                                                                                        Not downloaded
+                                                                                    </Typography>
+                                                                                )}
+                                                                            </Box>
+                                                                        </MenuItem>
+                                                                    )),
+                                                                ];
+                                                            })}
                                                             {/* Fine-tuned Models Section */}
                                                             {availableModels.length > 0 && (
                                                                 <MenuItem disabled>
@@ -2035,67 +2030,61 @@ function App() {
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
-                                                            <Grid item xs={12}>
-                                                                <Typography gutterBottom>CFG Scale</Typography>
-                                                                <Box sx={appStyles.sliderRow}>
-                                                                    <Slider
-                                                                        value={isDistilledBase ? 1.0 : cfgScale}
-                                                                        onChange={(e, value) => setCfgScale(value)}
-                                                                        min={0.1}
-                                                                        max={20}
-                                                                        step={0.1}
-                                                                        valueLabelDisplay="auto"
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderFlexGrow}
-                                                                    />
-                                                                    <TextField
-                                                                        type="number"
-                                                                        value={isDistilledBase ? 1.0 : cfgScale}
-                                                                        onChange={(e) => {
-                                                                            const val = parseFloat(e.target.value);
-                                                                            if (Number.isNaN(val)) return;
-                                                                            setCfgScale(Math.max(0.1, Math.min(20, val)));
-                                                                        }}
-                                                                        inputProps={{ min: 0.1, max: 20, step: 0.1 }}
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderInputSmall}
-                                                                        size="small"
-                                                                    />
-                                                                </Box>
-                                                                {isDistilledBase && (
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Locked at 1.0 for the distilled small model.
-                                                                    </Typography>
-                                                                )}
-                                                            </Grid>
+                                                            {/* CFG + Steps are only meaningful on *-base checkpoints.
+                                                                Distilled post-trained models bake cfg=1.0 / steps=8 and
+                                                                ignore overrides, so we hide the controls entirely. */}
+                                                            {!isDistilledBase && (
+                                                                <>
+                                                                    <Grid item xs={12}>
+                                                                        <Typography gutterBottom>CFG Scale</Typography>
+                                                                        <Box sx={appStyles.sliderRow}>
+                                                                            <Slider
+                                                                                value={cfgScale}
+                                                                                onChange={(e, value) => setCfgScale(value)}
+                                                                                min={0.1}
+                                                                                max={20}
+                                                                                step={0.1}
+                                                                                valueLabelDisplay="auto"
+                                                                                sx={appStyles.sliderFlexGrow}
+                                                                            />
+                                                                            <TextField
+                                                                                type="number"
+                                                                                value={cfgScale}
+                                                                                onChange={(e) => {
+                                                                                    const val = parseFloat(e.target.value);
+                                                                                    if (Number.isNaN(val)) return;
+                                                                                    setCfgScale(Math.max(0.1, Math.min(20, val)));
+                                                                                }}
+                                                                                inputProps={{ min: 0.1, max: 20, step: 0.1 }}
+                                                                                sx={appStyles.sliderInputSmall}
+                                                                                size="small"
+                                                                            />
+                                                                        </Box>
+                                                                    </Grid>
 
-                                                            <Grid item xs={12}>
-                                                                <Typography gutterBottom>Inference Steps</Typography>
-                                                                <Box sx={appStyles.sliderRow}>
-                                                                    <Slider
-                                                                        value={steps}
-                                                                        onChange={(e, value) => setSteps(value)}
-                                                                        min={50}
-                                                                        max={250}
-                                                                        step={null}
-                                                                        marks={[
-                                                                            { value: 50, label: '50' },
-                                                                            { value: 100, label: '100' },
-                                                                            { value: 150, label: '150' },
-                                                                            { value: 200, label: '200' },
-                                                                            { value: 250, label: '250' },
-                                                                        ]}
-                                                                        valueLabelDisplay="auto"
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderFlexGrow}
-                                                                    />
-                                                                </Box>
-                                                                {isDistilledBase && (
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Locked at 8 steps (pingpong sampler) for the distilled small model.
-                                                                    </Typography>
-                                                                )}
-                                                            </Grid>
+                                                                    <Grid item xs={12}>
+                                                                        <Typography gutterBottom>Inference Steps</Typography>
+                                                                        <Box sx={appStyles.sliderRow}>
+                                                                            <Slider
+                                                                                value={steps}
+                                                                                onChange={(e, value) => setSteps(value)}
+                                                                                min={20}
+                                                                                max={250}
+                                                                                step={null}
+                                                                                marks={[
+                                                                                    { value: 20, label: '20' },
+                                                                                    { value: 50, label: '50' },
+                                                                                    { value: 100, label: '100' },
+                                                                                    { value: 150, label: '150' },
+                                                                                    { value: 250, label: '250' },
+                                                                                ]}
+                                                                                valueLabelDisplay="auto"
+                                                                                sx={appStyles.sliderFlexGrow}
+                                                                            />
+                                                                        </Box>
+                                                                    </Grid>
+                                                                </>
+                                                            )}
 
                                                             {selectedLora && (
                                                                 <Grid item xs={12}>

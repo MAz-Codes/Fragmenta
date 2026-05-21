@@ -30,68 +30,73 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     # --- Generation models (post-trained) ----------------------------------
     "sa3-small-music": {
         "user_visible": True,
+        "kind": "post-trained",
         "name": "Small - Music",
         "sa3_name": "small-music",
         "repo": "stabilityai/stable-audio-3-small-music",
         "size_bytes": 2_270_000_000,
         "hardware": "cpu",                       # CPU / MPS / CUDA all work
         "max_duration_sec": 120,
-        "description": "Fast music generation on CPU or any GPU.",
+        "description": "Fast distilled music generation. Locked to 8 steps, cfg 1.0.",
     },
     "sa3-small-sfx": {
         "user_visible": True,
+        "kind": "post-trained",
         "name": "Small - SFX",
         "sa3_name": "small-sfx",
         "repo": "stabilityai/stable-audio-3-small-sfx",
         "size_bytes": 2_270_000_000,
         "hardware": "cpu",
         "max_duration_sec": 120,
-        "description": "Foley, ambience, and one-shot sound effects.",
+        "description": "Fast distilled SFX/foley generation. Locked to 8 steps, cfg 1.0.",
     },
     "sa3-medium": {
         "user_visible": True,
+        "kind": "post-trained",
         "name": "Medium",
         "sa3_name": "medium",
         "repo": "stabilityai/stable-audio-3-medium",
         "size_bytes": 9_220_000_000,
         "hardware": "cuda+flash-attn",
         "max_duration_sec": 380,
-        "description": "High-fidelity music + SFX, long-form (up to 380s).",
+        "description": "Fast distilled hi-fi generation, up to 380s. Locked to 8 steps, cfg 1.0.",
     },
-    # --- Hidden from the user-facing catalog ------------------------------
-    # Base checkpoints: training-only. The LoRA training flow (Phase 5)
-    # downloads the matching base on demand; the manager UI doesn't surface
-    # them. They remain reachable via /api/checkpoints?include=all for the
-    # subprocess dispatcher.
+    # --- Base checkpoints (full artist control) ----------------------------
+    # These are the CFG-aware pre-distillation models. Slower (~50 steps,
+    # cfg ~7), but the user controls cfg_scale, steps, and the inference
+    # trajectory. Also the canonical targets for LoRA training.
     "sa3-small-music-base": {
-        "user_visible": False,
-        "name": "Small Music - Base",
+        "user_visible": True,
+        "kind": "base",
+        "name": "Small - Music (Base)",
         "sa3_name": "small-music-base",
         "repo": "stabilityai/stable-audio-3-small-music-base",
         "size_bytes": 2_270_000_000,
         "hardware": "cpu",
         "max_duration_sec": 120,
-        "description": "Pre-post-train music checkpoint (LoRA training).",
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
     },
     "sa3-small-sfx-base": {
-        "user_visible": False,
-        "name": "Small SFX - Base",
+        "user_visible": True,
+        "kind": "base",
+        "name": "Small - SFX (Base)",
         "sa3_name": "small-sfx-base",
         "repo": "stabilityai/stable-audio-3-small-sfx-base",
         "size_bytes": 2_270_000_000,
         "hardware": "cpu",
         "max_duration_sec": 120,
-        "description": "Pre-post-train SFX checkpoint (LoRA training).",
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
     },
     "sa3-medium-base": {
-        "user_visible": False,
-        "name": "Medium - Base",
+        "user_visible": True,
+        "kind": "base",
+        "name": "Medium (Base)",
         "sa3_name": "medium-base",
         "repo": "stabilityai/stable-audio-3-medium-base",
         "size_bytes": 9_220_000_000,
         "hardware": "cuda+flash-attn",
         "max_duration_sec": 380,
-        "description": "Pre-post-train medium checkpoint (LoRA training).",
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
     },
     # Standalone autoencoders: the AE is bundled INSIDE each DiT repo
     # already (StableAudioModel.from_pretrained loads it from there), so
@@ -100,6 +105,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     # (autoencoder-only workflows, pre-encoding datasets for training).
     "sa3-same-s": {
         "user_visible": False,
+        "kind": "autoencoder",
         "name": "SAME-S",
         "sa3_name": "same-s",
         "repo": "stabilityai/SAME-S",
@@ -109,6 +115,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "sa3-same-l": {
         "user_visible": False,
+        "kind": "autoencoder",
         "name": "SAME-L",
         "sa3_name": "same-l",
         "repo": "stabilityai/SAME-L",
@@ -192,6 +199,7 @@ class ModelManager:
         downloaded = self.is_model_downloaded(model_id)
         return {
             "id": model_id,
+            "kind": info.get("kind"),
             "name": info["name"],
             "sa3_name": info["sa3_name"],
             "repo": info["repo"],

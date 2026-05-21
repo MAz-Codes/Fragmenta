@@ -25,7 +25,6 @@ import StorageDrilldown from './StorageDrilldown';
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
-    // Decimal (SI) units — matches what HuggingFace shows next to safetensors files.
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let v = n;
     let u = 0;
@@ -195,16 +194,31 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                         </Box>
                     )}
 
-                    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                        {catalog.map(c => (
-                            <CheckpointRow
-                                key={c.id}
-                                checkpoint={c}
-                                onAuthRequired={() => setShowTokenInput(true)}
-                                onChanged={refresh}
-                            />
-                        ))}
-                    </Box>
+                    {[
+                        { kind: 'post-trained', label: 'Distilled (fast)', hint: '8 steps, cfg locked at 1.0. Prompt, duration and seed only.' },
+                        { kind: 'base', label: 'Base (full control)', hint: 'CFG-aware. ~50 steps, cfg ~7. Cfg-scale and steps are live controls.' },
+                    ].map(group => {
+                        const rows = catalog.filter(c => c.kind === group.kind);
+                        if (!rows.length) return null;
+                        return (
+                            <Box key={group.kind} sx={{ mb: 2 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 0.25 }}>{group.label}</Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                                    {group.hint}
+                                </Typography>
+                                <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                                    {rows.map(c => (
+                                        <CheckpointRow
+                                            key={c.id}
+                                            checkpoint={c}
+                                            onAuthRequired={() => setShowTokenInput(true)}
+                                            onChanged={refresh}
+                                        />
+                                    ))}
+                                </Box>
+                            </Box>
+                        );
+                    })}
                 </DialogContent>
 
                 <DialogActions>

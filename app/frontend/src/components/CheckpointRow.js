@@ -18,7 +18,6 @@ import api from '../api';
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
-    // Decimal (SI) units — matches what HuggingFace shows next to safetensors files.
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let v = n;
     let u = 0;
@@ -32,17 +31,9 @@ const hardwareLabel = (hw) => ({
     'cuda+flash-attn': 'CUDA + Flash-Attn',
 }[hw] || hw);
 
-/**
- * Single catalog row. Owns its own download-job poll loop while a download
- * is in flight. Bubbles state changes via `onChanged` so the parent can
- * refresh the catalog (e.g. after delete or completion).
- *
- * SA3 bundles each DiT's autoencoder inside the same HF repo, so a single
- * snapshot_download is sufficient — no pairing nudge.
- */
 export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged }) {
     const [jobId, setJobId] = useState(null);
-    const [job, setJob] = useState(null);     // last polled job state
+    const [job, setJob] = useState(null);    
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
     const pollTimer = useRef(null);
