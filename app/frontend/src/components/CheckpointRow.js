@@ -179,7 +179,17 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
                             sx={{ height: 18, fontSize: 10 }}
                         />
                         {checkpoint.downloaded && (
-                            <Chip size="small" label="installed" color="success" sx={{ height: 18, fontSize: 10 }} />
+                            <Chip
+                                size="small"
+                                label="installed"
+                                sx={{
+                                    height: 18,
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    bgcolor: 'success.main',
+                                    color: 'common.white',
+                                }}
+                            />
                         )}
                     </Stack>
                     <Typography variant="caption" color="text.secondary">

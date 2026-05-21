@@ -30,7 +30,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     # --- Generation models (post-trained) ----------------------------------
     "sa3-small-music": {
         "user_visible": True,
-        "name": "Small — Music",
+        "name": "Small - Music",
         "sa3_name": "small-music",
         "repo": "stabilityai/stable-audio-3-small-music",
         "size_bytes": 2_270_000_000,
@@ -40,7 +40,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "sa3-small-sfx": {
         "user_visible": True,
-        "name": "Small — SFX",
+        "name": "Small - SFX",
         "sa3_name": "small-sfx",
         "repo": "stabilityai/stable-audio-3-small-sfx",
         "size_bytes": 2_270_000_000,
@@ -65,7 +65,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     # subprocess dispatcher.
     "sa3-small-music-base": {
         "user_visible": False,
-        "name": "Small Music — Base",
+        "name": "Small Music - Base",
         "sa3_name": "small-music-base",
         "repo": "stabilityai/stable-audio-3-small-music-base",
         "size_bytes": 2_270_000_000,
@@ -75,7 +75,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "sa3-small-sfx-base": {
         "user_visible": False,
-        "name": "Small SFX — Base",
+        "name": "Small SFX - Base",
         "sa3_name": "small-sfx-base",
         "repo": "stabilityai/stable-audio-3-small-sfx-base",
         "size_bytes": 2_270_000_000,
@@ -85,7 +85,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "sa3-medium-base": {
         "user_visible": False,
-        "name": "Medium — Base",
+        "name": "Medium - Base",
         "sa3_name": "medium-base",
         "repo": "stabilityai/stable-audio-3-medium-base",
         "size_bytes": 9_220_000_000,
