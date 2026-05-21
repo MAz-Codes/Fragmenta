@@ -458,8 +458,11 @@ def generate_audio():
             min_value=1, max_value=4, integer_only=True)
 
         steps_raw = data.get('steps')
+        # 250 matches the frontend slider max. Past ~80–100 the marginal
+        # quality gain from more steps is negligible on SA3 base models —
+        # the cap is a sanity boundary, not a recommendation.
         steps = Validator.number(
-            steps_raw, 'steps', min_value=1, max_value=200, integer_only=True
+            steps_raw, 'steps', min_value=1, max_value=250, integer_only=True
         ) if steps_raw is not None else None
 
         cfg_raw = data.get('cfg_scale')
