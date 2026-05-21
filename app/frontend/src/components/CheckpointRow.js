@@ -18,10 +18,11 @@ import api from '../api';
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
+    // Decimal (SI) units — matches what HuggingFace shows next to safetensors files.
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let v = n;
     let u = 0;
-    while (v >= 1024 && u < units.length - 1) { v /= 1024; u += 1; }
+    while (v >= 1000 && u < units.length - 1) { v /= 1000; u += 1; }
     return `${v.toFixed(v < 10 ? 2 : 1)} ${units[u]}`;
 };
 
