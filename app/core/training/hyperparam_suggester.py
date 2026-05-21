@@ -94,64 +94,58 @@ def _bucket(file_count: int) -> str:
 
 
 def _heuristic(file_count: int, vram_gb: Optional[float], mode: str) -> Dict[str, Any]:
-    """The rules-of-thumb. Same shape regardless of mode; the frontend ignores
-    LoRA-specific keys when mode='full'."""
+    """SA3 LoRA defaults — what train_lora.py wants directly.
+
+    SA3 trains by total `--steps` (not by epochs), so this returns a step
+    count tuned to the dataset bucket. Upstream's documented default is
+    10 000 steps; we trim that for smaller datasets where the LoRA
+    overfits well before then.
+    """
 
     bucket = _bucket(file_count)
     has_vram = vram_gb is not None
     constrained = (has_vram and vram_gb < 12)
 
-    # Target total weight updates. Sublinear with dataset size so tiny sets
-    # still get enough gradient steps, while large sets don't run forever.
-    target_steps_by_bucket = {
-        "tiny":   2500,
-        "small":  2000,
-        "medium": 1500,
-        "large":  3000,
+    # Target total weight updates per bucket. Tiny datasets overfit by
+    # ~2–3K steps; large datasets benefit from full 10K+ runs.
+    steps_by_bucket = {
+        "tiny":   2000,
+        "small":  5000,
+        "medium": 10000,
+        "large":  20000,
     }
-    target_steps = target_steps_by_bucket[bucket]
+    steps = steps_by_bucket[bucket]
 
-    # Rank/LR/alpha scale with how much "capacity per data point" the run needs.
-    # Small dataset trick: keep rank moderate (16) and conservative LR (1e-4 —
-    # 2e-4 caused overshoot/flat loss in testing), but boost alpha so the
-    # LoRA delta trains at higher effective voltage (scaling = alpha/rank).
-    # This produces a stronger imprint without the parameter bloat of rank=32
-    # or the instability of higher LR.
+    # Rank/LR/alpha — same shape as SA2 era. SA3's adapter families
+    # (dora-rows etc.) keep the parameter-budget math equivalent.
     if bucket in ("tiny", "small"):
-        rank, alpha, lr = 16, 32, 1e-4
+        rank, alpha, lr, dropout = 16, 16, 1e-4, 0.05
     else:
-        rank, alpha, lr = 16, 16, 1e-4
+        rank, alpha, lr, dropout = 16, 16, 1e-4, 0.0
 
-    # Batch size: smaller on small datasets (more updates per epoch + better
-    # gradient noise); larger on medium/large for throughput. VRAM caps the top.
     if bucket == "tiny":
-        batch = 1 if constrained else 2
+        batch = 1
     elif bucket == "small":
-        # Hold batch=2 even on roomy VRAM — the noise benefit on a small
-        # dataset outweighs the throughput win, and it keeps the epoch
-        # count to a reasonable display number.
-        batch = 2
+        batch = 1 if constrained else 2
     elif bucket == "medium":
         batch = 2 if constrained else 4
     else:
         batch = 4 if constrained else 8
 
-    steps_per_epoch = max(1, file_count // batch)
-    epochs = max(20, round(target_steps / steps_per_epoch))
-
     return {
+        "steps": steps,
         "batchSize": batch,
         "learningRate": lr,
-        "epochs": epochs,
         "loraRank": rank,
         "loraAlpha": alpha,
-        "loraDropout": 0,
-        "loraMultiplier": 1.0,
+        "loraDropout": dropout,
+        "adapterType": "dora-rows",
+        "precision": "bf16",
+        "duration": 30.0,
+        "checkpointSteps": max(250, steps // 10),
         "_meta": {
             "bucket": bucket,
-            "target_steps": target_steps,
-            "steps_per_epoch": steps_per_epoch,
-            "total_steps": steps_per_epoch * epochs,
+            "target_steps": steps,
             "vram_constrained": constrained,
         },
     }
@@ -181,20 +175,18 @@ def _compose_rationale(file_count: int, duration_sec: float, vram_gb: Optional[f
     else:
         bullets.append("No GPU detected — assuming consumer-class constraints.")
     bullets.append(
-        f"Targeting ~{meta['target_steps']} weight updates total; with batch_size "
-        f"the dataset gives {meta['steps_per_epoch']} steps/epoch, so "
-        f"{meta['total_steps']} steps over the recommended epoch count."
+        f"Targeting ~{meta['target_steps']} optimizer steps total (SA3 trains "
+        f"by step count, not epochs)."
     )
     if meta["bucket"] in ("tiny", "small"):
         bullets.append(
-            "Small dataset → conservative 1e-4 LR + rank=16 for stability, "
-            "but alpha=32 (alpha/rank = 2.0) so the LoRA delta trains at "
-            "double voltage. Stronger imprint without overshoot risk."
+            "Small dataset → conservative 1e-4 LR + rank=16 + dropout 0.05 to "
+            "delay overfit. Default adapter is DoRA-rows (SA3 upstream default)."
         )
     else:
         bullets.append(
-            "Larger dataset → moderate batch + standard 1e-4 LR. Rank=16 has "
-            "plenty of capacity for the prompt distribution this size implies."
+            "Larger dataset → standard 1e-4 LR + rank=16 + DoRA-rows. Rank "
+            "has plenty of capacity for the prompt distribution this size implies."
         )
     return bullets
 
@@ -225,8 +217,7 @@ def suggest(data_dir: Path, mode: str = "lora") -> Dict[str, Any]:
             "duration_human": _format_duration(duration_sec),
             "vram_gb": round(vram_gb, 2) if vram_gb is not None else None,
             "bucket": meta["bucket"],
-            "steps_per_epoch": meta["steps_per_epoch"],
-            "total_steps": meta["total_steps"],
+            "total_steps": meta["target_steps"],
         },
         "config": suggestion,
         "rationale": rationale,

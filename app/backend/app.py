@@ -301,6 +301,9 @@ def process_files():
         return jsonify({'error': str(e)}), 500
 
 
+_SA3_LORA_BASES = ['sa3-small-music-base', 'sa3-small-sfx-base', 'sa3-medium-base']
+
+
 @app.route('/api/start-training', methods=['POST'])
 def start_training():
     try:
@@ -308,78 +311,45 @@ def start_training():
         if training_config is None:
             raise ValueError("No training configuration provided")
 
-        print("\n" + "="*80)
-        print("API TRAINING REQUEST RECEIVED")
-        print("="*80)
-        print(f"RECEIVED CONFIG FROM FRONTEND:")
-        print(f"   - Mode: {training_config.get('mode', 'full')}")
-        print(f"   - Model Name: {training_config.get('modelName', 'untitled')}")
-        print(f"   - Base Model: {training_config.get('baseModel', 'NOT SET')}")
-        print(f"   - Epochs: {training_config.get('epochs', 'NOT SET')}")
-        print(f"   - Checkpoint Steps: {training_config.get('checkpointSteps', 'NOT SET')}")
-        print(f"   - Batch Size: {training_config.get('batchSize', 'NOT SET')}")
-        print(f"   - Learning Rate: {training_config.get('learningRate', 'NOT SET')}")
-        if training_config.get('mode') == 'lora':
-            print(f"   - LoRA rank: {training_config.get('loraRank', 16)}")
-            print(f"   - LoRA alpha: {training_config.get('loraAlpha', 16)}")
-            print(f"   - LoRA dropout: {training_config.get('loraDropout', 0)}")
-        else:
-            print(f"   - Save Wrapped Checkpoint: {training_config.get('saveWrappedCheckpoint', False)}")
-
+        # Required fields.
         required_fields = ['modelName', 'baseModel']
-        missing_fields = [field for field in required_fields if field not in training_config]
-        if missing_fields:
-            error_msg = f"Missing required fields: {missing_fields}"
-            print(f"API ERROR: {error_msg}")
-            return jsonify({'error': error_msg}), 400
+        missing = [f for f in required_fields if f not in training_config]
+        if missing:
+            return jsonify({'error': f"Missing required fields: {missing}"}), 400
 
-        valid_models = ['stable-audio-open-small', 'stable-audio-open-1.0']
+        # SA3 base validation. LoRA training requires a CFG-aware *-base
+        # checkpoint; the post-trained / distilled checkpoints have had
+        # the gradient signal LoRAs target collapsed away.
         base_model = training_config.get('baseModel')
-        if base_model not in valid_models:
-            error_msg = f"Invalid base model '{base_model}'. Must be one of: {valid_models}"
-            print(f"API ERROR: {error_msg}")
-            return jsonify({'error': error_msg}), 400
+        if base_model not in _SA3_LORA_BASES:
+            return jsonify({
+                'error': (
+                    f"baseModel '{base_model}' is not a valid LoRA target. "
+                    f"Pick one of: {_SA3_LORA_BASES}. SA2 models are gone in 0.2.0; "
+                    f"post-trained SA3 checkpoints (no -base suffix) can't be used "
+                    f"as a training base."
+                )
+            }), 400
 
-        # Mode validation: 'full' (existing SAO fine-tune) or 'lora' (LoRAW).
-        mode = training_config.get('mode', 'full')
-        if mode not in ('full', 'lora'):
-            return jsonify({'error': f"Invalid mode '{mode}'. Must be 'full' or 'lora'."}), 400
-        training_config['mode'] = mode
+        # SA3-aligned defaults. Phase 5 ships LoRA-only — no `mode` switch.
+        training_config['mode'] = 'lora'
+        training_config.setdefault('steps', 5000)
+        training_config.setdefault('checkpointSteps', 500)
+        training_config.setdefault('batchSize', 1)
+        training_config.setdefault('learningRate', 1e-4)
+        training_config.setdefault('duration', 30.0)
+        training_config.setdefault('precision', 'bf16')
+        training_config.setdefault('loraRank', 16)
+        training_config.setdefault('loraAlpha', training_config['loraRank'])
+        training_config.setdefault('loraDropout', 0.0)
+        training_config.setdefault('adapterType', 'dora-rows')
 
-        if 'epochs' not in training_config:
-            training_config['epochs'] = 30
-            print(f"   Setting default epochs: 30")
-        if 'checkpointSteps' not in training_config:
-            training_config['checkpointSteps'] = 50
-            print(f"   Setting default checkpointSteps: 50")
-        if 'batchSize' not in training_config:
-            training_config['batchSize'] = 1
-            print(f"   Setting default batch size: 1")
-        if 'learningRate' not in training_config:
-            training_config['learningRate'] = 1e-4
-            print(f"   Setting default learning rate: 1e-4")
-        if 'saveWrappedCheckpoint' not in training_config:
-            training_config['saveWrappedCheckpoint'] = False
-            print(f"   Setting default saveWrappedCheckpoint: False")
-        if 'precision' not in training_config or not training_config['precision']:
-            training_config['precision'] = 'auto'
-            print(f"   Setting default precision: auto")
-        # LoRA-specific defaults
-        if mode == 'lora':
-            training_config.setdefault('loraRank', 16)
-            training_config.setdefault('loraAlpha', training_config['loraRank'])
-            training_config.setdefault('loraDropout', 0)
-            training_config.setdefault('loraMultiplier', 1.0)
-
-        print(f"\nVALIDATED CONFIG:")
-        print(f"   - Model Name: {training_config['modelName']}")
-        print(f"   - Base Model: {training_config['baseModel']}")
-        print(f"   - Epochs: {training_config['epochs']}")
-        print(f"   - Checkpoint Steps: {training_config['checkpointSteps']}")
-        print(f"   - Batch Size: {training_config['batchSize']}")
-        print(f"   - Learning Rate: {training_config['learningRate']}")
-        print(f"   - Save Wrapped Checkpoint: {training_config['saveWrappedCheckpoint']}")
-        print(f"   - Precision: {training_config['precision']}")
+        logger.info(
+            f"Training request: base={base_model}, name={training_config['modelName']}, "
+            f"rank={training_config['loraRank']}, adapter={training_config['adapterType']}, "
+            f"steps={training_config['steps']}, batch={training_config['batchSize']}, "
+            f"lr={training_config['learningRate']}"
+        )
 
         result = start_training_func(training_config)
 
