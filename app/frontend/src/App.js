@@ -2011,17 +2011,6 @@ function App() {
                                                     sx={appStyles.fieldMarginBottomLarge}
                                                 />
 
-                                                <TextField
-                                                    fullWidth
-                                                    multiline
-                                                    minRows={1}
-                                                    maxRows={3}
-                                                    label="Negative Prompt (optional)"
-                                                    placeholder="What to avoid: vocals, distortion, silence..."
-                                                    value={negativePrompt}
-                                                    onChange={(e) => setNegativePrompt(e.target.value)}
-                                                    sx={appStyles.fieldMarginBottomLarge}
-                                                />
 
                                                 <Box sx={appStyles.durationRow}>
                                                     <Typography variant="body2" color="textSecondary">
@@ -2047,6 +2036,19 @@ function App() {
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
+                                                            <Grid item xs={12}>
+                                                                <TextField
+                                                                    fullWidth
+                                                                    multiline
+                                                                    minRows={1}
+                                                                    maxRows={3}
+                                                                    label="Negative Prompt (optional)"
+                                                                    placeholder="What to avoid: vocals, distortion, silence..."
+                                                                    value={negativePrompt}
+                                                                    onChange={(e) => setNegativePrompt(e.target.value)}
+                                                                />
+                                                            </Grid>
+
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
                                                                 Distilled post-trained models bake cfg=1.0 / steps=8 and
                                                                 ignore overrides, so we hide the controls entirely. */}
