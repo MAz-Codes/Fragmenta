@@ -152,9 +152,25 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
             <Stack direction="row" alignItems="center" spacing={2}>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Stack direction="row" alignItems="center" spacing={1}>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {checkpoint.name}
-                        </Typography>
+                        <Tooltip title="Open on HuggingFace to accept the model's gated-access terms">
+                            <Typography
+                                component="a"
+                                href={`https://huggingface.co/${checkpoint.repo}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                variant="body2"
+                                sx={{
+                                    fontWeight: 500,
+                                    color: 'inherit',
+                                    textDecoration: 'none',
+                                    borderBottom: '1px dashed',
+                                    borderColor: 'text.disabled',
+                                    '&:hover': { color: 'primary.main', borderColor: 'primary.main' },
+                                }}
+                            >
+                                {checkpoint.name}
+                            </Typography>
+                        </Tooltip>
                         <Chip
                             size="small"
                             label={hardwareLabel(checkpoint.hardware)}

@@ -159,13 +159,22 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                         {authError && <Alert severity="error" sx={{ mt: 1 }}>{authError}</Alert>}
                     </Box>
 
-                    {!hfAuth.signed_in && (
+                    {!hfAuth.signed_in ? (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            SA3 checkpoints are gated on HuggingFace. Sign in with a Read token, and accept
-                            the gated-access terms on each model's HF page before downloading — e.g.{' '}
-                            <a href="https://huggingface.co/stabilityai/stable-audio-3-small-music" target="_blank" rel="noreferrer">
-                                stable-audio-3-small-music
-                            </a>.
+                            SA3 checkpoints are gated on HuggingFace. You need a{' '}
+                            <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">
+                                HuggingFace account
+                            </a>
+                            {' '}to continue. Then{' '}
+                            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
+                                create a Read access token
+                            </a>
+                            {' '}and sign in above.
+                        </Alert>
+                    ) : (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            You're signed in. Each model is gated — click its name below to open the
+                            HuggingFace page and accept the model's terms before downloading.
                         </Alert>
                     )}
 
