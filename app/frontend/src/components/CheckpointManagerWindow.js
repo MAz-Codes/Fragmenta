@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     Dialog,
     DialogTitle,
@@ -9,38 +9,19 @@ import {
     Button,
     IconButton,
     Stack,
-    Divider,
-    Accordion,
-    AccordionSummary,
-    AccordionDetails,
-    Chip,
     Alert,
     TextField,
     LinearProgress,
 } from '@mui/material';
 import {
     X as CloseIcon,
-    ChevronDown as ExpandIcon,
     HardDrive as StorageIcon,
     LogIn as LoginIcon,
     LogOut as LogoutIcon,
 } from 'lucide-react';
 import api from '../api';
 import CheckpointRow from './CheckpointRow';
-import LicenseAcceptModal from './LicenseAcceptModal';
 import StorageDrilldown from './StorageDrilldown';
-
-const GROUP_LABELS = {
-    'post-trained': 'Generation models',
-    'base-for-lora': 'Base models (for LoRA training)',
-    'autoencoder': 'Autoencoders',
-};
-const GROUP_DESCRIPTIONS = {
-    'post-trained': 'Use these to generate audio. Smaller models run on CPU.',
-    'base-for-lora': 'Pick one of these as the base when training a new LoRA.',
-    'autoencoder': 'Required by the matching DiT. Pairing is automatic when downloading.',
-};
-const GROUP_ORDER = ['post-trained', 'base-for-lora', 'autoencoder'];
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
@@ -58,12 +39,10 @@ export default function CheckpointManagerWindow({ open, onClose }) {
     const [tokenDraft, setTokenDraft] = useState('');
     const [showTokenInput, setShowTokenInput] = useState(false);
     const [authError, setAuthError] = useState(null);
-    const [licenseModal, setLicenseModal] = useState({ open: false, checkpoint: null });
     const [showStorage, setShowStorage] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    // --- data ---------------------------------------------------------------
     const refresh = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -73,18 +52,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                 api.get('/api/checkpoints/storage'),
                 api.get('/api/hf-auth/status'),
             ]);
-            // Attach required_companions per row (the list endpoint doesn't
-            // include it; the per-id endpoint does. Compute it client-side
-            // from requires_ae + downloaded state.)
-            const items = cat.data.checkpoints.map(c => ({
-                ...c,
-                required_companions:
-                    c.requires_ae &&
-                    !(cat.data.checkpoints.find(x => x.id === c.requires_ae)?.downloaded)
-                        ? [c.requires_ae]
-                        : [],
-            }));
-            setCatalog(items);
+            setCatalog(cat.data.checkpoints);
             setStorage(store.data);
             setHfAuth(auth.data);
         } catch (e) {
@@ -98,7 +66,6 @@ export default function CheckpointManagerWindow({ open, onClose }) {
         if (open) refresh();
     }, [open, refresh]);
 
-    // --- auth ---------------------------------------------------------------
     const submitToken = async () => {
         setAuthError(null);
         try {
@@ -120,36 +87,6 @@ export default function CheckpointManagerWindow({ open, onClose }) {
         }
     };
 
-    // --- license modal hook -------------------------------------------------
-    const openLicense = (checkpoint) => setLicenseModal({ open: true, checkpoint });
-    const closeLicense = () => setLicenseModal({ open: false, checkpoint: null });
-    const onLicenseAccepted = () => refresh();
-
-    // --- quick-start --------------------------------------------------------
-    const quickStart = async () => {
-        const sm = catalog.find(c => c.id === 'sa3-small-music');
-        if (!sm) return;
-        if (!sm.terms_accepted) {
-            openLicense(sm);
-            return;
-        }
-        try {
-            await api.post('/api/checkpoints/sa3-small-music/download');
-            refresh();
-        } catch (e) {
-            setError(e.response?.data?.error || e.message);
-        }
-    };
-
-    // --- group view ---------------------------------------------------------
-    const groups = useMemo(() => {
-        const map = {};
-        for (const c of catalog) {
-            (map[c.group] = map[c.group] || []).push(c);
-        }
-        return GROUP_ORDER.map(g => ({ id: g, items: map[g] || [] })).filter(g => g.items.length);
-    }, [catalog]);
-
     const anyInstalled = catalog.some(c => c.downloaded);
 
     return (
@@ -161,7 +98,6 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                 </DialogTitle>
 
                 <DialogContent dividers>
-                    {/* Header strip: storage + HF auth */}
                     <Box sx={{ mb: 2 }}>
                         <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap">
                             <Button
@@ -225,8 +161,8 @@ export default function CheckpointManagerWindow({ open, onClose }) {
 
                     {!hfAuth.signed_in && (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            SA3 checkpoints are gated on HuggingFace. Sign in with a Read token before downloading,
-                            and visit each repo to accept its gated-access terms — e.g.{' '}
+                            SA3 checkpoints are gated on HuggingFace. Sign in with a Read token, and accept
+                            the gated-access terms on each model's HF page before downloading — e.g.{' '}
                             <a href="https://huggingface.co/stabilityai/stable-audio-3-small-music" target="_blank" rel="noreferrer">
                                 stable-audio-3-small-music
                             </a>.
@@ -236,61 +172,29 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                     {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
                     {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-                    {!loading && !anyInstalled && (
+                    {!loading && !anyInstalled && catalog.length > 0 && (
                         <Box sx={{
                             p: 2, mb: 2, borderRadius: 1, bgcolor: 'action.hover',
-                            display: 'flex', alignItems: 'center', gap: 2,
                         }}>
-                            <Box sx={{ flex: 1 }}>
-                                <Typography variant="body2" fontWeight={500}>
-                                    Pick a model to get started.
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                    Recommended: Small — Music (1.2 GB) + SAME-S (0.7 GB) ≈ 1.9 GB. Runs on CPU.
-                                </Typography>
-                            </Box>
-                            <Button variant="contained" onClick={quickStart} disabled={!catalog.length}>
-                                Quick Start
-                            </Button>
+                            <Typography variant="body2" fontWeight={500}>
+                                Pick a model to get started.
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                                Small — Music (1.2 GB) is a good first choice on a laptop or any GPU.
+                            </Typography>
                         </Box>
                     )}
 
-                    {/* Groups */}
-                    {groups.map((g) => (
-                        <Accordion
-                            key={g.id}
-                            defaultExpanded={g.id === 'post-trained'}
-                            disableGutters
-                            sx={{ '&:before': { display: 'none' }, mb: 0.5 }}
-                        >
-                            <AccordionSummary expandIcon={<ExpandIcon size={18} />}>
-                                <Stack direction="row" alignItems="center" spacing={1}>
-                                    <Typography variant="subtitle2">{GROUP_LABELS[g.id]}</Typography>
-                                    <Chip size="small" label={g.items.length} sx={{ height: 18, fontSize: 10 }} />
-                                </Stack>
-                            </AccordionSummary>
-                            <AccordionDetails sx={{ p: 0 }}>
-                                <Typography
-                                    variant="caption"
-                                    color="text.secondary"
-                                    sx={{ display: 'block', px: 1.5, pt: 0.5, pb: 1 }}
-                                >
-                                    {GROUP_DESCRIPTIONS[g.id]}
-                                </Typography>
-                                <Divider />
-                                {g.items.map(c => (
-                                    <CheckpointRow
-                                        key={c.id}
-                                        checkpoint={c}
-                                        catalog={catalog}
-                                        onRequestLicense={openLicense}
-                                        onAuthRequired={() => setShowTokenInput(true)}
-                                        onChanged={refresh}
-                                    />
-                                ))}
-                            </AccordionDetails>
-                        </Accordion>
-                    ))}
+                    <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        {catalog.map(c => (
+                            <CheckpointRow
+                                key={c.id}
+                                checkpoint={c}
+                                onAuthRequired={() => setShowTokenInput(true)}
+                                onChanged={refresh}
+                            />
+                        ))}
+                    </Box>
                 </DialogContent>
 
                 <DialogActions>
@@ -298,13 +202,6 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                     <Button onClick={onClose} variant="contained">Close</Button>
                 </DialogActions>
             </Dialog>
-
-            <LicenseAcceptModal
-                open={licenseModal.open}
-                checkpoint={licenseModal.checkpoint}
-                onClose={closeLicense}
-                onAccepted={onLicenseAccepted}
-            />
 
             <StorageDrilldown
                 open={showStorage}

@@ -927,56 +927,6 @@ def get_models():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/available', methods=['GET'])
-def get_available_models():
-    try:
-        models = model_manager.get_available_models()
-        return jsonify({'models': models})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/<model_id>/info', methods=['GET'])
-def get_model_info(model_id):
-    try:
-        model_info = model_manager.get_model_info(model_id)
-        if not model_info:
-            return jsonify({'error': 'Model not found'}), 404
-        return jsonify(model_info)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/<model_id>/accept-terms', methods=['POST'])
-def accept_model_terms(model_id):
-    try:
-        success = model_manager.accept_terms(model_id)
-        if success:
-            return jsonify({'success': True, 'message': f'Terms accepted for {model_id}'})
-        else:
-            return jsonify({'error': 'Failed to accept terms'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/<model_id>/download', methods=['POST'])
-def download_model(model_id):
-    try:
-        if not model_manager.is_terms_accepted(model_id):
-            return jsonify({'error': 'Terms not accepted for this model'}), 400
-
-        success = model_manager.download_model(model_id)
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'Model {model_id} downloaded successfully'
-            })
-        else:
-            return jsonify({'error': f'Failed to download {model_id}'}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/hf-login', methods=['POST'])
 def hf_login():
     try:
@@ -1003,7 +953,12 @@ def hf_login():
 @app.route('/api/checkpoints', methods=['GET'])
 def list_checkpoints():
     try:
-        return jsonify({'checkpoints': model_manager.get_catalog()})
+        # ?include=all → also returns base + standalone AE entries (training
+        # subprocess uses this; the manager UI relies on the default).
+        include_hidden = request.args.get('include') == 'all'
+        return jsonify({
+            'checkpoints': model_manager.get_catalog(include_hidden=include_hidden),
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1022,29 +977,7 @@ def get_checkpoint(model_id):
         info = model_manager.get_model_info(model_id)
         if not info:
             return jsonify({'error': 'Unknown checkpoint'}), 404
-        info['required_companions'] = model_manager.required_companions(model_id)
         return jsonify(info)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/checkpoints/<model_id>/license', methods=['GET'])
-def get_checkpoint_license(model_id):
-    try:
-        text = model_manager.get_license_text(model_id)
-        if text is None:
-            return jsonify({'error': 'License text unavailable'}), 404
-        return jsonify({'license': text})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/checkpoints/<model_id>/accept-terms', methods=['POST'])
-def accept_checkpoint_terms(model_id):
-    try:
-        if model_manager.accept_terms(model_id):
-            return jsonify({'success': True})
-        return jsonify({'error': 'Unknown checkpoint'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

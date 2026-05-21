@@ -31,33 +31,21 @@ const hardwareLabel = (hw) => ({
     'cuda+flash-attn': 'CUDA + Flash-Attn',
 }[hw] || hw);
 
-/** True when host can't run this checkpoint regardless of download state. */
-const isUnsupportedHere = (hw) => {
-    // Windows users won't have flash-attn wheels. We can't probe the OS from
-    // the frontend, but the backend's /api/health includes gpu_available. For
-    // a simple v1, surface the warning via hardware label only.
-    return false;
-};
-
 /**
  * Single catalog row. Owns its own download-job poll loop while a download
  * is in flight. Bubbles state changes via `onChanged` so the parent can
  * refresh the catalog (e.g. after delete or completion).
+ *
+ * SA3 bundles each DiT's autoencoder inside the same HF repo, so a single
+ * snapshot_download is sufficient — no pairing nudge.
  */
-export default function CheckpointRow({
-    checkpoint,
-    catalog,
-    onRequestLicense,
-    onAuthRequired,
-    onChanged,
-}) {
+export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged }) {
     const [jobId, setJobId] = useState(null);
     const [job, setJob] = useState(null);     // last polled job state
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
     const pollTimer = useRef(null);
 
-    // --- polling -------------------------------------------------------------
     useEffect(() => {
         if (!jobId) return undefined;
         const tick = async () => {
@@ -83,23 +71,10 @@ export default function CheckpointRow({
         return () => clearInterval(pollTimer.current);
     }, [jobId, onAuthRequired, onChanged]);
 
-    // --- actions -------------------------------------------------------------
     const startDownload = async () => {
         setBusy(true);
         setError(null);
         try {
-            // Auto-grab the paired autoencoder first if missing.
-            for (const aeId of checkpoint.required_companions || []) {
-                const ae = catalog.find(c => c.id === aeId);
-                if (!ae || ae.downloaded) continue;
-                if (!ae.terms_accepted) {
-                    setError(`Companion ${ae.name} needs license acceptance first.`);
-                    setBusy(false);
-                    onRequestLicense?.(ae);
-                    return;
-                }
-                await api.post(`/api/checkpoints/${aeId}/download`);
-            }
             const r = await api.post(`/api/checkpoints/${checkpoint.id}/download`);
             setJobId(r.data.job_id);
         } catch (e) {
@@ -130,7 +105,6 @@ export default function CheckpointRow({
         }
     };
 
-    // --- render --------------------------------------------------------------
     const downloading = !!jobId && job?.status === 'running';
     const queued = !!jobId && job?.status === 'queued';
     const pct = job?.total_bytes ? (job.downloaded_bytes / job.total_bytes) * 100 : 0;
@@ -152,35 +126,18 @@ export default function CheckpointRow({
                 </Tooltip>
             );
         }
-        if (!checkpoint.terms_accepted) {
-            return (
-                <Button size="small" variant="outlined" onClick={() => onRequestLicense?.(checkpoint)}>
-                    Accept License
-                </Button>
-            );
-        }
         return (
             <Button
                 size="small"
                 variant="contained"
                 startIcon={<DownloadIcon size={14} />}
                 onClick={startDownload}
-                disabled={busy || isUnsupportedHere(checkpoint.hardware)}
+                disabled={busy}
             >
                 Get
             </Button>
         );
     };
-
-    const companionHint = (() => {
-        const needed = (checkpoint.required_companions || []).filter(id => {
-            const ae = catalog.find(c => c.id === id);
-            return ae && !ae.downloaded;
-        });
-        if (!needed.length) return null;
-        const names = needed.map(id => catalog.find(c => c.id === id)?.name).filter(Boolean);
-        return `also downloads ${names.join(', ')}`;
-    })();
 
     return (
         <Box
@@ -211,7 +168,6 @@ export default function CheckpointRow({
                     <Typography variant="caption" color="text.secondary">
                         {fmtBytes(checkpoint.size_bytes)}
                         {checkpoint.max_duration_sec && ` · up to ${checkpoint.max_duration_sec}s`}
-                        {companionHint && ` · ${companionHint}`}
                     </Typography>
                 </Box>
                 <Box>{renderAction()}</Box>
