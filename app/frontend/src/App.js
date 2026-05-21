@@ -1385,6 +1385,40 @@ function App() {
                                                     sx={appStyles.fieldMarginBottom}
                                                 />
 
+                                                <Box sx={appStyles.fieldMarginBottom}>
+                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                        Base model to fine-tune
+                                                    </Typography>
+                                                    <Select
+                                                        fullWidth
+                                                        size="small"
+                                                        value={trainingConfig.baseModel}
+                                                        onChange={(e) => setTrainingConfig({
+                                                            ...trainingConfig,
+                                                            baseModel: e.target.value,
+                                                        })}
+                                                    >
+                                                        {/* LoRA training requires CFG-aware *-base checkpoints —
+                                                            post-trained models have CFG distilled out and
+                                                            can't be trained against. */}
+                                                        {baseModels
+                                                            .filter(m => m.name.endsWith('-base'))
+                                                            .map(m => (
+                                                                <MenuItem key={m.name} value={m.name}>
+                                                                    <Box>
+                                                                        <Typography variant="body2">
+                                                                            {m.displayName}
+                                                                        </Typography>
+                                                                        <Typography variant="caption" color="text.secondary">
+                                                                            {m.description}
+                                                                            {!m.downloaded && ' · not yet downloaded (will fetch on training start)'}
+                                                                        </Typography>
+                                                                    </Box>
+                                                                </MenuItem>
+                                                            ))}
+                                                    </Select>
+                                                </Box>
+
                                                 <Accordion sx={appStyles.accordionMarginBottom}>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                                                         <Typography variant="h6">Advanced Settings</Typography>
