@@ -120,21 +120,21 @@ function App() {
     });
 
     const [trainingConfig, setTrainingConfig] = useState({
-        mode: 'lora',                
-        epochs: 30,
+        mode: 'lora',                         // SA3 is LoRA-only; field kept for back-compat
+        steps: 5000,                          // SA3 trains by step count, not epochs
         checkpointSteps: 500,
         checkpointAuto: true,
-        batchSize: 4,
+        batchSize: 1,
         learningRate: 1e-4,
-        modelName: 'my_fine_tuned_model',
-        baseModel: 'stable-audio-open-1.0',
-        saveWrappedCheckpoint: false,
-        precision: 'auto',
+        modelName: 'my_lora',
+        baseModel: 'sa3-small-music-base',    // only *-base checkpoints are valid targets
+        precision: 'bf16',
+        duration: 30.0,                       // max clip seconds per sample
 
         loraRank: 16,
         loraAlpha: 16,
         loraDropout: 0,
-        loraMultiplier: 1.0,
+        adapterType: 'dora-rows',             // SA3 upstream default
     });
     const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
@@ -452,7 +452,7 @@ function App() {
         }, 300);
         return () => clearTimeout(handle);
     }, [
-        trainingConfig.epochs,
+        trainingConfig.steps,
         trainingConfig.batchSize,
         trainingConfig.checkpointSteps,
         trainingConfig.checkpointAuto,
@@ -1392,34 +1392,69 @@ function App() {
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Epochs</Typography>
+                                                                <Typography gutterBottom>Training Steps</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
-                                                                        value={trainingConfig.epochs}
+                                                                        value={trainingConfig.steps}
                                                                         onChange={(e, value) => setTrainingConfig({
                                                                             ...trainingConfig,
-                                                                            epochs: value
+                                                                            steps: value
                                                                         })}
-                                                                        min={1}
-                                                                        max={1000}
+                                                                        min={500}
+                                                                        max={20000}
+                                                                        step={500}
+                                                                        marks={[
+                                                                            { value: 1000, label: '1k' },
+                                                                            { value: 5000, label: '5k' },
+                                                                            { value: 10000, label: '10k' },
+                                                                            { value: 20000, label: '20k' },
+                                                                        ]}
                                                                         valueLabelDisplay="auto"
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                     <TextField
                                                                         type="number"
-                                                                        value={trainingConfig.epochs}
+                                                                        value={trainingConfig.steps}
                                                                         onChange={(e) => {
-                                                                            const val = parseInt(e.target.value) || 1;
+                                                                            const val = parseInt(e.target.value) || 500;
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                epochs: Math.max(1, Math.min(1000, val))
+                                                                                steps: Math.max(100, Math.min(50000, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 1, max: 1000, step: 1 }}
+                                                                        inputProps={{ min: 100, max: 50000, step: 100 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    SA3 LoRAs typically converge in 2 000 – 10 000 steps depending on dataset size.
+                                                                </Typography>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Typography gutterBottom>Adapter Type</Typography>
+                                                                <Select
+                                                                    fullWidth
+                                                                    size="small"
+                                                                    value={trainingConfig.adapterType || 'dora-rows'}
+                                                                    onChange={(e) => setTrainingConfig({
+                                                                        ...trainingConfig,
+                                                                        adapterType: e.target.value,
+                                                                    })}
+                                                                >
+                                                                    <MenuItem value="dora-rows">DoRA-rows (recommended)</MenuItem>
+                                                                    <MenuItem value="dora-cols">DoRA-cols</MenuItem>
+                                                                    <MenuItem value="lora">LoRA (classic)</MenuItem>
+                                                                    <MenuItem value="bora">BoRA</MenuItem>
+                                                                    <MenuItem value="lora-xs">LoRA-XS (compact)</MenuItem>
+                                                                    <MenuItem value="dora-rows-xs">DoRA-rows-XS (compact)</MenuItem>
+                                                                    <MenuItem value="dora-cols-xs">DoRA-cols-XS (compact)</MenuItem>
+                                                                    <MenuItem value="bora-xs">BoRA-XS (compact)</MenuItem>
+                                                                </Select>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    DoRA-rows is upstream's default and works best for most stylistic LoRAs.
+                                                                </Typography>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
