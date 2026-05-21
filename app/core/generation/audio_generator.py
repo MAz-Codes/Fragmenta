@@ -124,20 +124,41 @@ class AudioGenerator:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # If the snapshot is already in the HF cache, force offline mode for
-        # the load so SA3's hf_hub_download stops doing etag HEAD requests on
-        # every file. Restore the previous setting afterwards so a later
-        # snapshot_download (different model) still has network access.
+        # Load directly from our flat layout under models/pretrained/sa3/<id>/
+        # — bypassing SA3's StableAudioModel.from_pretrained() which would
+        # otherwise call hf_hub_download for every file and re-download into
+        # the global HF cache. Everything Fragmenta uses stays in the app
+        # folder.
+        local_dir = self.config.get_path("models_pretrained") / "sa3" / model_id
+        config_path = local_dir / "model_config.json"
+        ckpt_path = local_dir / "model.safetensors"
+        if not (config_path.exists() and ckpt_path.exists()):
+            raise FileNotFoundError(
+                f"Checkpoint '{model_id}' is not on disk under {local_dir}. "
+                f"Download it from the Checkpoint Manager first."
+            )
+
+        import json
+        with open(config_path) as fh:
+            model_config = json.load(fh)
+
+        # Force offline for any HF lookups that downstream loaders (T5Gemma
+        # conditioner, etc.) might attempt — we have everything locally so
+        # there's no reason to phone home.
         prev_offline = os.environ.get("HF_HUB_OFFLINE")
-        if self._is_cached(sa3_name):
-            os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
         try:
             from stable_audio_3 import StableAudioModel
+            from stable_audio_3.loading_utils import load_diffusion_cond
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                self.model = StableAudioModel.from_pretrained(
-                    sa3_name, device=device, model_half=half,
+                inner = load_diffusion_cond(
+                    model_config, str(ckpt_path),
+                    device=device, model_half=half,
                 )
+                inner.use_lora = False
+                inner.lora_names = []
+                self.model = StableAudioModel(inner, model_config, device, half)
         finally:
             if prev_offline is None:
                 os.environ.pop("HF_HUB_OFFLINE", None)
@@ -145,19 +166,6 @@ class AudioGenerator:
                 os.environ["HF_HUB_OFFLINE"] = prev_offline
         self._model_id = model_id
         self._device = device
-
-    @staticmethod
-    def _is_cached(sa3_name: str) -> bool:
-        """Heuristic: does the HF cache already have the safetensors for this model?"""
-        try:
-            from huggingface_hub import try_to_load_from_cache
-        except ImportError:
-            return False
-        repo_id = f"stabilityai/stable-audio-3-{sa3_name}"
-        # try_to_load_from_cache returns a path string when present, None when missing,
-        # _CACHED_NO_EXIST sentinel when explicitly known-not-on-the-hub.
-        result = try_to_load_from_cache(repo_id=repo_id, filename="model.safetensors")
-        return isinstance(result, str)
 
     # --- public entry ---------------------------------------------------------
     def generate_audio(
