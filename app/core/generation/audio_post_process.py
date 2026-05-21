@@ -39,9 +39,18 @@ _STRETCH_SAFE_MAX = 1.7
 # cost more than the sub-percent alignment gain.
 _STRETCH_DEADBAND = 0.02
 
-# Fade durations applied at trim points.
+# Fade durations applied at trim points. Kept very short — the fade is
+# click-prevention, not a perceptible ramp. Performance Mode loops these
+# clips, and longer fades audibly "duck" the loop seam.
 _HEAD_FADE_SEC = 0.003   # mask click at the trimmed head
-_TAIL_FADE_SEC = 0.008   # mask click at the truncated tail / loop seam
+_TAIL_FADE_SEC = 0.003   # mask click at a mid-note truncation; skipped on beats
+
+# Trailing-silence detection. SA3 occasionally pads a generation with low-
+# level tail; the post-processor used to keep that and fade over it, which
+# produced perceptible "silence + duck" at the loop point.
+_SILENCE_THRESHOLD_DB = -50.0          # anything below is silence
+_SILENCE_WINDOW_SEC = 0.05             # RMS window granularity
+_SILENCE_TAIL_KEEP_SEC = 0.010         # leave a tiny natural decay
 
 
 def align_to_grid(
@@ -113,20 +122,67 @@ def align_to_grid(
     else:
         logger.info("align_to_grid: no usable tempo detected; skipping warp")
 
+    # --- Trim trailing silence --------------------------------------------
+    # Done before end-snap so the snap operates on real audio, not on
+    # beats that happen to fall inside a quiet tail.
+    new_len = _trailing_audio_end(audio, sr)
+    if new_len < audio.shape[0]:
+        trimmed_ms = (audio.shape[0] - new_len) / sr * 1000
+        logger.info(f"align_to_grid: trimmed {trimmed_ms:.0f} ms trailing silence")
+        audio = audio[:new_len]
+        if beat_samples is not None:
+            beat_samples = beat_samples[beat_samples < new_len]
+
     # --- End-anchored truncation ------------------------------------------
     if audio.shape[0] > target_samples:
         end = _snap_to_beat(target_samples, beat_samples, samples_per_beat, audio.shape[0])
+        cut_on_beat = beat_samples is not None and end in beat_samples.tolist()
         audio = audio[:end]
-        _apply_fade(audio, _TAIL_FADE_SEC, sr, fade_in=False)
-    elif audio.shape[0] < target_samples:
-        pad = np.zeros((target_samples - audio.shape[0], audio.shape[1]), dtype=audio.dtype)
-        audio = np.concatenate([audio, pad], axis=0)
+        if not cut_on_beat:
+            # Mid-note cut — short fade hides the click. On a clean beat
+            # boundary the cut is on a natural transient edge, so the fade
+            # would only "duck" the start of the next beat at the loop
+            # seam without preventing any audible click.
+            _apply_fade(audio, _TAIL_FADE_SEC, sr, fade_in=False)
+    # If we came in shorter than target, return the actual audio without
+    # zero-padding. A 7.5-bar clip that loops cleanly beats an 8-bar clip
+    # with 0.5 bars of silence at the loop seam.
 
     sf.write(str(input_path), audio, sr, subtype="PCM_16")
     return input_path
 
 
 # --- helpers ---------------------------------------------------------------
+
+def _trailing_audio_end(audio: np.ndarray, sr: int) -> int:
+    """Return the sample index just past the last audible content.
+
+    Walks backwards in non-overlapping windows of `_SILENCE_WINDOW_SEC` and
+    finds the last window whose RMS exceeds `_SILENCE_THRESHOLD_DB`. Returns
+    the end of that window plus a small natural-decay tail.
+
+    Falls back to the original audio length when the entire clip is below
+    threshold (silent input) or shorter than one window.
+    """
+    n = audio.shape[0]
+    window = int(sr * _SILENCE_WINDOW_SEC)
+    if n <= window:
+        return n
+    mono = audio.mean(axis=1) if audio.ndim > 1 else audio
+    # Squared amplitudes — comparing to threshold² is equivalent to RMS vs
+    # threshold but avoids a sqrt per window.
+    sq = (mono ** 2)
+    thresh_sq = (10.0 ** (_SILENCE_THRESHOLD_DB / 20.0)) ** 2
+    tail_keep = int(sr * _SILENCE_TAIL_KEEP_SEC)
+    end = n
+    while end > 0:
+        start = max(0, end - window)
+        if float(sq[start:end].mean()) > thresh_sq:
+            return min(n, end + tail_keep)
+        end = start
+    # Whole clip is below threshold — leave as-is rather than truncate to 0.
+    return n
+
 
 def _snap_to_beat(
     target_samples: int,
