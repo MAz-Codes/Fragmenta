@@ -112,14 +112,40 @@ class AudioGenerator:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        from stable_audio_3 import StableAudioModel
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            self.model = StableAudioModel.from_pretrained(
-                sa3_name, device=device, model_half=half,
-            )
+        # If the snapshot is already in the HF cache, force offline mode for
+        # the load so SA3's hf_hub_download stops doing etag HEAD requests on
+        # every file. Restore the previous setting afterwards so a later
+        # snapshot_download (different model) still has network access.
+        prev_offline = os.environ.get("HF_HUB_OFFLINE")
+        if self._is_cached(sa3_name):
+            os.environ["HF_HUB_OFFLINE"] = "1"
+        try:
+            from stable_audio_3 import StableAudioModel
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.model = StableAudioModel.from_pretrained(
+                    sa3_name, device=device, model_half=half,
+                )
+        finally:
+            if prev_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = prev_offline
         self._model_id = model_id
         self._device = device
+
+    @staticmethod
+    def _is_cached(sa3_name: str) -> bool:
+        """Heuristic: does the HF cache already have the safetensors for this model?"""
+        try:
+            from huggingface_hub import try_to_load_from_cache
+        except ImportError:
+            return False
+        repo_id = f"stabilityai/stable-audio-3-{sa3_name}"
+        # try_to_load_from_cache returns a path string when present, None when missing,
+        # _CACHED_NO_EXIST sentinel when explicitly known-not-on-the-hub.
+        result = try_to_load_from_cache(repo_id=repo_id, filename="model.safetensors")
+        return isinstance(result, str)
 
     # --- public entry ---------------------------------------------------------
     def generate_audio(
