@@ -297,24 +297,17 @@ function PerformancePanelInner({
         refreshPresetNames();
     };
 
-    // Resolve which base model the current selection actually is. Fine-tuned
-    // models carry `base_model` from training_metadata.json via /api/models;
-    // legacy fine-tunes without that field fall back to the size heuristic.
+    // Resolve which SA3 base the current selection maps to. Direct picks of
+    // `sa3-*` models are themselves the base; fine-tuned models carry their
+    // base_model in training_metadata.json (exposed via /api/models).
     const resolvedBaseModel = (() => {
         if (!selectedModel) return null;
-        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
-            return selectedModel;
-        }
+        if (selectedModel.startsWith('sa3-')) return selectedModel;
         const model = availableModels.find((m) => m.name === selectedModel);
-        if (model?.base_model) return model.base_model;
-        if (model && selectedUnwrappedModel) {
-            const u = model.unwrapped_models?.find((x) => x.path === selectedUnwrappedModel);
-            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
-        }
-        return null;
+        return model?.base_model || null;
     })();
 
-    const isSmallModel = resolvedBaseModel === 'stable-audio-open-small';
+    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-small-');
 
     if (!engineRef.current) {
         engineRef.current = new PerformanceEngine(CHANNEL_COUNT);
@@ -572,21 +565,23 @@ function PerformancePanelInner({
             // distinct seed so the batch produces actual variations rather
             // than the same audio repeated.
             const seed = (baseSeed + i * 0x9e3779b1) >>> 0;
-            // LoRA only meaningful on top of a base model (the LoRA was bound
-            // to that exact base at training time; applying it to a full-FT
-            // model is undefined).
-            const isBaseModel = baseModels.some(m => m.name === selectedModel);
+            const isSA3Base = baseModels.some(m => m.name === selectedModel);
+            const isDistilled = isSA3Base && !selectedModel.endsWith('-base');
             const requestData = {
                 prompt: finalPrompt,
                 duration,
-                cfg_scale: 7.0,
-                steps,
                 seed,
-                model_name: selectedModel,
-                batch_index: i + 1,
-                batch_total: count,
-                ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
-                ...(selectedLora && isBaseModel ? { lora_path: selectedLora, lora_multiplier: loraMultiplier } : {}),
+                model_id: selectedModel,
+                // CFG is only meaningful for *-base; backend ignores it on
+                // distilled models. Steps default to 8 for distilled, 50 for
+                // base — only send the override when we're on base.
+                ...(isDistilled ? {} : { steps, cfg_scale: 7.0 }),
+                // LoRA stacking (Phase 4): only attach when the user picked
+                // a LoRA AND the active model is a *-base variant (the only
+                // architecturally valid target).
+                ...(selectedLora && isSA3Base && !isDistilled
+                    ? { loras: [{ path: selectedLora, strength: loraMultiplier }] }
+                    : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
