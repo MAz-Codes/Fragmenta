@@ -16,7 +16,7 @@ import { CloudDownload as CloudDownloadIcon, Trash2 as DeleteIcon } from 'lucide
 import api from '../api';
 import { checkpointManagerStyles } from '../theme';
 
-export default function CheckpointManager({ model, onRefresh }) {
+export default function LoraCheckpointManager({ model, onRefresh }) {
     const [loadingStates, setLoadingStates] = useState({});
     const [error, setError] = useState(null);
     const [deleteTarget, setDeleteTarget] = useState(null);

@@ -1,0 +1,240 @@
+import React, { useEffect, useRef, useState } from 'react';
+import {
+    Box,
+    Typography,
+    Button,
+    Chip,
+    LinearProgress,
+    Stack,
+    IconButton,
+    Tooltip,
+} from '@mui/material';
+import {
+    CloudDownload as DownloadIcon,
+    Trash2 as DeleteIcon,
+    X as CancelIcon,
+} from 'lucide-react';
+import api from '../api';
+
+const fmtBytes = (n) => {
+    if (!n && n !== 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = n;
+    let u = 0;
+    while (v >= 1024 && u < units.length - 1) { v /= 1024; u += 1; }
+    return `${v.toFixed(v < 10 ? 2 : 1)} ${units[u]}`;
+};
+
+const hardwareLabel = (hw) => ({
+    'cpu': 'CPU / GPU',
+    'cuda': 'CUDA',
+    'cuda+flash-attn': 'CUDA + Flash-Attn',
+}[hw] || hw);
+
+/** True when host can't run this checkpoint regardless of download state. */
+const isUnsupportedHere = (hw) => {
+    // Windows users won't have flash-attn wheels. We can't probe the OS from
+    // the frontend, but the backend's /api/health includes gpu_available. For
+    // a simple v1, surface the warning via hardware label only.
+    return false;
+};
+
+/**
+ * Single catalog row. Owns its own download-job poll loop while a download
+ * is in flight. Bubbles state changes via `onChanged` so the parent can
+ * refresh the catalog (e.g. after delete or completion).
+ */
+export default function CheckpointRow({
+    checkpoint,
+    catalog,
+    onRequestLicense,
+    onAuthRequired,
+    onChanged,
+}) {
+    const [jobId, setJobId] = useState(null);
+    const [job, setJob] = useState(null);     // last polled job state
+    const [error, setError] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const pollTimer = useRef(null);
+
+    // --- polling -------------------------------------------------------------
+    useEffect(() => {
+        if (!jobId) return undefined;
+        const tick = async () => {
+            try {
+                const r = await api.get(`/api/checkpoints/jobs/${jobId}`);
+                setJob(r.data);
+                if (['complete', 'failed', 'cancelled'].includes(r.data.status)) {
+                    if (r.data.status === 'failed' && (r.data.error || '').startsWith('hf_auth_required')) {
+                        onAuthRequired?.();
+                    } else if (r.data.status === 'failed') {
+                        setError(r.data.error);
+                    }
+                    setJobId(null);
+                    onChanged?.();
+                }
+            } catch (e) {
+                setError(e.response?.data?.error || e.message);
+                setJobId(null);
+            }
+        };
+        tick();
+        pollTimer.current = setInterval(tick, 1500);
+        return () => clearInterval(pollTimer.current);
+    }, [jobId, onAuthRequired, onChanged]);
+
+    // --- actions -------------------------------------------------------------
+    const startDownload = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            // Auto-grab the paired autoencoder first if missing.
+            for (const aeId of checkpoint.required_companions || []) {
+                const ae = catalog.find(c => c.id === aeId);
+                if (!ae || ae.downloaded) continue;
+                if (!ae.terms_accepted) {
+                    setError(`Companion ${ae.name} needs license acceptance first.`);
+                    setBusy(false);
+                    onRequestLicense?.(ae);
+                    return;
+                }
+                await api.post(`/api/checkpoints/${aeId}/download`);
+            }
+            const r = await api.post(`/api/checkpoints/${checkpoint.id}/download`);
+            setJobId(r.data.job_id);
+        } catch (e) {
+            setError(e.response?.data?.error || e.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const cancelDownload = async () => {
+        try {
+            await api.post(`/api/checkpoints/${checkpoint.id}/cancel-download`);
+        } catch (e) {
+            setError(e.response?.data?.error || e.message);
+        }
+    };
+
+    const deleteCheckpoint = async () => {
+        if (!window.confirm(`Delete ${checkpoint.name} (${fmtBytes(checkpoint.downloaded_bytes)})?`)) return;
+        setBusy(true);
+        try {
+            await api.delete(`/api/checkpoints/${checkpoint.id}`);
+            onChanged?.();
+        } catch (e) {
+            setError(e.response?.data?.error || e.message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    // --- render --------------------------------------------------------------
+    const downloading = !!jobId && job?.status === 'running';
+    const queued = !!jobId && job?.status === 'queued';
+    const pct = job?.total_bytes ? (job.downloaded_bytes / job.total_bytes) * 100 : 0;
+
+    const renderAction = () => {
+        if (downloading || queued) {
+            return (
+                <Tooltip title="Cancel download">
+                    <IconButton size="small" onClick={cancelDownload}><CancelIcon size={16} /></IconButton>
+                </Tooltip>
+            );
+        }
+        if (checkpoint.downloaded) {
+            return (
+                <Tooltip title="Delete from disk">
+                    <IconButton size="small" onClick={deleteCheckpoint} disabled={busy}>
+                        <DeleteIcon size={16} />
+                    </IconButton>
+                </Tooltip>
+            );
+        }
+        if (!checkpoint.terms_accepted) {
+            return (
+                <Button size="small" variant="outlined" onClick={() => onRequestLicense?.(checkpoint)}>
+                    Accept License
+                </Button>
+            );
+        }
+        return (
+            <Button
+                size="small"
+                variant="contained"
+                startIcon={<DownloadIcon size={14} />}
+                onClick={startDownload}
+                disabled={busy || isUnsupportedHere(checkpoint.hardware)}
+            >
+                Get
+            </Button>
+        );
+    };
+
+    const companionHint = (() => {
+        const needed = (checkpoint.required_companions || []).filter(id => {
+            const ae = catalog.find(c => c.id === id);
+            return ae && !ae.downloaded;
+        });
+        if (!needed.length) return null;
+        const names = needed.map(id => catalog.find(c => c.id === id)?.name).filter(Boolean);
+        return `also downloads ${names.join(', ')}`;
+    })();
+
+    return (
+        <Box
+            sx={{
+                py: 1.25,
+                px: 1.5,
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+                '&:last-child': { borderBottom: 'none' },
+            }}
+        >
+            <Stack direction="row" alignItems="center" spacing={2}>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                            {checkpoint.name}
+                        </Typography>
+                        <Chip
+                            size="small"
+                            label={hardwareLabel(checkpoint.hardware)}
+                            variant="outlined"
+                            sx={{ height: 18, fontSize: 10 }}
+                        />
+                        {checkpoint.downloaded && (
+                            <Chip size="small" label="installed" color="success" sx={{ height: 18, fontSize: 10 }} />
+                        )}
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                        {fmtBytes(checkpoint.size_bytes)}
+                        {checkpoint.max_duration_sec && ` · up to ${checkpoint.max_duration_sec}s`}
+                        {companionHint && ` · ${companionHint}`}
+                    </Typography>
+                </Box>
+                <Box>{renderAction()}</Box>
+            </Stack>
+
+            {(downloading || queued) && (
+                <Box sx={{ mt: 1 }}>
+                    <LinearProgress
+                        variant={queued ? 'indeterminate' : 'determinate'}
+                        value={Math.min(100, pct)}
+                        sx={{ height: 4, borderRadius: 2 }}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                        {queued ? 'Queued…' : `${fmtBytes(job?.downloaded_bytes)} / ${fmtBytes(job?.total_bytes)}`}
+                    </Typography>
+                </Box>
+            )}
+
+            {error && (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                    {error}
+                </Typography>
+            )}
+        </Box>
+    );
+}

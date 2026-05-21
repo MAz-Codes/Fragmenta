@@ -62,7 +62,8 @@ import BulkAnnotatePanel from './components/BulkAnnotatePanel';
 import CsvImportPanel from './components/CsvImportPanel';
 import TrainingMonitor from './components/TrainingMonitor';
 import ModelUnwrapButton from './components/ModelUnwrapButton';
-import CheckpointManager from './components/CheckpointManager';
+import LoraCheckpointManager from './components/LoraCheckpointManager';
+import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import { clearPerformanceSession } from './components/usePerformanceSession';
@@ -101,6 +102,7 @@ function App() {
         });
     };
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
+    const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     const [colorMode, setColorMode] = useState(() => {
@@ -1011,7 +1013,7 @@ function App() {
 
     const handleOpenModelsFromWarning = () => {
         closeModelWarning();
-        setAuthDialogOpen(true);
+        setCheckpointMgrOpen(true);
     };
 
     const getTrainingIndicatorState = () => {
@@ -1073,7 +1075,7 @@ function App() {
                                     color="secondary"
                                     size="small"
                                     startIcon={<CloudDownloadIcon />}
-                                    onClick={() => setAuthDialogOpen(true)}
+                                    onClick={() => setCheckpointMgrOpen(true)}
                                     sx={appStyles.headerActionButton}
                                 >
                                     Get Models
@@ -2316,7 +2318,7 @@ function App() {
                                                                         </Typography>
                                                                     )}
 
-                                                                    <CheckpointManager
+                                                                    <LoraCheckpointManager
                                                                         model={model}
                                                                         onRefresh={refreshAllModels}
                                                                     />
@@ -2710,6 +2712,14 @@ function App() {
                     if (success) {
                         refreshAllModels();
                     }
+                }}
+            />
+
+            <CheckpointManagerWindow
+                open={checkpointMgrOpen}
+                onClose={() => {
+                    setCheckpointMgrOpen(false);
+                    refreshAllModels();
                 }}
             />
         </ThemeProvider>
