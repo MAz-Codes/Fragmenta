@@ -493,15 +493,19 @@ def generate_audio():
     )
 
     # Variable-length lets us ask SA3 for exactly the bars-mode target duration
-    # up front — no time-stretch needed in the common path. Headroom is only
-    # useful for the post-processor when its drift-correction kicks in.
-    ALIGN_HEADROOM_SECONDS = 1.5
+    # up front — no time-stretch needed in the common path. Headroom gives the
+    # post-processor room for head-trim + drift correction without running short.
+    # Proportional (8% of target, clamped to [0.5s, 2.0s]) so fast tempos don't
+    # waste 30% of generation time on a fixed 1.5s buffer and slow ones get
+    # enough margin.
     effective_duration = duration
     if do_align:
-        effective_duration = duration + ALIGN_HEADROOM_SECONDS
+        headroom = max(0.5, min(2.0, duration * 0.08))
+        effective_duration = duration + headroom
         logger.debug(
             f"Bars-mode alignment: bars={align_bars}, bpm={align_bpm}; "
-            f"requesting {effective_duration:.2f}s with headroom"
+            f"target={duration:.2f}s +{headroom:.2f}s headroom = "
+            f"{effective_duration:.2f}s requested"
         )
 
     try:
