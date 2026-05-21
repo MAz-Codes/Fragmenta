@@ -36,12 +36,15 @@ pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
 
-# flash-attn — required ONLY for sa3-medium. Small models fall back to
-# standard attention. Not installed via pip because the right wheel
-# depends on torch version × ABI × Python × CUDA, and pip's resolver
-# picks the wrong ABI as often as the right one. Install manually after
-# pip install -r requirements.txt by picking the wheel matching your
-# `python -c "import torch; print(torch.__version__, torch._C._GLIBCXX_USE_CXX11_ABI)"`
-# from https://github.com/Dao-AILab/flash-attention/releases
-# Example (Linux, torch 2.7.1+cu128, Python 3.11, cxx11_abi=True):
-#   pip install --no-deps https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+# flash-attn — required for sa3-medium. Small models fall back to
+# standard attention without it.
+#
+# This is a direct-URL pin because the right wheel is determined by
+# every other thing we already pin (Python 3.11 from .python-version,
+# torch 2.7.1, cu128 from the --extra-index-url above → cxx11_abi=True).
+# Pinning it removes the "did pip find the right wheel in its cache"
+# ABI lottery that was previously a footgun.
+#
+# If you bump any of {Python, torch, CUDA}, swap this wheel for the
+# matching one from https://github.com/Dao-AILab/flash-attention/releases
+flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl ; sys_platform == 'linux'
