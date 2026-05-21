@@ -91,12 +91,24 @@ class AudioGenerator:
             raise ValueError(f"Unknown SA3 model_id: {model_id}")
         sa3_name, _kind, _max_dur = _MODEL_INFO[model_id]
 
-        if model_id in ("sa3-medium", "sa3-medium-base") and platform.system() == "Windows":
-            raise RuntimeError(
-                "sa3-medium requires Flash Attention 2, which doesn't have "
-                "Windows wheels. Use sa3-small-music / sa3-small-sfx, or run "
-                "Fragmenta via Docker on WSL2."
-            )
+        if model_id in ("sa3-medium", "sa3-medium-base"):
+            if platform.system() == "Windows":
+                raise RuntimeError(
+                    "sa3-medium requires Flash Attention 2, which doesn't have "
+                    "Windows wheels. Use sa3-small-music / sa3-small-sfx, or run "
+                    "Fragmenta via Docker on WSL2."
+                )
+            try:
+                import flash_attn  # noqa: F401
+            except ImportError as err:
+                raise RuntimeError(
+                    "sa3-medium needs Flash Attention 2 (flash_attn) but the "
+                    f"current install is unusable: {err}.\n"
+                    "Pick the wheel matching your torch+ABI+Python+CUDA from\n"
+                    "  https://github.com/Dao-AILab/flash-attention/releases\n"
+                    "and install with `pip install --no-deps <wheel-url>`. "
+                    "See the note next to flash-attn in requirements.txt for an example."
+                ) from err
 
         device = device or _autodetect_device()
         if (
