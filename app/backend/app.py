@@ -398,8 +398,35 @@ def start_training():
         return jsonify({'error': error_msg}), 500
 
 
+_SA3_MODEL_IDS = {
+    "sa3-small-music", "sa3-small-sfx", "sa3-medium",
+    "sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base",
+}
+
+
 @app.route('/api/generate', methods=['POST'])
 def generate_audio():
+    """SA3 inference. Phase 3 of SA3_INTEGRATION_PLAN.md.
+
+    Schema (post-clean-cut):
+        {
+            "model_id":        "sa3-small-music",      # required, SA3 IDs only
+            "prompt":          "techno kick",
+            "duration":        5.0,
+            "steps":           8,                       # optional; default by model
+            "cfg_scale":       1.0,                     # optional; default by model
+            "seed":            -1,
+            "negative_prompt": null,
+            "batch_size":      1,
+            "align_bars":      null,                    # bars-mode passthrough
+            "align_bpm":       null,
+            "chunked_decode":  null
+        }
+
+    LoRA stacking (`loras: [...]`), audio-to-audio (`init_audio_path`) and
+    inpainting (`inpaint_audio_path`) are Phase 4 / Phase 7 work and will
+    be silently ignored if sent now.
+    """
     if not request.json:
         return jsonify(APIResponse.error("No JSON data provided", status_code=400)), 400
 
@@ -407,26 +434,43 @@ def generate_audio():
     try:
         prompt = Validator.string(
             data.get('prompt', ''), 'prompt', min_length=1, max_length=500)
+
+        # Legacy callers send model_name; new callers send model_id. Honour either.
+        model_id = (data.get('model_id') or data.get('model_name') or '').strip()
+        if not model_id:
+            return jsonify(APIResponse.error(
+                "model_id is required (e.g. 'sa3-small-music').",
+                status_code=400)), 400
+        if model_id not in _SA3_MODEL_IDS:
+            return jsonify(APIResponse.error(
+                f"'{model_id}' is not a SA3 model. The SA2/SAO engine was "
+                f"removed in 0.2.0 (see v0.1.x-legacy tag for legacy use). "
+                f"Pick one of: {sorted(_SA3_MODEL_IDS)}.",
+                status_code=400)), 400
+
         duration = Validator.number(
-            data.get('duration', 10.0), 'duration', min_value=1, max_value=60)
-        cfg_scale = Validator.number(
-            data.get('cfg_scale', 7.0), 'cfg_scale', min_value=0.1, max_value=20.0)
-        steps = Validator.number(
-            data.get('steps', 250), 'steps', min_value=1, max_value=500, integer_only=True)
+            data.get('duration', 10.0), 'duration', min_value=1, max_value=380)
         seed = Validator.number(
-            data.get('seed', -1), 'seed', min_value=-1, max_value=2**32 - 1, integer_only=True)
-        batch_index = Validator.number(
-            data.get('batch_index', 1), 'batch_index', min_value=1, max_value=10, integer_only=True)
-        batch_total = Validator.number(
-            data.get('batch_total', 1), 'batch_total', min_value=1, max_value=10, integer_only=True)
-        model_name = data.get('model_name', data.get('model', 'default'))
-        model_path = data.get('model_path')
-        unwrapped_model_path = data.get('unwrapped_model_path')
-        lora_path = data.get('lora_path') or None
-        lora_multiplier = Validator.number(
-            data.get('lora_multiplier', 1.0), 'lora_multiplier',
-            min_value=0.0, max_value=2.0,
-        )
+            data.get('seed', -1), 'seed',
+            min_value=-1, max_value=2**32 - 1, integer_only=True)
+        batch_size = Validator.number(
+            data.get('batch_size', 1), 'batch_size',
+            min_value=1, max_value=4, integer_only=True)
+
+        steps_raw = data.get('steps')
+        steps = Validator.number(
+            steps_raw, 'steps', min_value=1, max_value=200, integer_only=True
+        ) if steps_raw is not None else None
+
+        cfg_raw = data.get('cfg_scale')
+        cfg_scale = Validator.number(
+            cfg_raw, 'cfg_scale', min_value=0.1, max_value=20.0
+        ) if cfg_raw is not None else None
+
+        negative_prompt_raw = data.get('negative_prompt')
+        negative_prompt = Validator.string(
+            negative_prompt_raw, 'negative_prompt', min_length=0, max_length=500
+        ) if negative_prompt_raw else None
 
         align_bars_raw = data.get('align_bars')
         align_bpm_raw = data.get('align_bpm')
@@ -438,169 +482,46 @@ def generate_audio():
         ) if align_bpm_raw is not None else None
         do_align = align_bars is not None and align_bpm is not None
 
+        chunked_decode = data.get('chunked_decode')  # tri-state: True / False / None
+
     except ValidationError as e:
         field = e.details.get('field', 'unknown') if e.details else 'unknown'
         logger.warning(f"/api/generate validation failed on '{field}': {e}")
         return jsonify(APIResponse.validation_error({field: [str(e)]})), 400
 
-    logger.info(f"Audio generation request received")
-    logger.debug(f"Request details: prompt='{prompt[:50]}...', duration={duration}s, model={model_name}")
-    if DEBUG_MODE:
-        logger.debug(f"Model paths: model_path={model_path}, unwrapped_model_path={unwrapped_model_path}")
+    logger.info(
+        f"Audio generation request: model={model_id} duration={duration}s "
+        f"prompt='{prompt[:50]}{'…' if len(prompt) > 50 else ''}'"
+    )
 
-    def determine_model_config(model_name, model_path, unwrapped_model_path):
-        config_file = None
-        model_file_path = None
-
-        # Priority: unwrapped_model_path > model_path > base model.
-        if unwrapped_model_path:
-            model_file_path = Path(unwrapped_model_path)
-            if not model_file_path.exists():
-                raise ModelNotFoundError(
-                    f"unwrapped_model:{model_name}", str(model_file_path))
-            logger.debug(f"Using unwrapped model: {model_file_path}")
-
-        elif model_path:
-            model_file_path = Path(model_path)
-            if not model_file_path.exists():
-                raise ModelNotFoundError(
-                    f"model_path:{model_name}", str(model_file_path))
-            logger.debug(f"Using model path: {model_file_path}")
-
-        # Small and full models use different configs; pick by file size when the name is ambiguous.
-        if model_file_path:
-            file_size_gb = model_file_path.stat().st_size / (1024**3)
-            config_file = "model_config_small.json" if file_size_gb < 2.0 else "model_config.json"
-            logger.debug(
-                f"Model file size: {file_size_gb:.2f} GB, using {'small' if file_size_gb < 2.0 else 'large'} config")
-
-        elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
-            config_file = "model_config_small.json" if 'small' in model_name else "model_config.json"
-            logger.debug(f"Using base model config for {model_name}")
-        else:
-            logger.warning(f"No config determined for model: {model_name}")
-            config_file = "model_config_small.json"
-
-        return config_file, model_file_path
-
-    config_file, determined_model_path = determine_model_config(
-        model_name, model_path, unwrapped_model_path)
-    logger.info(f"Starting generation with config: {config_file}")
-
-    # In bars mode we need a little extra audio so the post-processor can
-    # onset-trim and tempo-warp without running short of the requested length.
-    # The generator caps duration to model.sample_size internally, so this
-    # never overshoots the model's natural length.
+    # Variable-length lets us ask SA3 for exactly the bars-mode target duration
+    # up front — no time-stretch needed in the common path. Headroom is only
+    # useful for the post-processor when its drift-correction kicks in.
     ALIGN_HEADROOM_SECONDS = 1.5
+    effective_duration = duration
     if do_align:
-        duration = duration + ALIGN_HEADROOM_SECONDS
+        effective_duration = duration + ALIGN_HEADROOM_SECONDS
         logger.debug(
-            f"Bars-mode alignment requested: bars={align_bars}, bpm={align_bpm}; "
-            f"requesting {duration:.2f}s with headroom"
-        )
-
-    # Resolve LoRA: read the lora_config section out of the adjacent
-    # training_metadata.json so the inference wrapper knows the rank/alpha/etc.
-    lora_kwargs = {}
-    if lora_path:
-        lora_p = Path(lora_path)
-        if not lora_p.is_absolute():
-            lora_p = config.project_root / lora_p
-        if not lora_p.exists():
-            return jsonify(APIResponse.error(
-                f"LoRA file not found: {lora_p}", status_code=400)), 400
-        metadata_path = None
-        for ancestor in [lora_p.parent, *lora_p.parents]:
-            candidate = ancestor / "training_metadata.json"
-            if candidate.exists():
-                metadata_path = candidate
-                break
-            if ancestor == config.project_root:
-                break
-        if metadata_path is None:
-            return jsonify(APIResponse.error(
-                f"No training_metadata.json found near {lora_p}", status_code=400)), 400
-        try:
-            metadata = json.loads(metadata_path.read_text())
-        except Exception as exc:
-            return jsonify(APIResponse.error(
-                f"Failed to read LoRA metadata at {metadata_path}: {exc}",
-                status_code=400)), 400
-        if metadata.get("mode") != "lora":
-            return jsonify(APIResponse.error(
-                f"{metadata_path} is not a LoRA training metadata file",
-                status_code=400)), 400
-        lora_kwargs = {
-            "lora_path": str(lora_p),
-            "lora_config": metadata.get("lora_config", {}),
-            "lora_multiplier": float(lora_multiplier),
-        }
-        logger.info(
-            f"LoRA selected: {lora_p.name} (rank={lora_kwargs['lora_config'].get('rank')}, "
-            f"multiplier={lora_multiplier})"
+            f"Bars-mode alignment: bars={align_bars}, bpm={align_bpm}; "
+            f"requesting {effective_duration:.2f}s with headroom"
         )
 
     try:
-        if determined_model_path and determined_model_path.exists():
-            output_path = generator.generate_audio(
-                prompt,
-                unwrapped_model_path=unwrapped_model_path if unwrapped_model_path else None,
-                model_path=determined_model_path if not unwrapped_model_path else None,
-                config_file=config_file,
-                duration=duration,
-                cfg_scale=cfg_scale,
-                steps=steps,
-                seed=seed,
-                batch_index=batch_index,
-                batch_total=batch_total,
-                loop_mode=do_align,
-                **lora_kwargs,
-            )
-        elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
-            model_file_mapping = {
-                'stable-audio-open-small': 'stable-audio-open-small-model.safetensors',
-                'stable-audio-open-1.0': 'stable-audio-open-model.safetensors'
-            }
-            model_file_name = model_file_mapping.get(
-                model_name, f"{model_name}-model.safetensors")
-            model_file_path = config.project_root / \
-                "models" / "pretrained" / model_file_name
-
-            if not model_file_path.exists():
-                raise ModelNotFoundError(model_name, str(model_file_path))
-
-            output_path = generator.generate_audio(
-                prompt,
-                model_path=model_file_path,
-                config_file=config_file,
-                duration=duration,
-                cfg_scale=cfg_scale,
-                steps=steps,
-                seed=seed,
-                batch_index=batch_index,
-                batch_total=batch_total,
-                loop_mode=do_align,
-                **lora_kwargs,
-            )
-        elif model_name and model_name != 'default':
-            fine_tuned_path = config.get_path("models_fine_tuned") / model_name
-            if not fine_tuned_path.exists():
-                raise ModelNotFoundError(model_name, str(fine_tuned_path))
-
-            output_path = generator.generate_audio(
-                prompt, fine_tuned_path, duration=duration,
-                cfg_scale=cfg_scale, steps=steps, seed=seed,
-                batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align, **lora_kwargs)
-        else:
-            logger.debug("Using default model")
-            output_path = generator.generate_audio(
-                prompt, duration=duration, cfg_scale=cfg_scale, steps=steps,
-                seed=seed, batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align, **lora_kwargs)
+        output_path = generator.generate_audio(
+            prompt,
+            model_id=model_id,
+            duration=float(effective_duration),
+            steps=int(steps) if steps is not None else None,
+            cfg_scale=float(cfg_scale) if cfg_scale is not None else None,
+            seed=int(seed),
+            negative_prompt=negative_prompt,
+            batch_size=int(batch_size),
+            chunked_decode=chunked_decode,
+            loop_mode=do_align,
+        )
 
         if not output_path.exists():
-            raise GenerationError(prompt, model_name, "Generated audio file not found")
+            raise GenerationError(prompt, model_id, "Generated audio file not found")
 
         if do_align:
             try:
@@ -610,24 +531,25 @@ def generate_audio():
                     target_bpm=float(align_bpm),
                     target_bars=int(align_bars),
                 )
-                logger.info(
-                    f"Aligned to grid: bars={align_bars}, bpm={align_bpm}"
-                )
+                logger.info(f"Aligned to grid: bars={align_bars}, bpm={align_bpm}")
             except Exception as exc:
                 # Never fail the request because alignment failed — the user
                 # would rather have the raw clip than an error toast.
                 logger.warning(f"Grid alignment skipped after error: {exc}")
 
-        logger.info(f"Audio generation completed: {output_path.name} ({output_path.stat().st_size} bytes)")
+        logger.info(
+            f"Audio generation completed: {output_path.name} "
+            f"({output_path.stat().st_size} bytes)"
+        )
         return send_file(
             str(output_path),
             mimetype='audio/wav',
             as_attachment=True,
-            download_name='generated_audio.wav'
+            download_name='generated_audio.wav',
         )
 
     except (ModelNotFoundError, GenerationError, ValidationError) as e:
-        logger.error(f"Generation error: {str(e)}")
+        logger.error(f"Generation error: {e}")
         return jsonify(APIResponse.error(str(e), status_code=400)), 400
     except Exception as e:
         from app.core.generation.audio_generator import GenerationStopped
@@ -635,7 +557,7 @@ def generate_audio():
             logger.info("Generation stopped by user request")
             return jsonify({'stopped': True, 'message': 'Generation stopped'}), 499
         logger.exception("Unexpected error during audio generation")
-        return jsonify(APIResponse.error(f"Unexpected error: {str(e)}", status_code=500)), 500
+        return jsonify(APIResponse.error(f"Unexpected error: {e}", status_code=500)), 500
 
 
 @app.route('/api/loras', methods=['GET'])
