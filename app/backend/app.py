@@ -986,7 +986,9 @@ def get_checkpoint(model_id):
 def start_checkpoint_download(model_id):
     try:
         result = model_manager.start_download(model_id)
-        if 'error' in result:
+        # _DownloadJob.to_dict() always includes the "error" key (None when
+        # ok); use a truthy check so a successful job doesn't 400.
+        if result.get('error'):
             return jsonify(result), 400
         return jsonify(result)
     except Exception as e:
