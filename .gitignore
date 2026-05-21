@@ -114,7 +114,9 @@ debug_binaries.py
 
 distribution
 scripts
-
+!vendor/stable-audio-3/scripts/
+!vendor/stable-audio-3/scripts/**
+SA3_INTEGRATION_PLAN.md
 /data/
 !/data/.gitkeep
 .dockerignore
