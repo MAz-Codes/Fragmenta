@@ -127,41 +127,49 @@ class AudioGenerator:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        # Load directly from our flat layout under models/pretrained/sa3/<id>/
-        # — bypassing SA3's StableAudioModel.from_pretrained() which would
-        # otherwise call hf_hub_download for every file and re-download into
-        # the global HF cache. Everything Fragmenta uses stays in the app
-        # folder.
-        local_dir = self.config.get_path("models_pretrained") / "sa3" / model_id
-        config_path = local_dir / "model_config.json"
-        ckpt_path = local_dir / "model.safetensors"
-        if not (config_path.exists() and ckpt_path.exists()):
-            raise FileNotFoundError(
-                f"Checkpoint '{model_id}' is not on disk under {local_dir}. "
-                f"Download it from the Checkpoint Manager first."
-            )
-
-        import json
-        with open(config_path) as fh:
-            model_config = json.load(fh)
-
-        # Force offline for any HF lookups that downstream loaders (T5Gemma
-        # conditioner, etc.) might attempt — we have everything locally so
-        # there's no reason to phone home.
+        # Two layouts to support during the unification transition:
+        #   1. Canonical (post-Phase 5c): HF cache layout rooted at
+        #      <app>/models/pretrained/sa3/hub/. model_manager sets
+        #      HF_HUB_CACHE to that path, so StableAudioModel.from_pretrained
+        #      finds files there without going to ~/.cache/huggingface.
+        #   2. Legacy: <app>/models/pretrained/sa3/<model_id>/ flat layout
+        #      from earlier downloads. We fall back to direct load so
+        #      pre-existing users don't have to re-download.
         prev_offline = os.environ.get("HF_HUB_OFFLINE")
         os.environ["HF_HUB_OFFLINE"] = "1"
         try:
-            from stable_audio_3 import StableAudioModel
-            from stable_audio_3.loading_utils import load_diffusion_cond
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                inner = load_diffusion_cond(
-                    model_config, str(ckpt_path),
-                    device=device, model_half=half,
-                )
-                inner.use_lora = False
-                inner.lora_names = []
-                self.model = StableAudioModel(inner, model_config, device, half)
+            try:
+                from stable_audio_3 import StableAudioModel
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    self.model = StableAudioModel.from_pretrained(
+                        sa3_name, device=device, model_half=half,
+                    )
+            except (FileNotFoundError, OSError) as primary_err:
+                # HF cache miss — fall back to flat layout.
+                legacy_dir = self.config.get_path("models_pretrained") / "sa3" / model_id
+                config_path = legacy_dir / "model_config.json"
+                ckpt_path = legacy_dir / "model.safetensors"
+                if not (config_path.exists() and ckpt_path.exists()):
+                    raise FileNotFoundError(
+                        f"Checkpoint '{model_id}' not found in HF cache "
+                        f"({os.environ.get('HF_HUB_CACHE')}) or legacy flat "
+                        f"layout ({legacy_dir}). Download it from the "
+                        f"Checkpoint Manager."
+                    ) from primary_err
+                import json
+                with open(config_path) as fh:
+                    model_config = json.load(fh)
+                from stable_audio_3.loading_utils import load_diffusion_cond
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    inner = load_diffusion_cond(
+                        model_config, str(ckpt_path),
+                        device=device, model_half=half,
+                    )
+                    inner.use_lora = False
+                    inner.lora_names = []
+                    self.model = StableAudioModel(inner, model_config, device, half)
         finally:
             if prev_offline is None:
                 os.environ.pop("HF_HUB_OFFLINE", None)

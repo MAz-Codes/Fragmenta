@@ -9,6 +9,7 @@ The Phase 2b frontend (CheckpointManagerWindow.js) consumes the JSON shapes
 returned by the `/api/checkpoints/*` endpoints in `app/backend/app.py`.
 """
 import json
+import os
 import shutil
 import threading
 import uuid
@@ -168,6 +169,15 @@ class ModelManager:
         self.models_dir: Path = config.get_path("models_pretrained")
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
+        # Single canonical store: <app>/models/pretrained/sa3/hub/ in HF
+        # cache layout. snapshot_download, hf_hub_download, training, and
+        # inference all read/write here via HF_HUB_CACHE.
+        self.hub_dir: Path = self.models_dir / "sa3" / "hub"
+        self.hub_dir.mkdir(exist_ok=True, parents=True)
+        # setdefault — let an external override win (e.g. Docker container
+        # mounting a separate cache volume).
+        os.environ.setdefault("HF_HUB_CACHE", str(self.hub_dir))
+
         # available_models is exposed for backwards compat with the existing
         # /api/models/available endpoint. New code should use get_catalog().
         self.available_models: Dict[str, Dict] = {
@@ -195,8 +205,12 @@ class ModelManager:
 
     def _catalog_entry(self, model_id: str) -> Dict[str, Any]:
         info = _SA3_CATALOG[model_id]
-        local_dir = self._local_dir_for(model_id)
         downloaded = self.is_model_downloaded(model_id)
+        bytes_total = 0
+        if downloaded:
+            for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id)):
+                if d.exists():
+                    bytes_total += self._dir_size(d)
         return {
             "id": model_id,
             "kind": info.get("kind"),
@@ -209,7 +223,7 @@ class ModelManager:
             "description": info["description"],
             "user_visible": info.get("user_visible", False),
             "downloaded": downloaded,
-            "downloaded_bytes": self._dir_size(local_dir) if downloaded else 0,
+            "downloaded_bytes": bytes_total,
         }
 
     def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:
@@ -219,19 +233,39 @@ class ModelManager:
 
     # --- Filesystem layout ----------------------------------------------------
 
-    def _local_dir_for(self, model_id: str) -> Path:
-        """Per-model subdirectory under models/pretrained/sa3/."""
+    def _hub_cache_dir_for(self, model_id: str) -> Path:
+        """HF-cache-shaped directory inside the app folder."""
+        info = _SA3_CATALOG.get(model_id)
+        if info is None:
+            return self.hub_dir / "_unknown"
+        safe = "models--" + info["repo"].replace("/", "--")
+        return self.hub_dir / safe
+
+    def _legacy_flat_dir_for(self, model_id: str) -> Path:
+        """Pre-unification per-model dir. Read-only fallback for migration."""
         return self.models_dir / "sa3" / model_id
+
+    def _local_dir_for(self, model_id: str) -> Path:
+        """Public: returns the canonical (HF cache) directory for a model."""
+        return self._hub_cache_dir_for(model_id)
 
     def is_model_downloaded(self, model_id: str) -> bool:
         if model_id not in _SA3_CATALOG:
             return False
-        local = self._local_dir_for(model_id)
-        if not local.is_dir():
-            return False
-        # Any *.safetensors weight presence is enough for a positive signal;
-        # the loader will surface a config-missing error later if needed.
-        return any(local.rglob("*.safetensors"))
+        # Canonical: HF cache layout under <app>/models/pretrained/sa3/hub/.
+        hub = self._hub_cache_dir_for(model_id)
+        if hub.is_dir():
+            snaps = hub / "snapshots"
+            if snaps.is_dir():
+                for sub in snaps.iterdir():
+                    if any(sub.rglob("*.safetensors")):
+                        return True
+        # Fallback: legacy flat layout (predates the unification). Counts as
+        # downloaded for inference purposes; trainer will re-stage into hub.
+        legacy = self._legacy_flat_dir_for(model_id)
+        if legacy.is_dir() and any(legacy.rglob("*.safetensors")):
+            return True
+        return False
 
     # --- HF auth --------------------------------------------------------------
 
@@ -303,31 +337,36 @@ class ModelManager:
         job.status = "running"
         job.started_at = datetime.now().isoformat()
 
-        local_dir = self._local_dir_for(job.model_id)
-        local_dir.mkdir(exist_ok=True, parents=True)
+        cache_dir = self._hub_cache_dir_for(job.model_id).parent  # = self.hub_dir
+        cache_dir.mkdir(exist_ok=True, parents=True)
+        target = self._hub_cache_dir_for(job.model_id)
 
-        token = get_token()  # uses standard ~/.cache/huggingface/token
+        token = get_token()
 
         try:
             with _tqdm_progress_hook(job, progress_callback):
+                # Write into hub/ in HF cache layout. snapshot_download in
+                # hf-hub 1.x populates `<cache_dir>/models--<org>--<name>/`
+                # with the blobs/refs/snapshots structure that
+                # hf_hub_download() and StableAudioModel.from_pretrained()
+                # both consume.
                 snapshot_download(
                     repo_id=info["repo"],
-                    local_dir=str(local_dir),
+                    cache_dir=str(cache_dir),
                     token=token,
-                    # Slim the download: weights + small configs/tokenizers, no docs.
                     allow_patterns=[
                         "*.safetensors", "*.json", "*.txt", "*.model",
                         "tokenizer*", "*.tiktoken",
                     ],
                 )
             job.status = "complete"
-            job.downloaded_bytes = self._dir_size(local_dir)
+            job.downloaded_bytes = self._dir_size(target)
             if progress_callback:
                 progress_callback(100, f"Downloaded {info['name']}")
         except _DownloadCancelled:
             job.status = "cancelled"
             job.error = "Cancelled by user"
-            shutil.rmtree(local_dir, ignore_errors=True)
+            shutil.rmtree(target, ignore_errors=True)
         except GatedRepoError as err:
             job.status = "failed"
             job.error = f"hf_auth_required: {err}"
@@ -345,11 +384,18 @@ class ModelManager:
     def delete_model(self, model_id: str) -> bool:
         if model_id not in _SA3_CATALOG:
             return False
-        local = self._local_dir_for(model_id)
-        if not local.exists():
-            return False
-        shutil.rmtree(local, ignore_errors=True)
-        return not local.exists()
+        # Remove both the canonical hub copy and the legacy flat copy if
+        # they exist. Either being present is enough to consider the
+        # model "downloaded", so both must be cleaned for the row to
+        # flip back to "Get".
+        hub = self._hub_cache_dir_for(model_id)
+        legacy = self._legacy_flat_dir_for(model_id)
+        any_existed = hub.exists() or legacy.exists()
+        if hub.exists():
+            shutil.rmtree(hub, ignore_errors=True)
+        if legacy.exists():
+            shutil.rmtree(legacy, ignore_errors=True)
+        return any_existed and not (hub.exists() or legacy.exists())
 
     # --- Storage --------------------------------------------------------------
 
@@ -357,8 +403,10 @@ class ModelManager:
         per_model: List[Dict[str, Any]] = []
         total_used = 0
         for mid in _SA3_CATALOG:
-            local = self._local_dir_for(mid)
-            bytes_ = self._dir_size(local) if local.exists() else 0
+            bytes_ = 0
+            for d in (self._hub_cache_dir_for(mid), self._legacy_flat_dir_for(mid)):
+                if d.exists():
+                    bytes_ += self._dir_size(d)
             per_model.append({
                 "id": mid,
                 "downloaded": self.is_model_downloaded(mid),
