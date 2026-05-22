@@ -9,6 +9,7 @@ from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import os
+import re
 from pathlib import Path
 import sys
 import threading
@@ -457,6 +458,51 @@ def generate_audio():
 
         chunked_decode = data.get('chunked_decode')  # tri-state: True / False / None
 
+        # Phase 7: audio-to-audio + inpainting --------------------------
+        def _resolve_src(p):
+            if not p:
+                return None
+            ap = Path(str(p))
+            if not ap.is_absolute():
+                ap = config.project_root / ap
+            if not ap.exists():
+                raise FileNotFoundError(f"Source audio not found: {p}")
+            return str(ap)
+
+        try:
+            init_audio_path = _resolve_src(data.get('init_audio_path'))
+            inpaint_audio_path = _resolve_src(data.get('inpaint_audio_path'))
+        except FileNotFoundError as e:
+            return jsonify(APIResponse.error(str(e), status_code=400)), 400
+
+        init_noise_level = Validator.number(
+            data.get('init_noise_level', 1.0), 'init_noise_level',
+            min_value=0.0, max_value=1.0,
+        )
+
+        def _normalize_seconds(raw):
+            if raw is None:
+                return None
+            if isinstance(raw, (int, float)):
+                return [float(raw)]
+            if isinstance(raw, list):
+                return [float(x) for x in raw]
+            raise ValueError("must be a number or list of numbers")
+        try:
+            inpaint_starts = _normalize_seconds(data.get('inpaint_starts'))
+            inpaint_ends = _normalize_seconds(data.get('inpaint_ends'))
+        except (TypeError, ValueError) as e:
+            return jsonify(APIResponse.error(
+                f"inpaint_starts/inpaint_ends invalid: {e}", status_code=400)), 400
+        if (inpaint_starts is None) != (inpaint_ends is None):
+            return jsonify(APIResponse.error(
+                "inpaint_starts and inpaint_ends must both be set or both omitted.",
+                status_code=400)), 400
+        if inpaint_starts and inpaint_ends and len(inpaint_starts) != len(inpaint_ends):
+            return jsonify(APIResponse.error(
+                "inpaint_starts and inpaint_ends must be the same length.",
+                status_code=400)), 400
+
         # LoRA stack: list of { path, strength }. Validate each entry.
         loras_raw = data.get('loras') or []
         if not isinstance(loras_raw, list):
@@ -521,6 +567,11 @@ def generate_audio():
             chunked_decode=chunked_decode,
             loop_mode=do_align,
             loras=loras,
+            init_audio_path=init_audio_path,
+            init_noise_level=float(init_noise_level),
+            inpaint_audio_path=inpaint_audio_path,
+            inpaint_starts=inpaint_starts,
+            inpaint_ends=inpaint_ends,
         )
 
         if not output_path.exists():
@@ -650,6 +701,40 @@ def _safe_int(v):
         return int(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+@app.route('/api/audio/upload', methods=['POST'])
+def upload_source_audio():
+    """Accept a user-uploaded audio file to use as init_audio / inpaint_audio.
+
+    Stores under <output>/uploads/<timestamp>_<safe-name> so the file is
+    inside the project tree. Returns {path, name} where `path` is relative
+    to project_root so /api/generate can resolve it.
+    """
+    if 'file' not in request.files:
+        return jsonify(APIResponse.error("No file provided.", status_code=400)), 400
+    fileobj = request.files['file']
+    if not fileobj.filename:
+        return jsonify(APIResponse.error("Empty filename.", status_code=400)), 400
+
+    name = Path(fileobj.filename).name
+    # Strip path components + restrict to known extensions.
+    ext = Path(name).suffix.lower()
+    if ext not in {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".opus"}:
+        return jsonify(APIResponse.error(
+            f"Unsupported audio format '{ext}'. Use wav/mp3/flac/m4a/ogg/opus.",
+            status_code=400)), 400
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(name).stem)[:60] or "upload"
+
+    cfg = get_config()
+    uploads_dir = cfg.get_path("output") / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    dest = uploads_dir / f"{ts}_{safe}{ext}"
+    fileobj.save(str(dest))
+
+    rel = dest.relative_to(cfg.project_root)
+    return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
 
 
 @app.route('/api/lora-strength', methods=['POST'])

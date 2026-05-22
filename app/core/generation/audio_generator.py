@@ -253,6 +253,12 @@ class AudioGenerator:
         chunked_decode: Optional[bool] = None,
         loop_mode: bool = False,                 # bars-mode passthrough
         loras: Optional[list] = None,            # [{path, strength}, ...]
+        # Phase 7: audio-to-audio + inpainting -----------------------------
+        init_audio_path: Optional[str] = None,
+        init_noise_level: float = 1.0,
+        inpaint_audio_path: Optional[str] = None,
+        inpaint_starts: Optional[list] = None,   # list[float], seconds
+        inpaint_ends: Optional[list] = None,
         **_ignored_legacy_kwargs: Any,
     ) -> Path:
         self._stop_requested = False
@@ -261,6 +267,9 @@ class AudioGenerator:
 
         self._ensure_model(model_id, device=device, half=half)
         self._apply_loras(loras or [])
+
+        init_audio = self._load_audio(init_audio_path) if init_audio_path else None
+        inpaint_audio = self._load_audio(inpaint_audio_path) if inpaint_audio_path else None
 
         _, kind, max_dur = _MODEL_INFO[model_id]
         is_base = (kind == "base")
@@ -277,7 +286,7 @@ class AudioGenerator:
         if self._stop_requested:                  # one more check before the heavy call
             raise GenerationStopped()
 
-        audio = self.model.generate(
+        gen_kwargs = dict(
             prompt=prompt,
             negative_prompt=negative_prompt or None,
             duration=duration,
@@ -287,9 +296,42 @@ class AudioGenerator:
             batch_size=int(batch_size),
             chunked_decode=chunked_decode,
         )
+        if init_audio is not None:
+            gen_kwargs["init_audio"] = init_audio
+            gen_kwargs["init_noise_level"] = float(init_noise_level)
+        if inpaint_audio is not None:
+            gen_kwargs["inpaint_audio"] = inpaint_audio
+            if inpaint_starts is not None and len(inpaint_starts) > 0:
+                # SA3 accepts a single float or a list for multi-region.
+                gen_kwargs["inpaint_mask_start_seconds"] = (
+                    list(inpaint_starts) if len(inpaint_starts) > 1 else float(inpaint_starts[0])
+                )
+            if inpaint_ends is not None and len(inpaint_ends) > 0:
+                gen_kwargs["inpaint_mask_end_seconds"] = (
+                    list(inpaint_ends) if len(inpaint_ends) > 1 else float(inpaint_ends[0])
+                )
+
+        audio = self.model.generate(**gen_kwargs)
         # audio: torch.Tensor[B, channels=2, samples] in [-1, 1] @ 44.1 kHz
 
         return self._finalize(audio, prompt=prompt, model_id=model_id)
+
+    # --- audio loader (a2a + inpaint inputs) ----------------------------------
+    @staticmethod
+    def _load_audio(path: str):
+        """Load a wav/mp3/flac into the (sample_rate, tensor) tuple SA3 expects.
+
+        Returns a stereo float32 tensor of shape (channels, samples). Mono
+        inputs are duplicated to stereo (SA3 expects 2 channels); ≥3-channel
+        inputs are truncated to the first 2.
+        """
+        import torchaudio
+        wav, sr = torchaudio.load(str(path))   # (channels, samples), float32
+        if wav.shape[0] == 1:
+            wav = wav.repeat(2, 1)
+        elif wav.shape[0] > 2:
+            wav = wav[:2]
+        return int(sr), wav
 
     # --- output --------------------------------------------------------------
     def _finalize(self, audio: torch.Tensor, *, prompt: str, model_id: str) -> Path:

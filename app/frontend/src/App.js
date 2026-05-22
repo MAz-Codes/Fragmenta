@@ -65,6 +65,7 @@ import ModelUnwrapButton from './components/ModelUnwrapButton';
 import LoraCheckpointManager from './components/LoraCheckpointManager';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
+import EditPanel from './components/EditPanel';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import { clearPerformanceSession } from './components/usePerformanceSession';
@@ -2433,6 +2434,42 @@ function App() {
                                                     </Typography>
                                                 )}
                                             </Paper>
+
+                                            <Accordion sx={appStyles.accordionMarginBottom}>
+                                                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                                    <Typography variant="h6">Edit existing audio</Typography>
+                                                    <Typography variant="caption" color="textSecondary" sx={{ ml: 1, alignSelf: 'center' }}>
+                                                        Style transfer · Inpaint · Extend
+                                                    </Typography>
+                                                </AccordionSummary>
+                                                <AccordionDetails sx={{ p: 0 }}>
+                                                    <EditPanel
+                                                        model_id={selectedModel}
+                                                        negativePrompt={negativePrompt}
+                                                        onGenerated={(blob, filename, params) => {
+                                                            const audioUrl = URL.createObjectURL(blob);
+                                                            setGeneratedFragments(prev => [
+                                                                ...prev,
+                                                                {
+                                                                    id: Date.now(),
+                                                                    prompt: params.prompt,
+                                                                    duration: params.duration,
+                                                                    cfgScale: params.cfg_scale,
+                                                                    steps: params.steps,
+                                                                    seed: params.seed,
+                                                                    batchIndex: 1,
+                                                                    batchTotal: 1,
+                                                                    audioUrl,
+                                                                    audioBlob: blob,
+                                                                    filename,
+                                                                    timestamp: new Date().toLocaleString(),
+                                                                    editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
+                                                                },
+                                                            ]);
+                                                        }}
+                                                    />
+                                                </AccordionDetails>
+                                            </Accordion>
 
                                             <GeneratedFragmentsWindow
                                                 fragments={generatedFragments}
