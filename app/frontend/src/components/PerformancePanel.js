@@ -708,7 +708,6 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontFamily: 'inherit',
                                 fontSize: perfTokens.fontSize.body,
                                 fontWeight: 600,
                                 px: 1,
@@ -766,7 +765,6 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontFamily: 'inherit',
                                 fontSize: perfTokens.fontSize.body,
                                 fontWeight: 600,
                                 px: 1,
@@ -1165,7 +1163,7 @@ function PerformancePanelInner({
 
                 <Box sx={styles.masterStrip(MASTER_COLOR)}>
                     <Box sx={styles.masterHeader(MASTER_COLOR)}>
-                        <Box sx={styles.masterBadge(MASTER_COLOR)}>MASTER</Box>
+                        <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
                     </Box>
 
                     <Box sx={styles.masterFaderWrap}>
@@ -1233,7 +1231,7 @@ function PerformancePanelInner({
                         return (
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.5 }}>
                                 <Box>
-                                    <Typography component="span" sx={labelSx}>MAIN OUT</Typography>
+                                    <Typography component="span" sx={labelSx}>Main Out</Typography>
                                     <FormControl size="small" sx={selectSx}>
                                         <Select
                                             value={Math.min(mainOutputPair, pairCount - 1)}
@@ -1248,7 +1246,7 @@ function PerformancePanelInner({
                                     </FormControl>
                                 </Box>
                                 <Box>
-                                    <Typography component="span" sx={labelSx}>CUE OUT</Typography>
+                                    <Typography component="span" sx={labelSx}>Cue Out</Typography>
                                     <FormControl size="small" sx={selectSx}>
                                         <Select
                                             value={Math.min(cueOutputPair, pairCount - 1)}
@@ -1533,7 +1531,7 @@ function PerformancePanelInner({
                             color: 'text.disabled',
                         }}
                     >
-                        STEPS
+                        Steps
                     </Typography>
                     <Tooltip
                         placement="right"
@@ -1581,7 +1579,7 @@ function PerformancePanelInner({
                             color: 'text.disabled',
                         }}
                     >
-                        SEED
+                        Seed
                     </Typography>
                     <FormControlLabel
                         sx={{ mr: 0, ml: 0.25 }}
@@ -1630,7 +1628,7 @@ function PerformancePanelInner({
                                 color: 'text.disabled',
                             }}
                         >
-                            AUTO BPM
+                            Auto bpm
                         </Typography>
                         <Switch
                             size="small"

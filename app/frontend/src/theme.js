@@ -19,13 +19,12 @@ import { createTheme, responsiveFontSizes } from '@mui/material/styles';
  *   layout-level concerns the page-by-page pass will touch.
  * =================================================================== */
 
-const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+const FONT_BODY  = '"Inter Tight", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
 // Display face used for Tier-1 section titles + Tier-2 accordion labels —
 // gives the cards a strong, distinctive header voice that doesn't compete
-// with body Inter. Variable axes: opsz 9–144, wght 400–700, SOFT 30–100.
-// Set per-variant via fontVariationSettings for display-optimised glyphs.
-const FONT_DISPLAY = '"Fraunces", "Inter", system-ui, sans-serif';
+// with body Inter.
+const FONT_DISPLAY = '"Bricolage Grotesque", "Inter Tight", system-ui, sans-serif';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -38,9 +37,16 @@ const DARK = {
     text:      '#ECECEC',      // near-white, faintly cool
     textDim:   '#9B9B9D',      // neutral gray
     textFaint: '#65676A',
-    amber:     '#D4A24A',      // primary accent — Arcade's signature
-    amberHi:   '#E2B559',      // hover / lighter
-    amberLo:   '#A37C30',      // pressed / darker
+    amber:     '#279FBB',      // primary accent — saturated cyan
+    amberHi:   '#4DBAD3',      // hover / lighter
+    amberLo:   '#1F7E94',      // pressed / darker
+    // Warm complement — used to signal "active / in progress" state
+    // (training, generation, download) against the cool cyan UI chrome.
+    warm:      '#FDA22B',
+    warmHi:    '#FFB855',
+    warmLo:    '#D17F1A',
+    // Deep blue used for moon-icon / night cues on dark mode.
+    night:     '#3D6FA8',
     blue:      '#5BA9E8',      // secondary — selected-file cue
     blueDim:   '#84BFEE',
     success:   '#7AC795',
@@ -61,6 +67,14 @@ const LIGHT = {
     amber:     '#9E7228',      // deeper gold for contrast on cream
     amberHi:   '#C49350',
     amberLo:   '#6E4F17',
+    // Warm complement on cream — same hue family as dark mode but deeper
+    // for legibility against the warm-paper background.
+    warm:      '#C97A1A',
+    warmHi:    '#E59334',
+    warmLo:    '#9C5C0F',
+    // Deep navy for moon-icon / night cues on light mode — needs strong
+    // contrast against the warm cream paper.
+    night:     '#1F3A5F',
     blue:      '#3B6E9B',
     blueDim:   '#5E8FB8',
     success:   '#2E8A52',
@@ -80,6 +94,8 @@ let theme = createTheme({
         warning: { main: DARK.warning },
         success: { main: DARK.success },
         info: { main: DARK.blue },
+        warm: { main: DARK.warm, light: DARK.warmHi, dark: DARK.warmLo },
+        night: { main: DARK.night },
     },
     shape: {
         borderRadius: 10,
@@ -91,33 +107,31 @@ let theme = createTheme({
         h3: { fontWeight: 600, letterSpacing: '-0.015em' },
         h4: { fontWeight: 600, letterSpacing: '-0.01em' },
         h5: { fontWeight: 600, letterSpacing: '-0.005em' },
-        // Tier-1 section card titles — Fraunces at the display optical
-        // size (opsz 144) with a touch of softness (SOFT 50) for an
-        // editorial, modern-elegant voice.
+        // Tier-1 section card titles — Bricolage at display opsz for
+        // the wider, more characterful display cut.
         h6: {
             fontFamily: FONT_DISPLAY,
-            fontWeight: 600,
-            letterSpacing: '-0.01em',
+            fontWeight: 400,
+            letterSpacing: '-0.015em',
             fontSize: '1.2rem',
-            fontVariationSettings: '"opsz" 144, "SOFT" 50',
+            fontVariationSettings: '"opsz" 96',
         },
-        // Tier-2 section/accordion labels — same Fraunces, same display
-        // optical size + softness, slightly smaller. "Annotator Labels",
-        // "Advanced Settings", "Edit existing audio" all flow through here.
+        // Tier-2 section/accordion labels — same family, slightly smaller.
+        // "Annotator Labels", "Advanced Settings", "Edit existing audio".
         subtitle1: {
             fontFamily: FONT_DISPLAY,
-            fontWeight: 600,
-            letterSpacing: '-0.005em',
+            fontWeight: 400,
+            letterSpacing: '-0.01em',
             fontSize: '1.05rem',
             textTransform: 'none',
-            fontVariationSettings: '"opsz" 144, "SOFT" 50',
+            fontVariationSettings: '"opsz" 72',
         },
-        subtitle2: { fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
+        subtitle2: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
-        button: { fontWeight: 500, letterSpacing: '0.01em',     textTransform: 'none' },
-        caption: { fontWeight: 400, letterSpacing: '0.005em',   fontSize: '0.75rem' },
-        overline: { fontWeight: 600, letterSpacing: '0.12em',   textTransform: 'uppercase', fontSize: '0.7rem' },
+        button: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: '0.01em',     textTransform: 'none' },
+        caption: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: '0.005em',   fontSize: '0.75rem' },
+        overline: { fontFamily: FONT_DISPLAY, fontWeight: 600, letterSpacing: '0.12em',   textTransform: 'uppercase', fontSize: '0.7rem' },
     },
     components: {
         MuiCssBaseline: {
@@ -137,20 +151,20 @@ let theme = createTheme({
                 '#root': { minHeight: '100vh' },
                 '*::-webkit-scrollbar': { width: '10px', height: '10px' },
                 '*::-webkit-scrollbar-track': {
-                    background: 'rgba(212, 162, 74, 0.06)',
+                    background: 'rgba(39, 159, 187, 0.06)',
                     borderRadius: '999px',
                 },
                 '*::-webkit-scrollbar-thumb': {
-                    background: 'rgba(212, 162, 74, 0.32)',
+                    background: 'rgba(39, 159, 187, 0.32)',
                     borderRadius: '999px',
                     border: '2px solid rgba(0, 0, 0, 0)',
                     backgroundClip: 'padding-box',
-                    '&:hover': { background: 'rgba(212, 162, 74, 0.52)' },
+                    '&:hover': { background: 'rgba(39, 159, 187, 0.52)' },
                 },
                 '*::-webkit-scrollbar-corner': { background: 'transparent' },
                 '*': {
                     scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(212, 162, 74, 0.32) rgba(212, 162, 74, 0.06)',
+                    scrollbarColor: 'rgba(39, 159, 187, 0.32) rgba(39, 159, 187, 0.06)',
                 },
             },
         },
@@ -176,19 +190,25 @@ let theme = createTheme({
                     boxShadow: '0 10px 22px rgba(0, 0, 0, 0.45)',
                     transition: 'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
                     '&:hover': {
-                        borderColor: 'rgba(212, 162, 74, 0.4)',
-                        boxShadow: '0 16px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(212, 162, 74, 0.18)',
+                        borderColor: 'rgba(39, 159, 187, 0.4)',
+                        boxShadow: '0 16px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(39, 159, 187, 0.18)',
                         transform: 'translateY(-1px)',
                     },
                 },
             },
         },
+        MuiButtonBase: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
         MuiButton: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     textTransform: 'none',
                     borderRadius: 999,                 // pill — instrument-like
-                    fontWeight: 500,
+                    fontWeight: 400,
                     paddingInline: 18,
                     lineHeight: 1.2,
                     letterSpacing: '0.01em',
@@ -197,7 +217,7 @@ let theme = createTheme({
                 contained: {
                     boxShadow: '0 6px 16px rgba(0, 0, 0, 0.4)',
                     '&:hover': {
-                        boxShadow: '0 10px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(212, 162, 74, 0.4)',
+                        boxShadow: '0 10px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(39, 159, 187, 0.4)',
                         transform: 'translateY(-1px)',
                     },
                 },
@@ -216,14 +236,14 @@ let theme = createTheme({
                     color: DARK.text,
                     '&:hover': {
                         borderColor: DARK.amber,
-                        backgroundColor: 'rgba(212, 162, 74, 0.08)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.08)',
                         color: DARK.amberHi,
                     },
                 },
                 text: {
                     color: DARK.text,
                     '&:hover': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.08)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.08)',
                         color: DARK.amberHi,
                     },
                 },
@@ -232,9 +252,29 @@ let theme = createTheme({
         MuiInputBase: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     '&:not(.MuiInputBase-multiline)': { alignItems: 'center' },
                 },
-                input: { lineHeight: 1.4 },
+                input: {
+                    fontFamily: FONT_DISPLAY,
+                    lineHeight: 1.4,
+                    '&::placeholder': { fontFamily: FONT_DISPLAY, opacity: 0.6 },
+                },
+            },
+        },
+        MuiInputLabel: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiFormLabel: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiFormHelperText: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
             },
         },
         MuiTextField: {
@@ -247,7 +287,7 @@ let theme = createTheme({
                         '&:hover fieldset': { borderColor: 'rgba(240, 237, 229, 0.32)' },
                         '&.Mui-focused fieldset': {
                             borderColor: DARK.amber,
-                            boxShadow: '0 0 0 3px rgba(212, 162, 74, 0.12)',
+                            boxShadow: '0 0 0 3px rgba(39, 159, 187, 0.12)',
                         },
                     },
                 },
@@ -256,13 +296,14 @@ let theme = createTheme({
         MuiSelect: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     backgroundColor: 'rgba(10, 8, 6, 0.5)',
                     borderRadius: 8,
                     '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(240, 237, 229, 0.14)' },
                     '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(240, 237, 229, 0.32)' },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
                         borderColor: DARK.amber,
-                        boxShadow: '0 0 0 3px rgba(212, 162, 74, 0.12)',
+                        boxShadow: '0 0 0 3px rgba(39, 159, 187, 0.12)',
                     },
                 },
                 select: { display: 'flex', alignItems: 'center' },
@@ -271,12 +312,13 @@ let theme = createTheme({
         MuiMenuItem: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     backgroundColor: DARK.paper,
                     '&:hover': { backgroundColor: DARK.paperHi },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.14)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
                         color: DARK.amberHi,
-                        '&:hover': { backgroundColor: 'rgba(212, 162, 74, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
                     },
                 },
             },
@@ -284,14 +326,15 @@ let theme = createTheme({
         MuiChip: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     backgroundColor: 'rgba(240, 237, 229, 0.06)',
                     color: DARK.text,
                     border: `1px solid rgba(240, 237, 229, 0.12)`,
                     borderRadius: 999,            // pill, matches button language
                     '&.MuiChip-colorPrimary': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.16)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.16)',
                         color: DARK.amberHi,
-                        borderColor: 'rgba(212, 162, 74, 0.4)',
+                        borderColor: 'rgba(39, 159, 187, 0.4)',
                     },
                     '&.MuiChip-colorSuccess': {
                         backgroundColor: 'rgba(122, 199, 149, 0.16)',
@@ -326,7 +369,7 @@ let theme = createTheme({
                     '& .MuiAccordionSummary-content': { margin: '10px 0', alignItems: 'center' },
                     '&.Mui-expanded': { minHeight: 44 },
                     '&.Mui-expanded .MuiAccordionSummary-content': { margin: '10px 0' },
-                    '&:hover': { backgroundColor: '#2B2519' },
+                    '&:hover': { backgroundColor: '#1A262A' },
                 },
             },
         },
@@ -338,7 +381,7 @@ let theme = createTheme({
                         `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
                     border: `1px solid ${DARK.divider}`,
                     borderRadius: 14,
-                    boxShadow: '0 32px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(212, 162, 74, 0.04)',
+                    boxShadow: '0 32px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(39, 159, 187, 0.04)',
                     backdropFilter: 'blur(14px)',
                 },
             },
@@ -346,6 +389,7 @@ let theme = createTheme({
         MuiDialogTitle: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     backgroundColor: 'transparent',
                     borderBottom: `1px solid ${DARK.divider}`,
                     color: DARK.text,
@@ -373,10 +417,10 @@ let theme = createTheme({
         MuiListItem: {
             styleOverrides: {
                 root: {
-                    '&:hover': { backgroundColor: 'rgba(212, 162, 74, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.06)' },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(212, 162, 74, 0.20)' },
+                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
+                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
                     },
                 },
             },
@@ -386,12 +430,12 @@ let theme = createTheme({
                 root: {
                     color: DARK.textDim,
                     '&.Mui-checked': { color: DARK.amber },
-                    '&:hover': { backgroundColor: 'rgba(212, 162, 74, 0.08)' },
+                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.08)' },
                 },
             },
         },
         MuiFormControlLabel: {
-            styleOverrides: { label: { color: DARK.text, fontSize: '0.875rem' } },
+            styleOverrides: { label: { fontFamily: FONT_DISPLAY, color: DARK.text, fontSize: '0.875rem' } },
         },
         MuiSlider: {
             styleOverrides: {
@@ -404,10 +448,10 @@ let theme = createTheme({
                     height: 16,
                     boxShadow: '0 2px 6px rgba(0, 0, 0, 0.5)',
                     '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(212, 162, 74, 0.18)',
+                        boxShadow: '0 0 0 8px rgba(39, 159, 187, 0.18)',
                     },
                     '&.Mui-active': {
-                        boxShadow: '0 0 0 12px rgba(212, 162, 74, 0.24)',
+                        boxShadow: '0 0 0 12px rgba(39, 159, 187, 0.24)',
                     },
                 },
                 valueLabel: {
@@ -415,7 +459,7 @@ let theme = createTheme({
                     color: DARK.text,
                     border: `1px solid ${DARK.divider}`,
                     borderRadius: 6,
-                    fontWeight: 500,
+                    fontWeight: 400,
                     fontSize: '0.75rem',
                 },
                 mark: { backgroundColor: 'rgba(240, 237, 229, 0.24)' },
@@ -429,8 +473,10 @@ let theme = createTheme({
                     borderRadius: 999,
                     overflow: 'hidden',
                 },
+                // Warm complement on the bar tells the eye "work in progress"
+                // — distinct from the cool cyan that drives interactive chrome.
                 bar: {
-                    backgroundImage: `linear-gradient(90deg, ${DARK.amberLo} 0%, ${DARK.amber} 100%)`,
+                    backgroundImage: `linear-gradient(90deg, ${DARK.warmLo} 0%, ${DARK.warm} 100%)`,
                 },
             },
         },
@@ -449,10 +495,14 @@ let theme = createTheme({
         MuiTab: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     color: DARK.textDim,
                     textTransform: 'none',
-                    fontWeight: 500,
-                    letterSpacing: '-0.005em',
+                    // Match h6 exactly so the side rail label and the
+                    // in-card section title read as the same hierarchy.
+                    fontWeight: 400,
+                    fontSize: '1.2rem',
+                    letterSpacing: '-0.01em',
                     '&.Mui-selected': { color: DARK.amberHi },
                     '&:hover': { color: DARK.text },
                 },
@@ -473,7 +523,7 @@ let theme = createTheme({
                     color: DARK.textDim,
                     transition: 'all 160ms ease',
                     '&:hover': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.10)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.10)',
                         color: DARK.amberHi,
                     },
                 },
@@ -482,20 +532,21 @@ let theme = createTheme({
         MuiToggleButton: {
             styleOverrides: {
                 root: {
+                    fontFamily: FONT_DISPLAY,
                     textTransform: 'none',
                     border: `1px solid ${DARK.divider}`,
                     color: DARK.textDim,
-                    fontWeight: 500,
+                    fontWeight: 400,
                     letterSpacing: '-0.005em',
                     '&:hover': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.06)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.06)',
                         color: DARK.text,
                     },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(212, 162, 74, 0.14)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
                         color: DARK.amberHi,
                         borderColor: DARK.amber,
-                        '&:hover': { backgroundColor: 'rgba(212, 162, 74, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
                     },
                 },
             },
@@ -517,6 +568,7 @@ let theme = createTheme({
         MuiTooltip: {
             styleOverrides: {
                 tooltip: {
+                    fontFamily: FONT_DISPLAY,
                     backgroundColor: DARK.bg,
                     color: DARK.text,
                     border: `1px solid ${DARK.divider}`,
@@ -530,6 +582,35 @@ let theme = createTheme({
             },
         },
         MuiContainer: { styleOverrides: { root: { backgroundColor: 'transparent', background: 'transparent' } } },
+        MuiAutocomplete: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+                option: { fontFamily: FONT_DISPLAY },
+                noOptions: { fontFamily: FONT_DISPLAY },
+                loading: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiListItemText: {
+            styleOverrides: {
+                primary: { fontFamily: FONT_DISPLAY },
+                secondary: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiListItemButton: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiListSubheader: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
+        MuiAlert: {
+            styleOverrides: {
+                root: { fontFamily: FONT_DISPLAY },
+            },
+        },
     },
 });
 
@@ -557,6 +638,8 @@ export const lightTheme = createTheme(theme, {
         warning: { main: LIGHT.warning },
         success: { main: LIGHT.success },
         info: { main: LIGHT.blue },
+        warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
+        night: { main: LIGHT.night },
     },
     components: {
         MuiCssBaseline: {
@@ -810,7 +893,7 @@ export const lightTheme = createTheme(theme, {
                     backgroundColor: LIGHT.text,
                     color: '#FFFBF1',
                     borderRadius: 6,
-                    fontWeight: 500,
+                    fontWeight: 400,
                 },
                 mark: { backgroundColor: 'rgba(43, 31, 18, 0.28)' },
                 markActive: { backgroundColor: LIGHT.amber },
@@ -824,7 +907,7 @@ export const lightTheme = createTheme(theme, {
                     overflow: 'hidden',
                 },
                 bar: {
-                    backgroundImage: `linear-gradient(90deg, ${LIGHT.amber} 0%, ${LIGHT.amberHi} 100%)`,
+                    backgroundImage: `linear-gradient(90deg, ${LIGHT.warmLo} 0%, ${LIGHT.warm} 100%)`,
                 },
             },
         },
@@ -845,7 +928,7 @@ export const lightTheme = createTheme(theme, {
                 root: {
                     color: LIGHT.textDim,
                     textTransform: 'none',
-                    fontWeight: 500,
+                    fontWeight: 400,
                     '&.Mui-selected': { color: LIGHT.amberLo },
                     '&:hover': { color: LIGHT.text },
                 },
@@ -878,7 +961,7 @@ export const lightTheme = createTheme(theme, {
                     textTransform: 'none',
                     border: `1px solid ${LIGHT.divider}`,
                     color: LIGHT.textDim,
-                    fontWeight: 500,
+                    fontWeight: 400,
                     '&:hover': {
                         backgroundColor: 'rgba(158, 114, 40, 0.06)',
                         color: LIGHT.text,
@@ -989,27 +1072,6 @@ export const appStyles = {
         flexWrap: isCompactLayout ? 'wrap' : 'nowrap',
         width: { xs: '100%', md: 'auto' },
     }),
-    headerActionsGrid: (isCompactLayout) => ({
-        display: 'grid',
-        gridTemplateColumns: isCompactLayout
-            ? 'repeat(2, minmax(0, 1fr))'
-            : 'repeat(2, 122px)',
-        gap: { xs: 0.75, sm: 1 },
-        justifyContent: 'flex-end',
-        flex: isCompactLayout ? '1 1 auto' : '0 1 auto',
-        width: isCompactLayout ? '100%' : 'auto',
-    }),
-    headerActionButton: {
-        fontSize: { xs: '0.70rem', sm: '0.72rem' },
-        height: { xs: 34, sm: 36 },
-        minWidth: 0,
-        width: '100%',
-        px: { xs: 1, sm: 1.5 },
-        '& .MuiButton-startIcon svg': {
-            width: { xs: 14, sm: 15 },
-            height: { xs: 14, sm: 15 },
-        },
-    },
     gpuCard: (isCompactLayout) => ({
         p: { xs: 1.25, sm: 1.75 },
         bgcolor: 'background.paper',
@@ -1089,15 +1151,15 @@ export const appStyles = {
         borderRadius: 3,
         minHeight: 0,
     },
-    navPaper: {
-        width: { xs: '100%', md: 64, lg: 220 },
+    navPaper: (isCompactLayout, isIconOnly) => ({
+        width: isCompactLayout ? '100%' : isIconOnly ? 64 : 220,
         backgroundColor: 'background.paper',
         borderRadius: 2.5,
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-    },
+    }),
     navigationTabs: (isCompactLayout, isIconOnly = false) => ({
         height: isCompactLayout ? 'auto' : '100%',
         p: { xs: 0.5, sm: 1 },
@@ -1111,7 +1173,7 @@ export const appStyles = {
             textAlign: (isCompactLayout || isIconOnly) ? 'center' : 'left',
             minHeight: { xs: 40, sm: 46 },
             fontSize: { xs: '0.78rem', sm: '0.86rem' },
-            fontWeight: 500,
+            fontWeight: 400,
             textTransform: 'none',
             color: 'text.secondary',
             borderRadius: 2,
@@ -1178,18 +1240,6 @@ export const appStyles = {
             textDecoration: 'underline',
         },
     },
-    headerActionButtonWithOpacity: (isEnabled) => ({
-        fontSize: { xs: '0.70rem', sm: '0.72rem' },
-        height: { xs: 34, sm: 36 },
-        minWidth: 0,
-        width: '100%',
-        px: { xs: 1, sm: 1.5 },
-        opacity: isEnabled ? 1 : 0.5,
-        '& .MuiButton-startIcon svg': {
-            width: { xs: 14, sm: 15 },
-            height: { xs: 14, sm: 15 },
-        },
-    }),
     gpuHeaderRow: {
         display: 'flex',
         alignItems: 'center',
@@ -1460,15 +1510,89 @@ export const appStyles = {
     dialogErrorText: {
         mt: 2,
     },
-    modeToggleButton: (muiTheme) => {
+    // Bottom-left floating dock — vertical strip mirroring the icon-only
+    // nav rail. Icon buttons inside use the same flat rounded-square
+    // language as MuiTab in icon-only mode; hovering anywhere on the dock
+    // fades in each item's label to the right (via .dock-label).
+    bottomDock: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
         return {
             position: 'fixed',
             left: { xs: 12, sm: 16 },
-            bottom: { xs: 58, sm: 66 },
+            bottom: { xs: 12, sm: 16 },
+            zIndex: 1350,
+            display: 'flex',
+            flexDirection: 'column',
+            p: { xs: 0.5, sm: 1 },
+            gap: { xs: 0.25, sm: 0.5 },
+            backgroundColor: 'background.paper',
+            borderRadius: 2.5,
+            border: '1px solid',
+            borderColor: 'divider',
+            boxShadow: isDark
+                ? '0 14px 28px rgba(0, 0, 0, 0.45)'
+                : '0 14px 28px rgba(15, 23, 42, 0.12)',
+            '& .dock-label': {
+                opacity: 0,
+                transform: 'translate(-8px, -50%)',
+                pointerEvents: 'none',
+                transition: 'opacity 220ms ease, transform 220ms ease',
+            },
+            '&:hover .dock-label, &:focus-within .dock-label': {
+                opacity: 1,
+                transform: 'translate(0, -50%)',
+                pointerEvents: 'auto',
+            },
+        };
+    },
+    dockItem: {
+        position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
+    },
+    // Matches `& .MuiTab-root` styling in navigationTabs so dock icons read
+    // exactly like nav tab icons.
+    dockIconButton: {
+        width: { xs: 40, sm: 46 },
+        height: { xs: 40, sm: 46 },
+        flexShrink: 0,
+        borderRadius: 2,
+        color: 'text.secondary',
+        transition: 'background-color 160ms ease, color 160ms ease',
+        '&:hover': {
+            color: 'text.primary',
+            backgroundColor: 'rgba(53, 194, 212, 0.08)',
+        },
+        '&.Mui-disabled': {
+            opacity: 0.45,
+        },
+    },
+    dockIconButtonDanger: {
+        color: 'error.main',
+        '&:hover': {
+            color: 'error.light',
+            backgroundColor: 'rgba(226, 107, 94, 0.10)',
+        },
+    },
+    dockIconButtonAccent: {
+        color: 'primary.main',
+        '&:hover': {
+            color: 'primary.light',
+            backgroundColor: 'rgba(53, 194, 212, 0.10)',
+        },
+    },
+    // Hamburger trigger shown in place of the full dock when the viewport
+    // is too small to fit the 6-icon stack. Same visual treatment as a
+    // single dock icon button so the surface stays consistent.
+    dockHamburger: (muiTheme) => {
+        const isDark = muiTheme.palette.mode === 'dark';
+        return {
+            position: 'fixed',
+            left: { xs: 12, sm: 16 },
+            bottom: { xs: 12, sm: 16 },
+            zIndex: 1350,
             width: { xs: 38, sm: 42 },
             height: { xs: 38, sm: 42 },
-            zIndex: 1350,
             border: isDark
                 ? '1px solid rgba(194, 207, 228, 0.22)'
                 : '1px solid rgba(15, 23, 42, 0.16)',
@@ -1480,45 +1604,26 @@ export const appStyles = {
                 ? '0 14px 24px rgba(4, 8, 14, 0.5)'
                 : '0 14px 24px rgba(15, 23, 42, 0.14)',
             '&:hover': {
+                transform: 'translateY(-1px)',
                 background: isDark
                     ? 'linear-gradient(145deg, rgba(20, 28, 42, 1) 0%, rgba(14, 22, 34, 1) 100%)'
                     : 'linear-gradient(145deg, rgba(244, 250, 255, 1) 0%, rgba(236, 245, 252, 1) 100%)',
-                transform: 'translateY(-1px)',
                 boxShadow: isDark
                     ? '0 18px 28px rgba(4, 8, 14, 0.6)'
                     : '0 18px 28px rgba(15, 23, 42, 0.18)',
             },
         };
     },
-    infoButton: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            position: 'fixed',
-            left: { xs: 12, sm: 16 },
-            bottom: { xs: 12, sm: 16 },
-            width: { xs: 38, sm: 42 },
-            height: { xs: 38, sm: 42 },
-            zIndex: 1350,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.22)'
-                : '1px solid rgba(15, 23, 42, 0.16)',
-            background: isDark
-                ? 'linear-gradient(145deg, rgba(18, 25, 38, 0.96) 0%, rgba(12, 19, 30, 0.96) 100%)'
-                : 'linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            color: isDark ? 'primary.light' : 'primary.main',
-            boxShadow: isDark
-                ? '0 14px 24px rgba(4, 8, 14, 0.5)'
-                : '0 14px 24px rgba(15, 23, 42, 0.14)',
-            '&:hover': {
-                background: isDark
-                    ? 'linear-gradient(145deg, rgba(20, 28, 42, 1) 0%, rgba(14, 22, 34, 1) 100%)'
-                    : 'linear-gradient(145deg, rgba(244, 250, 255, 1) 0%, rgba(236, 245, 252, 1) 100%)',
-                transform: 'translateY(-1px)',
-                boxShadow: isDark
-                    ? '0 18px 28px rgba(4, 8, 14, 0.6)'
-                    : '0 18px 28px rgba(15, 23, 42, 0.18)',
-            },
-        };
+    dockLabel: {
+        position: 'absolute',
+        left: '100%',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        ml: 2.5,
+        whiteSpace: 'nowrap',
+        color: 'text.primary',
+        fontSize: { xs: '0.78rem', sm: '0.82rem' },
+        fontWeight: 500,
     },
     infoDialogTitleRow: {
         display: 'inline-flex',

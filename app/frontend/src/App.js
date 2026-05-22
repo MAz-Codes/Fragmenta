@@ -21,6 +21,10 @@ import {
     FormControl,
     Select,
     MenuItem,
+    Menu,
+    ListItemIcon,
+    ListItemText,
+    Divider,
     Accordion,
     AccordionSummary,
     AccordionDetails,
@@ -52,7 +56,8 @@ import {
     Piano as PerformanceIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
-    Trash2 as DeleteIcon
+    Trash2 as DeleteIcon,
+    Menu as MenuIcon,
 } from 'lucide-react';
 import api from './api';
 import HfAuthDialog from './components/HfAuthDialog';
@@ -251,7 +256,18 @@ function App() {
         [colorMode]
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
-    const isIconOnlySidebar = useMediaQuery(appTheme.breakpoints.between('md', 'lg'));
+    // Vertical icon-only mode: between the compact (horizontal) threshold
+    // and a custom upper bound. The MUI `lg` breakpoint at 1200 was too
+    // eager — labels collapsed while there was still plenty of room.
+    const isIconOnlySidebar = useMediaQuery('(min-width: 900px) and (max-width: 1099.95px)');
+    // Mobile/very-small width — the nav rail goes horizontal (compact)
+    // AND drops the text labels, matching the icon-only treatment used
+    // on mid-size vertical.
+    const isMobileLayout = useMediaQuery(appTheme.breakpoints.down('sm'));
+    // Dock collapses to a hamburger at the same threshold where the nav
+    // rail flips horizontal — keeps the chrome transition unified.
+    const isDockCollapsed = isCompactLayout;
+    const [dockMenuAnchor, setDockMenuAnchor] = useState(null);
 
     useEffect(() => {
         setSelectedUnwrappedModel('');
@@ -1071,51 +1087,6 @@ function App() {
                         </Box>
 
                         <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
-                            <Box sx={appStyles.headerActionsGrid(isCompactLayout)}>
-                                <Button
-                                    variant="outlined"
-                                    color="secondary"
-                                    size="small"
-                                    startIcon={<CloudDownloadIcon />}
-                                    onClick={() => setCheckpointMgrOpen(true)}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    Get Models
-                                </Button>
-                                <Button
-                                    variant="contained"
-                                    color="primary"
-                                    size="small"
-                                    startIcon={<RefreshIcon />}
-                                    onClick={() => setShowFreeGPUDialog(true)}
-                                    disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                                    sx={appStyles.headerActionButtonWithOpacity(Boolean(gpuMemoryStatus && gpuMemoryStatus.cuda))}
-                                >
-                                    {isFreeingGPU ? 'Freeing...' : 'Free GPU'}
-                                </Button>
-                                <Button
-                                    variant="outlined"
-                                    color="secondary"
-                                    size="small"
-                                    startIcon={<FolderOpenIcon />}
-                                    onClick={handleOpenOutputFolder}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    Outputs
-                                </Button>
-                                <Button
-                                    variant="contained"
-                                    color="error"
-                                    size="small"
-                                    startIcon={<RefreshIcon />}
-                                    onClick={() => setShowStartFreshDialog(true)}
-                                    disabled={isStartingFresh}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    {isStartingFresh ? 'Starting...' : 'Fresh Start'}
-                                </Button>
-                            </Box>
-
                             <Box sx={appStyles.gpuCard(isCompactLayout)}>
                                 {gpuMemoryStatus && gpuMemoryStatus.cuda ? (
                                     <>
@@ -1140,14 +1111,8 @@ function App() {
                                             <Box sx={appStyles.gpuUsageTrack}>
                                                 <Box
                                                     sx={appStyles.gpuUsageFill(
-                                                        `${Math.min((gpuMemoryStatus.cuda.allocated / gpuMemoryStatus.cuda.total) * 100, 100)}%`,
-                                                        'error.main'
-                                                    )}
-                                                />
-                                                <Box
-                                                    sx={appStyles.gpuUsageFill(
-                                                        `${Math.min(((gpuMemoryStatus.cuda.allocated + gpuMemoryStatus.cuda.cached) / gpuMemoryStatus.cuda.total) * 100, 100)}%`,
-                                                        'warning.main'
+                                                        `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
+                                                        'warm.main'
                                                     )}
                                                 />
                                             </Box>
@@ -1191,7 +1156,7 @@ function App() {
                     {/* Main Content with Sidebar Layout */}
                     <Box sx={appStyles.mainLayout}>
                         {/* Left Sidebar with Vertical Tabs */}
-                        <Paper sx={appStyles.navPaper}>
+                        <Paper sx={appStyles.navPaper(isCompactLayout, isIconOnlySidebar)}>
                             <Tabs
                                 value={tabValue}
                                 onChange={handleTabChange}
@@ -1199,13 +1164,13 @@ function App() {
                                 aria-label="main navigation tabs"
                                 sx={appStyles.navigationTabs(isCompactLayout, isIconOnlySidebar)}
                             >
-                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Data Processing'} />
-                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Training'} />
-                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Generation'} />
+                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Data Processing'} />
+                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
+                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
                                 <Tab
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
-                                    label={isIconOnlySidebar ? undefined : (
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : (
                                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
                                             Performance
                                             <Switch
@@ -1230,7 +1195,7 @@ function App() {
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
                                     <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
-                                            <Paper sx={{ p: 2 }} variant="outlined">
+                                            <Paper sx={{ p: 2, borderRadius: 2.5 }} variant="outlined">
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                                                     <UploadIcon size={20} />
                                                     <Typography variant="h6">Manual Annotation</Typography>
@@ -1250,25 +1215,24 @@ function App() {
                                                     />
                                                 ))}
 
-                                                <Button
-                                                    variant="outlined"
-                                                    startIcon={<AddIcon />}
-                                                    onClick={addUploadRow}
-                                                    sx={appStyles.addRowButton}
-                                                >
-                                                    Add Another Row
-                                                </Button>
-
-                                                <Button
-                                                    variant="contained"
-                                                    size="large"
-                                                    onClick={processFiles}
-                                                    disabled={isProcessing}
-                                                    startIcon={isProcessing ? <CircularProgress size={20} /> : <UploadIcon />}
-                                                    fullWidth
-                                                >
-                                                    {isProcessing ? 'Saving…' : 'Save to dataset'}
-                                                </Button>
+                                                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mt: 1 }}>
+                                                    <Button
+                                                        variant="outlined"
+                                                        startIcon={<AddIcon />}
+                                                        onClick={addUploadRow}
+                                                    >
+                                                        Add Another Row
+                                                    </Button>
+                                                    <Box sx={{ flex: 1 }} />
+                                                    <Button
+                                                        variant="contained"
+                                                        onClick={processFiles}
+                                                        disabled={isProcessing}
+                                                        startIcon={isProcessing ? <CircularProgress size={20} /> : <UploadIcon />}
+                                                    >
+                                                        {isProcessing ? 'Saving…' : 'Save to dataset'}
+                                                    </Button>
+                                                </Box>
                                             </Paper>
 
                                             <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
@@ -2514,7 +2478,7 @@ function App() {
                                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
                                         <AlertIcon size={48} color="#FFB74D" />
                                         <Typography variant="body1" color="textSecondary" align="center">
-                                            Performance mode is turned off. Toggle on from the sidebar if you wish to enter performance mode.
+                                            Performance mode is turned off. Toggle on from the {(isIconOnlySidebar || isMobileLayout) ? 'bottom-left menu' : 'sidebar'} if you wish to enter performance mode.
                                         </Typography>
                                     </Box>
                                 )}
@@ -2623,23 +2587,181 @@ function App() {
                 </Container>
             </Box>
 
-            <IconButton
-                aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-                title={colorMode === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-                onClick={toggleColorMode}
-                sx={appStyles.modeToggleButton}
-            >
-                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
-            </IconButton>
+            {isDockCollapsed ? (
+                <>
+                    <IconButton
+                        aria-label="Open actions menu"
+                        onClick={(e) => setDockMenuAnchor(e.currentTarget)}
+                        sx={appStyles.dockHamburger}
+                    >
+                        <MenuIcon size={18} />
+                    </IconButton>
+                    <Menu
+                        anchorEl={dockMenuAnchor}
+                        open={Boolean(dockMenuAnchor)}
+                        onClose={() => setDockMenuAnchor(null)}
+                        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+                        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                    >
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setCheckpointMgrOpen(true); }}
+                        >
+                            <ListItemIcon><CloudDownloadIcon size={18} /></ListItemIcon>
+                            <ListItemText>Get Models</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
+                        >
+                            <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
+                            <ListItemText>Outputs</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setShowFreeGPUDialog(true); }}
+                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
+                        >
+                            <ListItemIcon>
+                                {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
+                            </ListItemIcon>
+                            <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setShowStartFreshDialog(true); }}
+                            disabled={isStartingFresh}
+                            sx={{ color: 'error.main', '& .MuiListItemIcon-root': { color: 'inherit' } }}
+                        >
+                            <ListItemIcon>
+                                {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
+                            </ListItemIcon>
+                            <ListItemText>{isStartingFresh ? 'Starting…' : 'Fresh Start'}</ListItemText>
+                        </MenuItem>
+                        <Divider />
+                        {(isIconOnlySidebar || isMobileLayout) && (
+                            <MenuItem
+                                onClick={() => { setDockMenuAnchor(null); togglePerformance(); }}
+                                sx={performanceEnabled
+                                    ? { color: 'warm.main', '& .MuiListItemIcon-root': { color: 'inherit' } }
+                                    : undefined}
+                            >
+                                <ListItemIcon><PerformanceIcon size={18} /></ListItemIcon>
+                                <ListItemText>{performanceEnabled ? 'Performance: On' : 'Performance: Off'}</ListItemText>
+                            </MenuItem>
+                        )}
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); toggleColorMode(); }}
+                        >
+                            <ListItemIcon>
+                                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                            </ListItemIcon>
+                            <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
+                        >
+                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
+                            <ListItemText>About</ListItemText>
+                        </MenuItem>
+                    </Menu>
+                </>
+            ) : (
+                <Box sx={appStyles.bottomDock}>
+                    {(isIconOnlySidebar || isMobileLayout) && (
+                        <Box sx={appStyles.dockItem}>
+                            <IconButton
+                                aria-label={performanceEnabled ? 'Disable performance mode' : 'Enable performance mode'}
+                                onClick={togglePerformance}
+                                sx={performanceEnabled
+                                    ? [appStyles.dockIconButton, { color: 'warm.main', '&:hover': { color: 'warm.main' } }]
+                                    : appStyles.dockIconButton}
+                            >
+                                <PerformanceIcon size={18} />
+                            </IconButton>
+                            <Typography className="dock-label" sx={appStyles.dockLabel}>
+                                {performanceEnabled ? 'Performance: On' : 'Performance: Off'}
+                            </Typography>
+                        </Box>
+                    )}
 
-            <IconButton
-                aria-label="Open about and documentation"
-                title="About & Documentation"
-                onClick={() => setShowInfoDialog(true)}
-                sx={appStyles.infoButton}
-            >
-                <InfoIcon size={18} />
-            </IconButton>
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Get models"
+                            onClick={() => setCheckpointMgrOpen(true)}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <CloudDownloadIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            Get Models
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Open outputs folder"
+                            onClick={handleOpenOutputFolder}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <FolderOpenIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            Outputs
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Free GPU memory"
+                            onClick={() => setShowFreeGPUDialog(true)}
+                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
+                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
+                        >
+                            {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {isFreeingGPU ? 'Freeing…' : 'Free GPU'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Fresh start"
+                            onClick={() => setShowStartFreshDialog(true)}
+                            disabled={isStartingFresh}
+                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonDanger]}
+                        >
+                            {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {isStartingFresh ? 'Starting…' : 'Fresh Start'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+                            onClick={toggleColorMode}
+                            sx={[appStyles.dockIconButton, { color: colorMode === 'light' ? 'night.main' : 'warm.main', '&:hover': { color: colorMode === 'light' ? 'night.main' : 'warm.main' } }]}
+                        >
+                            {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Open about and documentation"
+                            onClick={() => setShowInfoDialog(true)}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <InfoIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            About
+                        </Typography>
+                    </Box>
+                </Box>
+            )}
 
             <Dialog
                 open={showInfoDialog}

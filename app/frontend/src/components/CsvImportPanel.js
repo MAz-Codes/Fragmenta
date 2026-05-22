@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    Box, Paper, Typography, TextField, Button, MenuItem, Select, FormControl,
+    Box, Paper, Typography, Button, MenuItem, Select, FormControl,
     InputLabel, Alert, Table, TableHead, TableRow, TableCell, TableBody,
     TableContainer, Checkbox, Tooltip, CircularProgress, Chip,
 } from '@mui/material';
@@ -181,7 +181,7 @@ export default function CsvImportPanel({ onCommitted }) {
     const policyHelp = CONFLICT_POLICIES.find((p) => p.value === conflictPolicy)?.help || '';
 
     return (
-        <Paper sx={{ p: 2, mt: 3 }} variant="outlined">
+        <Paper sx={{ p: 2, mt: 3, borderRadius: 2.5 }} variant="outlined">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <CsvIcon size={20} />
                 <Typography variant="h6">Import CSV + Audio Folder</Typography>
@@ -192,36 +192,35 @@ export default function CsvImportPanel({ onCommitted }) {
                 other modes — duplicate filenames follow the conflict policy you choose.
             </Typography>
 
-            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
-                <TextField
-                    label="Audio folder"
-                    size="small"
-                    value={folderPath}
-                    onChange={(e) => setFolderPath(e.target.value)}
-                    placeholder="Click Browse to choose a folder…"
-                    sx={{ flexGrow: 1, minWidth: 260 }}
-                    InputProps={{ readOnly: true }}
+            <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                style={{ display: 'none' }}
+                onChange={handleCsvSelected}
+            />
+            {isDocker && (
+                <input
+                    ref={folderInputRef}
+                    type="file"
+                    webkitdirectory=""
+                    directory=""
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleFolderSelected}
                 />
+            )}
+
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
                 {isDocker ? (
-                    <>
-                        <input
-                            ref={folderInputRef}
-                            type="file"
-                            webkitdirectory=""
-                            directory=""
-                            multiple
-                            style={{ display: 'none' }}
-                            onChange={handleFolderSelected}
-                        />
-                        <Button
-                            variant="outlined"
-                            onClick={openFolderUpload}
-                            startIcon={uploadingFolder ? <CircularProgress size={16} /> : <UploadIcon size={16} />}
-                            disabled={uploadingFolder}
-                        >
-                            {uploadingFolder ? 'Uploading…' : 'Upload Folder'}
-                        </Button>
-                    </>
+                    <Button
+                        variant="outlined"
+                        onClick={openFolderUpload}
+                        startIcon={uploadingFolder ? <CircularProgress size={16} /> : <UploadIcon size={16} />}
+                        disabled={uploadingFolder}
+                    >
+                        {uploadingFolder ? 'Uploading…' : 'Upload Folder'}
+                    </Button>
                 ) : (
                     <Button
                         variant="outlined"
@@ -231,16 +230,6 @@ export default function CsvImportPanel({ onCommitted }) {
                         Browse
                     </Button>
                 )}
-            </Box>
-
-            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
-                <input
-                    ref={csvInputRef}
-                    type="file"
-                    accept=".csv,text/csv"
-                    style={{ display: 'none' }}
-                    onChange={handleCsvSelected}
-                />
                 <Button
                     variant="outlined"
                     onClick={openCsvPicker}
@@ -248,9 +237,7 @@ export default function CsvImportPanel({ onCommitted }) {
                 >
                     Choose CSV
                 </Button>
-                <Typography variant="body2" color="textSecondary" sx={{ flexGrow: 1 }}>
-                    {csvFile ? csvFile.name : 'No CSV chosen.'}
-                </Typography>
+                <Box sx={{ flex: 1 }} />
                 <Button
                     variant="contained"
                     onClick={runPreview}
@@ -260,6 +247,45 @@ export default function CsvImportPanel({ onCommitted }) {
                     {previewLoading ? 'Parsing…' : 'Preview'}
                 </Button>
             </Box>
+
+            {(folderPath || csvFile) && (
+                <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                    {folderPath && (
+                        <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                fontSize: '0.7rem',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                direction: 'rtl',
+                                textAlign: 'left',
+                            }}
+                            title={folderPath}
+                        >
+                            {folderPath}
+                        </Typography>
+                    )}
+                    {csvFile && (
+                        <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{
+                                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                                fontSize: '0.7rem',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                            }}
+                            title={csvFile.name}
+                        >
+                            {csvFile.name}
+                        </Typography>
+                    )}
+                </Box>
+            )}
 
             {previewError && <Alert severity="error" sx={{ mb: 2 }}>{previewError}</Alert>}
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}

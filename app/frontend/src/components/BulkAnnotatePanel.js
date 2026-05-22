@@ -260,7 +260,7 @@ export default function BulkAnnotatePanel({ onCommitted }) {
     const progressPct = status?.total ? Math.round((status.current / status.total) * 100) : 0;
 
     return (
-        <Paper sx={{ p: 2, mt: 3 }} variant="outlined">
+        <Paper sx={{ p: 2, mt: 3, borderRadius: 2.5 }} variant="outlined">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <TagsIcon size={20} />
                 <Typography variant="h6">Bulk Auto-Annotation</Typography>
@@ -341,37 +341,28 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                 </AccordionDetails>
             </Accordion>
 
-            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 2 }}>
-                <TextField
-                    label="Folder path"
-                    size="small"
-                    value={folderPath}
-                    onChange={(e) => setFolderPath(e.target.value)}
-                    placeholder="Click Browse to choose a folder…"
-                    sx={{ flexGrow: 1, minWidth: 260 }}
-                    disabled={isRunning}
-                    InputProps={{ readOnly: true }}
+            {isDocker && (
+                <input
+                    ref={folderInputRef}
+                    type="file"
+                    webkitdirectory=""
+                    directory=""
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleFolderSelected}
                 />
+            )}
+
+            <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap', mb: 1 }}>
                 {isDocker ? (
-                    <>
-                        <input
-                            ref={folderInputRef}
-                            type="file"
-                            webkitdirectory=""
-                            directory=""
-                            multiple
-                            style={{ display: 'none' }}
-                            onChange={handleFolderSelected}
-                        />
-                        <Button
-                            variant="outlined"
-                            onClick={openFolderUpload}
-                            startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon size={16} />}
-                            disabled={isRunning || uploading}
-                        >
-                            {uploading ? 'Uploading…' : 'Upload Folder'}
-                        </Button>
-                    </>
+                    <Button
+                        variant="outlined"
+                        onClick={openFolderUpload}
+                        startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon size={16} />}
+                        disabled={isRunning || uploading}
+                    >
+                        {uploading ? 'Uploading…' : 'Upload Folder'}
+                    </Button>
                 ) : (
                     <Button
                         variant="outlined"
@@ -394,6 +385,17 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                         <MenuItem value="rich">Rich (CLAP, ~2.35 GB)</MenuItem>
                     </Select>
                 </FormControl>
+                {tier === 'rich' && !clapAvailable && (
+                    <Button
+                        variant="outlined"
+                        onClick={downloadClap}
+                        startIcon={clapDownloading ? <CircularProgress size={16} /> : <CloudDownloadIcon size={16} />}
+                        disabled={clapDownloading}
+                    >
+                        {clapDownloading ? 'Downloading…' : 'Download CLAP'}
+                    </Button>
+                )}
+                <Box sx={{ flex: 1 }} />
                 <Tooltip title={richBlocked ? 'Download CLAP to enable Rich tier' : ''}>
                     <span>
                         <Button
@@ -406,17 +408,29 @@ export default function BulkAnnotatePanel({ onCommitted }) {
                         </Button>
                     </span>
                 </Tooltip>
-                {tier === 'rich' && !clapAvailable && (
-                    <Button
-                        variant="outlined"
-                        onClick={downloadClap}
-                        startIcon={clapDownloading ? <CircularProgress size={16} /> : <CloudDownloadIcon size={16} />}
-                        disabled={clapDownloading}
-                    >
-                        {clapDownloading ? 'Downloading…' : 'Download CLAP'}
-                    </Button>
-                )}
             </Box>
+
+            {folderPath && (
+                <Box sx={{ mb: 2 }}>
+                    <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                            fontSize: '0.7rem',
+                            display: 'block',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            direction: 'rtl',
+                            textAlign: 'left',
+                        }}
+                        title={folderPath}
+                    >
+                        {folderPath}
+                    </Typography>
+                </Box>
+            )}
 
             {isRunning && (
                 <Box sx={{ mb: 2 }}>

@@ -357,7 +357,6 @@ export default function PerformanceChannel({
                                         fontSize: perfTokens.fontSize.small,
                                         letterSpacing: perfTokens.letterSpacing.wide,
                                         textTransform: 'uppercase',
-                                        fontFamily: 'inherit',
                                         px: 0.7,
                                         minWidth: 30,
                                         bgcolor: active ? color : 'transparent',
