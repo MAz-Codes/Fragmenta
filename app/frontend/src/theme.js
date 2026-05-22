@@ -87,7 +87,10 @@ let theme = createTheme({
         h4: { fontWeight: 600, letterSpacing: '-0.01em' },
         h5: { fontWeight: 600, letterSpacing: '-0.005em' },
         h6: { fontWeight: 600, letterSpacing: 0,  fontSize: '1.05rem' },
-        subtitle1: { fontWeight: 500, letterSpacing: '-0.005em' },
+        // Tier-2 section/accordion labels: same family + weight as h6 but
+        // slightly smaller. "Annotator Labels", "Advanced Settings",
+        // "Edit existing audio" all flow through here.
+        subtitle1: { fontWeight: 600, letterSpacing: 0,         fontSize: '0.95rem', textTransform: 'none' },
         subtitle2: { fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
@@ -1406,9 +1409,9 @@ export const appStyles = {
         color: 'text.primary',
         lineHeight: 0,
     },
-    sectionCardTitle: {
-        fontWeight: 500,
-    },
+    // Layout glue only — typography is owned by the Tier-1 (h6) variant.
+    // Leaving fontWeight here would override the canonical 600.
+    sectionCardTitle: {},
     // Same treatment as elevatedInfoCard — layout + motion only, theme
     // owns colour. Kept as its own export because the Selected Model card
     // sits in a different grid pane and may want page-specific tweaks
@@ -1614,9 +1617,7 @@ export const generatedFragmentsWindowStyles = {
         color: 'text.primary',
         lineHeight: 0,
     },
-    titleText: {
-        fontWeight: 500,
-    },
+    titleText: {},  // typography handled by the h6 variant in theme
     countText: {
         fontWeight: 600,
         minWidth: 20,
@@ -1711,9 +1712,7 @@ export const trainingMonitorStyles = {
         color: 'text.primary',
         lineHeight: 0,
     },
-    headerTitle: {
-        fontWeight: 500,
-    },
+    headerTitle: {},  // typography handled by the h6 variant in theme
     statusInline: {
         display: 'flex',
         alignItems: 'center',

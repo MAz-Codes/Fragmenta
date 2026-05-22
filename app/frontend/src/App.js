@@ -1422,7 +1422,7 @@ function App() {
 
                                                 <Accordion sx={appStyles.accordionMarginBottom}>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="h6">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -2113,7 +2113,7 @@ function App() {
 
                                                 <Accordion sx={appStyles.accordionMarginBottom}>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="h6">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -2437,7 +2437,7 @@ function App() {
 
                                             <Accordion sx={appStyles.accordionMarginBottom}>
                                                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                    <Typography variant="h6">Edit existing audio</Typography>
+                                                    <Typography variant="subtitle1">Edit existing audio</Typography>
                                                     <Typography variant="caption" color="textSecondary" sx={{ ml: 1, alignSelf: 'center' }}>
                                                         Style transfer · Inpaint · Extend
                                                     </Typography>
