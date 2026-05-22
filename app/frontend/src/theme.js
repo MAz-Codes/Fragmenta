@@ -1409,30 +1409,16 @@ export const appStyles = {
     sectionCardTitle: {
         fontWeight: 500,
     },
-    selectedModelCard: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            p: { xs: 1.5, sm: 2 },
-            mb: 2,
-            boxShadow: isDark
-                ? '0 14px 28px rgba(4, 8, 14, 0.44)'
-                : '0 14px 26px rgba(15, 23, 42, 0.1)',
-            borderRadius: 2.5,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.16)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.96) 0%, rgba(13, 20, 31, 0.92) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 20px 34px rgba(4, 8, 14, 0.56)'
-                    : '0 20px 34px rgba(15, 23, 42, 0.14)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.3s ease',
-            },
-            transition: 'all 0.3s ease',
-        };
+    // Same treatment as elevatedInfoCard — layout + motion only, theme
+    // owns colour. Kept as its own export because the Selected Model card
+    // sits in a different grid pane and may want page-specific tweaks
+    // later in the fine-pass.
+    selectedModelCard: {
+        p: { xs: 1.5, sm: 2 },
+        mb: 2,
+        borderRadius: 2.5,
+        transition: 'all 0.3s ease',
+        '&:hover': { transform: 'translateY(-1px)' },
     },
     boldBodyText: {
         fontWeight: 'bold',
