@@ -23,8 +23,8 @@ const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", syst
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
 // Display face used for Tier-1 section titles + Tier-2 accordion labels —
 // gives the cards a strong, distinctive header voice that doesn't compete
-// with body Inter. Variable weights 400–800 available; choose per-variant.
-const FONT_DISPLAY = '"Archivo", "Inter", system-ui, sans-serif';
+// with body Inter. Variable weights 400–700 available; choose per-variant.
+const FONT_DISPLAY = '"Finlandica Headline", "Inter", system-ui, sans-serif';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
