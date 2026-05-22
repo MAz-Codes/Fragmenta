@@ -23,8 +23,9 @@ const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", syst
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
 // Display face used for Tier-1 section titles + Tier-2 accordion labels —
 // gives the cards a strong, distinctive header voice that doesn't compete
-// with body Inter. Variable weights 400–800 available; choose per-variant.
-const FONT_DISPLAY = '"Archivo", "Inter", system-ui, sans-serif';
+// with body Inter. Variable axes: opsz 9–144, wght 400–700, SOFT 30–100.
+// Set per-variant via fontVariationSettings for display-optimised glyphs.
+const FONT_DISPLAY = '"Fraunces", "Inter", system-ui, sans-serif';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -90,13 +91,27 @@ let theme = createTheme({
         h3: { fontWeight: 600, letterSpacing: '-0.015em' },
         h4: { fontWeight: 600, letterSpacing: '-0.01em' },
         h5: { fontWeight: 600, letterSpacing: '-0.005em' },
-        // Tier-1 section card titles — Archivo at heavy weight for display
-        // presence without the extreme density of Archivo Black.
-        h6: { fontFamily: FONT_DISPLAY, fontWeight: 700, letterSpacing: 0, fontSize: '1.05rem' },
-        // Tier-2 section/accordion labels — same Archivo face, same heavy
-        // weight, slightly smaller. "Annotator Labels", "Advanced Settings",
-        // "Edit existing audio" all flow through here.
-        subtitle1: { fontFamily: FONT_DISPLAY, fontWeight: 700, letterSpacing: 0, fontSize: '0.95rem', textTransform: 'none' },
+        // Tier-1 section card titles — Fraunces at the display optical
+        // size (opsz 144) with a touch of softness (SOFT 50) for an
+        // editorial, modern-elegant voice.
+        h6: {
+            fontFamily: FONT_DISPLAY,
+            fontWeight: 600,
+            letterSpacing: '-0.01em',
+            fontSize: '1.2rem',
+            fontVariationSettings: '"opsz" 144, "SOFT" 50',
+        },
+        // Tier-2 section/accordion labels — same Fraunces, same display
+        // optical size + softness, slightly smaller. "Annotator Labels",
+        // "Advanced Settings", "Edit existing audio" all flow through here.
+        subtitle1: {
+            fontFamily: FONT_DISPLAY,
+            fontWeight: 600,
+            letterSpacing: '-0.005em',
+            fontSize: '1.05rem',
+            textTransform: 'none',
+            fontVariationSettings: '"opsz" 144, "SOFT" 50',
+        },
         subtitle2: { fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
