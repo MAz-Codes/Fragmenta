@@ -1127,30 +1127,15 @@ export const appStyles = {
             height: 20,
         },
     }),
-    elevatedInfoCard: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            p: { xs: 1.5, sm: 2 },
-            mb: 2,
-            boxShadow: isDark
-                ? '0 14px 28px rgba(4, 8, 14, 0.44)'
-                : '0 14px 26px rgba(15, 23, 42, 0.1)',
-            borderRadius: 2.5,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.16)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.96) 0%, rgba(13, 20, 31, 0.92) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 20px 34px rgba(4, 8, 14, 0.56)'
-                    : '0 20px 34px rgba(15, 23, 42, 0.14)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.3s ease',
-            },
-            transition: 'all 0.3s ease',
-        };
+    // Used by Dataset Status / Training Configuration / Audio Generation /
+    // Selected Model cards. Layout + motion only — MuiPaper owns bg/border/
+    // shadow so the theme palette actually applies.
+    elevatedInfoCard: {
+        p: { xs: 1.5, sm: 2 },
+        mb: 2,
+        borderRadius: 2.5,
+        transition: 'all 0.3s ease',
+        '&:hover': { transform: 'translateY(-1px)' },
     },
     modelMissingAlert: {
         mt: 2,
@@ -1570,29 +1555,15 @@ export const tabPanelStyles = {
 };
 
 export const audioUploadRowStyles = {
-    card: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            mb: { xs: 1.5, sm: 2 },
-            boxShadow: isDark
-                ? '0 12px 24px rgba(4, 8, 14, 0.34)'
-                : '0 12px 24px rgba(15, 23, 42, 0.1)',
-            borderRadius: 2.2,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.15)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.96) 0%, rgba(13, 20, 31, 0.92) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 16px 30px rgba(4, 8, 14, 0.46)'
-                    : '0 16px 30px rgba(15, 23, 42, 0.14)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.3s ease',
-            },
-            transition: 'all 0.3s ease',
-        };
+    // Layout / motion only — MuiPaper theme override owns background, border,
+    // and shadow. Avoids the old palette leaking through inline gradients.
+    card: {
+        mb: { xs: 1.5, sm: 2 },
+        borderRadius: 2.2,
+        transition: 'all 0.3s ease',
+        '&:hover': {
+            transform: 'translateY(-1px)',
+        },
     },
     cardContent: {
         p: { xs: 1.5, sm: 2 },
@@ -1601,27 +1572,20 @@ export const audioUploadRowStyles = {
         },
     },
     gridSpacing: { xs: 1.5, sm: 2 },
-    uploadDropZone: (isDragActive) => (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            border: isDark
-                ? '1.5px dashed rgba(194, 207, 228, 0.35)'
-                : '1.5px dashed rgba(100, 116, 139, 0.34)',
-            borderRadius: 2,
-            p: { xs: 1.5, sm: 2 },
-            textAlign: 'center',
-            cursor: 'pointer',
-            '&:hover': {
-                borderColor: 'primary.main',
-                backgroundColor: isDark
-                    ? 'rgba(53, 194, 212, 0.08)'
-                    : 'rgba(20, 151, 168, 0.08)',
-            },
-            backgroundColor: isDragActive
-                ? (isDark ? 'rgba(53, 194, 212, 0.12)' : 'rgba(20, 151, 168, 0.12)')
-                : (isDark ? 'rgba(10, 15, 23, 0.8)' : 'rgba(255, 255, 255, 0.9)'),
-        };
-    },
+    uploadDropZone: (isDragActive) => ({
+        border: '1.5px dashed',
+        borderColor: isDragActive ? 'primary.main' : 'divider',
+        borderRadius: 2,
+        p: { xs: 1.5, sm: 2 },
+        textAlign: 'center',
+        cursor: 'pointer',
+        bgcolor: isDragActive ? 'action.selected' : 'action.hover',
+        transition: 'border-color 160ms ease, background-color 160ms ease',
+        '&:hover': {
+            borderColor: 'primary.main',
+            bgcolor: 'action.selected',
+        },
+    }),
     hiddenInput: {
         display: 'none',
     },
@@ -1639,24 +1603,13 @@ export const audioUploadRowStyles = {
 };
 
 export const generatedFragmentsWindowStyles = {
-    rootPaper: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            p: 2,
-            height: 240,
-            display: 'flex',
-            flexDirection: 'column',
-            borderRadius: 2.5,
-            borderColor: isDark
-                ? 'rgba(194, 207, 228, 0.16)'
-                : 'rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.94) 0%, rgba(13, 20, 31, 0.9) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            boxShadow: isDark
-                ? '0 14px 28px rgba(4, 8, 14, 0.42)'
-                : '0 14px 28px rgba(15, 23, 42, 0.1)',
-        };
+    // Theme-driven coloring — MuiPaper handles bg/border/shadow.
+    rootPaper: {
+        p: 2,
+        height: 240,
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: 2.5,
     },
     headerRow: {
         display: 'flex',
@@ -1690,27 +1643,18 @@ export const generatedFragmentsWindowStyles = {
         height: '100%',
         color: 'text.secondary',
     },
-    listRoot: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            flex: 1,
-            overflow: 'auto',
-            maxHeight: 180,
-            '& .MuiListItem-root': {
-                border: '1px solid',
-                borderColor: isDark
-                    ? 'rgba(194, 207, 228, 0.16)'
-                    : 'rgba(15, 23, 42, 0.12)',
-                borderRadius: 1.5,
-                mb: 1,
-                backgroundColor: isDark
-                    ? 'rgba(12, 18, 28, 0.62)'
-                    : 'rgba(248, 251, 255, 0.9)',
-                '&:last-child': {
-                    mb: 0,
-                },
-            },
-        };
+    listRoot: {
+        flex: 1,
+        overflow: 'auto',
+        maxHeight: 180,
+        '& .MuiListItem-root': {
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1.5,
+            mb: 1,
+            bgcolor: 'background.default',
+            '&:last-child': { mb: 0 },
+        },
     },
     listItem: {
         display: 'flex',
@@ -1753,33 +1697,15 @@ export const generatedFragmentsWindowStyles = {
 };
 
 export const trainingMonitorStyles = {
-    rootPaper: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            p: 3,
-            mb: 2,
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            boxShadow: isDark
-                ? '0 16px 30px rgba(4, 8, 14, 0.48)'
-                : '0 16px 30px rgba(15, 23, 42, 0.1)',
-            borderRadius: 2.5,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.16)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.96) 0%, rgba(13, 20, 31, 0.92) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 22px 38px rgba(4, 8, 14, 0.58)'
-                    : '0 22px 38px rgba(15, 23, 42, 0.14)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.3s ease',
-            },
-            transition: 'all 0.3s ease',
-        };
+    rootPaper: {
+        p: 3,
+        mb: 2,
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: 2.5,
+        transition: 'all 0.3s ease',
+        '&:hover': { transform: 'translateY(-1px)' },
     },
     headerRow: {
         display: 'flex',
@@ -1802,7 +1728,7 @@ export const trainingMonitorStyles = {
     headerTitle: {
         fontWeight: 500,
     },
-    statusInline: (muiTheme) => ({
+    statusInline: {
         display: 'flex',
         alignItems: 'center',
         gap: 0.75,
@@ -1811,10 +1737,8 @@ export const trainingMonitorStyles = {
         borderRadius: 999,
         border: '1px solid',
         borderColor: 'divider',
-        backgroundColor: muiTheme.palette.mode === 'dark'
-            ? 'rgba(10, 15, 23, 0.7)'
-            : 'rgba(255, 255, 255, 0.9)',
-    }),
+        bgcolor: 'background.default',
+    },
     statusDot: (status, animate = false) => ({
         width: 8,
         height: 8,
@@ -2185,7 +2109,7 @@ export const performancePanelStyles = {
         width: '100%',
         minHeight: 0,
     },
-    headerCard: {
+    headerCard: (theme) => ({
         display: 'flex',
         alignItems: 'center',
         gap: 2,
@@ -2193,9 +2117,11 @@ export const performancePanelStyles = {
         borderRadius: 2.5,
         border: '1px solid',
         borderColor: 'divider',
-        background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.08) 0%, rgba(159, 138, 230, 0.06) 100%)',
+        bgcolor: 'background.paper',
+        backgroundImage:
+            `linear-gradient(135deg, ${theme.palette.primary.main}14 0%, ${theme.palette.background.paper} 100%)`,
         flexWrap: { xs: 'wrap', md: 'nowrap' },
-    },
+    }),
     headerLeft: {
         display: 'flex',
         flexDirection: 'column',
@@ -2257,12 +2183,11 @@ export const performancePanelStyles = {
         p: 1.25,
         borderRadius: 2.5,
         border: `1px solid ${color}55`,
-        background: theme.palette.mode === 'dark'
-            ? `linear-gradient(160deg, ${color}14 0%, rgba(13, 20, 31, 0.94) 70%)`
-            : `linear-gradient(160deg, ${color}14 0%, ${theme.palette.background.paper} 70%)`,
+        bgcolor: 'background.paper',
+        backgroundImage: `linear-gradient(160deg, ${color}14 0%, ${theme.palette.background.paper} 70%)`,
         boxShadow: theme.palette.mode === 'dark'
-            ? `0 8px 22px rgba(4, 8, 14, 0.44), inset 0 0 0 1px ${color}22`
-            : `0 2px 8px rgba(0,0,0,0.1), inset 0 0 0 1px ${color}22`,
+            ? `0 8px 22px rgba(0, 0, 0, 0.55), inset 0 0 0 1px ${color}22`
+            : `0 6px 14px rgba(43, 31, 18, 0.10), inset 0 0 0 1px ${color}22`,
         width: { xs: '100%', md: 160 },
         flex: { xs: '1 1 100%', md: '0 0 160px' },
         minHeight: 0,
@@ -2299,24 +2224,27 @@ export const performancePanelStyles = {
         py: 1.25,
         minHeight: 0,
     },
-    masterMeterTrack: (theme) => ({
+    masterMeterTrack: {
         width: 10,
-        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.7)' : 'rgba(0, 0, 0, 0.08)',
+        bgcolor: 'background.default',
         borderRadius: 0.75,
         border: '1px solid',
-        borderColor: theme.palette.divider,
+        borderColor: 'divider',
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
         alignItems: 'flex-end',
-    }),
-    masterMeterFill: (color) => ({
+    },
+    masterMeterFill: (color) => (theme) => ({
         width: '100%',
         height: '0%',
-        background: `linear-gradient(0deg, ${color} 0%, ${color}DD 60%, #E3A34B 80%, #E36C61 100%)`,
+        // Peaks light up in warning (amber) then error (red) — uses theme
+        // tokens instead of hardcoded #E3A34B / #E36C61 so the meter shifts
+        // automatically when the palette changes.
+        background: `linear-gradient(0deg, ${color} 0%, ${color}DD 55%, ${theme.palette.warning.main} 78%, ${theme.palette.error.main} 100%)`,
         transition: 'height 0.05s linear',
     }),
-    masterFader: (color) => (theme) => ({
+    masterFader: (color) => ({
         height: '100%',
         color,
         '& .MuiSlider-thumb': { width: 16, height: 16 },
@@ -2325,11 +2253,11 @@ export const performancePanelStyles = {
         '& .MuiSlider-mark': {
             width: 6,
             height: 1,
-            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(157, 169, 188, 0.55)' : 'rgba(0, 0, 0, 0.25)',
+            bgcolor: 'text.disabled',
             opacity: 1,
         },
         '& .MuiSlider-markActive': {
-            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(157, 169, 188, 0.55)' : 'rgba(0, 0, 0, 0.25)',
+            bgcolor: 'text.disabled',
         },
     }),
     masterReadouts: {
@@ -2371,9 +2299,14 @@ export const performancePanelStyles = {
                 '&:hover': { backgroundColor: `${color}26`, borderColor: color },
             }
             : {
-                color: '#E36C61',
-                borderColor: theme.palette.mode === 'dark' ? 'rgba(227, 108, 97, 0.5)' : 'rgba(227, 108, 97, 0.8)',
-                '&:hover': { backgroundColor: 'rgba(227, 108, 97, 0.12)', borderColor: '#E36C61' },
+                color: 'error.main',
+                borderColor: 'error.main',
+                '&:hover': {
+                    bgcolor: theme.palette.mode === 'dark'
+                        ? `${theme.palette.error.main}1F`
+                        : `${theme.palette.error.main}14`,
+                    borderColor: 'error.main',
+                },
             }),
     }),
 };
