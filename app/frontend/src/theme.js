@@ -56,17 +56,20 @@ const DARK = {
 
 // --- Paper (light) palette --------------------------------------------------
 const LIGHT = {
-    bg:        '#EAE3D2',      // the user's exact cream
-    bgElev:    '#EFE9D9',
-    paper:     '#F2EBD9',
-    paperHi:   '#F7F1E2',
+    bg:        '#F2EDE3',      // lighter cream — less amber, closer to warm white
+    bgElev:    '#F6F1E8',
+    paper:     '#F8F3EA',
+    paperHi:   '#FBF6EE',
     divider:   'rgba(43, 31, 18, 0.16)',
     text:      '#2B1F12',      // warm dark brown
-    textDim:   '#6E5E48',
-    textFaint: '#9C8B70',
-    amber:     '#9E7228',      // deeper gold for contrast on cream
-    amberHi:   '#C49350',
-    amberLo:   '#6E4F17',
+    textDim:   '#4D3F2A',      // darker for ~7:1 contrast on cream
+    textFaint: '#7A6A50',      // bumped from #9C8B70 for ~4.5:1
+    // "amber" is a legacy token name — the accent is actually a deep
+    // cyan that mirrors dark mode. Cream + gold read as muddy yellow-on-
+    // amber; cyan gives the accents real separation from the warm paper.
+    amber:     '#1F7E94',      // deep cyan accent for legibility on cream
+    amberHi:   '#2DA0BC',
+    amberLo:   '#155F71',
     // Warm complement on cream — same hue family as dark mode but deeper
     // for legibility against the warm-paper background.
     warm:      '#C97A1A',
@@ -129,7 +132,7 @@ let theme = createTheme({
         subtitle2: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
-        button: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: '0.01em',     textTransform: 'none' },
+        button: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: '0.01em',     textTransform: 'none', fontSize: '0.8rem' },
         caption: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: '0.005em',   fontSize: '0.75rem' },
         overline: { fontFamily: FONT_DISPLAY, fontWeight: 600, letterSpacing: '0.12em',   textTransform: 'uppercase', fontSize: '0.7rem' },
     },
@@ -137,62 +140,118 @@ let theme = createTheme({
         MuiCssBaseline: {
             styleOverrides: {
                 ':root': { colorScheme: 'dark' },
+                // ---- Motion keyframes (Phase 2) ----
+                '@keyframes fragmenta-fade-up': {
+                    from: { opacity: 0, transform: 'translateY(12px)' },
+                    to:   { opacity: 1, transform: 'translateY(0)' },
+                },
+                '@keyframes fragmenta-fade-in': {
+                    from: { opacity: 0 },
+                    to:   { opacity: 1 },
+                },
+                '@keyframes fragmenta-press': {
+                    '0%':   { transform: 'scale(1)' },
+                    '40%':  { transform: 'scale(0.97)' },
+                    '100%': { transform: 'scale(1)' },
+                },
+                // Respect user preference for reduced motion.
+                '@media (prefers-reduced-motion: reduce)': {
+                    '*, *::before, *::after': {
+                        animationDuration: '0.01ms !important',
+                        animationIterationCount: '1 !important',
+                        transitionDuration: '0.01ms !important',
+                    },
+                },
                 body: {
                     margin: 0,
                     minHeight: '100vh',
-                    // Neutral charcoal — the amber accent does the warmth.
-                    // A faint diagonal sheen for life; no coloured glows.
+                    // Three-layer backdrop: warm radial in the bottom-
+                    // right corner, a softer cyan wash on the left, and
+                    // the diagonal grey gradient. The cyan is gentle so
+                    // the upper-right corner still reads neutral.
                     backgroundColor: DARK.bg,
                     backgroundImage:
-                        `linear-gradient(170deg, ${DARK.bg} 0%, #1B1C1D 45%, ${DARK.bg} 100%)`,
+                        `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.14), transparent 60%), ` +
+                        `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.11), transparent 55%), ` +
+                        `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`,
+                    backgroundAttachment: 'fixed',
                     color: DARK.text,
                     fontFeatureSettings: '"cv11", "ss01", "ss03"',  // Inter stylistic alts
                 },
                 '#root': { minHeight: '100vh' },
-                '*::-webkit-scrollbar': { width: '10px', height: '10px' },
+                // Always reserve a gutter for the page scrollbar so the
+                // layout doesn't shift when it appears/disappears. The
+                // previous `overflow: overlay` trick stopped working in
+                // newer Chromium/Electron builds (the keyword was removed),
+                // which caused content to jump left when a scrollbar showed.
+                html: { scrollbarGutter: 'stable' },
+                'body, body *': { scrollbarGutter: 'auto' },
+                '*::-webkit-scrollbar': { width: '8px', height: '8px' },
                 '*::-webkit-scrollbar-track': {
-                    background: 'rgba(39, 159, 187, 0.06)',
+                    background: 'transparent',
                     borderRadius: '999px',
                 },
                 '*::-webkit-scrollbar-thumb': {
-                    background: 'rgba(39, 159, 187, 0.32)',
+                    // Neutral gray — no accent color in chrome.
+                    background: 'rgba(255, 255, 255, 0.16)',
                     borderRadius: '999px',
                     border: '2px solid rgba(0, 0, 0, 0)',
                     backgroundClip: 'padding-box',
-                    '&:hover': { background: 'rgba(39, 159, 187, 0.52)' },
+                    '&:hover': { background: 'rgba(255, 255, 255, 0.28)' },
                 },
                 '*::-webkit-scrollbar-corner': { background: 'transparent' },
                 '*': {
                     scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(39, 159, 187, 0.32) rgba(39, 159, 187, 0.06)',
+                    scrollbarColor: 'rgba(255, 255, 255, 0.16) transparent',
                 },
             },
         },
         MuiPaper: {
             styleOverrides: {
                 root: {
-                    backgroundColor: DARK.paper,
-                    backgroundImage:
-                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
-                    border: `1px solid ${DARK.divider}`,
-                    boxShadow: '0 20px 38px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.02)',
-                    backdropFilter: 'blur(10px)',
+                    // Liquid Glass: highly translucent so the body's
+                    // radial cyan/warm glows bleed through visibly.
+                    // `saturate` amplifies that bleed to make tint pop.
+                    backgroundColor: 'rgba(38, 41, 44, 0.38)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(28px) saturate(200%)',
+                    WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+                    border: 'none',
+                    boxShadow:
+                        '0 24px 48px rgba(0, 0, 0, 0.55), ' +
+                        '0 4px 12px rgba(0, 0, 0, 0.35), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.22), ' +
+                        'inset 0 -1px 0 rgba(0, 0, 0, 0.35), ' +
+                        'inset 1px 0 0 rgba(255, 255, 255, 0.08), ' +
+                        'inset -1px 0 0 rgba(0, 0, 0, 0.20)',
                 },
             },
         },
         MuiCard: {
             styleOverrides: {
                 root: {
-                    backgroundColor: DARK.paper,
-                    backgroundImage:
-                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
-                    border: `1px solid ${DARK.divider}`,
-                    boxShadow: '0 10px 22px rgba(0, 0, 0, 0.45)',
-                    transition: 'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
+                    backgroundColor: 'rgba(38, 41, 44, 0.38)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(28px) saturate(200%)',
+                    WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+                    border: 'none',
+                    boxShadow:
+                        '0 24px 48px rgba(0, 0, 0, 0.55), ' +
+                        '0 4px 12px rgba(0, 0, 0, 0.35), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.22), ' +
+                        'inset 0 -1px 0 rgba(0, 0, 0, 0.35), ' +
+                        'inset 1px 0 0 rgba(255, 255, 255, 0.08), ' +
+                        'inset -1px 0 0 rgba(0, 0, 0, 0.20)',
+                    transition: 'box-shadow 220ms ease, transform 220ms ease, background-color 220ms ease',
                     '&:hover': {
-                        borderColor: 'rgba(39, 159, 187, 0.4)',
-                        boxShadow: '0 16px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(39, 159, 187, 0.18)',
-                        transform: 'translateY(-1px)',
+                        backgroundColor: 'rgba(46, 50, 54, 0.46)',
+                        boxShadow:
+                            '0 32px 64px rgba(0, 0, 0, 0.6), ' +
+                            '0 6px 16px rgba(0, 0, 0, 0.45), ' +
+                            'inset 0 1px 0 rgba(255, 255, 255, 0.30), ' +
+                            'inset 0 -1px 0 rgba(0, 0, 0, 0.40), ' +
+                            '0 0 0 1px rgba(39, 159, 187, 0.30)',
+                        transform: 'translateY(-2px)',
                     },
                 },
             },
@@ -203,22 +262,49 @@ let theme = createTheme({
             },
         },
         MuiButton: {
+            variants: [
+                {
+                    props: { color: 'warm', variant: 'contained' },
+                    style: {
+                        backgroundImage: `linear-gradient(135deg, ${DARK.warmHi} 0%, ${DARK.warm} 55%, ${DARK.warmLo} 100%)`,
+                        color: '#1A0F00',
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${DARK.warmHi} 0%, ${DARK.warmHi} 55%, ${DARK.warm} 100%)`,
+                        },
+                    },
+                },
+            ],
             styleOverrides: {
                 root: {
                     fontFamily: FONT_DISPLAY,
                     textTransform: 'none',
-                    borderRadius: 999,                 // pill — instrument-like
+                    borderRadius: 999,
                     fontWeight: 400,
                     paddingInline: 18,
                     lineHeight: 1.2,
                     letterSpacing: '0.01em',
-                    transition: 'transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background-color 160ms ease, color 160ms ease',
+                    transition: 'transform 220ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1), border-color 220ms ease, background-color 220ms ease, color 220ms ease',
+                    // Tactile press feedback — quick squeeze on mousedown.
+                    '&:active:not(.Mui-disabled)': {
+                        transform: 'scale(0.96)',
+                        transition: 'transform 80ms ease-out',
+                    },
                 },
                 contained: {
-                    boxShadow: '0 6px 16px rgba(0, 0, 0, 0.4)',
+                    boxShadow: '0 3px 8px rgba(0, 0, 0, 0.45), 0 12px 24px rgba(0, 0, 0, 0.55)',
                     '&:hover': {
-                        boxShadow: '0 10px 22px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(39, 159, 187, 0.4)',
+                        boxShadow: '0 5px 12px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(39, 159, 187, 0.4)',
                         transform: 'translateY(-1px)',
+                    },
+                    // Strip the gradient + colored fill when disabled so
+                    // every contained variant reads as a neutral gray
+                    // chip (matches the outlined "Stop" button's disabled
+                    // look).
+                    '&.Mui-disabled': {
+                        backgroundImage: 'none',
+                        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+                        color: 'rgba(255, 255, 255, 0.26)',
+                        boxShadow: 'none',
                     },
                 },
                 containedPrimary: {
@@ -232,12 +318,19 @@ let theme = createTheme({
                     backgroundImage: 'linear-gradient(135deg, #ED7B6E 0%, #C95A4F 100%)',
                 },
                 outlined: {
-                    borderColor: 'rgba(240, 237, 229, 0.18)',
-                    color: DARK.text,
+                    // Cyan accent by default — outlined still reads as
+                    // the secondary action vs filled contained, but
+                    // carries enough color to feel active.
+                    borderColor: 'rgba(39, 159, 187, 0.50)',
+                    color: DARK.amberHi,
                     '&:hover': {
                         borderColor: DARK.amber,
-                        backgroundColor: 'rgba(39, 159, 187, 0.08)',
+                        backgroundColor: 'rgba(39, 159, 187, 0.10)',
                         color: DARK.amberHi,
+                    },
+                    '&.Mui-disabled': {
+                        borderColor: 'rgba(240, 237, 229, 0.12)',
+                        color: 'rgba(255, 255, 255, 0.26)',
                     },
                 },
                 text: {
@@ -253,28 +346,30 @@ let theme = createTheme({
             styleOverrides: {
                 root: {
                     fontFamily: FONT_DISPLAY,
+                    fontSize: '0.8rem',
                     '&:not(.MuiInputBase-multiline)': { alignItems: 'center' },
                 },
                 input: {
                     fontFamily: FONT_DISPLAY,
+                    fontSize: '0.8rem',
                     lineHeight: 1.4,
-                    '&::placeholder': { fontFamily: FONT_DISPLAY, opacity: 0.6 },
+                    '&::placeholder': { fontFamily: FONT_DISPLAY, fontSize: '0.8rem', opacity: 0.6 },
                 },
             },
         },
         MuiInputLabel: {
             styleOverrides: {
-                root: { fontFamily: FONT_DISPLAY },
+                root: { fontFamily: FONT_DISPLAY, fontSize: '0.8rem' },
             },
         },
         MuiFormLabel: {
             styleOverrides: {
-                root: { fontFamily: FONT_DISPLAY },
+                root: { fontFamily: FONT_DISPLAY, fontSize: '0.8rem' },
             },
         },
         MuiFormHelperText: {
             styleOverrides: {
-                root: { fontFamily: FONT_DISPLAY },
+                root: { fontFamily: FONT_DISPLAY, fontSize: '0.7rem' },
             },
         },
         MuiTextField: {
@@ -297,6 +392,7 @@ let theme = createTheme({
             styleOverrides: {
                 root: {
                     fontFamily: FONT_DISPLAY,
+                    fontSize: '0.8rem',
                     backgroundColor: 'rgba(10, 8, 6, 0.5)',
                     borderRadius: 8,
                     '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(240, 237, 229, 0.14)' },
@@ -306,13 +402,14 @@ let theme = createTheme({
                         boxShadow: '0 0 0 3px rgba(39, 159, 187, 0.12)',
                     },
                 },
-                select: { display: 'flex', alignItems: 'center' },
+                select: { display: 'flex', alignItems: 'center', fontSize: '0.8rem' },
             },
         },
         MuiMenuItem: {
             styleOverrides: {
                 root: {
                     fontFamily: FONT_DISPLAY,
+                    fontSize: '0.8rem',
                     backgroundColor: DARK.paper,
                     '&:hover': { backgroundColor: DARK.paperHi },
                     '&.Mui-selected': {
@@ -351,25 +448,46 @@ let theme = createTheme({
         MuiAccordion: {
             styleOverrides: {
                 root: {
-                    backgroundColor: DARK.paper,
-                    border: `1px solid ${DARK.divider}`,
-                    borderRadius: 10,
+                    // 25px matches every other Tier-1 card (borderRadius: 2.5
+                    // in sx === 2.5 × theme.shape.borderRadius (10) = 25px).
+                    // The :first/:last-of-type overrides re-assert 25 against
+                    // MUI's defaults, which otherwise clamp matching corners
+                    // back to theme.shape.borderRadius (10) and produce an
+                    // asymmetric squash when the Accordion has a div sibling
+                    // on only one side.
+                    borderRadius: 25,
                     overflow: 'hidden',
+                    marginBottom: 16,
                     '&:before': { display: 'none' },
-                    '&.Mui-expanded': { margin: 0 },
+                    '&:first-of-type': {
+                        borderTopLeftRadius: 25,
+                        borderTopRightRadius: 25,
+                    },
+                    '&:last-of-type': {
+                        borderBottomLeftRadius: 25,
+                        borderBottomRightRadius: 25,
+                    },
+                    '&.Mui-expanded': {
+                        marginTop: 0,
+                        marginBottom: 16,
+                    },
+                    // MUI's default collapses marginBottom to 0 when an
+                    // expanded Accordion is :last-of-type — that's more
+                    // specific than our &.Mui-expanded rule, so we match
+                    // its specificity here to keep the gap consistent.
+                    '&.Mui-expanded:last-of-type': { marginBottom: 16 },
                 },
             },
         },
         MuiAccordionSummary: {
             styleOverrides: {
                 root: {
-                    backgroundColor: DARK.paperHi,
-                    borderRadius: 10,
-                    minHeight: 44,
-                    '& .MuiAccordionSummary-content': { margin: '10px 0', alignItems: 'center' },
-                    '&.Mui-expanded': { minHeight: 44 },
-                    '&.Mui-expanded .MuiAccordionSummary-content': { margin: '10px 0' },
-                    '&:hover': { backgroundColor: '#1A262A' },
+                    backgroundColor: 'transparent',
+                    minHeight: 48,
+                    '& .MuiAccordionSummary-content': { margin: '12px 0', alignItems: 'center' },
+                    '&.Mui-expanded': { minHeight: 48 },
+                    '&.Mui-expanded .MuiAccordionSummary-content': { margin: '12px 0' },
+                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.06)' },
                 },
             },
         },
@@ -521,10 +639,14 @@ let theme = createTheme({
             styleOverrides: {
                 root: {
                     color: DARK.textDim,
-                    transition: 'all 160ms ease',
+                    transition: 'background-color 220ms ease, color 220ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1)',
                     '&:hover': {
                         backgroundColor: 'rgba(39, 159, 187, 0.10)',
                         color: DARK.amberHi,
+                    },
+                    '&:active:not(.Mui-disabled)': {
+                        transform: 'scale(0.92)',
+                        transition: 'transform 80ms ease-out',
                     },
                 },
             },
@@ -648,63 +770,110 @@ export const lightTheme = createTheme(theme, {
                 body: {
                     margin: 0,
                     minHeight: '100vh',
-                    // Solid warm cream with a very subtle radial warm spot
-                    // top-left for life. Paper apps don't need gradients.
+                    // Three-layer backdrop, mirroring dark mode:
+                    // soft cyan radial on the left, warm radial on the
+                    // bottom-right, and a gentle diagonal cream linear.
+                    // Opacities are low so the paper still reads neutral.
                     backgroundColor: LIGHT.bg,
                     backgroundImage:
-                        `radial-gradient(1200px 600px at 6% -10%, rgba(158, 114, 40, 0.06), transparent 55%), ` +
-                        `linear-gradient(180deg, ${LIGHT.bg} 0%, #E6DECB 100%)`,
+                        `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.06), transparent 60%), ` +
+                        `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.05), transparent 55%), ` +
+                        `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
+                    backgroundAttachment: 'fixed',
                     color: LIGHT.text,
                     fontFeatureSettings: '"cv11", "ss01", "ss03"',
                 },
                 '#root': { minHeight: '100vh' },
+                html: { scrollbarGutter: 'stable' },
                 '*::-webkit-scrollbar-track': {
-                    background: 'rgba(158, 114, 40, 0.06)',
+                    background: 'transparent',
                     borderRadius: '999px',
                 },
                 '*::-webkit-scrollbar-thumb': {
-                    background: 'rgba(158, 114, 40, 0.30)',
+                    background: 'rgba(43, 31, 18, 0.18)',
                     borderRadius: '999px',
-                    '&:hover': { background: 'rgba(158, 114, 40, 0.48)' },
+                    border: '2px solid rgba(0, 0, 0, 0)',
+                    backgroundClip: 'padding-box',
+                    '&:hover': { background: 'rgba(43, 31, 18, 0.32)' },
                 },
                 '*::-webkit-scrollbar-corner': { background: 'transparent' },
                 '*': {
                     scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(158, 114, 40, 0.30) rgba(158, 114, 40, 0.06)',
+                    scrollbarColor: 'rgba(43, 31, 18, 0.18) transparent',
                 },
             },
         },
         MuiPaper: {
             styleOverrides: {
                 root: {
-                    backgroundColor: LIGHT.paper,
-                    backgroundImage:
-                        `linear-gradient(180deg, ${LIGHT.paper} 0%, ${LIGHT.bgElev} 100%)`,
-                    border: `1px solid ${LIGHT.divider}`,
-                    boxShadow: '0 8px 22px rgba(43, 31, 18, 0.08)',
+                    // Liquid Glass on cream: translucent warm paper with
+                    // softer rim highlights so the surface reads as glass
+                    // on paper rather than glass on charcoal.
+                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(22px) saturate(160%)',
+                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                    border: 'none',
+                    boxShadow:
+                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
+                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
+                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
+                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
                 },
             },
         },
         MuiCard: {
             styleOverrides: {
                 root: {
-                    backgroundColor: LIGHT.paper,
-                    backgroundImage:
-                        `linear-gradient(180deg, ${LIGHT.paper} 0%, ${LIGHT.bgElev} 100%)`,
-                    border: `1px solid ${LIGHT.divider}`,
-                    boxShadow: '0 6px 14px rgba(43, 31, 18, 0.08)',
+                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(22px) saturate(160%)',
+                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                    border: 'none',
+                    boxShadow:
+                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
+                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08)',
+                    transition: 'box-shadow 220ms ease, transform 220ms ease, background-color 220ms ease',
                     '&:hover': {
-                        borderColor: 'rgba(158, 114, 40, 0.4)',
-                        boxShadow: '0 12px 22px rgba(43, 31, 18, 0.12)',
+                        backgroundColor: 'rgba(252, 246, 232, 0.82)',
+                        boxShadow:
+                            '0 24px 48px rgba(43, 31, 18, 0.14), ' +
+                            '0 5px 14px rgba(43, 31, 18, 0.08), ' +
+                            'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
+                            'inset 0 -1px 0 rgba(43, 31, 18, 0.10), ' +
+                            '0 0 0 1px rgba(31, 126, 148, 0.25)',
+                        transform: 'translateY(-2px)',
                     },
                 },
             },
         },
         MuiButton: {
+            variants: [
+                {
+                    props: { color: 'warm', variant: 'contained' },
+                    style: {
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warm} 55%, ${LIGHT.warmLo} 100%)`,
+                        color: '#FFFBF1',
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warmHi} 55%, ${LIGHT.warm} 100%)`,
+                        },
+                    },
+                },
+            ],
             styleOverrides: {
                 contained: {
-                    boxShadow: '0 6px 14px rgba(158, 114, 40, 0.18)',
-                    '&:hover': { boxShadow: '0 10px 20px rgba(158, 114, 40, 0.26)' },
+                    boxShadow: '0 6px 14px rgba(31, 126, 148, 0.18)',
+                    '&:hover': { boxShadow: '0 10px 20px rgba(31, 126, 148, 0.26)' },
+                    '&.Mui-disabled': {
+                        backgroundImage: 'none',
+                        backgroundColor: 'rgba(43, 31, 18, 0.08)',
+                        color: 'rgba(43, 31, 18, 0.30)',
+                        boxShadow: 'none',
+                    },
                 },
                 containedPrimary: {
                     backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
@@ -717,18 +886,26 @@ export const lightTheme = createTheme(theme, {
                     backgroundImage: 'linear-gradient(135deg, #C95A50 0%, #A03B33 100%)',
                 },
                 outlined: {
-                    borderColor: 'rgba(43, 31, 18, 0.18)',
-                    color: LIGHT.text,
+                    // Cyan accent by default, mirroring dark-mode outlined
+                    // buttons. Keeps "Browse / Choose CSV" etc. visually
+                    // active without going to a fully filled (contained)
+                    // treatment.
+                    borderColor: 'rgba(31, 126, 148, 0.50)',
+                    color: LIGHT.amber,
                     '&:hover': {
-                        borderColor: LIGHT.amber,
-                        backgroundColor: 'rgba(158, 114, 40, 0.08)',
+                        borderColor: LIGHT.amberLo,
+                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
                         color: LIGHT.amberLo,
+                    },
+                    '&.Mui-disabled': {
+                        borderColor: 'rgba(43, 31, 18, 0.12)',
+                        color: 'rgba(43, 31, 18, 0.30)',
                     },
                 },
                 text: {
                     color: LIGHT.text,
                     '&:hover': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.08)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.08)',
                         color: LIGHT.amberLo,
                     },
                 },
@@ -744,7 +921,7 @@ export const lightTheme = createTheme(theme, {
                         '&:hover fieldset': { borderColor: 'rgba(43, 31, 18, 0.36)' },
                         '&.Mui-focused fieldset': {
                             borderColor: LIGHT.amber,
-                            boxShadow: '0 0 0 3px rgba(158, 114, 40, 0.14)',
+                            boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
                         },
                     },
                 },
@@ -759,7 +936,7 @@ export const lightTheme = createTheme(theme, {
                     '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.36)' },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
                         borderColor: LIGHT.amber,
-                        boxShadow: '0 0 0 3px rgba(158, 114, 40, 0.14)',
+                        boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
                     },
                 },
             },
@@ -770,9 +947,9 @@ export const lightTheme = createTheme(theme, {
                     backgroundColor: LIGHT.paper,
                     '&:hover': { backgroundColor: LIGHT.paperHi },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.14)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
                         color: LIGHT.amberLo,
-                        '&:hover': { backgroundColor: 'rgba(158, 114, 40, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
                     },
                 },
             },
@@ -785,9 +962,9 @@ export const lightTheme = createTheme(theme, {
                     border: `1px solid rgba(43, 31, 18, 0.14)`,
                     borderRadius: 999,
                     '&.MuiChip-colorPrimary': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.14)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
                         color: LIGHT.amberLo,
-                        borderColor: 'rgba(158, 114, 40, 0.36)',
+                        borderColor: 'rgba(31, 126, 148, 0.36)',
                     },
                     '&.MuiChip-colorSuccess': {
                         backgroundColor: 'rgba(46, 138, 82, 0.14)',
@@ -804,20 +981,31 @@ export const lightTheme = createTheme(theme, {
         MuiAccordion: {
             styleOverrides: {
                 root: {
-                    backgroundColor: LIGHT.paper,
-                    border: `1px solid ${LIGHT.divider}`,
-                    borderRadius: 10,
+                    borderRadius: 25,
                     overflow: 'hidden',
+                    marginBottom: 16,
                     '&:before': { display: 'none' },
-                    '&.Mui-expanded': { margin: 0 },
+                    '&:first-of-type': {
+                        borderTopLeftRadius: 25,
+                        borderTopRightRadius: 25,
+                    },
+                    '&:last-of-type': {
+                        borderBottomLeftRadius: 25,
+                        borderBottomRightRadius: 25,
+                    },
+                    '&.Mui-expanded': {
+                        marginTop: 0,
+                        marginBottom: 16,
+                    },
+                    '&.Mui-expanded:last-of-type': { marginBottom: 16 },
                 },
             },
         },
         MuiAccordionSummary: {
             styleOverrides: {
                 root: {
-                    backgroundColor: LIGHT.paperHi,
-                    '&:hover': { backgroundColor: '#FAF4E4' },
+                    backgroundColor: 'transparent',
+                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
                 },
             },
         },
@@ -856,10 +1044,10 @@ export const lightTheme = createTheme(theme, {
         MuiListItem: {
             styleOverrides: {
                 root: {
-                    '&:hover': { backgroundColor: 'rgba(158, 114, 40, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(158, 114, 40, 0.20)' },
+                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
+                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
                     },
                 },
             },
@@ -869,7 +1057,7 @@ export const lightTheme = createTheme(theme, {
                 root: {
                     color: LIGHT.textDim,
                     '&.Mui-checked': { color: LIGHT.amber },
-                    '&:hover': { backgroundColor: 'rgba(158, 114, 40, 0.08)' },
+                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.08)' },
                 },
             },
         },
@@ -886,7 +1074,7 @@ export const lightTheme = createTheme(theme, {
                     border: `2px solid ${LIGHT.paper}`,
                     boxShadow: '0 2px 6px rgba(43, 31, 18, 0.20)',
                     '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(158, 114, 40, 0.18)',
+                        boxShadow: '0 0 0 8px rgba(31, 126, 148, 0.18)',
                     },
                 },
                 valueLabel: {
@@ -949,7 +1137,7 @@ export const lightTheme = createTheme(theme, {
                     color: LIGHT.textDim,
                     transition: 'all 160ms ease',
                     '&:hover': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.10)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
                         color: LIGHT.amberLo,
                     },
                 },
@@ -963,14 +1151,14 @@ export const lightTheme = createTheme(theme, {
                     color: LIGHT.textDim,
                     fontWeight: 400,
                     '&:hover': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.06)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.06)',
                         color: LIGHT.text,
                     },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(158, 114, 40, 0.14)',
+                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
                         color: LIGHT.amberLo,
                         borderColor: LIGHT.amber,
-                        '&:hover': { backgroundColor: 'rgba(158, 114, 40, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
                     },
                 },
             },
@@ -1016,8 +1204,12 @@ export const appStyles = {
         flexDirection: 'column',
     },
     container: (showWelcomePage) => ({
-        py: { xs: 1, sm: 1.5, md: 2.5 },
-        px: { xs: 0.75, sm: 1.25, md: 2.5 },
+        // Symmetric outer padding. Top is 0 — the header has its own
+        // internal top padding so it sticks at viewport y=0 without
+        // any visible movement during the first pixels of scroll.
+        pt: 0,
+        pb: { xs: 1.5, sm: 2, md: 3 },
+        px: { xs: 1.5, sm: 2, md: 3 },
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
@@ -1033,35 +1225,60 @@ export const appStyles = {
     headerRow: {
         display: 'flex',
         justifyContent: 'space-between',
-        alignItems: { xs: 'stretch', md: 'flex-start' },
+        alignItems: { xs: 'stretch', md: 'center' },
         flexDirection: { xs: 'column', md: 'row' },
         gap: { xs: 1.25, sm: 1.75, md: 2 },
-        mb: { xs: 1, sm: 1.5 },
+        mb: { xs: 0.5, sm: 0.75 },
+        // Sticky to viewport top — no chrome by default; the scrolled
+        // style overlays the glass treatment once the page moves. The
+        // top padding lives inside this element (not on Container) so
+        // the header sticks at y=0 from the very first pixel of scroll
+        // — zero movement.
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        pt: { xs: 1.5, sm: 2, md: 3 },
+        pb: { xs: 0.75, sm: 1 },
+        transition: 'background-color 220ms ease, backdrop-filter 220ms ease, border-color 220ms ease',
+        backdropFilter: 'blur(0px)',
+        WebkitBackdropFilter: 'blur(0px)',
+        backgroundColor: 'transparent',
+        borderBottom: '1px solid transparent',
     },
+    headerRowScrolled: (theme) => ({
+        backdropFilter: 'blur(14px)',
+        WebkitBackdropFilter: 'blur(14px)',
+        backgroundColor: theme.palette.mode === 'dark'
+            ? 'rgba(31, 32, 33, 0.55)'
+            : 'rgba(242, 237, 227, 0.65)',
+        borderBottom: theme.palette.mode === 'dark'
+            ? '1px solid rgba(255, 255, 255, 0.04)'
+            : '1px solid rgba(43, 31, 18, 0.08)',
+    }),
     headerBrand: {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
-        gap: { xs: 1.25, sm: 2 },
-        py: { xs: 0.25, sm: 0.5 },
+        gap: { xs: 1, sm: 1.5 },
+        py: 0,
     },
     logo: {
-        width: 60,
-        height: 60,
+        width: 44,
+        height: 44,
         backgroundImage: 'url(/fragmenta_icon_1024.png)',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        borderRadius: 2,
-        border: '1px solid rgba(194, 207, 228, 0.22)',
-        boxShadow: '0 10px 20px rgba(4, 8, 14, 0.36)',
+        borderRadius: 1.5,
         filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))',
     },
     title: {
         color: 'text.primary',
         fontFamily: '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace',
         fontWeight: 400,
+        fontSize: { xs: '1.5rem', sm: '1.65rem' },
         letterSpacing: '0.02em',
         textShadow: '0 2px 10px rgba(0, 0, 0, 0.6)',
+        lineHeight: 1.1,
     },
     headerActionsContainer: (isCompactLayout) => ({
         display: 'flex',
@@ -1071,94 +1288,65 @@ export const appStyles = {
         flexDirection: isCompactLayout ? 'column' : 'row',
         flexWrap: isCompactLayout ? 'wrap' : 'nowrap',
         width: { xs: '100%', md: 'auto' },
+        // Cards inset from the Container only — no extra pr needed.
     }),
     gpuCard: (isCompactLayout) => ({
-        p: { xs: 1.25, sm: 1.75 },
-        bgcolor: 'background.paper',
-        borderRadius: 2.5,
-        border: '1px solid',
-        borderColor: 'divider',
-        minWidth: isCompactLayout ? '100%' : 270,
+        // Layout-only — Paper component's MuiPaper.root override owns
+        // bg/border/shadow so this card inherits the same Liquid Glass
+        // treatment as every other Tier-1 card.
+        px: 1.75,
+        py: 1.25,
+        borderRadius: 2,
+        minWidth: isCompactLayout ? '100%' : 240,
         flexShrink: 0,
         position: 'relative',
         overflow: 'hidden',
-        boxShadow: '0 16px 32px rgba(4, 8, 14, 0.44)',
-    }),
-    gpuUsageTrack: {
-        position: 'relative',
-        width: '100%',
-        height: 6,
-        bgcolor: 'rgba(157, 169, 188, 0.2)',
-        borderRadius: 3,
-        overflow: 'hidden',
-    },
-    gpuUsageFill: (width, color) => ({
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        height: '100%',
-        width,
-        bgcolor: color,
-        borderRadius: 3,
-        transition: 'width 0.3s ease-in-out',
     }),
     emphasizedPrimaryBody2: {
         fontWeight: 'bold',
         color: 'primary.main',
     },
-    advancedSettingsDetails: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            backgroundColor: isDark
-                ? 'rgba(10, 15, 23, 0.46)'
-                : 'rgba(255, 255, 255, 0.82)',
-            borderTop: isDark
-                ? '1px solid rgba(194, 207, 228, 0.12)'
-                : '1px solid rgba(15, 23, 42, 0.08)',
-            borderBottomLeftRadius: 12,
-            borderBottomRightRadius: 12,
-            maxHeight: { xs: 'none', md: '400px' },
-            overflowY: { xs: 'visible', md: 'auto' },
-            overflowX: 'hidden',
-            '&::-webkit-scrollbar': {
-                width: '8px',
-            },
-            '&::-webkit-scrollbar-track': {
-                background: isDark
-                    ? 'rgba(157, 169, 188, 0.14)'
-                    : 'rgba(100, 116, 139, 0.14)',
-                borderRadius: '4px',
-            },
-            '&::-webkit-scrollbar-thumb': {
-                background: isDark
-                    ? 'rgba(157, 169, 188, 0.45)'
-                    : 'rgba(100, 116, 139, 0.42)',
-                borderRadius: '4px',
-                '&:hover': {
-                    background: isDark
-                        ? 'rgba(157, 169, 188, 0.62)'
-                        : 'rgba(100, 116, 139, 0.56)',
-                },
-            },
-        };
+    advancedSettingsDetails: {
+        // Pure pass-through. No maxHeight / inner scroll — that was
+        // truncating the bottom before the parent's rounded corner
+        // (the "cut" look). Content flows naturally; the whole page
+        // scrolls if the accordion gets tall.
     },
-    mainLayout: {
+    mainLayout: (isCompactLayout, isIconOnly) => ({
         display: 'flex',
         flexDirection: { xs: 'column', md: 'row' },
         width: '100%',
         flex: 1,
-        gap: { xs: 1, sm: 1.25, md: 1.5 },
+        gap: { xs: 1.25, sm: 1.75, md: 2.5 },
         borderRadius: 3,
         minHeight: 0,
-    },
+        // Reserve space on the left for the fixed nav rail in vertical
+        // mode. Compact mode keeps the rail in flow (horizontal at top).
+        pl: isCompactLayout
+            ? 0
+            : isIconOnly
+                ? `calc(64px + ${24}px)`
+                : `calc(220px + ${24}px)`,
+    }),
     navPaper: (isCompactLayout, isIconOnly) => ({
         width: isCompactLayout ? '100%' : isIconOnly ? 64 : 220,
-        backgroundColor: 'background.paper',
         borderRadius: 2.5,
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
+        // Vertical mode: `position: fixed` so the rail is anchored to
+        // the viewport directly. `top` is provided dynamically from
+        // App.js via a JS measurement of the first card's natural top
+        // edge — guarantees pixel-perfect alignment regardless of
+        // header content height or breakpoint.
+        ...(isCompactLayout
+            ? { height: '100%' }
+            : {
+                position: 'fixed',
+                left: { xs: 12, sm: 16, md: 24 },
+                maxHeight: { xs: 'calc(100vh - 90px)', md: 'calc(100vh - 120px)' },
+                zIndex: 50,
+            }),
     }),
     navigationTabs: (isCompactLayout, isIconOnly = false) => ({
         height: isCompactLayout ? 'auto' : '100%',
@@ -1172,7 +1360,9 @@ export const appStyles = {
             justifyContent: (isCompactLayout || isIconOnly) ? 'center' : 'flex-start',
             textAlign: (isCompactLayout || isIconOnly) ? 'center' : 'left',
             minHeight: { xs: 40, sm: 46 },
-            fontSize: { xs: '0.78rem', sm: '0.86rem' },
+            // Match the dropdown / Select font size so the nav rail labels
+            // read at the same scale as in-page form chrome.
+            fontSize: '0.8rem',
             fontWeight: 400,
             textTransform: 'none',
             color: 'text.secondary',
@@ -1196,10 +1386,10 @@ export const appStyles = {
             },
         },
     }),
-    mainContentPaper: (muiTheme) => ({
+    mainContentBox: (muiTheme) => ({
+        // Layout-only Box (no Paper chrome). Lives as a flex sibling to
+        // the nav rail; the cards inside sit directly on the app bg.
         flex: 1,
-        backgroundColor: 'background.paper',
-        borderRadius: 2.5,
         display: 'flex',
         flexDirection: 'column',
         minHeight: { xs: 'auto', md: 0 },
@@ -1217,12 +1407,27 @@ export const appStyles = {
     // Selected Model cards. Layout + motion only — MuiPaper owns bg/border/
     // shadow so the theme palette actually applies.
     elevatedInfoCard: {
-        p: { xs: 1.5, sm: 2 },
+        // Phase 3 spacing: generous interior padding so Tier-1 cards
+        // breathe. Aligns with the industry-app feel — cards have room.
+        p: { xs: 2.25, sm: 3 },
         mb: 2,
         borderRadius: 2.5,
         transition: 'all 0.3s ease',
         '&:hover': { transform: 'translateY(-1px)' },
     },
+    // Sticks the Dataset Status card to the top of the viewport during
+    // page scroll, mirroring the left nav rail's anchored position.
+    // Sticky (not fixed) so the card stays inside the Grid layout — no
+    // need to reserve space. Only enabled on md+ where the card sits in
+    // a side column; on compact widths it falls below the upload area
+    // and sticky would be useless.
+    datasetStatusSticky: (navTopPx) => ({
+        position: { md: 'sticky' },
+        top: { md: `${navTopPx}px` },
+        // Cancel the hover lift while sticky — translateY would offset
+        // the stuck position and make the card appear to nudge upward.
+        '&:hover': { transform: 'none' },
+    }),
     modelMissingAlert: {
         mt: 2,
         backgroundColor: 'rgba(219, 80, 68, 0)',
@@ -1240,56 +1445,6 @@ export const appStyles = {
             textDecoration: 'underline',
         },
     },
-    gpuHeaderRow: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        mb: 1,
-    },
-    gpuLabel: {
-        fontWeight: 500,
-    },
-    gpuStatusGroup: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 0.5,
-    },
-    gpuStatusDot: (status, animate = true) => ({
-        width: 6,
-        height: 6,
-        borderRadius: '50%',
-        bgcolor: status === 'good'
-            ? 'success.main'
-            : status === 'low'
-                ? 'warning.main'
-                : 'error.main',
-        animation: animate ? 'pulse 2s infinite' : 'none',
-        '@keyframes pulse': {
-            '0%': { opacity: 1 },
-            '50%': { opacity: 0.5 },
-            '100%': { opacity: 1 },
-        },
-    }),
-    gpuUsageWrap: {
-        mb: 1.25,
-    },
-    gpuFooterRow: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-    },
-    gpuFreeText: {
-        fontWeight: 'bold',
-    },
-    centeredCaption: {
-        display: 'block',
-        textAlign: 'center',
-    },
-    centeredCaptionWithMargin: {
-        display: 'block',
-        textAlign: 'center',
-        mt: 0.5,
-    },
     dataProcessingGrid: {
         flex: 1,
         minHeight: 0,
@@ -1306,6 +1461,9 @@ export const appStyles = {
         flex: 1,
         overflow: 'visible',
         pr: { xs: 0, md: 1 },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
     },
     secondaryPaneItem: {
         display: 'flex',
@@ -1341,9 +1499,6 @@ export const appStyles = {
     },
     fieldMarginBottomLarge: {
         mb: 3,
-    },
-    accordionMarginBottom: {
-        mb: 2,
     },
     sliderRow: {
         display: 'flex',
@@ -1488,7 +1643,7 @@ export const appStyles = {
     // sits in a different grid pane and may want page-specific tweaks
     // later in the fine-pass.
     selectedModelCard: {
-        p: { xs: 1.5, sm: 2 },
+        p: { xs: 2.25, sm: 3 },
         mb: 2,
         borderRadius: 2.5,
         transition: 'all 0.3s ease',
@@ -1514,37 +1669,29 @@ export const appStyles = {
     // nav rail. Icon buttons inside use the same flat rounded-square
     // language as MuiTab in icon-only mode; hovering anywhere on the dock
     // fades in each item's label to the right (via .dock-label).
-    bottomDock: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            position: 'fixed',
-            left: { xs: 12, sm: 16 },
-            bottom: { xs: 12, sm: 16 },
-            zIndex: 1350,
-            display: 'flex',
-            flexDirection: 'column',
-            p: { xs: 0.5, sm: 1 },
-            gap: { xs: 0.25, sm: 0.5 },
-            backgroundColor: 'background.paper',
-            borderRadius: 2.5,
-            border: '1px solid',
-            borderColor: 'divider',
-            boxShadow: isDark
-                ? '0 14px 28px rgba(0, 0, 0, 0.45)'
-                : '0 14px 28px rgba(15, 23, 42, 0.12)',
-            '& .dock-label': {
-                opacity: 0,
-                transform: 'translate(-8px, -50%)',
-                pointerEvents: 'none',
-                transition: 'opacity 220ms ease, transform 220ms ease',
-            },
-            '&:hover .dock-label, &:focus-within .dock-label': {
-                opacity: 1,
-                transform: 'translate(0, -50%)',
-                pointerEvents: 'auto',
-            },
-        };
-    },
+    // Layout-only — bg/border/shadow come from MuiPaper.root theme override.
+    bottomDock: (muiTheme) => ({
+        position: 'fixed',
+        left: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
+        bottom: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
+        zIndex: 1350,
+        display: 'flex',
+        flexDirection: 'column',
+        p: { xs: 0.5, sm: 1 },
+        gap: { xs: 0.25, sm: 0.5 },
+        borderRadius: 2.5,
+        '& .dock-label': {
+            opacity: 0,
+            transform: 'translate(-8px, -50%)',
+            pointerEvents: 'none',
+            transition: 'opacity 220ms ease, transform 220ms ease',
+        },
+        '&:hover .dock-label, &:focus-within .dock-label': {
+            opacity: 1,
+            transform: 'translate(0, -50%)',
+            pointerEvents: 'auto',
+        },
+    }),
     dockItem: {
         position: 'relative',
         display: 'flex',
@@ -1588,8 +1735,8 @@ export const appStyles = {
         const isDark = muiTheme.palette.mode === 'dark';
         return {
             position: 'fixed',
-            left: { xs: 12, sm: 16 },
-            bottom: { xs: 12, sm: 16 },
+            left: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
+            bottom: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
             zIndex: 1350,
             width: { xs: 38, sm: 42 },
             height: { xs: 38, sm: 42 },
@@ -1623,7 +1770,7 @@ export const appStyles = {
         whiteSpace: 'nowrap',
         color: 'text.primary',
         fontSize: { xs: '0.78rem', sm: '0.82rem' },
-        fontWeight: 500,
+        fontWeight: 400,
     },
     infoDialogTitleRow: {
         display: 'inline-flex',
@@ -1659,7 +1806,9 @@ export const appStyles = {
 
 export const tabPanelStyles = {
     root: {
-        p: { xs: 1.25, md: 2 },
+        px: 0,
+        pt: { xs: 1, md: 1.5 },
+        pb: { xs: 2, md: 3 },
         background: 'transparent',
         flex: 1,
         display: 'flex',
@@ -1670,21 +1819,13 @@ export const tabPanelStyles = {
 };
 
 export const audioUploadRowStyles = {
-    // Layout / motion only — MuiPaper theme override owns background, border,
-    // and shadow. Avoids the old palette leaking through inline gradients.
+    // Plain row — no surrounding card background/border. Just spacing
+    // between rows so the dropzone and TextField stand on their own.
     card: {
-        mb: { xs: 1.5, sm: 2 },
-        borderRadius: 2.2,
-        transition: 'all 0.3s ease',
-        '&:hover': {
-            transform: 'translateY(-1px)',
-        },
+        mb: { xs: 1, sm: 1.25 },
     },
     cardContent: {
-        p: { xs: 1.5, sm: 2 },
-        '&:last-child': {
-            pb: { xs: 1.5, sm: 2 },
-        },
+        p: 0,
     },
     gridSpacing: { xs: 1.5, sm: 2 },
     uploadDropZone: (isDragActive) => ({
@@ -1919,11 +2060,18 @@ export const trainingMonitorStyles = {
 export const welcomePageStyles = {
     backdrop: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
+        // Match the main app body's three-layer treatment so the
+        // welcome page reads as part of the same surface, not a
+        // separate dialog with its own palette.
         return {
             zIndex: 9999,
             background: isDark
-                ? 'radial-gradient(1200px 600px at 8% -15%, rgba(53, 194, 212, 0.2), transparent 55%), radial-gradient(800px 500px at 92% 110%, rgba(83, 193, 138, 0.16), transparent 65%), linear-gradient(160deg, #090C12 0%, #0C1119 45%, #090D13 100%)'
-                : 'radial-gradient(1200px 600px at 8% -15%, rgba(20, 151, 168, 0.16), transparent 55%), radial-gradient(800px 500px at 92% 110%, rgba(72, 171, 118, 0.14), transparent 65%), linear-gradient(160deg, #F4FAFF 0%, #EAF4FF 45%, #F8FCFF 100%)',
+                ? `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.18), transparent 60%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.14), transparent 55%), ` +
+                  `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`
+                : `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.09), transparent 60%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.08), transparent 55%), ` +
+                  `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -1931,22 +2079,17 @@ export const welcomePageStyles = {
             cursor: 'pointer',
         };
     },
-    panel: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
+    panel: () => {
+        // Transparent card so the backdrop gradient shows through;
+        // only the inner content (logo, title, button) is visible.
         return {
             textAlign: 'center',
             width: 'min(920px, 100%)',
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.2)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
+            border: 'none',
             borderRadius: 4,
-            background: isDark
-                ? 'linear-gradient(170deg, rgba(19, 27, 41, 0.95) 0%, rgba(12, 19, 31, 0.96) 100%)'
-                : 'linear-gradient(170deg, rgba(255, 255, 255, 0.98) 0%, rgba(242, 248, 255, 0.98) 100%)',
-            boxShadow: isDark
-                ? '0 32px 56px rgba(4, 8, 14, 0.64)'
-                : '0 24px 46px rgba(15, 23, 42, 0.2)',
-            backdropFilter: 'blur(10px)',
+            background: 'transparent',
+            boxShadow: 'none',
+            backdropFilter: 'none',
             px: { xs: 3, md: 7 },
             py: { xs: 5, md: 6 },
         };
@@ -1957,20 +2100,18 @@ export const welcomePageStyles = {
             width: { xs: 96, sm: 122 },
             height: { xs: 96, sm: 122 },
             backgroundImage: 'url(/fragmenta_icon_1024.png)',
-            backgroundSize: 'cover',
+            backgroundSize: 'contain',
+            backgroundRepeat: 'no-repeat',
             backgroundPosition: 'center',
-            borderRadius: 3,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.24)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            boxShadow: isDark
-                ? '0 16px 28px rgba(4, 8, 14, 0.45)'
-                : '0 12px 24px rgba(15, 23, 42, 0.22)',
+            // No border, no surface — only the icon and its drop shadow.
+            backgroundColor: 'transparent',
+            border: 'none',
+            boxShadow: 'none',
             filter: isDark
                 ? 'drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4))'
-                : 'drop-shadow(0 6px 12px rgba(15, 23, 42, 0.22))',
+                : 'drop-shadow(0 6px 12px rgba(43, 31, 18, 0.18))',
             mx: 'auto',
-            mb: 1.5,
+            mb: { xs: 3.5, sm: 5 },
         };
     },
     title: {

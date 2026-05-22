@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, CardContent, Grid, Box, Typography, TextField, IconButton } from '@mui/material';
+import { Grid, Box, Typography, TextField, IconButton } from '@mui/material';
 import { Upload as UploadIcon, Trash2 as DeleteIcon } from 'lucide-react';
 import { audioUploadRowStyles } from '../theme';
 
@@ -28,8 +28,8 @@ export default function AudioUploadRow({ index, data, onChange, onRemove }) {
     };
 
     return (
-        <Card sx={audioUploadRowStyles.card}>
-            <CardContent sx={audioUploadRowStyles.cardContent}>
+        <Box sx={audioUploadRowStyles.card}>
+            <Box sx={audioUploadRowStyles.cardContent}>
                 <Grid container spacing={audioUploadRowStyles.gridSpacing} alignItems="center">
                     <Grid item xs={12} sm={4}>
                         <Box
@@ -98,7 +98,7 @@ export default function AudioUploadRow({ index, data, onChange, onRemove }) {
                         </IconButton>
                     </Grid>
                 </Grid>
-            </CardContent>
-        </Card>
+            </Box>
+        </Box>
     );
 }

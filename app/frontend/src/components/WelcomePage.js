@@ -50,14 +50,6 @@ export default function WelcomePage({ open, onClose }) {
                 <Fade in={textVisible} timeout={1000}>
                     <Box>
                         <Typography
-                            variant="overline"
-                            sx={welcomePageStyles.overline}
-                        >
-                            An End-to-End Pipeline to Fine-Tune and Use Text-to-Audio Models.
-                        </Typography>
-
-
-                        <Typography
                             variant="body2"
                             sx={welcomePageStyles.footer}
                         >
@@ -67,7 +59,7 @@ export default function WelcomePage({ open, onClose }) {
                             variant="body2"
                             sx={welcomePageStyles.version}
                         >
-                            Version 0.1.1
+                            Version 0.2.0
                         </Typography>
                         <Button
                             variant="contained"

@@ -9,19 +9,15 @@ import time
 import webbrowser
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parent
 BACKEND_URL = "http://127.0.0.1:5001"
 HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
-# Windows: a multi-res .ico is generated from the PNG on first launch and the
-# process gets its own AppUserModelID so the taskbar treats Fragmenta as a
-# distinct app instead of grouping it under (and inheriting the icon of)
-# python.exe.
+
 WINDOWS_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta.ico"
 WINDOWS_APP_ID = "Fragmenta.Desktop.1"
-WINDOWS_WINDOW_TITLE = "Fragmenta Desktop"
+WINDOWS_WINDOW_TITLE = "Fragmenta"
 CHROMIUM_CANDIDATES = (
     "google-chrome",
     "google-chrome-stable",
@@ -33,7 +29,6 @@ CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
-
 
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
     """Wait until the Flask backend becomes reachable."""
@@ -48,13 +43,11 @@ def wait_for_backend(timeout_seconds: int = 60) -> bool:
         time.sleep(0.4)
     return False
 
-
 def backend_process_running() -> bool:
     """Return True if something is already listening on backend port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
         return sock.connect_ex(("127.0.0.1", 5001)) == 0
-
 
 def start_backend_subprocess() -> subprocess.Popen:
     env = os.environ.copy()
@@ -64,7 +57,6 @@ def start_backend_subprocess() -> subprocess.Popen:
         cwd=str(PROJECT_ROOT),
         env=env,
     )
-
 
 def run_browser_mode() -> int:
     backend_process = None
@@ -90,20 +82,12 @@ def run_browser_mode() -> int:
             except subprocess.TimeoutExpired:
                 backend_process.kill()
 
-
 def find_chromium() -> str | None:
-    """Return path to a Chromium-family browser, skipping snap-confined ones.
-
-    Snap'd browsers can't write to --user-data-dir outside ~/snap/, which
-    breaks --app mode with a custom profile path.
-    """
     for name in CHROMIUM_CANDIDATES:
         path = shutil.which(name)
         if not path:
             continue
         resolved = os.path.realpath(path)
-        # Snap launchers often appear as /snap/bin/<browser> but resolve to
-        # /usr/bin/snap, so check both forms before selecting the browser.
         if (
             path.startswith("/snap/")
             or resolved.startswith("/snap/")
@@ -122,7 +106,7 @@ def ensure_desktop_entry() -> None:
     contents = (
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=Fragmenta Desktop\n"
+        "Name=Fragmenta\n"
         "Comment=Fine-tune and use text-to-audio models\n"
         f"Icon={APP_ICON_PATH}\n"
         "Categories=AudioVideo;Audio;\n"
@@ -197,7 +181,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             except subprocess.TimeoutExpired:
                 backend_process.kill()
 
-
 def check_linux_webview_deps() -> tuple[bool, str]:
     """Check if Linux has required GTK/WebKit dependencies for pywebview."""
     if sys.platform != "linux":
@@ -213,7 +196,6 @@ def check_linux_webview_deps() -> tuple[bool, str]:
         return False, f"Missing GI bindings: {e}"
     except ValueError as e:
         return False, f"Missing GTK/WebKit: {e}"
-
 
 def _ensure_windows_icon() -> bool:
     """Generate a multi-resolution .ico from the source PNG if it's missing.
@@ -237,7 +219,6 @@ def _ensure_windows_icon() -> bool:
         print(f"Could not generate Windows icon: {exc}")
         return False
 
-
 def _windows_set_app_id() -> None:
     """Give the host process its own AppUserModelID. Without this, Windows
     looks up the taskbar icon by the host executable (python.exe) and groups
@@ -249,7 +230,6 @@ def _windows_set_app_id() -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
     except Exception as exc:
         print(f"Could not set AppUserModelID: {exc}")
-
 
 def _windows_apply_window_icon() -> None:
     """Replace the pywebview window's titlebar/taskbar icon with Fragmenta's.
@@ -271,8 +251,6 @@ def _windows_apply_window_icon() -> None:
         if not hwnd:
             return
         icon_path = str(WINDOWS_ICON_PATH)
-        # Load both 16×16 (titlebar) and 32×32 (alt-tab/taskbar) sizes from
-        # the multi-res .ico so each surface gets a crisp image.
         h_small = ctypes.windll.user32.LoadImageW(
             None, icon_path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE
         )
@@ -294,11 +272,8 @@ def run_pywebview_mode() -> int:
         print("pywebview is unavailable; falling back to browser mode.")
         return run_browser_mode()
 
-    # Must run before the window is created — AppUserModelID is sticky per
-    # process and Windows reads it when registering the new top-level window.
     _windows_set_app_id()
 
-    # Pre-check Linux dependencies for better error messages
     if sys.platform == "linux":
         deps_ok, deps_error = check_linux_webview_deps()
         if not deps_ok:
@@ -334,18 +309,11 @@ def run_pywebview_mode() -> int:
             window = webview.create_window(
                 title=WINDOWS_WINDOW_TITLE,
                 url=BACKEND_URL,
-                # Just over the App's md→lg breakpoint (1200px) so the
-                # Performance-mode toggle in the sidebar isn't hidden by the
-                # icon-only collapse. Window chrome eats some pixels, hence
-                # the buffer above 1200.
                 width=1280,
                 height=820,
                 min_size=(1000, 700),
                 background_color="#0D1117",
             )
-            # On Windows, swap python.exe's icon for Fragmenta's once the
-            # window is ready. Other platforms ignore this — the icon comes
-            # from the .desktop file (Linux) or the bundle (macOS).
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
             webview.start()
@@ -367,7 +335,6 @@ def run_pywebview_mode() -> int:
             except subprocess.TimeoutExpired:
                 backend_process.kill()
 
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch Fragmenta desktop app")
     parser.add_argument(
@@ -376,7 +343,6 @@ def parse_args() -> argparse.Namespace:
         help="Use the system browser instead of pywebview window",
     )
     return parser.parse_args()
-
 
 def main() -> int:
     args = parse_args()
@@ -393,7 +359,6 @@ def main() -> int:
                 f"(exit code {chromium_exit_code}); falling back to pywebview/browser mode."
             )
     return run_pywebview_mode()
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

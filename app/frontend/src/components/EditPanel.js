@@ -153,13 +153,6 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
     // --- render ----------------------------------------------------------
     return (
         <Box sx={{ p: 2 }}>
-            <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                <Typography variant="subtitle1">Edit existing audio</Typography>
-                <Typography variant="caption" color="text.secondary">
-                    Style transfer · Inpaint · Extend
-                </Typography>
-            </Stack>
-
             {/* Source picker */}
             <Box sx={{ mb: 2 }}>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>

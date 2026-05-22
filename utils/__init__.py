@@ -1,5 +1,5 @@
 """
-Fragmenta Desktop Utilities Package
+Fragmenta Utilities Package
 Centralized utilities for improved code organization and reusability
 """
 

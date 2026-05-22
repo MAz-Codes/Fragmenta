@@ -260,7 +260,7 @@ export default function BulkAnnotatePanel({ onCommitted }) {
     const progressPct = status?.total ? Math.round((status.current / status.total) * 100) : 0;
 
     return (
-        <Paper sx={{ p: 2, mt: 3, borderRadius: 2.5 }} variant="outlined">
+        <Paper sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }} variant="outlined">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <TagsIcon size={20} />
                 <Typography variant="h6">Bulk Auto-Annotation</Typography>

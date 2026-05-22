@@ -1,6 +1,6 @@
 # Third-Party Software Notices and Attributions
 
-Fragmenta Desktop uses third-party software and libraries. This document provides the required notices and attribution information for these dependencies.
+Fragmenta uses third-party software and libraries. This document provides the required notices and attribution information for these dependencies.
 
 ---
 
@@ -11,7 +11,7 @@ Fragmenta Desktop uses third-party software and libraries. This document provide
 - **Copyright**: Copyright (c) 2023 Stability AI
 - **License**: MIT License
 - **Location**: `vendor/stable-audio-tools/`
-- **Modifications**: Minor modifications for integration with Fragmenta Desktop
+- **Modifications**: Minor modifications for integration with Fragmenta
 
 The MIT License text can be found in `vendor/stable-audio-tools/LICENSE`.
 
@@ -56,7 +56,7 @@ Stable Audio Tools itself includes code from the following projects (see `vendor
 
 ## Python Dependencies
 
-The following Python packages are distributed with Fragmenta Desktop:
+The following Python packages are distributed with Fragmenta:
 
 ### Deep Learning Frameworks
 - **PyTorch** - BSD-3-Clause License - https://pytorch.org/
@@ -134,7 +134,7 @@ The following npm packages are included in the React frontend:
 - Note: This is an optional dependency for performance optimization. The application functions without it.
 
 ### Desktop Windowing Note
-Fragmenta Desktop uses pywebview as a lightweight native window wrapper for the local web interface.
+Fragmenta uses pywebview as a lightweight native window wrapper for the local web interface.
 
 ### Stable Audio Models
 
@@ -144,7 +144,7 @@ Required attribution (per the SACL):
 
 > "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
 
-Users must accept the model license terms independently when downloading the models through Fragmenta Desktop:
+Users must accept the model license terms independently when downloading the models through Fragmenta:
 - https://huggingface.co/stabilityai/stable-audio-open-1.0
 - https://huggingface.co/stabilityai/stable-audio-open-small
 
@@ -169,4 +169,4 @@ Full license texts for all dependencies can be obtained from their respective re
 
 **Last Updated**: October 22, 2025
 
-For questions about licensing, please contact the Fragmenta Desktop project maintainers or open an issue on the project repository.
+For questions about licensing, please contact the Fragmenta project maintainers or open an issue on the project repository.

@@ -1,6 +1,6 @@
 <div align="center">
 
-# Fragmenta Desktop (beta)
+# Fragmenta (beta)
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Version](https://img.shields.io/badge/version-0.1.2-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)

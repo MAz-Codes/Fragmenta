@@ -25,6 +25,7 @@ import {
     ListItemIcon,
     ListItemText,
     Divider,
+    Snackbar,
     Accordion,
     AccordionSummary,
     AccordionDetails,
@@ -80,11 +81,21 @@ import theme, { appStyles, lightTheme } from './theme';
 const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
 
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
-const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome';
+const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
 
 function App() {
     const [tabValue, setTabValue] = useState(0);
+    // Lags behind tabValue by ~fadeDuration so content swap happens
+    // while the panel is invisible (cross-fade between pages).
+    const [displayedTab, setDisplayedTab] = useState(0);
+    const TAB_FADE_MS = 180;
+    // Header sticky chrome only kicks in once the page has scrolled.
+    const [isScrolled, setIsScrolled] = useState(false);
+    // Measure the header's actual rendered height so the fixed nav
+    // rail can be pinned at exactly the first card's top edge.
+    const headerRef = useRef(null);
+    const [navTopPx, setNavTopPx] = useState(94);
     const [uploadRows, setUploadRows] = useState([
         { file: null, prompt: '', audioUrl: '' }
     ]);
@@ -110,6 +121,7 @@ function App() {
     };
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
+    const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     const [colorMode, setColorMode] = useState(() => {
@@ -226,14 +238,12 @@ function App() {
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
     const [baseModels, setBaseModels] = useState([
-        // Distilled (post-trained): fast, no cfg / steps control.
-        { name: 'sa3-small-music', displayName: 'Small - Music',     description: 'Distilled · CPU/GPU · up to 120 s · 8 steps, cfg 1.0',         kind: 'post-trained', downloaded: false },
-        { name: 'sa3-small-sfx',   displayName: 'Small - SFX',       description: 'Distilled · CPU/GPU · up to 120 s · 8 steps, cfg 1.0',         kind: 'post-trained', downloaded: false },
-        { name: 'sa3-medium',      displayName: 'Medium',            description: 'Distilled · CUDA + Flash-Attn · up to 380 s · 8 steps, cfg 1.0', kind: 'post-trained', downloaded: false },
-        // Base (CFG-aware): slower, full artist control.
-        { name: 'sa3-small-music-base', displayName: 'Small - Music (Base)', description: 'Base · CPU/GPU · up to 120 s · cfg + steps live',         kind: 'base', downloaded: false },
-        { name: 'sa3-small-sfx-base',   displayName: 'Small - SFX (Base)',   description: 'Base · CPU/GPU · up to 120 s · cfg + steps live',         kind: 'base', downloaded: false },
-        { name: 'sa3-medium-base',      displayName: 'Medium (Base)',        description: 'Base · CUDA + Flash-Attn · up to 380 s · cfg + steps live', kind: 'base', downloaded: false },
+        { name: 'sa3-small-music', displayName: 'Small - Music',     description: 'CPU/GPU · ≤ 120s',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-small-sfx',   displayName: 'Small - SFX',       description: 'CPU/GPU · ≤ 120s',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-medium',      displayName: 'Medium',            description: 'CUDA + Flash-Attn · ≤ 380s', kind: 'post-trained', downloaded: false },
+        { name: 'sa3-small-music-base', displayName: 'Small - Music (Base)', description: 'CPU/GPU · ≤ 120s',         kind: 'base', downloaded: false },
+        { name: 'sa3-small-sfx-base',   displayName: 'Small - SFX (Base)',   description: 'CPU/GPU · ≤ 120s',         kind: 'base', downloaded: false },
+        { name: 'sa3-medium-base',      displayName: 'Medium (Base)',        description: 'CUDA + Flash-Attn · ≤ 380s', kind: 'base', downloaded: false },
     ]);
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
@@ -319,8 +329,53 @@ function App() {
     }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
 
     const handleTabChange = (event, newValue) => {
+        if (newValue === tabValue) return;
         setTabValue(newValue);
     };
+
+    // Sync displayedTab to tabValue with a fade-out delay so content
+    // swap happens while the wrapper opacity is at 0. Works for any
+    // code path that updates tabValue (Tabs click, togglePerformance,
+    // model-warning auto-jump, etc).
+    useEffect(() => {
+        if (tabValue === displayedTab) return;
+        const t = window.setTimeout(() => setDisplayedTab(tabValue), TAB_FADE_MS);
+        return () => window.clearTimeout(t);
+    }, [tabValue, displayedTab]);
+
+    useEffect(() => {
+        const onScroll = () => setIsScrolled(window.scrollY > 8);
+        onScroll();
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, []);
+
+    // Re-measure header bottom edge on mount, resize, and content
+    // reflows. Nav rail's `top` = headerBottom + headerRow.mb +
+    // tabPanelStyles.pt so it lines up with the first card.
+    useEffect(() => {
+        if (!headerRef.current) return undefined;
+        const el = headerRef.current;
+        const measure = () => {
+            // Header is sticky at top: 0, so rect.bottom is already the
+            // viewport y of the header's bottom edge.
+            const rect = el.getBoundingClientRect();
+            const w = window.innerWidth;
+            const offset = w >= 900 ? 18 : w >= 600 ? 14 : 12;
+            setNavTopPx(rect.bottom + offset);
+        };
+        measure();
+        // Re-measure only when the header's actual size changes (e.g.
+        // GPU card transitions detected ↔ not on first load) or the
+        // window resizes — never on scroll, never on poll churn.
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        window.addEventListener('resize', measure);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener('resize', measure);
+        };
+    }, []);
 
     const addUploadRow = () => {
         setUploadRows([...uploadRows, { file: null, prompt: '', audioUrl: '' }]);
@@ -1072,7 +1127,7 @@ function App() {
                 />
 
                 <Container maxWidth={false} sx={appStyles.container(showWelcomePage)}>
-                    <Box sx={appStyles.headerRow}>
+                    <Box ref={headerRef} sx={[appStyles.headerRow, isScrolled && appStyles.headerRowScrolled]}>
                         <Box sx={appStyles.headerBrand}>
                             {/* Logo */}
                             <Box sx={appStyles.logo} />
@@ -1087,76 +1142,46 @@ function App() {
                         </Box>
 
                         <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
-                            <Box sx={appStyles.gpuCard(isCompactLayout)}>
+                            <Paper sx={appStyles.gpuCard(isCompactLayout)}>
                                 {gpuMemoryStatus && gpuMemoryStatus.cuda ? (
                                     <>
-                                        <Box sx={appStyles.gpuHeaderRow}>
-                                            <Typography variant="caption" color="textSecondary" sx={appStyles.gpuLabel}>
-                                                GPU Memory
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
+                                            <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
+                                                GPU
                                             </Typography>
-                                            <Box sx={appStyles.gpuStatusGroup}>
-                                                <Box
-                                                    sx={appStyles.gpuStatusDot(
-                                                        gpuMemoryStatus.cuda.free > 2 ? 'good' : gpuMemoryStatus.cuda.free > 0.5 ? 'low' : 'critical'
-                                                    )}
-                                                />
-                                                <Typography variant="caption" color="textSecondary">
-                                                    {gpuMemoryStatus.cuda.free > 2 ? 'Good' :
-                                                        gpuMemoryStatus.cuda.free > 0.5 ? 'Low' : 'Critical'}
-                                                </Typography>
-                                            </Box>
+                                            <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, fontSize: '0.72rem' }}>
+                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {gpuMemoryStatus.cuda.total.toFixed(0)} GB free
+                                            </Typography>
                                         </Box>
-
-                                        <Box sx={appStyles.gpuUsageWrap}>
-                                            <Box sx={appStyles.gpuUsageTrack}>
-                                                <Box
-                                                    sx={appStyles.gpuUsageFill(
-                                                        `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
-                                                        'warm.main'
-                                                    )}
-                                                />
-                                            </Box>
-                                        </Box>
-
-                                        <Box sx={appStyles.gpuFooterRow}>
-                                            <Typography variant="caption" color="primary" sx={appStyles.gpuFreeText}>
-                                                {gpuMemoryStatus.cuda.free.toFixed(1)}GB free
-                                            </Typography>
-                                            <Typography variant="caption" color="textSecondary">
-                                                {gpuMemoryStatus.cuda.total.toFixed(1)}GB total
-                                            </Typography>
+                                        <Box sx={{ height: 4, borderRadius: 999, bgcolor: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
+                                            <Box
+                                                sx={{
+                                                    height: '100%',
+                                                    width: `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
+                                                    bgcolor: 'primary.main',
+                                                    transition: 'width 0.3s ease',
+                                                }}
+                                            />
                                         </Box>
                                     </>
                                 ) : (
-                                    <>
-                                        <Box sx={appStyles.gpuHeaderRow}>
-                                            <Typography variant="caption" color="textSecondary" sx={appStyles.gpuLabel}>
-                                                GPU Status
-                                            </Typography>
-                                            <Box sx={appStyles.gpuStatusGroup}>
-                                                <Box sx={appStyles.gpuStatusDot('low', false)} />
-                                                <Typography variant="caption" color="warning.main">
-                                                    No GPU
-                                                </Typography>
-                                            </Box>
-                                        </Box>
-
-                                        <Typography variant="caption" color="textSecondary" sx={appStyles.centeredCaption}>
-                                            No CUDA GPU detected
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                        <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
+                                            GPU
                                         </Typography>
-                                        <Typography variant="caption" color="textSecondary" sx={appStyles.centeredCaptionWithMargin}>
-                                            Using CPU for processing
+                                        <Typography variant="caption" color="warning.main" sx={{ fontSize: '0.72rem' }}>
+                                            Not detected · CPU mode
                                         </Typography>
-                                    </>
+                                    </Box>
                                 )}
-                            </Box>
+                            </Paper>
                         </Box>
                     </Box>
 
                     {/* Main Content with Sidebar Layout */}
-                    <Box sx={appStyles.mainLayout}>
+                    <Box sx={appStyles.mainLayout(isCompactLayout, isIconOnlySidebar)}>
                         {/* Left Sidebar with Vertical Tabs */}
-                        <Paper sx={appStyles.navPaper(isCompactLayout, isIconOnlySidebar)}>
+                        <Paper sx={[appStyles.navPaper(isCompactLayout, isIconOnlySidebar), !isCompactLayout && { top: `${navTopPx}px` }]}>
                             <Tabs
                                 value={tabValue}
                                 onChange={handleTabChange}
@@ -1188,14 +1213,28 @@ function App() {
                         </Paper>
 
                         {/* Main Content Area */}
-                        <Paper sx={appStyles.mainContentPaper}>
+                        <Box sx={appStyles.mainContentBox}>
+                            <Box
+                                sx={{
+                                    flex: 1,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    minHeight: 0,
+                                    opacity: tabValue === displayedTab ? 1 : 0,
+                                    transition: `opacity ${TAB_FADE_MS}ms ease`,
+                                }}
+                            >
 
                             {/* Data Processing Tab */}
-                            <TabPanel value={tabValue} index={0}>
+                            <TabPanel value={displayedTab} index={0}>
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
                                     <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
-                                            <Paper sx={{ p: 2, borderRadius: 2.5 }} variant="outlined">
+                                            <CsvImportPanel key={`csv-${uploadKey}`} onCommitted={fetchSystemStatus} />
+
+                                            <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
+
+                                            <Paper sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }} variant="outlined">
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                                                     <UploadIcon size={20} />
                                                     <Typography variant="h6">Manual Annotation</Typography>
@@ -1227,30 +1266,20 @@ function App() {
                                                     <Button
                                                         variant="contained"
                                                         onClick={processFiles}
-                                                        disabled={isProcessing}
+                                                        disabled={isProcessing || uploadRows.every((r) => !r.file)}
                                                         startIcon={isProcessing ? <CircularProgress size={20} /> : <UploadIcon />}
                                                     >
                                                         {isProcessing ? 'Saving…' : 'Save to dataset'}
                                                     </Button>
                                                 </Box>
                                             </Paper>
-
-                                            <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
-
-                                            <CsvImportPanel key={`csv-${uploadKey}`} onCommitted={fetchSystemStatus} />
                                         </Box>
                                     </Grid>
 
                                     <Grid item xs={12} md={4}>
 
-                                        {processingStatus && (
-                                            <Alert severity="info" sx={appStyles.sectionInfoAlert}>
-                                                {processingStatus}
-                                            </Alert>
-                                        )}
-
                                         {!systemStatus && (
-                                            <Paper sx={appStyles.elevatedInfoCard}>
+                                            <Paper sx={[appStyles.elevatedInfoCard, appStyles.datasetStatusSticky(navTopPx)]}>
                                                 <Box sx={appStyles.sectionCardHeader}>
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <FolderOpenIcon size={20} />
@@ -1267,7 +1296,7 @@ function App() {
                                         )}
 
                                         {systemStatus && (
-                                            <Paper sx={appStyles.elevatedInfoCard}>
+                                            <Paper sx={[appStyles.elevatedInfoCard, appStyles.datasetStatusSticky(navTopPx)]}>
                                                 <Box sx={appStyles.sectionCardHeader}>
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <FolderOpenIcon size={20} />
@@ -1299,7 +1328,7 @@ function App() {
                             </TabPanel>
 
                             {/* Training Tab */}
-                            <TabPanel value={tabValue} index={1}>
+                            <TabPanel value={displayedTab} index={1}>
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} alignItems="stretch" sx={appStyles.responsiveGrid}>
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
@@ -1384,7 +1413,7 @@ function App() {
                                                     </Select>
                                                 </Box>
 
-                                                <Accordion sx={appStyles.accordionMarginBottom}>
+                                                <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                                                         <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
@@ -1723,8 +1752,8 @@ function App() {
 
                                                 <Box sx={{ mt: 1.5, mb: 1.5 }}>
                                                     <Button
-                                                        variant="outlined"
-                                                        size="small"
+                                                        variant="contained"
+                                                        color="warm"
                                                         fullWidth
                                                         onClick={fetchHyperparamSuggestion}
                                                         disabled={isTraining}
@@ -1737,7 +1766,6 @@ function App() {
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
-                                                        size="large"
                                                         onClick={startTraining}
                                                         disabled={isTraining || !trainingConfig.baseModel || (() => {
                                                             // Check if the selected base model is downloaded
@@ -1752,7 +1780,6 @@ function App() {
                                                     <Button
                                                         variant="outlined"
                                                         color="error"
-                                                        size="large"
                                                         onClick={stopTraining}
                                                         disabled={!isTraining}
                                                         startIcon={<StopIcon />}
@@ -1767,7 +1794,7 @@ function App() {
 
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.secondaryPaneContent}>
-                                            <Box sx={appStyles.trainingMonitorWrap}>
+                                            <Box sx={[appStyles.trainingMonitorWrap, appStyles.datasetStatusSticky(navTopPx)]}>
                                                 <TrainingMonitor
                                                     trainingProgress={trainingProgress}
                                                     trainingStatus={trainingStatus}
@@ -1785,7 +1812,7 @@ function App() {
                             </TabPanel>
 
                             {/* Generation Tab */}
-                            <TabPanel value={tabValue} index={2}>
+                            <TabPanel value={displayedTab} index={2}>
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.responsiveGrid}>
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
@@ -1804,6 +1831,9 @@ function App() {
                                                             id="model-select"
                                                             value={selectedModel || ''}
                                                             label="Select Model"
+                                                            open={generationModelSelectOpen}
+                                                            onOpen={() => setGenerationModelSelectOpen(true)}
+                                                            onClose={() => setGenerationModelSelectOpen(false)}
                                                             onChange={(event) => {
                                                                 console.log('Model dropdown selected:', event.target.value, typeof event.target.value);
                                                                 handleModelChange(event);
@@ -1814,8 +1844,8 @@ function App() {
                                                                 <em>Select a model</em>
                                                             </MenuItem>
                                                             {[
-                                                                { kind: 'post-trained', label: '── Distilled (fast) ──' },
-                                                                { kind: 'base',         label: '── Base (full control) ──' },
+                                                                { kind: 'post-trained', label: '── Distilled · fixed cfg + steps (fast) ──' },
+                                                                { kind: 'base',         label: '── Base · cfg + steps live ──' },
                                                             ].flatMap(group => {
                                                                 const rows = baseModels.filter(m => m.kind === group.kind);
                                                                 if (!rows.length) return [];
@@ -1826,22 +1856,44 @@ function App() {
                                                                         </Typography>
                                                                     </MenuItem>,
                                                                     ...rows.map(model => (
-                                                                        <MenuItem key={model.name} value={String(model.name)}>
-                                                                            <Box>
+                                                                        <MenuItem
+                                                                            key={model.name}
+                                                                            value={String(model.name)}
+                                                                            disabled={!model.downloaded}
+                                                                            sx={{
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: 1,
+                                                                                // Disabled MenuItems get opacity from MUI; the
+                                                                                // download IconButton needs to stay clickable
+                                                                                // (and look it), so re-enable pointer events on
+                                                                                // the action slot and lift its opacity.
+                                                                                '&.Mui-disabled': { pointerEvents: 'auto' },
+                                                                            }}
+                                                                        >
+                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                                 <Typography variant="body1">{model.displayName}</Typography>
                                                                                 <Typography variant="caption" color="textSecondary">
                                                                                     {model.description}
                                                                                 </Typography>
-                                                                                {model.downloaded ? (
-                                                                                    <Typography variant="caption" color="success.main" display="block">
-                                                                                        Ready for inference
-                                                                                    </Typography>
-                                                                                ) : (
-                                                                                    <Typography variant="caption" color="error.main" display="block">
-                                                                                        Not downloaded
-                                                                                    </Typography>
-                                                                                )}
                                                                             </Box>
+                                                                            {!model.downloaded && (
+                                                                                <Tooltip title="Download this model">
+                                                                                    <IconButton
+                                                                                        size="small"
+                                                                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            e.preventDefault();
+                                                                                            setGenerationModelSelectOpen(false);
+                                                                                            setCheckpointMgrOpen(true);
+                                                                                        }}
+                                                                                        sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                    >
+                                                                                        <CloudDownloadIcon size={16} />
+                                                                                    </IconButton>
+                                                                                </Tooltip>
+                                                                            )}
                                                                         </MenuItem>
                                                                     )),
                                                                 ];
@@ -2075,7 +2127,7 @@ function App() {
                                                     </Typography>
                                                 </Box>
 
-                                                <Accordion sx={appStyles.accordionMarginBottom}>
+                                                <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                                                         <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
@@ -2100,6 +2152,44 @@ function App() {
                                                                     value={loraStack}
                                                                     onChange={setLoraStack}
                                                                 />
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Accordion>
+                                                                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                                                                        <Typography variant="subtitle1">Edit existing audio</Typography>
+                                                                        <Typography variant="caption" color="textSecondary" sx={{ ml: 1, alignSelf: 'center' }}>
+                                                                            Style transfer · Inpaint · Extend
+                                                                        </Typography>
+                                                                    </AccordionSummary>
+                                                                    <AccordionDetails sx={{ p: 0 }}>
+                                                                        <EditPanel
+                                                                            model_id={selectedModel}
+                                                                            negativePrompt={negativePrompt}
+                                                                            onGenerated={(blob, filename, params) => {
+                                                                                const audioUrl = URL.createObjectURL(blob);
+                                                                                setGeneratedFragments(prev => [
+                                                                                    ...prev,
+                                                                                    {
+                                                                                        id: Date.now(),
+                                                                                        prompt: params.prompt,
+                                                                                        duration: params.duration,
+                                                                                        cfgScale: params.cfg_scale,
+                                                                                        steps: params.steps,
+                                                                                        seed: params.seed,
+                                                                                        batchIndex: 1,
+                                                                                        batchTotal: 1,
+                                                                                        audioUrl,
+                                                                                        audioBlob: blob,
+                                                                                        filename,
+                                                                                        timestamp: new Date().toLocaleString(),
+                                                                                        editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
+                                                                                    },
+                                                                                ]);
+                                                                            }}
+                                                                        />
+                                                                    </AccordionDetails>
+                                                                </Accordion>
                                                             </Grid>
 
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
@@ -2314,137 +2404,18 @@ function App() {
 
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.secondaryPaneContent}>
-                                            <Paper sx={appStyles.selectedModelCard}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <InfoIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Selected Model</Typography>
-                                                </Box>
-                                                {selectedModel ? (
-                                                    (() => {
-                                                        // Check if it's a base model
-                                                        const baseModel = baseModels.find(m => m.name === selectedModel);
-                                                        if (baseModel) {
-                                                            return (
-                                                                <Box>
-                                                                    <Typography variant="body1" sx={appStyles.boldBodyText}>
-                                                                        {baseModel.displayName}
-                                                                    </Typography>
-                                                                    {baseModel.downloaded ? (
-                                                                        <Typography variant="body2" color="success.main" sx={appStyles.boldBodyText}>
-                                                                            Ready for inference
-                                                                        </Typography>
-                                                                    ) : (
-                                                                        <Typography variant="body2" color="error.main" >
-                                                                            Model not downloaded
-                                                                        </Typography>
-                                                                    )}
-                                                                </Box>
-                                                            );
-                                                        }
-
-                                                        // Check if it's a fine-tuned model
-                                                        const model = availableModels.find(m => m.name === selectedModel);
-                                                        if (model) {
-                                                            const maxDuration = getMaxDuration();
-                                                            const selectedUnwrapped = selectedUnwrappedModel
-                                                                ? model.unwrapped_models?.find(u => u.path === selectedUnwrappedModel)
-                                                                : null;
-                                                            return (
-                                                                <Box>
-                                                                    <Typography variant="body1" sx={appStyles.boldBodyText}>
-                                                                        {model.name}
-                                                                    </Typography>
-                                                                    <Typography variant="caption" color="textSecondary" sx={appStyles.selectedModelMetaText}>
-                                                                        {model.checkpoints?.length || 0} wrapped checkpoints
-                                                                    </Typography>
-
-                                                                    {selectedUnwrapped ? (
-                                                                        <Box sx={appStyles.unwrappedInfoWrap}>
-                                                                            <Typography variant="body2" sx={appStyles.boldBodyText}>
-                                                                                Using: {selectedUnwrapped.name}
-                                                                            </Typography>
-                                                                            <Typography variant="caption" color="textSecondary" sx={appStyles.selectedModelMetaText}>
-                                                                                {selectedUnwrapped.size_mb} MB
-                                                                            </Typography>
-                                                                            <Typography variant="body2" color="primary.main" sx={appStyles.boldBodyText}>
-                                                                                Max Duration: {maxDuration} seconds
-                                                                            </Typography>
-                                                                        </Box>
-                                                                    ) : (
-                                                                        <Typography variant="caption" color="error" sx={appStyles.unwrappedInfoWrap}>
-                                                                            Select a checkpoint to generate audio.
-                                                                        </Typography>
-                                                                    )}
-
-                                                                    <LoraCheckpointManager
-                                                                        model={model}
-                                                                        onRefresh={refreshAllModels}
-                                                                    />
-                                                                </Box>
-                                                            );
-                                                        }
-
-                                                        return (
-                                                            <Typography variant="body2" color="textSecondary">
-                                                                Model not found
-                                                            </Typography>
-                                                        );
-                                                    })()
-                                                ) : (
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Please select a model to generate audio
-                                                    </Typography>
-                                                )}
-                                            </Paper>
-
-                                            <Accordion sx={appStyles.accordionMarginBottom}>
-                                                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                    <Typography variant="subtitle1">Edit existing audio</Typography>
-                                                    <Typography variant="caption" color="textSecondary" sx={{ ml: 1, alignSelf: 'center' }}>
-                                                        Style transfer · Inpaint · Extend
-                                                    </Typography>
-                                                </AccordionSummary>
-                                                <AccordionDetails sx={{ p: 0 }}>
-                                                    <EditPanel
-                                                        model_id={selectedModel}
-                                                        negativePrompt={negativePrompt}
-                                                        onGenerated={(blob, filename, params) => {
-                                                            const audioUrl = URL.createObjectURL(blob);
-                                                            setGeneratedFragments(prev => [
-                                                                ...prev,
-                                                                {
-                                                                    id: Date.now(),
-                                                                    prompt: params.prompt,
-                                                                    duration: params.duration,
-                                                                    cfgScale: params.cfg_scale,
-                                                                    steps: params.steps,
-                                                                    seed: params.seed,
-                                                                    batchIndex: 1,
-                                                                    batchTotal: 1,
-                                                                    audioUrl,
-                                                                    audioBlob: blob,
-                                                                    filename,
-                                                                    timestamp: new Date().toLocaleString(),
-                                                                    editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
-                                                                },
-                                                            ]);
-                                                        }}
-                                                    />
-                                                </AccordionDetails>
-                                            </Accordion>
-
-                                            <GeneratedFragmentsWindow
-                                                fragments={generatedFragments}
-                                                onDownload={downloadFragment}
-                                            />
+                                            <Box sx={appStyles.datasetStatusSticky(navTopPx)}>
+                                                <GeneratedFragmentsWindow
+                                                    fragments={generatedFragments}
+                                                    onDownload={downloadFragment}
+                                                />
+                                            </Box>
                                         </Box>
                                     </Grid>
                                 </Grid>
                             </TabPanel>
 
-                            <TabPanel value={tabValue} index={3} keepMounted>
+                            <TabPanel value={displayedTab} index={3} keepMounted>
                                 {performanceEnabled ? (
                                     <Suspense fallback={
                                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -2483,7 +2454,8 @@ function App() {
                                     </Box>
                                 )}
                             </TabPanel>
-                        </Paper>
+                            </Box>
+                        </Box>
                     </Box>
 
                     {/* Start Fresh Confirmation Dialog */}
@@ -2587,6 +2559,26 @@ function App() {
                 </Container>
             </Box>
 
+            <Snackbar
+                open={Boolean(processingStatus)}
+                autoHideDuration={10000}
+                onClose={(_e, reason) => { if (reason !== 'clickaway') setProcessingStatus(''); }}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            >
+                <Alert
+                    onClose={() => setProcessingStatus('')}
+                    severity={
+                        /error|failed/i.test(processingStatus) ? 'error'
+                        : /completed|success/i.test(processingStatus) ? 'success'
+                        : 'info'
+                    }
+                    variant="filled"
+                    sx={{ minWidth: 280, boxShadow: 6 }}
+                >
+                    {processingStatus}
+                </Alert>
+            </Snackbar>
+
             {isDockCollapsed ? (
                 <>
                     <IconButton
@@ -2663,7 +2655,7 @@ function App() {
                     </Menu>
                 </>
             ) : (
-                <Box sx={appStyles.bottomDock}>
+                <Paper sx={appStyles.bottomDock}>
                     {(isIconOnlySidebar || isMobileLayout) && (
                         <Box sx={appStyles.dockItem}>
                             <IconButton
@@ -2760,7 +2752,7 @@ function App() {
                             About
                         </Typography>
                     </Box>
-                </Box>
+                </Paper>
             )}
 
             <Dialog

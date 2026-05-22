@@ -181,10 +181,10 @@ export default function CsvImportPanel({ onCommitted }) {
     const policyHelp = CONFLICT_POLICIES.find((p) => p.value === conflictPolicy)?.help || '';
 
     return (
-        <Paper sx={{ p: 2, mt: 3, borderRadius: 2.5 }} variant="outlined">
+        <Paper sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }} variant="outlined">
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <CsvIcon size={20} />
-                <Typography variant="h6">Import CSV + Audio Folder</Typography>
+                <Typography variant="h6">Import Annotation</Typography>
             </Box>
             <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                 Upload a CSV with <code>file_name</code> and <code>prompt</code> columns plus the
