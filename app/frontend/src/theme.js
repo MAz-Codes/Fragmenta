@@ -21,6 +21,10 @@ import { createTheme, responsiveFontSizes } from '@mui/material/styles';
 
 const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
+// Display face used for Tier-1 section titles + Tier-2 accordion labels —
+// gives the cards a strong, distinctive header voice that doesn't compete
+// with body Inter. Single weight (400) — heavy by design.
+const FONT_DISPLAY = '"Archivo Black", "Inter", system-ui, sans-serif';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -86,11 +90,14 @@ let theme = createTheme({
         h3: { fontWeight: 600, letterSpacing: '-0.015em' },
         h4: { fontWeight: 600, letterSpacing: '-0.01em' },
         h5: { fontWeight: 600, letterSpacing: '-0.005em' },
-        h6: { fontWeight: 600, letterSpacing: 0,  fontSize: '1.05rem' },
-        // Tier-2 section/accordion labels: same family + weight as h6 but
+        // Tier-1 section card titles. Archivo Black for the strong display
+        // voice; fontWeight 400 because Archivo Black IS the heavy weight
+        // (asking for 600 would synthesise a fake-bold glyph).
+        h6: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: 0, fontSize: '1.05rem' },
+        // Tier-2 section/accordion labels: same Archivo Black face as h6,
         // slightly smaller. "Annotator Labels", "Advanced Settings",
         // "Edit existing audio" all flow through here.
-        subtitle1: { fontWeight: 600, letterSpacing: 0,         fontSize: '0.95rem', textTransform: 'none' },
+        subtitle1: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: 0, fontSize: '0.95rem', textTransform: 'none' },
         subtitle2: { fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
