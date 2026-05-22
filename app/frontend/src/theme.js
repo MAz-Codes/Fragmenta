@@ -23,8 +23,8 @@ const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", syst
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
 // Display face used for Tier-1 section titles + Tier-2 accordion labels —
 // gives the cards a strong, distinctive header voice that doesn't compete
-// with body Inter. Variable weights 400–700 available; choose per-variant.
-const FONT_DISPLAY = '"Finlandica Headline", "Inter", system-ui, sans-serif';
+// with body Inter. Single style (regular) — condensed, expressive.
+const FONT_DISPLAY = '"Text Me One", "Inter", system-ui, sans-serif';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -90,13 +90,13 @@ let theme = createTheme({
         h3: { fontWeight: 600, letterSpacing: '-0.015em' },
         h4: { fontWeight: 600, letterSpacing: '-0.01em' },
         h5: { fontWeight: 600, letterSpacing: '-0.005em' },
-        // Tier-1 section card titles — Archivo at heavy weight for display
-        // presence without the extreme density of Archivo Black.
-        h6: { fontFamily: FONT_DISPLAY, fontWeight: 700, letterSpacing: 0, fontSize: '1.05rem' },
-        // Tier-2 section/accordion labels — same Archivo face, same heavy
-        // weight, slightly smaller. "Annotator Labels", "Advanced Settings",
+        // Tier-1 section card titles — Text Me One renders at its single
+        // native weight (400); the face is condensed/expressive by design.
+        h6: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: 0, fontSize: '1.15rem' },
+        // Tier-2 section/accordion labels — same Text Me One face,
+        // slightly smaller. "Annotator Labels", "Advanced Settings",
         // "Edit existing audio" all flow through here.
-        subtitle1: { fontFamily: FONT_DISPLAY, fontWeight: 700, letterSpacing: 0, fontSize: '0.95rem', textTransform: 'none' },
+        subtitle1: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: 0, fontSize: '1.02rem', textTransform: 'none' },
         subtitle2: { fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
