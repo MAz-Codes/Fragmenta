@@ -23,16 +23,17 @@ const FONT_BODY  = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", syst
 const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace';
 
 // --- Arcade (dark) palette --------------------------------------------------
+// Neutral charcoal base — the amber accent does the warmth.
 const DARK = {
-    bg:        '#0D0B09',      // warm-tinted near-black; the body
-    bgElev:    '#15120E',      // one notch up (containers)
-    paper:     '#1A1612',      // panels / cards
-    paperHi:   '#221D17',      // hovered panel / menu items
-    divider:   'rgba(212, 162, 74, 0.14)',   // amber-tinted, very subtle
-    text:      '#F0EDE5',      // warm off-white
-    textDim:   '#9A9489',      // warm gray
-    textFaint: '#6A645C',
-    amber:     '#D4A24A',      // primary — Arcade's signature
+    bg:        '#1F2021',      // neutral near-black, slight blue-gray bias
+    bgElev:    '#26282A',      // one notch up (containers)
+    paper:     '#2B2D2F',      // panels / cards
+    paperHi:   '#34373A',      // hovered panel / menu items
+    divider:   'rgba(255, 255, 255, 0.08)',  // neutral, very subtle
+    text:      '#ECECEC',      // near-white, faintly cool
+    textDim:   '#9B9B9D',      // neutral gray
+    textFaint: '#65676A',
+    amber:     '#D4A24A',      // primary accent — Arcade's signature
     amberHi:   '#E2B559',      // hover / lighter
     amberLo:   '#A37C30',      // pressed / darker
     blue:      '#5BA9E8',      // secondary — selected-file cue
@@ -101,14 +102,11 @@ let theme = createTheme({
                 body: {
                     margin: 0,
                     minHeight: '100vh',
-                    // Warm radial amber glow top-left + subtle blue secondary
-                    // glow on the right. Subtle — the panels do most of the
-                    // visual work; the body is just a stage.
+                    // Neutral charcoal — the amber accent does the warmth.
+                    // A faint diagonal sheen for life; no coloured glows.
                     backgroundColor: DARK.bg,
                     backgroundImage:
-                        `radial-gradient(1400px 700px at 6% -8%, rgba(212, 162, 74, 0.10), transparent 55%), ` +
-                        `radial-gradient(900px 500px at 96% -20%, rgba(91, 169, 232, 0.06), transparent 60%), ` +
-                        `linear-gradient(170deg, ${DARK.bg} 0%, #100D0A 45%, ${DARK.bg} 100%)`,
+                        `linear-gradient(170deg, ${DARK.bg} 0%, #1B1C1D 45%, ${DARK.bg} 100%)`,
                     color: DARK.text,
                     fontFeatureSettings: '"cv11", "ss01", "ss03"',  // Inter stylistic alts
                 },
@@ -137,7 +135,7 @@ let theme = createTheme({
                 root: {
                     backgroundColor: DARK.paper,
                     backgroundImage:
-                        `linear-gradient(180deg, rgba(28, 23, 18, 0.96) 0%, rgba(22, 18, 14, 0.96) 100%)`,
+                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
                     border: `1px solid ${DARK.divider}`,
                     boxShadow: '0 20px 38px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.02)',
                     backdropFilter: 'blur(10px)',
@@ -149,7 +147,7 @@ let theme = createTheme({
                 root: {
                     backgroundColor: DARK.paper,
                     backgroundImage:
-                        `linear-gradient(180deg, rgba(28, 23, 18, 0.98) 0%, rgba(22, 18, 14, 0.98) 100%)`,
+                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
                     border: `1px solid ${DARK.divider}`,
                     boxShadow: '0 10px 22px rgba(0, 0, 0, 0.45)',
                     transition: 'border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease',
@@ -313,7 +311,7 @@ let theme = createTheme({
                 paper: {
                     backgroundColor: DARK.paper,
                     backgroundImage:
-                        `linear-gradient(180deg, rgba(28, 23, 18, 0.98) 0%, rgba(22, 18, 14, 0.99) 100%)`,
+                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
                     border: `1px solid ${DARK.divider}`,
                     borderRadius: 14,
                     boxShadow: '0 32px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(212, 162, 74, 0.04)',
