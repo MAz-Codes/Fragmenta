@@ -49,9 +49,18 @@ def _iter_audio_files(folder: Path) -> List[Path]:
 
 def _estimate_tempo(y, sr) -> Optional[int]:
     import librosa
+    import numpy as np
     try:
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = float(tempo if hasattr(tempo, "__float__") else tempo[0])
+        # librosa 0.10+ returns tempo as np.ndarray (shape (1,) typically).
+        # numpy 2.x removed implicit float() conversion of N-d arrays —
+        # `float(np.array([120.]))` now raises TypeError instead of returning
+        # 120.0 like numpy 1.x did. Normalize via .flat[0] which handles
+        # scalar, 0-d, 1-d, and N-d uniformly.
+        arr = np.atleast_1d(np.asarray(tempo))
+        if arr.size == 0:
+            return None
+        bpm = float(arr.flat[0])
         if bpm <= 0:
             return None
         return int(round(bpm))
