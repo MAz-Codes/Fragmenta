@@ -1186,6 +1186,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onAnnotate(clip.file_name)}
                             disabled={disabled}
+                            sx={{ color: 'warm.main', '&:hover': { color: 'warm.light', bgcolor: 'action.hover' } }}
                         >
                             <WandSparkles size={16} />
                         </IconButton>
