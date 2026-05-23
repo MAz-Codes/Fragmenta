@@ -2398,6 +2398,36 @@ def clip_audio_route(name, file_name):
     return send_file(str(audio_path), conditional=True)
 
 
+@app.route('/api/projects/<name>/clip/<path:file_name>/slice', methods=['POST'])
+def clip_slice_route(name, file_name):
+    """Split one clip into N children. Body: { target_duration, overlap_sec, strategy }."""
+    from app.backend.data.projects import slice_clip
+    from app.backend.data.slicing import VALID_STRATEGIES
+    payload = request.json or {}
+    try:
+        target = float(payload.get('target_duration', 0))
+        overlap = float(payload.get('overlap_sec', 0))
+        strategy = str(payload.get('strategy', 'hard')).lower()
+    except (TypeError, ValueError):
+        return jsonify({'error': 'target_duration / overlap_sec must be numeric'}), 400
+    if target <= 0 or target > 600:
+        return jsonify({'error': 'target_duration must be in (0, 600]'}), 400
+    if overlap < 0 or overlap >= target:
+        return jsonify({'error': 'overlap_sec must be >= 0 and < target_duration'}), 400
+    if strategy not in VALID_STRATEGIES:
+        return jsonify({'error': f"strategy must be one of {VALID_STRATEGIES}"}), 400
+    try:
+        result = slice_clip(name, file_name, target, overlap, strategy)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Slice failed for %s/%s", name, file_name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify(result)
+
+
 @app.route('/api/projects/<name>/clip/<path:file_name>/peaks', methods=['GET'])
 def clip_peaks_route(name, file_name):
     """Return waveform peaks + duration JSON for a clip. Cached per session."""

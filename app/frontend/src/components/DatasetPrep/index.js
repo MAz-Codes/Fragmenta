@@ -48,6 +48,7 @@ import {
     Trash2 as TrashIcon,
     Play as PlayIcon,
     Pause as PauseIcon,
+    Scissors as ScissorsIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -70,6 +71,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [createOpen, setCreateOpen] = useState(false);
     const [loadOpen, setLoadOpen] = useState(false);
     const [ingestOpen, setIngestOpen] = useState(false);
+    const [sliceTarget, setSliceTarget] = useState(null);  // file_name or null
     const [error, setError] = useState('');
 
     const [errorCode, setErrorCode] = useState('');
@@ -444,6 +446,10 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                             if (playingFile === fname) stopPlayback();
                             return handleClipDelete(fname);
                         }}
+                        onSlice={(fname) => {
+                            if (playingFile === fname) stopPlayback();
+                            setSliceTarget(fname);
+                        }}
                         disabled={isAnnotating}
                     />
                     <audio
@@ -489,6 +495,17 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                 onClose={() => setIngestOpen(false)}
                 onIngested={async () => {
                     setIngestOpen(false);
+                    if (project) await refreshProject(project.name);
+                    await refreshProjects();
+                }}
+            />
+
+            <SliceDialog
+                open={Boolean(sliceTarget)}
+                projectName={project?.name}
+                fileName={sliceTarget}
+                onClose={() => setSliceTarget(null)}
+                onSliced={async () => {
                     if (project) await refreshProject(project.name);
                     await refreshProjects();
                 }}
@@ -831,7 +848,7 @@ function Waveform({ projectName, fileName, isActive, progress }) {
     );
 }
 
-function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, disabled }) {
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
     if (!clips || clips.length === 0) {
         return (
             <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
@@ -848,7 +865,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                     <TableRow>
                         <TableCell sx={{ width: '36%' }}>File</TableCell>
                         <TableCell>Prompt</TableCell>
-                        <TableCell sx={{ width: 96, textAlign: 'right' }}>Actions</TableCell>
+                        <TableCell sx={{ width: 132, textAlign: 'right' }}>Actions</TableCell>
                     </TableRow>
                 </TableHead>
                 <TableBody>
@@ -863,6 +880,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                             onPromptChange={onPromptChange}
                             onAnnotate={onAnnotate}
                             onDelete={onDelete}
+                            onSlice={onSlice}
                             disabled={disabled}
                         />
                     ))}
@@ -872,7 +890,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     );
 }
 
-function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, disabled }) {
+function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
@@ -925,6 +943,17 @@ function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onP
                             disabled={disabled}
                         >
                             <SparklesIcon size={16} />
+                        </IconButton>
+                    </span>
+                </Tooltip>
+                <Tooltip title="Slice this clip into shorter children (immediate)">
+                    <span>
+                        <IconButton
+                            size="small"
+                            onClick={() => onSlice(clip.file_name)}
+                            disabled={disabled}
+                        >
+                            <ScissorsIcon size={16} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -1076,6 +1105,127 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
                 <Button onClick={onClose} disabled={busy}>Cancel</Button>
                 <Button variant="contained" onClick={submit} disabled={busy || !folder}>
                     {busy ? 'Adding…' : 'Add'}
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+}
+
+function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
+    const [target, setTarget] = useState(10);
+    const [overlap, setOverlap] = useState(0);
+    const [strategy, setStrategy] = useState('hard');
+    const [duration, setDuration] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [dialogError, setDialogError] = useState('');
+
+    useEffect(() => {
+        if (!open) return;
+        setTarget(10);
+        setOverlap(0);
+        setStrategy('hard');
+        setDialogError('');
+        setDuration(null);
+        if (!projectName || !fileName) return;
+        // Reuse the peaks endpoint to pull duration cheaply (it's cached
+        // server-side, and the row's waveform already populated it).
+        api.get(`/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=20`)
+            .then(({ data }) => setDuration(data?.duration || null))
+            .catch(() => setDuration(null));
+    }, [open, projectName, fileName]);
+
+    const stepSec = Math.max(0.5, target - overlap);
+    const estChildren = duration && target > 0 ? Math.max(1, Math.ceil(duration / stepSec)) : null;
+    const tooShort = duration !== null && duration <= target;
+
+    async function submit() {
+        setBusy(true);
+        setDialogError('');
+        try {
+            await api.post(
+                `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/slice`,
+                { target_duration: target, overlap_sec: overlap, strategy },
+            );
+            await onSliced();
+            onClose();
+        } catch (e) {
+            setDialogError(extractError(e, 'Slice failed'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Slice {fileName}</DialogTitle>
+            <DialogContent>
+                <Stack spacing={2.5} sx={{ pt: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                        The original file will be replaced by the children on disk. Children inherit this clip's prompt and start out uncommitted — Discard will roll them back, Commit makes them permanent.
+                    </Typography>
+
+                    <Stack direction="row" spacing={2}>
+                        <TextField
+                            label="Target duration (sec)"
+                            type="number"
+                            size="small"
+                            value={target}
+                            onChange={(e) => setTarget(Math.max(0.5, parseFloat(e.target.value) || 0))}
+                            inputProps={{ step: 0.5, min: 0.5, max: 60 }}
+                            fullWidth
+                        />
+                        <TextField
+                            label="Overlap (sec)"
+                            type="number"
+                            size="small"
+                            value={overlap}
+                            onChange={(e) => setOverlap(Math.max(0, parseFloat(e.target.value) || 0))}
+                            inputProps={{ step: 0.1, min: 0, max: Math.max(0, target - 0.5) }}
+                            fullWidth
+                            helperText="Head-overlap on every child after the first"
+                        />
+                    </Stack>
+
+                    <FormControl>
+                        <Typography variant="body2" gutterBottom>Where each cut should land:</Typography>
+                        <RadioGroup value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+                            <FormControlLabel
+                                value="hard"
+                                control={<Radio size="small" />}
+                                label={<Typography variant="body2">Hard cut — exact intervals; fastest, can split mid-note</Typography>}
+                            />
+                            <FormControlLabel
+                                value="transient"
+                                control={<Radio size="small" />}
+                                label={<Typography variant="body2">Transient-aware — snaps each cut to the nearest onset (good for drums / rhythmic)</Typography>}
+                            />
+                            <FormControlLabel
+                                value="silence"
+                                control={<Radio size="small" />}
+                                label={<Typography variant="body2">Silence-aware — snaps to the quietest moment in each window (good for melodic / phrased)</Typography>}
+                            />
+                        </RadioGroup>
+                    </FormControl>
+
+                    {duration !== null && (
+                        <Typography variant="caption" color="text.secondary">
+                            Source: {duration.toFixed(1)}s
+                            {estChildren !== null && !tooShort && ` · ~${estChildren} children at this setting`}
+                            {tooShort && ' · already shorter than the target — nothing to slice'}
+                        </Typography>
+                    )}
+
+                    {dialogError && <Alert severity="error">{dialogError}</Alert>}
+                </Stack>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onClose} disabled={busy}>Cancel</Button>
+                <Button
+                    variant="contained"
+                    onClick={submit}
+                    disabled={busy || tooShort || target <= 0 || overlap >= target}
+                >
+                    {busy ? 'Slicing…' : 'Slice'}
                 </Button>
             </DialogActions>
         </Dialog>

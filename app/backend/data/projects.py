@@ -197,12 +197,17 @@ class ClipState:
 
     `prompt` is the live in-memory value (what the UI shows). `committed_prompt`
     is what's on disk in the sidecar — used to compute dirtiness.
+
+    `parent` is the original clip's file_name if this clip was produced by a
+    slice operation in the current session. In-memory only; not persisted
+    across restart (yet). Future merge-back will need disk-level lineage.
     """
     file_name: str
     path: str
     prompt: str = ""
     committed_prompt: str = ""
     committed: bool = True   # False if audio was added since last commit
+    parent: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -212,6 +217,7 @@ class ClipState:
             "committed_prompt": self.committed_prompt,
             "committed": self.committed,
             "dirty": self.prompt != self.committed_prompt,
+            "parent": self.parent,
         }
 
 
@@ -615,3 +621,84 @@ def get_or_compute_peaks(
     result = _compute_peaks(audio_path, n)
     session.peaks_cache[cache_key] = result
     return result
+
+
+# ---------- Slicing ---------------------------------------------------------
+
+
+def slice_clip(
+    name: str,
+    file_name: str,
+    target_sec: float,
+    overlap_sec: float,
+    strategy: str,
+) -> Dict[str, Any]:
+    """Split one clip into N children. Disk-level — happens immediately.
+
+    The parent file (and its sidecar) is deleted. Each child:
+      - lives in the project folder as `<stem>__NNN.wav`
+      - inherits the parent's in-memory prompt verbatim
+      - is uncommitted (so Discard rolls it back)
+      - keeps `parent=<parent_file_name>` in its session state
+
+    Discard cannot recover the parent file from children — same rule as
+    delete_clip. Commit makes the slice permanent.
+    """
+    from app.backend.data.slicing import plan_slices, write_slices
+
+    session = _get_or_load_session(name)
+    proj_path = project_path(name)
+    audio_path = proj_path / file_name
+
+    if not audio_path.exists():
+        raise FileNotFoundError(f"Clip not on disk: {file_name}")
+
+    plans = plan_slices(audio_path, target_sec, overlap_sec, strategy)
+    if len(plans) <= 1:
+        raise ValueError(
+            f"{file_name} is shorter than the target duration "
+            f"({target_sec:.1f}s); nothing to slice."
+        )
+
+    stem = audio_path.stem
+    children = write_slices(audio_path, plans, proj_path, stem)
+    if not children:
+        raise RuntimeError("Slice produced no children — check the audio file.")
+
+    with session.lock:
+        parent_clip = session.clips.get(file_name)
+        inherited_prompt = parent_clip.prompt if parent_clip else ""
+
+        # Remove the parent from session + disk.
+        session.clips.pop(file_name, None)
+        for key in list(session.peaks_cache):
+            if key.startswith(f"{file_name}:"):
+                del session.peaks_cache[key]
+        sidecar = _sidecar_for(audio_path)
+        if audio_path.exists():
+            audio_path.unlink()
+        if sidecar.exists():
+            sidecar.unlink()
+        committed = session.metadata.get("committed_files") or []
+        if file_name in committed:
+            session.metadata["committed_files"] = [f for f in committed if f != file_name]
+
+        # Register children as uncommitted clips with parent linkage.
+        for child_path in children:
+            session.clips[child_path.name] = ClipState(
+                file_name=child_path.name,
+                path=str(child_path),
+                prompt=inherited_prompt,
+                committed_prompt="",
+                committed=False,
+                parent=file_name,
+            )
+
+    return {
+        "parent": file_name,
+        "children": [
+            {"file_name": p.name, "start_sec": pl.start_sec, "end_sec": pl.end_sec}
+            for p, pl in zip(children, plans)
+        ],
+        "project": get_project(name),
+    }
