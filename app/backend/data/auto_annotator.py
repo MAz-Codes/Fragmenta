@@ -22,6 +22,11 @@ AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac")
 CLAP_CKPT_FILENAME = "music_audioset_epoch_15_esc_90.14.pt"
 CLAP_REPO = "lukewys/laion_clap"
 
+# Text-side dependencies laion_clap pulls from HF on construction.
+# We stage these into models/pretrained/clap/hub/ so the rich tier is
+# fully offline after a single download and nothing leaks to ~/.cache.
+CLAP_TEXT_DEPS = ("roberta-base", "bert-base-uncased", "facebook/bart-base")
+
 KEY_NAMES_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 KEY_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
@@ -182,8 +187,28 @@ class _ClapTagger:
             import torch
             logging.getLogger("transformers").setLevel(logging.ERROR)
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
+            # Point HF resolution at our project-local cache and disable the
+            # HEAD-revalidation traffic. After download_clap_checkpoint() has
+            # staged the text deps under <pretrained>/clap/hub/, CLAP_Module
+            # loads them offline with zero HF hub requests.
+            hub_dir = self.ckpt_path.parent / "hub"
+            env_keys = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE",
+                        "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+            prev_env = {k: os.environ.get(k) for k in env_keys}
+            os.environ["HF_HUB_CACHE"] = str(hub_dir)
+            os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
+            os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            try:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
+            finally:
+                for k, v in prev_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
             # torch >= 2.6 flipped torch.load(weights_only=True) and newer
             # transformers dropped the roberta position_ids buffer, so
@@ -268,8 +293,21 @@ def clap_checkpoint_path(models_pretrained_dir: Path) -> Path:
     return models_pretrained_dir / "clap" / CLAP_CKPT_FILENAME
 
 
+def clap_hub_dir(models_pretrained_dir: Path) -> Path:
+    """HF cache for laion_clap's text-side deps. Sibling of the .pt."""
+    return models_pretrained_dir / "clap" / "hub"
+
+
 def clap_checkpoint_available(models_pretrained_dir: Path) -> bool:
     return clap_checkpoint_path(models_pretrained_dir).exists()
+
+
+def _text_dep_snapshot_present(hub_dir: Path, repo_id: str) -> bool:
+    safe = "models--" + repo_id.replace("/", "--")
+    snap_root = hub_dir / safe / "snapshots"
+    if not snap_root.exists():
+        return False
+    return any(snap_root.iterdir())
 
 
 def download_clap_checkpoint(
@@ -278,34 +316,58 @@ def download_clap_checkpoint(
 ) -> Path:
     target = clap_checkpoint_path(models_pretrained_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        return target
+    hub_dir = clap_hub_dir(models_pretrained_dir)
+    hub_dir.mkdir(parents=True, exist_ok=True)
 
-    from huggingface_hub import hf_hub_download
+    from huggingface_hub import hf_hub_download, snapshot_download
     import os
 
-    if progress_cb:
-        progress_cb("Downloading CLAP checkpoint (~630 MB)…")
+    if not target.exists():
+        if progress_cb:
+            progress_cb("Downloading CLAP checkpoint (~630 MB)…")
 
-    # Use custom CLAP from fragmenta-models on HF Spaces
-    use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
-    if use_custom_repo:
-        repo_id = "MazCodes/fragmenta-models"
-    else:
-        repo_id = CLAP_REPO
+        # Use custom CLAP from fragmenta-models on HF Spaces
+        use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
+        if use_custom_repo:
+            repo_id = "MazCodes/fragmenta-models"
+        else:
+            repo_id = CLAP_REPO
 
-    downloaded = hf_hub_download(
-        repo_id=repo_id,
-        filename=CLAP_CKPT_FILENAME,
-        local_dir=str(target.parent),
-    )
-    downloaded_path = Path(downloaded)
-    if downloaded_path != target:
-        try:
-            downloaded_path.replace(target)
-        except OSError:
-            import shutil
-            shutil.copy2(downloaded_path, target)
+        downloaded = hf_hub_download(
+            repo_id=repo_id,
+            filename=CLAP_CKPT_FILENAME,
+            local_dir=str(target.parent),
+        )
+        downloaded_path = Path(downloaded)
+        if downloaded_path != target:
+            try:
+                downloaded_path.replace(target)
+            except OSError:
+                import shutil
+                shutil.copy2(downloaded_path, target)
+
+    # laion_clap's CLAP_Module(...) constructor instantiates a Roberta text
+    # branch plus bert/bart tokenizers at import time. Pre-stage them into
+    # our own cache so the rich tier is fully offline after this step.
+    for repo_id in CLAP_TEXT_DEPS:
+        if _text_dep_snapshot_present(hub_dir, repo_id):
+            continue
+        if progress_cb:
+            progress_cb(f"Downloading CLAP text dep: {repo_id}…")
+        snapshot_download(
+            repo_id=repo_id,
+            cache_dir=str(hub_dir),
+            allow_patterns=[
+                "config.json",
+                "tokenizer*",
+                "vocab*",
+                "merges.txt",
+                "special_tokens_map.json",
+                "model.safetensors",
+                "pytorch_model.bin",
+            ],
+        )
+
     return target
 
 

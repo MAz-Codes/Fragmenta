@@ -124,6 +124,23 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "hardware": "cuda",
         "description": "Standalone autoencoder (1.7B). Already bundled with medium.",
     },
+    # --- Auto-annotation tools ---------------------------------------------
+    # Single-file HF download, lives under <models_pretrained>/clap/.
+    # `is_model_downloaded` and `_run_download` special-case kind=="tagger".
+    "clap-music": {
+        "user_visible": True,
+        "kind": "tagger",
+        "name": "LAION-CLAP (music)",
+        "sa3_name": "clap-music",
+        "repo": "lukewys/laion_clap",
+        "filename": "music_audioset_epoch_15_esc_90.14.pt",
+        "size_bytes": 660_000_000,
+        "hardware": "cpu",
+        "description": (
+            "Zero-shot tagger used by the dataset prep's rich-tier annotation. "
+            "Scores each clip against your genre / mood / instrument vocabulary."
+        ),
+    },
 }
 
 # --- Job state for in-flight downloads ----------------------------------------
@@ -169,14 +186,20 @@ class ModelManager:
         self.models_dir: Path = config.get_path("models_pretrained")
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
-        # Single canonical store: <app>/models/pretrained/sa3/hub/ in HF
-        # cache layout. snapshot_download, hf_hub_download, training, and
-        # inference all read/write here via HF_HUB_CACHE.
+        # Project-wide policy: every HF download lands inside
+        # <app>/models/pretrained/. SA3 generation + training uses
+        # <pretrained>/sa3/hub/; CLAP text deps use <pretrained>/clap/hub/.
+        # Both are HF cache layout so snapshot_download / hf_hub_download /
+        # from_pretrained resolve there transparently.
         self.hub_dir: Path = self.models_dir / "sa3" / "hub"
         self.hub_dir.mkdir(exist_ok=True, parents=True)
-        # setdefault — let an external override win (e.g. Docker container
-        # mounting a separate cache volume).
-        os.environ.setdefault("HF_HUB_CACHE", str(self.hub_dir))
+        # Hard-force the resolution vars — never let an external env leak
+        # downloads into ~/.cache/huggingface or anywhere else outside the
+        # app folder. Covers huggingface_hub (current + legacy name) and
+        # transformers (which still consults TRANSFORMERS_CACHE).
+        os.environ["HF_HUB_CACHE"] = str(self.hub_dir)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(self.hub_dir)
+        os.environ["TRANSFORMERS_CACHE"] = str(self.hub_dir)
 
         # available_models is exposed for backwards compat with the existing
         # /api/models/available endpoint. New code should use get_catalog().
@@ -252,6 +275,12 @@ class ModelManager:
     def is_model_downloaded(self, model_id: str) -> bool:
         if model_id not in _SA3_CATALOG:
             return False
+        info = _SA3_CATALOG[model_id]
+        if info.get("kind") == "tagger":
+            # Single-file artifacts live in <models_pretrained>/<group>/<filename>.
+            # auto_annotator owns the exact path for CLAP, so we delegate.
+            from app.backend.data.auto_annotator import clap_checkpoint_available
+            return clap_checkpoint_available(self.models_dir)
         # Canonical: HF cache layout under <app>/models/pretrained/sa3/hub/.
         hub = self._hub_cache_dir_for(model_id)
         if hub.is_dir():
@@ -336,6 +365,26 @@ class ModelManager:
         info = _SA3_CATALOG[job.model_id]
         job.status = "running"
         job.started_at = datetime.now().isoformat()
+
+        # Tagger kind (e.g. CLAP) is a single .pt file living outside the
+        # sa3/hub HF cache layout. Delegate to auto_annotator which owns
+        # the canonical path.
+        if info.get("kind") == "tagger":
+            try:
+                from app.backend.data.auto_annotator import download_clap_checkpoint
+                if progress_callback:
+                    progress_callback(0, f"Downloading {info['name']}…")
+                download_clap_checkpoint(self.models_dir)
+                job.downloaded_bytes = job.total_bytes
+                job.status = "complete"
+                job.finished_at = datetime.now().isoformat()
+                if progress_callback:
+                    progress_callback(100, f"Downloaded {info['name']}")
+            except Exception as err:
+                job.status = "failed"
+                job.error = f"{type(err).__name__}: {err}"
+                job.finished_at = datetime.now().isoformat()
+            return
 
         cache_dir = self._hub_cache_dir_for(job.model_id).parent  # = self.hub_dir
         cache_dir.mkdir(exist_ok=True, parents=True)

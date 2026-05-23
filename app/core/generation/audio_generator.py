@@ -135,7 +135,18 @@ class AudioGenerator:
         #   2. Legacy: <app>/models/pretrained/sa3/<model_id>/ flat layout
         #      from earlier downloads. We fall back to direct load so
         #      pre-existing users don't have to re-download.
-        prev_offline = os.environ.get("HF_HUB_OFFLINE")
+        #
+        # Defense-in-depth: re-force the HF cache vars here too. model_manager
+        # sets them at construction, but if generation is reached via an
+        # alternate code path or the env was clobbered later, we still
+        # guarantee resolution into <pretrained>/sa3/hub/.
+        hub_dir = self.config.get_path("models_pretrained") / "sa3" / "hub"
+        hf_env_keys = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
+                       "TRANSFORMERS_CACHE", "HF_HUB_OFFLINE")
+        prev_env = {k: os.environ.get(k) for k in hf_env_keys}
+        os.environ["HF_HUB_CACHE"] = str(hub_dir)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
+        os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
         os.environ["HF_HUB_OFFLINE"] = "1"
         try:
             try:
@@ -171,10 +182,11 @@ class AudioGenerator:
                     inner.lora_names = []
                     self.model = StableAudioModel(inner, model_config, device, half)
         finally:
-            if prev_offline is None:
-                os.environ.pop("HF_HUB_OFFLINE", None)
-            else:
-                os.environ["HF_HUB_OFFLINE"] = prev_offline
+            for k, v in prev_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
         self._model_id = model_id
         self._device = device
 

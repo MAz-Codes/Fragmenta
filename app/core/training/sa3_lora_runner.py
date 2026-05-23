@@ -191,8 +191,11 @@ def build_train_env(sa3_vendor_dir: Path, hub_dir: Path) -> Dict[str, str]:
         f"{sa3_vendor_dir}{os.pathsep}{pp}" if pp else str(sa3_vendor_dir)
     )
     # Pin the HF cache to our app-folder hub dir; otherwise train_lora.py's
-    # model_cfg.resolve() would write into ~/.cache/huggingface/hub.
+    # model_cfg.resolve() would write into ~/.cache/huggingface/hub. Cover
+    # the legacy + transformers env names too for defense-in-depth.
     env["HF_HUB_CACHE"] = str(hub_dir)
+    env["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
+    env["TRANSFORMERS_CACHE"] = str(hub_dir)
     env["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     env["WANDB_DISABLED"] = "1"
     return env

@@ -37,6 +37,7 @@ const api = {
     get: (url, config) => request('GET', url, null, config),
     post: (url, body, config) => request('POST', url, body, config),
     put: (url, body, config) => request('PUT', url, body, config),
+    patch: (url, body, config) => request('PATCH', url, body, config),
     delete: (url, config) => request('DELETE', url, null, config),
 };
 

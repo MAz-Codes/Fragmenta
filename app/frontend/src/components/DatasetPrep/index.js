@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    Accordion,
+    AccordionDetails,
+    AccordionSummary,
     Alert,
+    Autocomplete,
     Box,
     Button,
     Checkbox,
+    Chip,
     Dialog,
     DialogActions,
     DialogContent,
@@ -30,16 +35,19 @@ import {
     Typography,
 } from '@mui/material';
 import {
+    ChevronDown as ChevronDownIcon,
     FolderOpenIcon,
     PlusIcon,
     SparklesIcon,
     SaveIcon,
+    Upload as UploadIcon,
     CheckCircle2 as CommitIcon,
     Undo2 as DiscardIcon,
     Square as StopIcon,
     Trash2 as TrashIcon,
 } from 'lucide-react';
 import api from '../../api';
+import { appStyles } from '../../theme';
 
 /**
  * DatasetPrep — sidecar-native dataset surface with a buffered editing model.
@@ -49,7 +57,7 @@ import api from '../../api';
  * audio all live in an in-memory session until the user explicitly hits
  * Save (writes a draft) or Commit (writes .txt sidecars).
  */
-export default function DatasetPrep() {
+export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [projects, setProjects] = useState([]);
     const [selectedName, setSelectedName] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.lastProject') || ''; }
@@ -57,9 +65,12 @@ export default function DatasetPrep() {
     });
     const [project, setProject] = useState(null);
     const [createOpen, setCreateOpen] = useState(false);
+    const [loadOpen, setLoadOpen] = useState(false);
     const [ingestOpen, setIngestOpen] = useState(false);
     const [error, setError] = useState('');
 
+    const [errorCode, setErrorCode] = useState('');
+    const [errorExtra, setErrorExtra] = useState(null);
     const [annotateJob, setAnnotateJob] = useState(null);
     const [tier, setTier] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.tier') || 'basic'; }
@@ -145,7 +156,7 @@ export default function DatasetPrep() {
 
     async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
         if (!project) return;
-        setError('');
+        setError(''); setErrorCode(''); setErrorExtra(null);
         try {
             await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
                 tier,
@@ -153,7 +164,12 @@ export default function DatasetPrep() {
                 skip_existing: opts.skip_existing ?? skipExisting,
             });
             pollAnnotateStatus(project.name);
-        } catch (e) { setError(extractError(e, 'Failed to start annotation')); }
+        } catch (e) {
+            const body = e?.response?.data || {};
+            setError(extractError(e, 'Failed to start annotation'));
+            setErrorCode(body.code || '');
+            setErrorExtra(body.install_command ? { install_command: body.install_command } : null);
+        }
     }
 
     async function handleCancelAnnotate() {
@@ -223,22 +239,78 @@ export default function DatasetPrep() {
         <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
         <Stack spacing={2.5}>
             <Box>
-                <Typography variant="h6">Dataset</Typography>
+                <Box sx={{ ...appStyles.sectionCardHeader, mb: 0.5 }}>
+                    <Box component="span" sx={appStyles.sectionCardIcon}>
+                        <UploadIcon size={20} />
+                    </Box>
+                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>
+                        Dataset Workbench
+                    </Typography>
+                    <Box sx={{ flex: 1 }} />
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<FolderOpenIcon size={16} />}
+                        onClick={() => setLoadOpen(true)}
+                        disabled={projects.length === 0}
+                    >
+                        Load project
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<PlusIcon size={16} />}
+                        onClick={() => setCreateOpen(true)}
+                    >
+                        New project
+                    </Button>
+                </Box>
                 <Typography variant="body2" color="text.secondary">
-                    Each project is a folder on disk holding audio + matching .txt sidecars —
-                    the format SA3 trains against directly. Edits live in memory; Save persists a draft,
-                    Commit writes the final sidecars.
+                    Create a new dataset or load and edit one. 
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paddingBottom={2}>
+                     You can auto-annotate using Librosa and CLAP or annotate everything manually.
                 </Typography>
             </Box>
 
-            <ProjectSelector
-                projects={projects}
-                selectedName={selectedName}
-                onSelect={trySelectProject}
-                onCreateClick={() => setCreateOpen(true)}
-            />
-
-            {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
+            {error && (
+                <Alert
+                    severity={(errorCode === 'clap_not_available' || errorCode === 'clap_package_missing') ? 'warning' : 'error'}
+                    onClose={() => { setError(''); setErrorCode(''); setErrorExtra(null); }}
+                    action={
+                        errorCode === 'clap_not_available' && onOpenCheckpointManager ? (
+                            <Button
+                                color="inherit"
+                                size="small"
+                                onClick={() => { setError(''); setErrorCode(''); setErrorExtra(null); onOpenCheckpointManager(); }}
+                            >
+                                Open Model Management
+                            </Button>
+                        ) : null
+                    }
+                >
+                    <Box>
+                        <Typography variant="body2">{error}</Typography>
+                        {errorCode === 'clap_package_missing' && errorExtra?.install_command && (
+                            <Box
+                                component="pre"
+                                sx={{
+                                    mt: 1,
+                                    mb: 0,
+                                    p: 1,
+                                    borderRadius: 1,
+                                    bgcolor: 'action.hover',
+                                    fontSize: '0.8rem',
+                                    fontFamily: 'monospace',
+                                    overflowX: 'auto',
+                                }}
+                            >
+                                {errorExtra.install_command}
+                            </Box>
+                        )}
+                    </Box>
+                </Alert>
+            )}
 
             {project && (
                 <Stack spacing={2}>
@@ -293,6 +365,10 @@ export default function DatasetPrep() {
                         />
                     </Box>
 
+                    {tier === 'rich' && (
+                        <ClapVocabAccordion disabled={isAnnotating} />
+                    )}
+
                     {isAnnotating && annotateJob && (
                         <Box>
                             <LinearProgress
@@ -338,6 +414,17 @@ export default function DatasetPrep() {
                 }}
             />
 
+            <LoadProjectDialog
+                open={loadOpen}
+                projects={projects}
+                currentName={selectedName}
+                onClose={() => setLoadOpen(false)}
+                onLoad={(name) => {
+                    setLoadOpen(false);
+                    trySelectProject(name);
+                }}
+            />
+
             <IngestDialog
                 open={ingestOpen}
                 projectName={project?.name}
@@ -355,33 +442,207 @@ export default function DatasetPrep() {
 
 // ---------- subcomponents --------------------------------------------------
 
-function ProjectSelector({ projects, selectedName, onSelect, onCreateClick }) {
+function ClapVocabAccordion({ disabled }) {
+    const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
+    const [overridden, setOverridden] = useState(false);
+    const [dirty, setDirty] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [vocabError, setVocabError] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const { data } = await api.get('/api/annotator-labels');
+                if (cancelled) return;
+                setLabels(data.labels || { genre: [], mood: [], instruments: [] });
+                setOverridden(!!data.overridden);
+                setDirty(false);
+            } catch (e) {
+                if (!cancelled) setVocabError(extractError(e, 'Failed to load vocabulary'));
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
+    function setCategory(cat, values) {
+        setLabels((prev) => ({ ...prev, [cat]: values }));
+        setDirty(true);
+    }
+
+    async function save() {
+        setBusy(true);
+        setVocabError('');
+        try {
+            await api.put('/api/annotator-labels', labels);
+            setDirty(false);
+            setOverridden(true);
+        } catch (e) {
+            setVocabError(extractError(e, 'Failed to save vocabulary'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function reset() {
+        if (!window.confirm('Reset vocabulary to the built-in defaults? Your custom tags will be lost.')) return;
+        setBusy(true);
+        setVocabError('');
+        try {
+            await api.delete('/api/annotator-labels');
+            const { data } = await api.get('/api/annotator-labels');
+            setLabels(data.labels || { genre: [], mood: [], instruments: [] });
+            setOverridden(false);
+            setDirty(false);
+        } catch (e) {
+            setVocabError(extractError(e, 'Failed to reset vocabulary'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
+
     return (
-        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-                <InputLabel id="project-select-label">Project</InputLabel>
-                <Select
-                    labelId="project-select-label"
-                    label="Project"
-                    value={selectedName}
-                    onChange={(e) => onSelect(e.target.value)}
-                    displayEmpty
+        <Accordion sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}>
+            <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
+                <Typography variant="subtitle1">CLAP Vocabulary</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, alignSelf: 'center' }}>
+                    {overridden ? 'custom' : 'defaults'} · {tagCount} tags
+                </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+                <Stack spacing={2}>
+                    <Typography variant="body2" color="text.secondary">
+                        Words CLAP scores each clip against. Empty categories are ignored. Tweak to match your dataset's territory.
+                    </Typography>
+                    <VocabCategory
+                        label="Genre"
+                        values={labels.genre || []}
+                        onChange={(v) => setCategory('genre', v)}
+                        disabled={disabled || busy}
+                    />
+                    <VocabCategory
+                        label="Mood"
+                        values={labels.mood || []}
+                        onChange={(v) => setCategory('mood', v)}
+                        disabled={disabled || busy}
+                    />
+                    <VocabCategory
+                        label="Instruments"
+                        values={labels.instruments || []}
+                        onChange={(v) => setCategory('instruments', v)}
+                        disabled={disabled || busy}
+                    />
+                    {vocabError && <Alert severity="error" onClose={() => setVocabError('')}>{vocabError}</Alert>}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={reset}
+                            disabled={disabled || busy || !overridden}
+                        >
+                            Reset to defaults
+                        </Button>
+                        <Box sx={{ flex: 1 }} />
+                        <Button
+                            variant="contained"
+                            size="small"
+                            onClick={save}
+                            disabled={disabled || busy || !dirty}
+                        >
+                            Save vocabulary
+                        </Button>
+                    </Box>
+                </Stack>
+            </AccordionDetails>
+        </Accordion>
+    );
+}
+
+function VocabCategory({ label, values, onChange, disabled }) {
+    return (
+        <Autocomplete
+            multiple
+            freeSolo
+            options={[]}
+            value={values}
+            onChange={(_e, newValues) => onChange(newValues)}
+            disabled={disabled}
+            renderTags={(value, getTagProps) =>
+                value.map((option, index) => {
+                    const tagProps = getTagProps({ index });
+                    return (
+                        <Chip
+                            variant="outlined"
+                            size="small"
+                            label={option}
+                            {...tagProps}
+                            key={`${option}-${index}`}
+                        />
+                    );
+                })
+            }
+            renderInput={(params) => (
+                <TextField
+                    {...params}
+                    label={label}
+                    placeholder="Add tag, press Enter"
+                    size="small"
+                />
+            )}
+        />
+    );
+}
+
+function LoadProjectDialog({ open, projects, currentName, onClose, onLoad }) {
+    const [picked, setPicked] = useState(currentName || '');
+
+    useEffect(() => {
+        if (open) setPicked(currentName || (projects[0]?.name ?? ''));
+    }, [open, currentName, projects]);
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>Load project</DialogTitle>
+            <DialogContent>
+                {projects.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                        No projects yet. Create one first.
+                    </Typography>
+                ) : (
+                    <RadioGroup value={picked} onChange={(e) => setPicked(e.target.value)}>
+                        {projects.map((p) => (
+                            <FormControlLabel
+                                key={p.name}
+                                value={p.name}
+                                control={<Radio size="small" />}
+                                label={
+                                    <Box>
+                                        <Typography variant="body2">{p.name}</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {p.clip_count} clip{p.clip_count === 1 ? '' : 's'}
+                                            {p.has_draft ? ' · has unsaved draft' : ''}
+                                        </Typography>
+                                    </Box>
+                                }
+                                sx={{ alignItems: 'flex-start', py: 0.5 }}
+                            />
+                        ))}
+                    </RadioGroup>
+                )}
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={onClose}>Cancel</Button>
+                <Button
+                    variant="contained"
+                    onClick={() => onLoad(picked)}
+                    disabled={!picked || projects.length === 0}
                 >
-                    <MenuItem value="">
-                        <em>None selected</em>
-                    </MenuItem>
-                    {projects.map((p) => (
-                        <MenuItem key={p.name} value={p.name}>
-                            {p.name} · {p.clip_count} clip{p.clip_count === 1 ? '' : 's'}
-                            {p.has_draft ? ' · draft' : ''}
-                        </MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
-            <Button variant="outlined" startIcon={<PlusIcon size={18} />} onClick={onCreateClick}>
-                New project
-            </Button>
-        </Stack>
+                    Load
+                </Button>
+            </DialogActions>
+        </Dialog>
     );
 }
 

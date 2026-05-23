@@ -2448,7 +2448,10 @@ def annotate_project_route(name):
         return jsonify({'error': str(exc)}), 404
 
     if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
-        return jsonify({'error': 'CLAP checkpoint not downloaded yet.'}), 409
+        return jsonify({
+            'error': 'CLAP checkpoint not downloaded yet. Open Model Management to download it.',
+            'code': 'clap_not_available',
+        }), 409
 
     with session.lock:
         all_clips = sorted(session.clips.values(), key=lambda c: c.file_name)
@@ -2495,7 +2498,48 @@ def annotate_project_route(name):
     clap_tagger = None
     if tier == 'rich':
         clap_tagger = get_clap_tagger(_clap_ckpt_path())
-        clap_tagger.ensure_loaded()
+        try:
+            clap_tagger.ensure_loaded()
+        except FileNotFoundError as exc:
+            # File-existence check passed earlier but the actual load failed.
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            return jsonify({
+                'error': str(exc),
+                'code': 'clap_not_available',
+            }), 409
+        except ImportError as exc:
+            # The .pt weights are on disk but one of CLAP's Python deps isn't
+            # installed in the venv. Could be laion_clap itself or anything it
+            # imports transitively (e.g. torchvision). Model Manager can't fix
+            # this — the user has to pip install in their environment.
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            missing = getattr(exc, 'name', None) or 'laion_clap'
+            # Module name → PyPI name when they differ; default identical.
+            _PYPI_NAME = {'laion_clap': 'laion-clap'}
+            pip_name = _PYPI_NAME.get(missing, missing)
+            install_command = f'pip install {pip_name}'
+            # torch-family packages need the CUDA index URL to match the
+            # pinned torch build; otherwise pip installs the CPU-only wheel.
+            if missing in {'torchvision', 'torchaudio'}:
+                install_command += ' --extra-index-url https://download.pytorch.org/whl/cu128'
+            return jsonify({
+                'error': (
+                    f"The '{missing}' Python package is required for Rich-tier annotation "
+                    "but isn't installed. Install it in Fragmenta's venv, then restart the app:"
+                ),
+                'code': 'clap_package_missing',
+                'install_command': install_command,
+            }), 409
+        except Exception as exc:
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            logger.exception("CLAP load failed for project %s", name)
+            return jsonify({
+                'error': f'CLAP failed to load: {exc}',
+                'code': 'clap_load_failed',
+            }), 500
 
     proj_path = project_path(name)
 

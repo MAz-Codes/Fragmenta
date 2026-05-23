@@ -134,6 +134,7 @@ function App() {
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
+    const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     const [colorMode, setColorMode] = useState(() => {
@@ -1246,7 +1247,7 @@ function App() {
                                     />
                                 </Box>
                                 {datasetPrepPreview ? (
-                                    <DatasetPrep />
+                                    <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
                                 ) : (
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
                                     <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
@@ -1409,6 +1410,9 @@ function App() {
                                                         fullWidth
                                                         size="small"
                                                         value={trainingConfig.baseModel}
+                                                        open={trainingBaseModelSelectOpen}
+                                                        onOpen={() => setTrainingBaseModelSelectOpen(true)}
+                                                        onClose={() => setTrainingBaseModelSelectOpen(false)}
                                                         onChange={(e) => setTrainingConfig({
                                                             ...trainingConfig,
                                                             baseModel: e.target.value,
@@ -1420,16 +1424,42 @@ function App() {
                                                         {baseModels
                                                             .filter(m => m.name.endsWith('-base'))
                                                             .map(m => (
-                                                                <MenuItem key={m.name} value={m.name}>
-                                                                    <Box>
+                                                                <MenuItem
+                                                                    key={m.name}
+                                                                    value={m.name}
+                                                                    disabled={!m.downloaded}
+                                                                    sx={{
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: 1,
+                                                                        '&.Mui-disabled': { pointerEvents: 'auto' },
+                                                                    }}
+                                                                >
+                                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                         <Typography variant="body2">
                                                                             {m.displayName}
                                                                         </Typography>
                                                                         <Typography variant="caption" color="text.secondary">
                                                                             {m.description}
-                                                                            {!m.downloaded && ' · not yet downloaded (will fetch on training start)'}
                                                                         </Typography>
                                                                     </Box>
+                                                                    {!m.downloaded && (
+                                                                        <Tooltip title="Download this model">
+                                                                            <IconButton
+                                                                                size="small"
+                                                                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    e.preventDefault();
+                                                                                    setTrainingBaseModelSelectOpen(false);
+                                                                                    setCheckpointMgrOpen(true);
+                                                                                }}
+                                                                                sx={{ opacity: 1, color: 'primary.main' }}
+                                                                            >
+                                                                                <CloudDownloadIcon size={16} />
+                                                                            </IconButton>
+                                                                        </Tooltip>
+                                                                    )}
                                                                 </MenuItem>
                                                             ))}
                                                     </Select>
