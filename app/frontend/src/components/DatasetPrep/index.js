@@ -1009,12 +1009,16 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
 
 function HealthStrip({ health, onSelectFiles }) {
     if (!health || health.total_clips === 0) return null;
-    const empty = health.empty_prompts;
-    const tooLong = health.too_long;
-    const tooShort = health.too_short;
-    const issues = (empty.count + tooLong.count + tooShort.count) > 0;
+    const empty = health.empty_prompts || { count: 0, files: [] };
+    const tooLong = health.too_long || { count: 0, files: [] };
+    const tooShort = health.too_short || { count: 0, files: [] };
+    const mixedSR = health.mixed_sample_rates || { count: 0, files: [] };
+    const loud = health.loudness_outliers || { count: 0, files: [] };
+    const dups = health.duplicate_annotations || { count: 0, group_count: 0, files: [] };
+    const issues = empty.count + tooLong.count + tooShort.count
+        + mixedSR.count + loud.count + dups.count;
 
-    if (!issues) {
+    if (issues === 0) {
         return (
             <Typography variant="caption" color="success.main">
                 All clean · {health.total_clips} clip{health.total_clips === 1 ? '' : 's'} ready
@@ -1057,6 +1061,39 @@ function HealthStrip({ health, onSelectFiles }) {
                         color="error"
                         label={`${tooShort.count} too short (< ${tooShort.threshold_sec}s)`}
                         onClick={() => onSelectFiles(tooShort.files)}
+                    />
+                </Tooltip>
+            )}
+            {mixedSR.count > 0 && (
+                <Tooltip title={`Dataset has mixed sample rates (${(mixedSR.rates || []).join(' Hz, ')} Hz). The dominant is ${mixedSR.dominant_sr} Hz; click to select the minority and resample or delete.`}>
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        label={`${mixedSR.count} off-rate (≠ ${mixedSR.dominant_sr} Hz)`}
+                        onClick={() => onSelectFiles(mixedSR.files)}
+                    />
+                </Tooltip>
+            )}
+            {loud.count > 0 && (
+                <Tooltip title={`Loudness more than ${loud.threshold_db} dB from the dataset median (${loud.median_db?.toFixed(1)} dB). Click to select; consider normalizing or removing.`}>
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        label={`${loud.count} loudness outlier${loud.count === 1 ? '' : 's'}`}
+                        onClick={() => onSelectFiles(loud.files)}
+                    />
+                </Tooltip>
+            )}
+            {dups.count > 0 && (
+                <Tooltip title={`${dups.group_count} group${dups.group_count === 1 ? '' : 's'} of clips share the same annotation. Bad for training diversity — click to select all of them.`}>
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        label={`${dups.count} duplicate annotation${dups.count === 1 ? '' : 's'}`}
+                        onClick={() => onSelectFiles(dups.files)}
                     />
                 </Tooltip>
             )}

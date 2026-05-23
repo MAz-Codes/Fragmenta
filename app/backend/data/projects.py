@@ -241,6 +241,10 @@ class ProjectSession:
     # file_name -> duration_sec. Same lifecycle, but populated cheaply via
     # soundfile.info() instead of waiting for a peaks fetch.
     duration_cache: Dict[str, float] = field(default_factory=dict)
+    # file_name -> sample_rate (Hz) and approximate loudness in dB.
+    # Both populated lazily during a health check; cleared with the session.
+    samplerate_cache: Dict[str, int] = field(default_factory=dict)
+    loudness_cache: Dict[str, float] = field(default_factory=dict)
 
     def _draft_snapshot(self) -> Dict[str, str]:
         """Map file_name -> prompt, only for clips whose prompt differs from
@@ -494,6 +498,8 @@ def delete_clip(name: str, file_name: str) -> None:
             if key.startswith(f"{file_name}:"):
                 del session.peaks_cache[key]
         session.duration_cache.pop(file_name, None)
+        session.samplerate_cache.pop(file_name, None)
+        session.loudness_cache.pop(file_name, None)
         committed = session.metadata.get("committed_files") or []
         if file_name in committed:
             session.metadata["committed_files"] = [f for f in committed if f != file_name]
@@ -695,16 +701,68 @@ def _clip_duration_sec(audio_path: Path) -> Optional[float]:
         return None
 
 
+def _clip_samplerate(audio_path: Path) -> Optional[int]:
+    """Header-only sample-rate probe."""
+    try:
+        import soundfile as sf
+        return int(sf.info(str(audio_path)).samplerate)
+    except Exception:
+        return None
+
+
+def _clip_loudness_db(audio_path: Path) -> Optional[float]:
+    """Approximate RMS dB via the same N-probe stride as the peak computer.
+
+    Not LUFS — we don't have pyloudnorm in the venv and it's not worth the
+    extra dep for a health-check rough indicator. Reads ~200 short blocks
+    spread across the file (~1-2 ms per clip regardless of duration).
+    """
+    try:
+        import soundfile as sf
+        import numpy as np
+        with sf.SoundFile(str(audio_path)) as src:
+            total = src.frames
+            if total == 0:
+                return None
+            n_probes = 200
+            probe_size = max(64, total // (n_probes * 6))
+            sq_sum = 0.0
+            samples = 0
+            for i in range(n_probes):
+                center = int((i + 0.5) * total / n_probes)
+                start = max(0, center - probe_size // 2)
+                src.seek(start)
+                data = src.read(probe_size, dtype="float32", always_2d=False)
+                if data.ndim > 1:
+                    data = data.mean(axis=1)
+                if len(data):
+                    sq_sum += float(np.sum(data ** 2))
+                    samples += len(data)
+            if samples == 0:
+                return None
+            mean_sq = sq_sum / samples
+            if mean_sq <= 1e-12:
+                return -120.0
+            return float(20.0 * np.log10(np.sqrt(mean_sq)))
+    except Exception:
+        return None
+
+
 def compute_health(
     name: str,
     long_threshold_sec: float = 30.0,
     short_threshold_sec: float = 1.0,
+    loudness_outlier_db: float = 6.0,
 ) -> Dict[str, Any]:
     """Per-clip checks that surface dataset problems before training.
 
-    Defaults match the SA3 LoRA --duration default (30s) and the practical
-    "this is so short it's mostly silence-padding" floor (1s).
+    Duration defaults match the SA3 LoRA --duration default (30s) and the
+    practical "this is so short it's mostly silence-padding" floor (1s).
+    Loudness outliers: |dB - median_dB| > loudness_outlier_db (default 6).
     """
+    import statistics
+    from collections import defaultdict
+
     session = _get_or_load_session(name)
     with session.lock:
         clips = list(session.clips.values())
@@ -712,21 +770,70 @@ def compute_health(
     empty_prompts: List[str] = []
     too_long: List[str] = []
     too_short: List[str] = []
+    sr_by_file: Dict[str, int] = {}
+    loudness_by_file: Dict[str, float] = {}
+    prompt_groups: Dict[str, List[str]] = defaultdict(list)
 
     for c in clips:
         if not (c.prompt or "").strip():
             empty_prompts.append(c.file_name)
+        else:
+            prompt_groups[c.prompt.strip().lower()].append(c.file_name)
+
+        # Duration (header-only, ~free)
         dur = session.duration_cache.get(c.file_name)
         if dur is None:
             dur = _clip_duration_sec(Path(c.path))
             if dur is not None:
                 session.duration_cache[c.file_name] = dur
-        if dur is None:
-            continue
-        if dur > long_threshold_sec:
-            too_long.append(c.file_name)
-        elif dur < short_threshold_sec:
-            too_short.append(c.file_name)
+        if dur is not None:
+            if dur > long_threshold_sec:
+                too_long.append(c.file_name)
+            elif dur < short_threshold_sec:
+                too_short.append(c.file_name)
+
+        # Sample rate (header-only)
+        sr = session.samplerate_cache.get(c.file_name)
+        if sr is None:
+            sr = _clip_samplerate(Path(c.path))
+            if sr is not None:
+                session.samplerate_cache[c.file_name] = sr
+        if sr is not None:
+            sr_by_file[c.file_name] = sr
+
+        # Loudness (cheap stride read, ~1-2 ms per clip)
+        loud = session.loudness_cache.get(c.file_name)
+        if loud is None:
+            loud = _clip_loudness_db(Path(c.path))
+            if loud is not None:
+                session.loudness_cache[c.file_name] = loud
+        if loud is not None:
+            loudness_by_file[c.file_name] = loud
+
+    # --- Mixed sample rates: dominant SR is the majority; minority gets flagged.
+    sr_counts: Dict[int, int] = {}
+    for sr in sr_by_file.values():
+        sr_counts[sr] = sr_counts.get(sr, 0) + 1
+    dominant_sr = max(sr_counts, key=sr_counts.get) if sr_counts else None
+    sr_minority = (
+        sorted([f for f, sr in sr_by_file.items() if sr != dominant_sr])
+        if dominant_sr is not None and len(sr_counts) > 1
+        else []
+    )
+
+    # --- Loudness outliers: |x - median| > threshold dB
+    loudness_outliers: List[str] = []
+    median_db = None
+    if loudness_by_file:
+        median_db = float(statistics.median(loudness_by_file.values()))
+        loudness_outliers = sorted([
+            f for f, v in loudness_by_file.items()
+            if abs(v - median_db) > loudness_outlier_db
+        ])
+
+    # --- Duplicate annotations: any non-empty prompt shared by 2+ clips.
+    dup_groups = [files for files in prompt_groups.values() if len(files) > 1]
+    dup_files = sorted({f for group in dup_groups for f in group})
 
     empty_prompts.sort()
     too_long.sort()
@@ -744,6 +851,23 @@ def compute_health(
             "count": len(too_short),
             "threshold_sec": short_threshold_sec,
             "files": too_short,
+        },
+        "mixed_sample_rates": {
+            "count": len(sr_minority),
+            "dominant_sr": dominant_sr,
+            "rates": sorted(sr_counts.keys()),
+            "files": sr_minority,
+        },
+        "loudness_outliers": {
+            "count": len(loudness_outliers),
+            "median_db": median_db,
+            "threshold_db": loudness_outlier_db,
+            "files": loudness_outliers,
+        },
+        "duplicate_annotations": {
+            "count": len(dup_files),
+            "group_count": len(dup_groups),
+            "files": dup_files,
         },
     }
 
@@ -800,6 +924,8 @@ def slice_clip(
             if key.startswith(f"{file_name}:"):
                 del session.peaks_cache[key]
         session.duration_cache.pop(file_name, None)
+        session.samplerate_cache.pop(file_name, None)
+        session.loudness_cache.pop(file_name, None)
         sidecar = _sidecar_for(audio_path)
         if audio_path.exists():
             audio_path.unlink()
