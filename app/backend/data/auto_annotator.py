@@ -313,7 +313,17 @@ def _text_dep_snapshot_present(hub_dir: Path, repo_id: str) -> bool:
 def download_clap_checkpoint(
     models_pretrained_dir: Path,
     progress_cb: Optional[Callable[[str], None]] = None,
+    phase_cb: Optional[Callable[[int, int, str], None]] = None,
 ) -> Path:
+    """Download the CLAP audio .pt plus laion_clap's text-side HF snapshots.
+
+    Four sequential phases — emit a phase update (current, total, label) at the
+    start of each so a multi-phase progress UI can show real context. Skips
+    phases whose artifacts are already on disk.
+
+    `progress_cb` (str-only) is kept for the bulk-annotate API.
+    `phase_cb` (current, total, label) is the structured channel.
+    """
     target = clap_checkpoint_path(models_pretrained_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
     hub_dir = clap_hub_dir(models_pretrained_dir)
@@ -322,9 +332,16 @@ def download_clap_checkpoint(
     from huggingface_hub import hf_hub_download, snapshot_download
     import os
 
-    if not target.exists():
+    total_phases = 1 + len(CLAP_TEXT_DEPS)
+
+    def _emit(phase_index: int, label: str) -> None:
+        if phase_cb:
+            phase_cb(phase_index, total_phases, label)
         if progress_cb:
-            progress_cb("Downloading CLAP checkpoint (~630 MB)…")
+            progress_cb(f"[{phase_index}/{total_phases}] {label}")
+
+    if not target.exists():
+        _emit(1, "CLAP audio model (~2.35 GB)")
 
         # Use custom CLAP from fragmenta-models on HF Spaces
         use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
@@ -349,11 +366,11 @@ def download_clap_checkpoint(
     # laion_clap's CLAP_Module(...) constructor instantiates a Roberta text
     # branch plus bert/bart tokenizers at import time. Pre-stage them into
     # our own cache so the rich tier is fully offline after this step.
-    for repo_id in CLAP_TEXT_DEPS:
+    # safetensors only — pytorch_model.bin is a redundant copy.
+    for i, repo_id in enumerate(CLAP_TEXT_DEPS, start=2):
         if _text_dep_snapshot_present(hub_dir, repo_id):
             continue
-        if progress_cb:
-            progress_cb(f"Downloading CLAP text dep: {repo_id}…")
+        _emit(i, f"Text encoder: {repo_id}")
         snapshot_download(
             repo_id=repo_id,
             cache_dir=str(hub_dir),
@@ -364,7 +381,6 @@ def download_clap_checkpoint(
                 "merges.txt",
                 "special_tokens_map.json",
                 "model.safetensors",
-                "pytorch_model.bin",
             ],
         )
 

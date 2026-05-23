@@ -134,7 +134,10 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "sa3_name": "clap-music",
         "repo": "lukewys/laion_clap",
         "filename": "music_audioset_epoch_15_esc_90.14.pt",
-        "size_bytes": 660_000_000,
+        # ~2.35 GB .pt + ~1.4 GB of text-encoder snapshots (roberta-base,
+        # bert-base-uncased, facebook/bart-base) that laion_clap loads at
+        # construction. download_clap_checkpoint pulls all of them.
+        "size_bytes": 3_800_000_000,
         "hardware": "cpu",
         "description": (
             "Zero-shot tagger used by the dataset prep's rich-tier annotation. "
@@ -366,20 +369,40 @@ class ModelManager:
         job.status = "running"
         job.started_at = datetime.now().isoformat()
 
-        # Tagger kind (e.g. CLAP) is a single .pt file living outside the
-        # sa3/hub HF cache layout. Delegate to auto_annotator which owns
-        # the canonical path.
+        # Tagger kind (e.g. CLAP) is a .pt file plus auxiliary HF snapshots
+        # living outside the sa3/hub layout. Multi-phase: 1 hf_hub_download
+        # for the audio .pt, then N sequential snapshot_downloads for the
+        # text encoders. Each spawns its own tqdm bars, so we use the
+        # cumulative hook to accumulate bytes across phases, and a phase_cb
+        # to prefix the message with which step the user is on.
         if info.get("kind") == "tagger":
             try:
                 from app.backend.data.auto_annotator import download_clap_checkpoint
                 if progress_callback:
                     progress_callback(0, f"Downloading {info['name']}…")
-                download_clap_checkpoint(self.models_dir)
+                # Pin total to the catalog estimate so the % stays anchored
+                # even before tqdm reports any file's size.
+                job.total_bytes = info["size_bytes"]
+                current_phase = {"label": ""}
+
+                def phase_cb(idx: int, total: int, label: str) -> None:
+                    current_phase["label"] = f"[{idx}/{total}] {label}"
+                    if progress_callback:
+                        pct = (int(job.downloaded_bytes / job.total_bytes * 100)
+                               if job.total_bytes else 0)
+                        progress_callback(pct, current_phase["label"])
+
+                with _cumulative_tqdm_hook(job, progress_callback, current_phase):
+                    download_clap_checkpoint(self.models_dir, phase_cb=phase_cb)
                 job.downloaded_bytes = job.total_bytes
                 job.status = "complete"
                 job.finished_at = datetime.now().isoformat()
                 if progress_callback:
                     progress_callback(100, f"Downloaded {info['name']}")
+            except _DownloadCancelled:
+                job.status = "cancelled"
+                job.error = "Cancelled by user"
+                job.finished_at = datetime.now().isoformat()
             except Exception as err:
                 job.status = "failed"
                 job.error = f"{type(err).__name__}: {err}"
@@ -511,6 +534,57 @@ def _tqdm_progress_hook(
                     mb_done = self.n / (1024 * 1024)
                     mb_total = self.total / (1024 * 1024)
                     progress_callback(pct, f"Downloading: {mb_done:.1f}MB / {mb_total:.1f}MB")
+            return result
+
+        self.update = new_update  # type: ignore[method-assign]
+
+    tqdm.__init__ = patched_init  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        tqdm.__init__ = original_init  # type: ignore[method-assign]
+
+
+@contextlib.contextmanager
+def _cumulative_tqdm_hook(
+    job: _DownloadJob,
+    progress_callback: Optional[Callable[[int, str], None]],
+    current_phase: Dict[str, str],
+):
+    """Like _tqdm_progress_hook, but sums bytes across sequential bars.
+
+    Each tqdm bar reports `self.n` cumulative within ITS file. The single-bar
+    hook uses max() which freezes the UI when a fresh bar starts smaller than
+    the previous bar's total. Here we track the previous `self.n` per bar id
+    and add only the delta to job.downloaded_bytes — so progress climbs
+    monotonically across all phases.
+    """
+    from tqdm.auto import tqdm
+    original_init = tqdm.__init__
+    prev_n: Dict[int, int] = {}
+
+    def patched_init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        original_update = self.update
+        prev_n[id(self)] = 0
+
+        def new_update(n: int = 1) -> Any:
+            if job._cancel_flag.is_set():
+                raise _DownloadCancelled()
+            result = original_update(n)
+            prev = prev_n.get(id(self), 0)
+            delta = self.n - prev
+            prev_n[id(self)] = self.n
+            if delta > 0:
+                job.downloaded_bytes += delta
+                if progress_callback and job.total_bytes:
+                    pct = min(int(job.downloaded_bytes / job.total_bytes * 100), 99)
+                    mb_done = job.downloaded_bytes / (1024 * 1024)
+                    mb_total = job.total_bytes / (1024 * 1024)
+                    label = current_phase.get("label", "")
+                    msg = (f"{label} · {mb_done:.0f} MB / {mb_total:.0f} MB"
+                           if label else f"{mb_done:.0f} MB / {mb_total:.0f} MB")
+                    progress_callback(pct, msg)
             return result
 
         self.update = new_update  # type: ignore[method-assign]
