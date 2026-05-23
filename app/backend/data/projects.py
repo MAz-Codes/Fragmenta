@@ -238,6 +238,9 @@ class ProjectSession:
     # file_name -> (peaks, duration). Lazily filled by get_or_compute_peaks.
     # Cleared on Discard. Survives an annotate; safe to recompute on miss.
     peaks_cache: Dict[str, Tuple[List[float], float]] = field(default_factory=dict)
+    # file_name -> duration_sec. Same lifecycle, but populated cheaply via
+    # soundfile.info() instead of waiting for a peaks fetch.
+    duration_cache: Dict[str, float] = field(default_factory=dict)
 
     def _draft_snapshot(self) -> Dict[str, str]:
         """Map file_name -> prompt, only for clips whose prompt differs from
@@ -490,6 +493,7 @@ def delete_clip(name: str, file_name: str) -> None:
         for key in list(session.peaks_cache):
             if key.startswith(f"{file_name}:"):
                 del session.peaks_cache[key]
+        session.duration_cache.pop(file_name, None)
         committed = session.metadata.get("committed_files") or []
         if file_name in committed:
             session.metadata["committed_files"] = [f for f in committed if f != file_name]
@@ -676,6 +680,74 @@ def get_or_compute_peaks(
     return result
 
 
+# ---------- Health checks ---------------------------------------------------
+
+
+def _clip_duration_sec(audio_path: Path) -> Optional[float]:
+    """Cheap duration probe via soundfile.info() — header read, no decode."""
+    try:
+        import soundfile as sf
+        info = sf.info(str(audio_path))
+        if info.samplerate <= 0:
+            return None
+        return float(info.frames / info.samplerate)
+    except Exception:
+        return None
+
+
+def compute_health(
+    name: str,
+    long_threshold_sec: float = 30.0,
+    short_threshold_sec: float = 1.0,
+) -> Dict[str, Any]:
+    """Per-clip checks that surface dataset problems before training.
+
+    Defaults match the SA3 LoRA --duration default (30s) and the practical
+    "this is so short it's mostly silence-padding" floor (1s).
+    """
+    session = _get_or_load_session(name)
+    with session.lock:
+        clips = list(session.clips.values())
+
+    empty_prompts: List[str] = []
+    too_long: List[str] = []
+    too_short: List[str] = []
+
+    for c in clips:
+        if not (c.prompt or "").strip():
+            empty_prompts.append(c.file_name)
+        dur = session.duration_cache.get(c.file_name)
+        if dur is None:
+            dur = _clip_duration_sec(Path(c.path))
+            if dur is not None:
+                session.duration_cache[c.file_name] = dur
+        if dur is None:
+            continue
+        if dur > long_threshold_sec:
+            too_long.append(c.file_name)
+        elif dur < short_threshold_sec:
+            too_short.append(c.file_name)
+
+    empty_prompts.sort()
+    too_long.sort()
+    too_short.sort()
+
+    return {
+        "total_clips": len(clips),
+        "empty_prompts": {"count": len(empty_prompts), "files": empty_prompts},
+        "too_long": {
+            "count": len(too_long),
+            "threshold_sec": long_threshold_sec,
+            "files": too_long,
+        },
+        "too_short": {
+            "count": len(too_short),
+            "threshold_sec": short_threshold_sec,
+            "files": too_short,
+        },
+    }
+
+
 # ---------- Slicing ---------------------------------------------------------
 
 
@@ -727,6 +799,7 @@ def slice_clip(
         for key in list(session.peaks_cache):
             if key.startswith(f"{file_name}:"):
                 del session.peaks_cache[key]
+        session.duration_cache.pop(file_name, None)
         sidecar = _sidecar_for(audio_path)
         if audio_path.exists():
             audio_path.unlink()

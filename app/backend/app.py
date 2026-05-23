@@ -2323,6 +2323,25 @@ def get_project_route(name):
         return jsonify({'error': str(exc)}), 500
 
 
+@app.route('/api/projects/<name>/health', methods=['GET'])
+def project_health_route(name):
+    """Per-clip health checks. Returns counts + file lists the UI can route
+    into the existing selection model."""
+    from app.backend.data.projects import compute_health
+    try:
+        long_th = float(request.args.get('long_threshold_sec', 30.0))
+        short_th = float(request.args.get('short_threshold_sec', 1.0))
+    except (TypeError, ValueError):
+        long_th, short_th = 30.0, 1.0
+    try:
+        return jsonify(compute_health(name, long_th, short_th))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Health check failed for %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
 @app.route('/api/projects/<name>', methods=['DELETE'])
 def delete_project_route(name):
     """Nuke the project folder + drop the in-memory session. Irreversible."""

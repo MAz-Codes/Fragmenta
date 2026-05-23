@@ -158,21 +158,35 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         } catch (e) { setError(extractError(e, 'Failed to list projects')); }
     }, []);
 
+    const [health, setHealth] = useState(null);
+    const refreshHealth = useCallback(async (name) => {
+        if (!name) { setHealth(null); return; }
+        try {
+            const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/health`);
+            setHealth(data);
+        } catch {
+            // Non-fatal — strip just hides until next refresh.
+            setHealth(null);
+        }
+    }, []);
+
     const refreshProject = useCallback(async (name) => {
-        if (!name) { setProject(null); return; }
+        if (!name) { setProject(null); setHealth(null); return; }
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}`);
             setProject(data);
+            refreshHealth(name);
         } catch (e) {
             if (e?.response?.status === 404) {
                 setSelectedName('');
                 setProject(null);
+                setHealth(null);
                 await refreshProjects();
                 return;
             }
             setError(extractError(e, 'Failed to load project'));
         }
-    }, [refreshProjects]);
+    }, [refreshProjects, refreshHealth]);
 
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
@@ -449,6 +463,11 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                         onDiscard={handleDiscard}
                         onAddAudio={() => setIngestOpen(true)}
                         disabled={isAnnotating}
+                    />
+
+                    <HealthStrip
+                        health={health}
+                        onSelectFiles={(files) => setSelectedFiles(new Set(files))}
                     />
 
                     {isAnnotating && annotateJob && (
@@ -984,6 +1003,63 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                     </span>
                 </Tooltip>
             </Stack>
+        </Box>
+    );
+}
+
+function HealthStrip({ health, onSelectFiles }) {
+    if (!health || health.total_clips === 0) return null;
+    const empty = health.empty_prompts;
+    const tooLong = health.too_long;
+    const tooShort = health.too_short;
+    const issues = (empty.count + tooLong.count + tooShort.count) > 0;
+
+    if (!issues) {
+        return (
+            <Typography variant="caption" color="success.main">
+                All clean · {health.total_clips} clip{health.total_clips === 1 ? '' : 's'} ready
+            </Typography>
+        );
+    }
+
+    return (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+                Health:
+            </Typography>
+            {empty.count > 0 && (
+                <Tooltip title="Click to select these clips — then Auto-annotate them.">
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        label={`${empty.count} empty annotation${empty.count === 1 ? '' : 's'}`}
+                        onClick={() => onSelectFiles(empty.files)}
+                    />
+                </Tooltip>
+            )}
+            {tooLong.count > 0 && (
+                <Tooltip title={`Longer than ${tooLong.threshold_sec}s — gets randomly cropped by the dataloader. Click to select for slicing.`}>
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        label={`${tooLong.count} too long (> ${tooLong.threshold_sec}s)`}
+                        onClick={() => onSelectFiles(tooLong.files)}
+                    />
+                </Tooltip>
+            )}
+            {tooShort.count > 0 && (
+                <Tooltip title={`Shorter than ${tooShort.threshold_sec}s — gets silence-padded into each batch. Consider deleting. Click to select.`}>
+                    <Chip
+                        size="small"
+                        variant="outlined"
+                        color="error"
+                        label={`${tooShort.count} too short (< ${tooShort.threshold_sec}s)`}
+                        onClick={() => onSelectFiles(tooShort.files)}
+                    />
+                </Tooltip>
+            )}
         </Box>
     );
 }
