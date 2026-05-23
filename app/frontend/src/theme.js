@@ -103,6 +103,28 @@ let theme = createTheme({
     shape: {
         borderRadius: 10,
     },
+    // Slower, smoother defaults than MUI's stock 195/225/300ms transitions.
+    // Applies to every component that reads from theme.transitions — Dialog
+    // backdrop + paper, Fade, Slide, Collapse, Snackbar, Menu, Tooltip, etc.
+    // Easing matches the custom curve already used on the button press
+    // animations, so all motion in the app feels like one family.
+    transitions: {
+        duration: {
+            shortest: 200,
+            shorter: 280,
+            short: 330,
+            standard: 420,
+            complex: 500,
+            enteringScreen: 320,
+            leavingScreen: 280,
+        },
+        easing: {
+            easeInOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
+            easeOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
+            easeIn: 'cubic-bezier(0.4, 0, 1, 1)',
+            sharp: 'cubic-bezier(0.4, 0, 0.6, 1)',
+        },
+    },
     typography: {
         fontFamily: FONT_BODY,
         h1: { fontWeight: 700, letterSpacing: '-0.02em' },
