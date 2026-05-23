@@ -183,14 +183,25 @@ class _ClapTagger:
                     f"CLAP checkpoint not found at {self.ckpt_path}. "
                     "Download it first via /api/bulk-annotate/download-clap."
                 )
-            import laion_clap
-            import torch
             logging.getLogger("transformers").setLevel(logging.ERROR)
 
             # Point HF resolution at our project-local cache and disable the
             # HEAD-revalidation traffic. After download_clap_checkpoint() has
             # staged the text deps under <pretrained>/clap/hub/, CLAP_Module
             # loads them offline with zero HF hub requests.
+            #
+            # Two reasons env vars alone aren't enough:
+            # 1. huggingface_hub.constants.HF_HUB_OFFLINE is captured at
+            #    module-import time (constants.py:185). model_manager.py
+            #    imports huggingface_hub at app startup, so the constant is
+            #    already False by the time we set the env var here.
+            #    transformers.utils.hub.is_offline_mode reads that same
+            #    constant — patching the attribute makes both libraries see
+            #    offline mode.
+            # 2. laion_clap/training/data.py:44-46 runs three from_pretrained
+            #    calls at MODULE LEVEL — those fire the first time we do
+            #    `import laion_clap` and predate any patch we do after the
+            #    import. So we patch BEFORE the import, not after.
             hub_dir = self.ckpt_path.parent / "hub"
             env_keys = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE",
                         "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
@@ -200,10 +211,17 @@ class _ClapTagger:
             os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
             os.environ["HF_HUB_OFFLINE"] = "1"
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+            import huggingface_hub.constants as _hhc
+            prev_offline_attr = _hhc.HF_HUB_OFFLINE
+            _hhc.HF_HUB_OFFLINE = True
             try:
+                import laion_clap  # noqa: E402 — must follow the offline patch
+                import torch
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
             finally:
+                _hhc.HF_HUB_OFFLINE = prev_offline_attr
                 for k, v in prev_env.items():
                     if v is None:
                         os.environ.pop(k, None)
