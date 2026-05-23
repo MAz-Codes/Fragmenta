@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel } from '@mui/material';
+import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel, Stack } from '@mui/material';
 import { welcomePageStyles } from '../theme';
 
 export default function WelcomePage({ open, onClose }) {
@@ -48,45 +48,40 @@ export default function WelcomePage({ open, onClose }) {
                 </Fade>
 
                 <Fade in={textVisible} timeout={1000}>
-                    <Box>
-                        <Typography
-                            variant="body2"
-                            sx={welcomePageStyles.footer}
-                        >
-                            @2025-2026 Misagh Azimi
-                        </Typography>
-                        <Typography
-                            variant="body2"
-                            sx={welcomePageStyles.version}
-                        >
-                            Version 0.2.0
-                        </Typography>
-                        <Button
-                            variant="contained"
-                            onClick={() => onClose(dontShowAgain)}
-                            sx={welcomePageStyles.ctaButton}
-                        >
-                            Get Started
-                        </Button>
-                        <Box sx={{ mt: 1.5 }}>
+                    <Stack alignItems="center">
+                        <Stack alignItems="center">
+                            <Typography variant="body3" color="text.secondary">
+                                ©2025-2026 Misagh Azimi
+                            </Typography>
+                            <Typography variant="body3" color="text.secondary">
+                                Version 0.2.0
+                            </Typography>
+                        </Stack>
+                        <Box mt={5}>
+                            <Button
+                                variant="contained"
+                                onClick={() => onClose(dontShowAgain)}
+                            >
+                                Get Started
+                            </Button>
+                        </Box>
+                        <Box mt={6}>
                             <FormControlLabel
                                 control={
                                     <Checkbox
                                         checked={dontShowAgain}
                                         onChange={(e) => setDontShowAgain(e.target.checked)}
                                         size="small"
-                                        sx={{ color: 'text.secondary' }}
                                     />
                                 }
                                 label={
-                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                    <Typography variant="caption" color="text.secondary">
                                         Don't show this again
                                     </Typography>
                                 }
                             />
                         </Box>
-
-                    </Box>
+                    </Stack>
                 </Fade>
             </Box>
         </Backdrop>

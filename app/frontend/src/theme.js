@@ -132,6 +132,7 @@ let theme = createTheme({
         subtitle2: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: 0,         fontSize: '0.825rem', textTransform: 'uppercase' },
         body1: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.925rem' },
         body2: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.825rem' },
+        body3: { fontWeight: 400, letterSpacing: '-0.005em',    fontSize: '0.7rem' },
         button: { fontFamily: FONT_DISPLAY, fontWeight: 500, letterSpacing: '0.01em',     textTransform: 'none', fontSize: '0.8rem' },
         caption: { fontFamily: FONT_DISPLAY, fontWeight: 400, letterSpacing: '0.005em',   fontSize: '0.75rem' },
         overline: { fontFamily: FONT_DISPLAY, fontWeight: 600, letterSpacing: '0.12em',   textTransform: 'uppercase', fontSize: '0.7rem' },
@@ -203,6 +204,13 @@ let theme = createTheme({
                 '*': {
                     scrollbarWidth: 'thin',
                     scrollbarColor: 'rgba(255, 255, 255, 0.16) transparent',
+                },
+            },
+        },
+        MuiTypography: {
+            defaultProps: {
+                variantMapping: {
+                    body3: 'p',
                 },
             },
         },
@@ -2121,34 +2129,6 @@ export const welcomePageStyles = {
         mb: 1,
         fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4rem' },
         letterSpacing: '0.02em',
-    },
-    overline: {
-        color: 'primary.main',
-        letterSpacing: { xs: '0.12em', md: '0.18em' },
-        fontWeight: 700,
-        fontSize: { xs: '0.62rem', sm: '0.7rem' },
-    },
-    footer: {
-        color: 'text.secondary',
-        opacity: 0.6,
-        fontSize: { xs: '0.64rem', sm: '0.7rem' },
-        marginTop: 5,
-    },
-    version: {
-        color: 'text.secondary',
-        opacity: 0.6,
-        fontSize: { xs: '0.64rem', sm: '0.7rem' },
-        fontStyle: 'italic',
-    },
-    ctaButton: {
-        mt: 3,
-        mb: 2,
-        px: { xs: 3.25, md: 4.5 },
-        py: { xs: 1.2, md: 1.5 },
-        borderRadius: 2,
-        textTransform: 'none',
-        fontSize: { xs: '0.98rem', sm: '1.05rem', md: '1.1rem' },
-        fontWeight: 500,
     },
 };
 
