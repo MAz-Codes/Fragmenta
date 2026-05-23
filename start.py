@@ -231,6 +231,66 @@ def _windows_set_app_id() -> None:
     except Exception as exc:
         print(f"Could not set AppUserModelID: {exc}")
 
+def _linux_set_app_metadata() -> None:
+    """Linux analogue of `_windows_set_app_id` + bundled icon setup.
+
+    Sets the GTK program name / WM_CLASS and registers Fragmenta's PNG as the
+    default icon for every Gtk.Window created after this call. pywebview's
+    GTK backend constructs its WebKit window inside `webview.start()`, so as
+    long as this runs first the dock picks up the icon and associates the
+    window with our identity.
+    """
+    if sys.platform != "linux":
+        return
+    if not APP_ICON_PATH.exists():
+        return
+    try:
+        import gi
+        gi.require_version("Gtk", "3.0")
+        from gi.repository import GLib, Gtk
+        # WM_CLASS res_name (first string).
+        GLib.set_prgname(APP_WM_CLASS)
+        GLib.set_application_name("Fragmenta")
+        # WM_CLASS res_class (second string) — what GNOME/KDE compare against
+        # StartupWMClass when resolving a window to a .desktop entry.
+        try:
+            gi.require_version("Gdk", "3.0")
+            from gi.repository import Gdk
+            Gdk.set_program_class(APP_WM_CLASS)
+        except Exception:
+            pass
+        Gtk.Window.set_default_icon_from_file(str(APP_ICON_PATH))
+    except Exception as exc:
+        print(f"Could not set Linux app metadata: {exc}")
+
+
+def _linux_apply_window_icon() -> None:
+    """Belt-and-suspenders: after pywebview shows the window, reach into the
+    GTK backend and reapply the icon/WM_CLASS directly. Safe no-op if the
+    internals differ from the version we expect.
+    """
+    if sys.platform != "linux":
+        return
+    if not APP_ICON_PATH.exists():
+        return
+    try:
+        from webview.platforms.gtk import BrowserView
+        for inst in BrowserView.instances.values():
+            gtk_window = getattr(inst, "window", None)
+            if gtk_window is None:
+                continue
+            try:
+                gtk_window.set_icon_from_file(str(APP_ICON_PATH))
+            except Exception:
+                pass
+            try:
+                gtk_window.set_wmclass(APP_WM_CLASS, APP_WM_CLASS)
+            except Exception:
+                pass
+    except Exception as exc:
+        print(f"Could not set Linux window icon: {exc}")
+
+
 def _windows_apply_window_icon() -> None:
     """Replace the pywebview window's titlebar/taskbar icon with Fragmenta's.
     Called from the window's `shown` event so the HWND is guaranteed to exist.
@@ -273,6 +333,7 @@ def run_pywebview_mode() -> int:
         return run_browser_mode()
 
     _windows_set_app_id()
+    _linux_set_app_metadata()
 
     if sys.platform == "linux":
         deps_ok, deps_error = check_linux_webview_deps()
@@ -316,6 +377,8 @@ def run_pywebview_mode() -> int:
             )
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
+            elif sys.platform == "linux":
+                window.events.shown += _linux_apply_window_icon
             webview.start()
             return 0 if window else 1
         except Exception as exc:

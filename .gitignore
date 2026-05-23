@@ -13,6 +13,9 @@ lib64/
 parts/
 sdist/
 var/
+....venv
+.venv-sa3
+models/pretrained/sa3
 wheels/
 !utils/vendor/wheels/
 share/python-wheels/
