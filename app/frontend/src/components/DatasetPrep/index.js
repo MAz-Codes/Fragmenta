@@ -3,6 +3,7 @@ import {
     Alert,
     Box,
     Button,
+    Checkbox,
     Dialog,
     DialogActions,
     DialogContent,
@@ -32,52 +33,52 @@ import {
     FolderOpenIcon,
     PlusIcon,
     SparklesIcon,
+    SaveIcon,
+    CheckCircle2 as CommitIcon,
+    Undo2 as DiscardIcon,
+    Square as StopIcon,
     Trash2 as TrashIcon,
 } from 'lucide-react';
 import api from '../../api';
 
 /**
- * DatasetPrep — the SA3 sidecar-native unified dataset surface.
+ * DatasetPrep — sidecar-native dataset surface with a buffered editing model.
  *
- * One page, no modes. Pick or create a project; the dataset is the folder
- * under `<user_data_dir>/projects/<name>/`. Audio + .txt sidecars live there
- * directly, so training can point at the same folder unchanged. Editing a
- * prompt writes its sidecar immediately. See DATASET_PREP_REDESIGN.md.
+ * One page, no modes. Pick or create a project. The dataset folder on disk
+ * is the *committed* state. Edits, auto-annotate output, and just-ingested
+ * audio all live in an in-memory session until the user explicitly hits
+ * Save (writes a draft) or Commit (writes .txt sidecars).
  */
 export default function DatasetPrep() {
     const [projects, setProjects] = useState([]);
     const [selectedName, setSelectedName] = useState(() => {
-        try {
-            return window.localStorage.getItem('fragmenta.datasetPrep.lastProject') || '';
-        } catch {
-            return '';
-        }
+        try { return window.localStorage.getItem('fragmenta.datasetPrep.lastProject') || ''; }
+        catch { return ''; }
     });
     const [project, setProject] = useState(null);
     const [createOpen, setCreateOpen] = useState(false);
     const [ingestOpen, setIngestOpen] = useState(false);
     const [error, setError] = useState('');
 
-    // Annotation progress, polled while a job is running.
-    const [annotateJob, setAnnotateJob] = useState(null); // { state, current, total, current_file, ... }
-    const pollHandleRef = useRef(null);
+    const [annotateJob, setAnnotateJob] = useState(null);
+    const [tier, setTier] = useState(() => {
+        try { return window.localStorage.getItem('fragmenta.datasetPrep.tier') || 'basic'; }
+        catch { return 'basic'; }
+    });
+    const [skipExisting, setSkipExisting] = useState(true);
 
+    const pollHandleRef = useRef(null);
     const isAnnotating = annotateJob?.state === 'running';
 
     const refreshProjects = useCallback(async () => {
         try {
             const { data } = await api.get('/api/projects');
             setProjects(data.projects || []);
-        } catch (e) {
-            setError(extractError(e, 'Failed to list projects'));
-        }
+        } catch (e) { setError(extractError(e, 'Failed to list projects')); }
     }, []);
 
     const refreshProject = useCallback(async (name) => {
-        if (!name) {
-            setProject(null);
-            return;
-        }
+        if (!name) { setProject(null); return; }
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}`);
             setProject(data);
@@ -92,8 +93,8 @@ export default function DatasetPrep() {
         }
     }, [refreshProjects]);
 
-    // Initial load + selection persistence.
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
+
     useEffect(() => {
         if (selectedName) {
             try { window.localStorage.setItem('fragmenta.datasetPrep.lastProject', selectedName); } catch {}
@@ -103,13 +104,28 @@ export default function DatasetPrep() {
         }
     }, [selectedName, refreshProject]);
 
-    // Cleanup any in-flight poll on unmount.
     useEffect(() => () => {
         if (pollHandleRef.current) {
             window.clearTimeout(pollHandleRef.current);
             pollHandleRef.current = null;
         }
     }, []);
+
+    function changeTier(value) {
+        setTier(value);
+        try { window.localStorage.setItem('fragmenta.datasetPrep.tier', value); } catch {}
+    }
+
+    function trySelectProject(nextName) {
+        // Confirm before switching if there are unsaved or uncommitted edits.
+        if (project && (project.dirty || project.has_unsaved_changes) && nextName !== project.name) {
+            const ok = window.confirm(
+                `“${project.name}” has unsaved or uncommitted changes. Switch anyway? They'll stay in memory until you reload the project — but a backend restart will lose them.`,
+            );
+            if (!ok) return;
+        }
+        setSelectedName(nextName);
+    }
 
     async function pollAnnotateStatus(name) {
         try {
@@ -124,64 +140,101 @@ export default function DatasetPrep() {
                 return;
             }
             pollHandleRef.current = window.setTimeout(() => pollAnnotateStatus(name), 500);
-        } catch (e) {
-            setError(extractError(e, 'Status poll failed'));
-        }
+        } catch (e) { setError(extractError(e, 'Status poll failed')); }
     }
 
-    async function handleAnnotate(scope /* "all" | [file_names] */) {
+    async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
         if (!project) return;
         setError('');
         try {
             await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
-                tier: 'basic',
+                tier,
                 scope: scope ?? 'all',
+                skip_existing: opts.skip_existing ?? skipExisting,
             });
             pollAnnotateStatus(project.name);
-        } catch (e) {
-            setError(extractError(e, 'Failed to start annotation'));
-        }
+        } catch (e) { setError(extractError(e, 'Failed to start annotation')); }
+    }
+
+    async function handleCancelAnnotate() {
+        if (!project) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate/cancel`);
+        } catch (e) { setError(extractError(e, 'Cancel failed')); }
+    }
+
+    async function handleSave() {
+        if (!project) return;
+        setError('');
+        try {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/save`);
+            setProject(data);
+        } catch (e) { setError(extractError(e, 'Save failed')); }
+    }
+
+    async function handleCommit() {
+        if (!project) return;
+        setError('');
+        try {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/commit`);
+            setProject(data);
+            await refreshProjects();
+        } catch (e) { setError(extractError(e, 'Commit failed')); }
+    }
+
+    async function handleDiscard() {
+        if (!project) return;
+        const ok = window.confirm(
+            `Discard all uncommitted work in “${project.name}”? Audio files added since the last commit will be deleted. This cannot be undone.`,
+        );
+        if (!ok) return;
+        setError('');
+        try {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/discard`);
+            setProject(data);
+            await refreshProjects();
+        } catch (e) { setError(extractError(e, 'Discard failed')); }
     }
 
     async function handleClipPromptChange(fileName, newPrompt) {
         if (!project) return;
         try {
-            // Manually editing a prompt locks it so a later bulk auto-annotate
-            // doesn't silently overwrite the user's text.
             await api.patch(
                 `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
-                { prompt: newPrompt, locked: true },
+                { prompt: newPrompt },
             );
+            // Reload to pick up dirty-state flip in the header.
             await refreshProject(project.name);
-        } catch (e) {
-            setError(extractError(e, 'Failed to save prompt'));
-        }
+        } catch (e) { setError(extractError(e, 'Failed to save prompt')); }
     }
 
     async function handleClipDelete(fileName) {
         if (!project) return;
-        if (!window.confirm(`Remove ${fileName} from this project?`)) return;
+        if (!window.confirm(`Remove ${fileName} from this project? (Deletes the audio file from disk immediately — cannot be discarded back.)`)) return;
         try {
             await api.delete(
                 `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
             );
             await refreshProject(project.name);
-        } catch (e) {
-            setError(extractError(e, 'Failed to delete clip'));
-        }
+        } catch (e) { setError(extractError(e, 'Failed to delete clip')); }
     }
 
     return (
+        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
         <Stack spacing={2.5}>
-            <Typography variant="body2" color="text.secondary">
-                Each project is a folder on disk holding audio + matching .txt sidecars —
-                the format SA3 trains against directly.
-            </Typography>
+            <Box>
+                <Typography variant="h6">Dataset</Typography>
+                <Typography variant="body2" color="text.secondary">
+                    Each project is a folder on disk holding audio + matching .txt sidecars —
+                    the format SA3 trains against directly. Edits live in memory; Save persists a draft,
+                    Commit writes the final sidecars.
+                </Typography>
+            </Box>
 
             <ProjectSelector
                 projects={projects}
                 selectedName={selectedName}
-                onSelect={setSelectedName}
+                onSelect={trySelectProject}
                 onCreateClick={() => setCreateOpen(true)}
             />
 
@@ -189,9 +242,15 @@ export default function DatasetPrep() {
 
             {project && (
                 <Stack spacing={2}>
-                    <ProjectHeader project={project} />
+                    <ProjectHeader
+                        project={project}
+                        onSave={handleSave}
+                        onCommit={handleCommit}
+                        onDiscard={handleDiscard}
+                        disabled={isAnnotating}
+                    />
 
-                    <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
                         <Button
                             variant="outlined"
                             startIcon={<FolderOpenIcon size={18} />}
@@ -208,6 +267,30 @@ export default function DatasetPrep() {
                         >
                             Auto-annotate all
                         </Button>
+                        <FormControl size="small" sx={{ minWidth: 220 }}>
+                            <InputLabel id="annotate-tier-label">Annotation tier</InputLabel>
+                            <Select
+                                labelId="annotate-tier-label"
+                                label="Annotation tier"
+                                value={tier}
+                                onChange={(e) => changeTier(e.target.value)}
+                                disabled={isAnnotating}
+                            >
+                                <MenuItem value="basic">Basic — librosa only</MenuItem>
+                                <MenuItem value="rich">Rich — LAION-CLAP</MenuItem>
+                            </Select>
+                        </FormControl>
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    size="small"
+                                    checked={skipExisting}
+                                    onChange={(e) => setSkipExisting(e.target.checked)}
+                                    disabled={isAnnotating}
+                                />
+                            }
+                            label={<Typography variant="caption" color="text.secondary">Skip clips that already have a prompt</Typography>}
+                        />
                     </Box>
 
                     {isAnnotating && annotateJob && (
@@ -216,17 +299,28 @@ export default function DatasetPrep() {
                                 variant={annotateJob.total > 0 ? 'determinate' : 'indeterminate'}
                                 value={annotateJob.total > 0 ? (annotateJob.current / annotateJob.total) * 100 : undefined}
                             />
-                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
-                                Annotating {annotateJob.current} / {annotateJob.total}
-                                {annotateJob.current_file ? ` · ${annotateJob.current_file}` : ''}
-                            </Typography>
+                            <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                                    Annotating {annotateJob.current} / {annotateJob.total}
+                                    {annotateJob.current_file ? ` · ${annotateJob.current_file}` : ''}
+                                </Typography>
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="error"
+                                    startIcon={<StopIcon size={14} />}
+                                    onClick={handleCancelAnnotate}
+                                >
+                                    Stop
+                                </Button>
+                            </Box>
                         </Box>
                     )}
 
                     <ClipTable
                         clips={project.clips}
                         onPromptChange={handleClipPromptChange}
-                        onAnnotate={(fname) => handleAnnotate([fname])}
+                        onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
                         onDelete={handleClipDelete}
                         disabled={isAnnotating}
                     />
@@ -255,6 +349,7 @@ export default function DatasetPrep() {
                 }}
             />
         </Stack>
+        </Paper>
     );
 }
 
@@ -278,6 +373,7 @@ function ProjectSelector({ projects, selectedName, onSelect, onCreateClick }) {
                     {projects.map((p) => (
                         <MenuItem key={p.name} value={p.name}>
                             {p.name} · {p.clip_count} clip{p.clip_count === 1 ? '' : 's'}
+                            {p.has_draft ? ' · draft' : ''}
                         </MenuItem>
                     ))}
                 </Select>
@@ -289,13 +385,64 @@ function ProjectSelector({ projects, selectedName, onSelect, onCreateClick }) {
     );
 }
 
-function ProjectHeader({ project }) {
+function ProjectHeader({ project, onSave, onCommit, onDiscard, disabled }) {
+    const stateLabel = (() => {
+        if (project.dirty && project.has_unsaved_changes) return 'Unsaved changes';
+        if (project.dirty && !project.has_unsaved_changes) return 'Draft saved · not committed';
+        if (!project.dirty) return 'All changes committed';
+        return '';
+    })();
     return (
-        <Box>
-            <Typography variant="h6">{project.name}</Typography>
-            <Typography variant="body2" color="text.secondary">
-                {project.clip_count} clip{project.clip_count === 1 ? '' : 's'} · ingest mode: {project.ingest_mode}
-            </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+            <Box sx={{ flex: 1, minWidth: 240 }}>
+                <Typography variant="h6">{project.name}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                    {project.clip_count} clip{project.clip_count === 1 ? '' : 's'}
+                    {' · '}{stateLabel}
+                </Typography>
+            </Box>
+            <Stack direction="row" spacing={1}>
+                <Tooltip title="Discard uncommitted work — deletes audio added since the last commit">
+                    <span>
+                        <Button
+                            variant="text"
+                            color="error"
+                            size="small"
+                            startIcon={<DiscardIcon size={16} />}
+                            onClick={onDiscard}
+                            disabled={disabled || !project.dirty}
+                        >
+                            Discard
+                        </Button>
+                    </span>
+                </Tooltip>
+                <Tooltip title="Save a draft — persists across app restarts but isn't the SA3 sidecar form">
+                    <span>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={<SaveIcon size={16} />}
+                            onClick={onSave}
+                            disabled={disabled || !project.has_unsaved_changes}
+                        >
+                            Save
+                        </Button>
+                    </span>
+                </Tooltip>
+                <Tooltip title="Commit — writes .txt sidecars (overwrites the previous commit)">
+                    <span>
+                        <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<CommitIcon size={16} />}
+                            onClick={onCommit}
+                            disabled={disabled || !project.dirty}
+                        >
+                            Commit
+                        </Button>
+                    </span>
+                </Tooltip>
+            </Stack>
         </Box>
     );
 }
@@ -339,7 +486,6 @@ function ClipTable({ clips, onPromptChange, onAnnotate, onDelete, disabled }) {
 
 function ClipRow({ clip, onPromptChange, onAnnotate, onDelete, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
-    // Keep local draft in sync with server-side updates (e.g. after auto-annotate).
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
     const dirty = draft !== clip.prompt;
@@ -360,7 +506,7 @@ function ClipRow({ clip, onPromptChange, onAnnotate, onDelete, disabled }) {
                 />
             </TableCell>
             <TableCell sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                <Tooltip title="Auto-annotate this clip">
+                <Tooltip title="Auto-annotate this clip (overwrites any current prompt)">
                     <span>
                         <IconButton
                             size="small"
@@ -371,7 +517,7 @@ function ClipRow({ clip, onPromptChange, onAnnotate, onDelete, disabled }) {
                         </IconButton>
                     </span>
                 </Tooltip>
-                <Tooltip title="Remove this clip from the project">
+                <Tooltip title="Remove this clip from the project (immediate)">
                     <span>
                         <IconButton
                             size="small"

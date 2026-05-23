@@ -2250,15 +2250,12 @@ def bulk_annotate_results():
         return jsonify({'results': list(_annotate_job['results']), 'state': _annotate_job['state']})
 
 
-# --- SA3 sidecar-native dataset prep (Phase 1) -------------------------------
-# Project-scoped endpoints. The session model was replaced — disk under
-# `<user_data_dir>/projects/<name>/` is the source of truth (see
-# DATASET_PREP_REDESIGN.md). Coexists with the bulk-annotate routes above and
-# the AudioUploadRow/CsvImportPanel/BulkAnnotatePanel UI for one release;
-# those go away in Phase 5.
+# --- SA3 sidecar-native dataset prep -----------------------------------------
+# Projects are folders under <user_data_dir>/projects/<name>/. Editing happens
+# against an in-memory session per loaded project; persistence is explicit via
+# Save (writes .draft.json) and Commit (writes .txt sidecars + marks audio
+# committed). See DATASET_PREP_REDESIGN.md.
 
-# Per-project annotation job state. Keyed by project name so multiple
-# projects can be in flight independently.
 _project_annotate_jobs: Dict[str, dict] = {}
 _project_annotate_jobs_lock = threading.Lock()
 
@@ -2274,11 +2271,12 @@ def _get_project_annotate_job(project_name: str) -> dict:
                 'current_file': '',
                 'tier': None,
                 'annotated': 0,
-                'skipped_locked': 0,
+                'skipped_existing': 0,
                 'errors': 0,
                 'error': None,
                 'started_at': None,
                 'finished_at': None,
+                'cancelled': False,
             }
             _project_annotate_jobs[project_name] = job
         return job
@@ -2286,7 +2284,6 @@ def _get_project_annotate_job(project_name: str) -> dict:
 
 @app.route('/api/projects', methods=['GET'])
 def list_projects_route():
-    """List all projects with summary fields."""
     from app.backend.data.projects import list_projects
     try:
         return jsonify({'projects': list_projects()})
@@ -2297,7 +2294,6 @@ def list_projects_route():
 
 @app.route('/api/projects', methods=['POST'])
 def create_project_route():
-    """Create a new empty project. Body: { name: string }."""
     from app.backend.data.projects import create_project, sanitize_project_name
     payload = request.json or {}
     raw_name = payload.get('name', '')
@@ -2317,7 +2313,6 @@ def create_project_route():
 
 @app.route('/api/projects/<name>', methods=['GET'])
 def get_project_route(name):
-    """Fetch full project state (clips + sidecar prompts + metadata)."""
     from app.backend.data.projects import get_project
     try:
         return jsonify(get_project(name))
@@ -2330,11 +2325,8 @@ def get_project_route(name):
 
 @app.route('/api/projects/<name>/ingest', methods=['POST'])
 def ingest_into_project_route(name):
-    """Add audio files from a source folder to a project.
-
-    Body: { folder_path: string, mode: "copy" | "symlink" }
-    """
-    from app.backend.data.projects import ingest_folder, INGEST_MODES
+    """Body: { folder_path: string, mode: "copy" | "symlink" }"""
+    from app.backend.data.projects import ingest_folder, INGEST_MODES, get_project
     payload = request.json or {}
     folder = (payload.get('folder_path') or '').strip()
     mode = payload.get('mode', 'copy')
@@ -2356,23 +2348,18 @@ def ingest_into_project_route(name):
         "Ingest into project=%s mode=%s added=%d (copied=%d symlinked=%d skipped=%d)",
         name, mode, result['added'], result['copied'], result['symlinked'], result['skipped'],
     )
-    return jsonify(result)
+    return jsonify({**result, 'project': get_project(name)})
 
 
 @app.route('/api/projects/<name>/clip/<path:file_name>', methods=['PATCH'])
 def patch_clip_route(name, file_name):
-    """Edit a single clip — writes sidecar + updates metadata immediately.
-
-    Body: { prompt?: string, locked?: boolean }
-    """
-    from app.backend.data.projects import update_clip
+    """In-memory prompt edit. Persists only on Save or Commit."""
+    from app.backend.data.projects import update_clip_prompt
     payload = request.json or {}
-    prompt = payload.get('prompt')
-    locked = payload.get('locked')
-    if prompt is None and locked is None:
-        return jsonify({'error': 'Provide at least one of prompt or locked.'}), 400
+    if 'prompt' not in payload:
+        return jsonify({'error': 'prompt is required'}), 400
     try:
-        clip = update_clip(name, file_name, prompt=prompt, locked=locked)
+        clip = update_clip_prompt(name, file_name, payload['prompt'])
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -2383,28 +2370,67 @@ def patch_clip_route(name, file_name):
 
 @app.route('/api/projects/<name>/clip/<path:file_name>', methods=['DELETE'])
 def delete_clip_route(name, file_name):
-    """Remove an audio file + its sidecar from a project."""
-    from app.backend.data.projects import delete_clip
+    """Immediate delete — cannot be discarded back."""
+    from app.backend.data.projects import delete_clip, get_project
     try:
         delete_clip(name, file_name)
     except Exception as exc:
         logger.exception("Failed to delete clip %s in project %s", file_name, name)
         return jsonify({'error': str(exc)}), 500
-    return jsonify({'name': name, 'file_name': file_name, 'deleted': True})
+    return jsonify({'name': name, 'file_name': file_name, 'deleted': True, 'project': get_project(name)})
+
+
+@app.route('/api/projects/<name>/save', methods=['POST'])
+def save_project_route(name):
+    """Persist in-memory diffs as a hidden draft (not the SA3 sidecars)."""
+    from app.backend.data.projects import save_project
+    try:
+        return jsonify(save_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to save project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/commit', methods=['POST'])
+def commit_project_route(name):
+    """Flush in-memory state to .txt sidecars; overwrites the previous commit."""
+    from app.backend.data.projects import commit_project
+    try:
+        return jsonify(commit_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to commit project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/discard', methods=['POST'])
+def discard_project_route(name):
+    """Drop uncommitted state and delete audio files added since the last commit."""
+    from app.backend.data.projects import discard_project
+    try:
+        return jsonify(discard_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to discard project %s", name)
+        return jsonify({'error': str(exc)}), 500
 
 
 @app.route('/api/projects/<name>/annotate', methods=['POST'])
 def annotate_project_route(name):
-    """Kick off auto-annotation for a project.
+    """Kick off auto-annotation. Updates the in-memory session; sidecars on
+    disk are not touched until the user commits.
 
     Body: {
       tier: "basic" | "rich",
-      scope?: "all" | ["file_name1", ...]    # default: "all"
+      scope?: "all" | ["file_name1", ...],          # default: "all"
+      skip_existing?: bool                          # default: true
     }
-    Async — returns 202 with initial job state. Poll /annotate/status.
-    Sidecars are written on disk as each clip completes.
     """
-    from app.backend.data.projects import get_project, project_path, write_sidecar
+    from app.backend.data.projects import get_session_handle, reset_cancel, project_path
     from app.backend.data.auto_annotator import (
         annotate_file, load_label_sets, get_clap_tagger, clap_checkpoint_available,
     )
@@ -2412,32 +2438,38 @@ def annotate_project_route(name):
     payload = request.json or {}
     tier = payload.get('tier', 'basic')
     scope = payload.get('scope', 'all')
+    skip_existing = bool(payload.get('skip_existing', True))
     if tier not in ('basic', 'rich'):
         return jsonify({'error': f'Invalid tier: {tier}'}), 400
 
     try:
-        project = get_project(name)
+        session = get_session_handle(name)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
 
     if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
         return jsonify({'error': 'CLAP checkpoint not downloaded yet.'}), 409
 
-    all_clips = project['clips']
-    if scope == 'all':
-        target_clips = [c for c in all_clips if not c['locked']]
-        skipped_locked = sum(1 for c in all_clips if c['locked'])
-    elif isinstance(scope, list):
-        wanted = set(scope)
-        # Per-clip annotate ignores the lock flag — the user is explicitly
-        # asking for this clip to be re-rolled.
-        target_clips = [c for c in all_clips if c['file_name'] in wanted]
-        skipped_locked = 0
-        missing = wanted - {c['file_name'] for c in target_clips}
-        if missing:
-            return jsonify({'error': f'Clips not in project: {sorted(missing)}'}), 404
-    else:
-        return jsonify({'error': 'scope must be "all" or a list of file names'}), 400
+    with session.lock:
+        all_clips = sorted(session.clips.values(), key=lambda c: c.file_name)
+        if scope == 'all':
+            target = list(all_clips)
+        elif isinstance(scope, list):
+            wanted = set(scope)
+            target = [c for c in all_clips if c.file_name in wanted]
+            missing = wanted - {c.file_name for c in target}
+            if missing:
+                return jsonify({'error': f'Clips not in project: {sorted(missing)}'}), 404
+        else:
+            return jsonify({'error': 'scope must be "all" or a list of file names'}), 400
+
+        if skip_existing:
+            run_targets = [c for c in target if not (c.prompt or '').strip()]
+            skipped_existing = len(target) - len(run_targets)
+        else:
+            run_targets = list(target)
+            skipped_existing = 0
+        target_names = [c.file_name for c in run_targets]
 
     job = _get_project_annotate_job(name)
     with _project_annotate_jobs_lock:
@@ -2446,17 +2478,19 @@ def annotate_project_route(name):
         job.update({
             'state': 'running',
             'current': 0,
-            'total': len(target_clips),
+            'total': len(target_names),
             'current_file': '',
             'tier': tier,
             'annotated': 0,
-            'skipped_locked': skipped_locked,
+            'skipped_existing': skipped_existing,
             'errors': 0,
             'error': None,
             'started_at': time.time(),
             'finished_at': None,
+            'cancelled': False,
         })
 
+    reset_cancel(session)
     labels = load_label_sets(_annotator_labels_path())
     clap_tagger = None
     if tier == 'rich':
@@ -2468,19 +2502,23 @@ def annotate_project_route(name):
     def runner():
         try:
             logger.info(
-                "Project annotate started: name=%s tier=%s scope=%s targets=%d skipped_locked=%d",
-                name, tier, ('all' if scope == 'all' else f"{len(target_clips)} clips"),
-                len(target_clips), skipped_locked,
+                "Project annotate started: name=%s tier=%s targets=%d skip_existing=%s",
+                name, tier, len(target_names), skip_existing,
             )
-            for i, clip in enumerate(target_clips, start=1):
+            for i, file_name in enumerate(target_names, start=1):
+                if session.cancel_event.is_set():
+                    logger.info("Project annotate cancelled mid-run: name=%s", name)
+                    with _project_annotate_jobs_lock:
+                        job['cancelled'] = True
+                    break
                 with _project_annotate_jobs_lock:
-                    job['current_file'] = clip['file_name']
-                logger.info("  annotating %d/%d: %s", i, len(target_clips), clip['file_name'])
-                audio_path = proj_path / clip['file_name']
+                    job['current_file'] = file_name
+                logger.info("  annotating %d/%d: %s", i, len(target_names), file_name)
+                audio_path = proj_path / file_name
                 try:
                     result = annotate_file(audio_path, tier, clap_tagger, labels)
                 except Exception as exc:
-                    logger.warning("annotate_file failed for %s: %s", clip['file_name'], exc)
+                    logger.warning("annotate_file failed for %s: %s", file_name, exc)
                     with _project_annotate_jobs_lock:
                         job['errors'] += 1
                         job['current'] += 1
@@ -2491,7 +2529,10 @@ def annotate_project_route(name):
                         job['current'] += 1
                     continue
                 prompt = result.get('prompt', '') or ''
-                write_sidecar(audio_path, prompt)
+                with session.lock:
+                    clip = session.clips.get(file_name)
+                    if clip is not None:
+                        clip.prompt = prompt
                 with _project_annotate_jobs_lock:
                     job['annotated'] += 1
                     job['current'] += 1
@@ -2500,8 +2541,8 @@ def annotate_project_route(name):
                 job['finished_at'] = time.time()
                 job['current_file'] = ''
             logger.info(
-                "Project annotate done: name=%s annotated=%d errors=%d skipped_locked=%d",
-                name, job['annotated'], job['errors'], job['skipped_locked'],
+                "Project annotate done: name=%s annotated=%d errors=%d skipped_existing=%d cancelled=%s",
+                name, job['annotated'], job['errors'], job['skipped_existing'], job['cancelled'],
             )
         except Exception as exc:
             logger.exception("Project annotate failed: name=%s", name)
@@ -2516,9 +2557,20 @@ def annotate_project_route(name):
     return jsonify({'name': name, 'job': snapshot}), 202
 
 
+@app.route('/api/projects/<name>/annotate/cancel', methods=['POST'])
+def annotate_project_cancel_route(name):
+    """Stop a running annotate job after the in-flight clip completes."""
+    from app.backend.data.projects import get_session_handle
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    session.cancel_event.set()
+    return jsonify({'name': name, 'cancel_signal_set': True})
+
+
 @app.route('/api/projects/<name>/annotate/status', methods=['GET'])
 def annotate_project_status_route(name):
-    """Poll project annotation progress."""
     from app.backend.data.projects import project_path
     if not project_path(name).exists():
         return jsonify({'error': f'Project not found: {name}'}), 404
