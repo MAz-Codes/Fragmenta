@@ -15,7 +15,9 @@ sdist/
 var/
 ....venv
 .venv-sa3
+DATASET_PREP_REDESIGN.md
 models/pretrained/sa3
+projects/
 wheels/
 !utils/vendor/wheels/
 share/python-wheels/

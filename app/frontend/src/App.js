@@ -66,6 +66,7 @@ import TabPanel from './components/TabPanel';
 import AudioUploadRow from './components/AudioUploadRow';
 import BulkAnnotatePanel from './components/BulkAnnotatePanel';
 import CsvImportPanel from './components/CsvImportPanel';
+import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import ModelUnwrapButton from './components/ModelUnwrapButton';
 import LoraCheckpointManager from './components/LoraCheckpointManager';
@@ -83,6 +84,7 @@ const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
+const DATASET_PREP_PREVIEW_KEY = 'fragmenta-dataset-prep-preview';
 
 function App() {
     const [tabValue, setTabValue] = useState(0);
@@ -110,6 +112,16 @@ function App() {
     const [performanceEnabled, setPerformanceEnabled] = useState(
         () => window.localStorage.getItem(PERFORMANCE_ENABLED_KEY) === 'true'
     );
+    const [datasetPrepPreview, setDatasetPrepPreview] = useState(
+        () => window.localStorage.getItem(DATASET_PREP_PREVIEW_KEY) === 'true'
+    );
+    const toggleDatasetPrepPreview = () => {
+        setDatasetPrepPreview((prev) => {
+            const next = !prev;
+            window.localStorage.setItem(DATASET_PREP_PREVIEW_KEY, next ? 'true' : 'false');
+            return next;
+        });
+    };
     const togglePerformance = () => {
         setPerformanceEnabled((prev) => {
             const next = !prev;
@@ -1227,6 +1239,15 @@ function App() {
 
                             {/* Data Processing Tab */}
                             <TabPanel value={displayedTab} index={0}>
+                                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+                                    <FormControlLabel
+                                        control={<Switch size="small" checked={datasetPrepPreview} onChange={toggleDatasetPrepPreview} />}
+                                        label={<Typography variant="caption" color="text.secondary">New dataset prep (preview)</Typography>}
+                                    />
+                                </Box>
+                                {datasetPrepPreview ? (
+                                    <DatasetPrep />
+                                ) : (
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
                                     <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
@@ -1325,6 +1346,7 @@ function App() {
 
                                     </Grid>
                                 </Grid>
+                                )}
                             </TabPanel>
 
                             {/* Training Tab */}

@@ -330,6 +330,7 @@ def annotate_file(
     max_seconds: float = 60.0,
 ) -> Dict[str, Any]:
     import librosa
+    import warnings
 
     parts: Dict[str, Any] = {}
     try:
@@ -343,10 +344,19 @@ def annotate_file(
             "error": f"load failed: {exc}",
         }
 
-    parts["bpm"] = _estimate_tempo(y, loaded_sr)
-    parts["key"] = _estimate_key(y, loaded_sr)
-    parts["brightness"] = _estimate_brightness(y, loaded_sr)
-    parts["character"] = _estimate_character(y, loaded_sr)
+    # Silent / harmonically flat clips trip librosa's "Trying to estimate
+    # tuning from empty frequency set" warning during chroma extraction.
+    # The warning is benign — the analysis returns sensible defaults — but
+    # it spams stderr on every silent file, so we mute it here.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Trying to estimate tuning from empty frequency set",
+        )
+        parts["bpm"] = _estimate_tempo(y, loaded_sr)
+        parts["key"] = _estimate_key(y, loaded_sr)
+        parts["brightness"] = _estimate_brightness(y, loaded_sr)
+        parts["character"] = _estimate_character(y, loaded_sr)
 
     if tier == "rich" and clap_tagger is not None:
         try:
