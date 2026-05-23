@@ -794,7 +794,7 @@ function Waveform({ projectName, fileName, isActive, progress }) {
         setPeaks(null);
         setFailed(false);
         if (!projectName || !fileName) return;
-        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=120`;
+        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=80`;
         api.get(url)
             .then(({ data }) => { if (!cancelled) setPeaks(data?.peaks || []); })
             .catch(() => { if (!cancelled) setFailed(true); });
