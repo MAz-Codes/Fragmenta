@@ -33,6 +33,7 @@ import {
     TextField,
     Tooltip,
     Typography,
+    useTheme,
 } from '@mui/material';
 import {
     ChevronDown as ChevronDownIcon,
@@ -45,6 +46,8 @@ import {
     Undo2 as DiscardIcon,
     Square as StopIcon,
     Trash2 as TrashIcon,
+    Play as PlayIcon,
+    Pause as PauseIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -80,6 +83,42 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
 
     const pollHandleRef = useRef(null);
     const isAnnotating = annotateJob?.state === 'running';
+
+    // --- Per-row audio preview --------------------------------------------
+    // One <audio> for the whole table. Rows just say "play me" / "pause";
+    // the parent reconciles which file is loaded and where the playhead is.
+    const audioRef = useRef(null);
+    const [playingFile, setPlayingFile] = useState(null);
+    const [playProgress, setPlayProgress] = useState(0);  // 0..1
+
+    const stopPlayback = useCallback(() => {
+        const audio = audioRef.current;
+        if (audio) { audio.pause(); }
+        setPlayingFile(null);
+        setPlayProgress(0);
+    }, []);
+
+    const handlePlayToggle = useCallback((fileName) => {
+        if (!selectedName) return;
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (playingFile === fileName) {
+            audio.pause();
+            setPlayingFile(null);
+            return;
+        }
+        const url = `/api/projects/${encodeURIComponent(selectedName)}/clip/${encodeURIComponent(fileName)}/audio`;
+        audio.src = url;
+        setPlayProgress(0);
+        setPlayingFile(fileName);
+        audio.play().catch(() => {
+            setPlayingFile(null);
+        });
+    }, [selectedName, playingFile]);
+
+    // Stop playback when the project changes — the audio element's src would
+    // suddenly refer to a different project's file.
+    useEffect(() => { stopPlayback(); }, [selectedName, stopPlayback]);
 
     const refreshProjects = useCallback(async () => {
         try {
@@ -394,11 +433,30 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     )}
 
                     <ClipTable
+                        projectName={selectedName}
                         clips={project.clips}
+                        playingFile={playingFile}
+                        playProgress={playProgress}
+                        onPlayToggle={handlePlayToggle}
                         onPromptChange={handleClipPromptChange}
                         onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
-                        onDelete={handleClipDelete}
+                        onDelete={(fname) => {
+                            if (playingFile === fname) stopPlayback();
+                            return handleClipDelete(fname);
+                        }}
                         disabled={isAnnotating}
+                    />
+                    <audio
+                        ref={audioRef}
+                        style={{ display: 'none' }}
+                        onTimeUpdate={(e) => {
+                            const a = e.currentTarget;
+                            if (a.duration && isFinite(a.duration)) {
+                                setPlayProgress(a.currentTime / a.duration);
+                            }
+                        }}
+                        onEnded={() => { setPlayingFile(null); setPlayProgress(0); }}
+                        onError={() => { setPlayingFile(null); setPlayProgress(0); }}
                     />
                 </Stack>
             )}
@@ -708,7 +766,72 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, disabled }) {
     );
 }
 
-function ClipTable({ clips, onPromptChange, onAnnotate, onDelete, disabled }) {
+function Waveform({ projectName, fileName, isActive, progress }) {
+    const canvasRef = useRef(null);
+    const theme = useTheme();
+    const [peaks, setPeaks] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        setPeaks(null);
+        setFailed(false);
+        if (!projectName || !fileName) return;
+        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=120`;
+        api.get(url)
+            .then(({ data }) => { if (!cancelled) setPeaks(data?.peaks || []); })
+            .catch(() => { if (!cancelled) setFailed(true); });
+        return () => { cancelled = true; };
+    }, [projectName, fileName]);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        if (canvas.width !== w * dpr) canvas.width = w * dpr;
+        if (canvas.height !== h * dpr) canvas.height = h * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+
+        if (!peaks || !peaks.length) {
+            ctx.fillStyle = 'rgba(0,0,0,0.08)';
+            const midY = h / 2;
+            ctx.fillRect(0, midY - 0.5, w, 1);
+            return;
+        }
+
+        const barCount = peaks.length;
+        const barWidth = Math.max(1, w / barCount - 1);
+        const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
+        const playedColor = theme.palette.warm?.main || '#FDA22B';
+        const restColor = theme.palette.mode === 'dark'
+            ? 'rgba(255, 255, 255, 0.35)'
+            : 'rgba(0, 0, 0, 0.35)';
+
+        for (let i = 0; i < barCount; i++) {
+            const v = peaks[i];
+            const barH = Math.max(1, v * (h - 2));
+            const x = i * (w / barCount);
+            const y = (h - barH) / 2;
+            ctx.fillStyle = i <= playedIdx ? playedColor : restColor;
+            ctx.fillRect(x, y, barWidth, barH);
+        }
+    }, [peaks, isActive, progress, theme]);
+
+    return (
+        <Box sx={{ width: 120, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
+            <canvas
+                ref={canvasRef}
+                style={{ width: '100%', height: '100%', display: 'block' }}
+            />
+        </Box>
+    );
+}
+
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, disabled }) {
     if (!clips || clips.length === 0) {
         return (
             <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
@@ -723,16 +846,20 @@ function ClipTable({ clips, onPromptChange, onAnnotate, onDelete, disabled }) {
             <Table size="small">
                 <TableHead>
                     <TableRow>
-                        <TableCell sx={{ width: '30%' }}>File</TableCell>
+                        <TableCell sx={{ width: '36%' }}>File</TableCell>
                         <TableCell>Prompt</TableCell>
-                        <TableCell sx={{ width: 120, textAlign: 'right' }}>Actions</TableCell>
+                        <TableCell sx={{ width: 96, textAlign: 'right' }}>Actions</TableCell>
                     </TableRow>
                 </TableHead>
                 <TableBody>
                     {clips.map((c) => (
                         <ClipRow
                             key={c.file_name}
+                            projectName={projectName}
                             clip={c}
+                            isPlaying={playingFile === c.file_name}
+                            playProgress={playingFile === c.file_name ? playProgress : 0}
+                            onPlayToggle={onPlayToggle}
                             onPromptChange={onPromptChange}
                             onAnnotate={onAnnotate}
                             onDelete={onDelete}
@@ -745,7 +872,7 @@ function ClipTable({ clips, onPromptChange, onAnnotate, onDelete, disabled }) {
     );
 }
 
-function ClipRow({ clip, onPromptChange, onAnnotate, onDelete, disabled }) {
+function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
@@ -753,7 +880,30 @@ function ClipRow({ clip, onPromptChange, onAnnotate, onDelete, disabled }) {
 
     return (
         <TableRow hover>
-            <TableCell sx={{ wordBreak: 'break-all' }}>{clip.file_name}</TableCell>
+            <TableCell sx={{ wordBreak: 'break-all' }}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                    <Tooltip title={isPlaying ? 'Pause' : 'Play'}>
+                        <span>
+                            <IconButton
+                                size="small"
+                                onClick={() => onPlayToggle(clip.file_name)}
+                                sx={{ width: 28, height: 28 }}
+                            >
+                                {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                            </IconButton>
+                        </span>
+                    </Tooltip>
+                    <Waveform
+                        projectName={projectName}
+                        fileName={clip.file_name}
+                        isActive={isPlaying}
+                        progress={playProgress}
+                    />
+                    <Typography variant="body2" sx={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+                        {clip.file_name}
+                    </Typography>
+                </Stack>
+            </TableCell>
             <TableCell>
                 <TextField
                     fullWidth

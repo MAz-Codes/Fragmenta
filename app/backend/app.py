@@ -2380,6 +2380,52 @@ def delete_clip_route(name, file_name):
     return jsonify({'name': name, 'file_name': file_name, 'deleted': True, 'project': get_project(name)})
 
 
+@app.route('/api/projects/<name>/clip/<path:file_name>/audio', methods=['GET'])
+def clip_audio_route(name, file_name):
+    """Stream raw audio bytes for a clip. Range requests work via send_file."""
+    from app.backend.data.projects import get_session_handle
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    with session.lock:
+        clip = session.clips.get(file_name)
+        if clip is None:
+            return jsonify({'error': f"Clip not found: {file_name}"}), 404
+        audio_path = Path(clip.path)
+    if not audio_path.exists():
+        return jsonify({'error': 'Audio file missing on disk'}), 404
+    return send_file(str(audio_path), conditional=True)
+
+
+@app.route('/api/projects/<name>/clip/<path:file_name>/peaks', methods=['GET'])
+def clip_peaks_route(name, file_name):
+    """Return waveform peaks + duration JSON for a clip. Cached per session."""
+    from app.backend.data.projects import get_session_handle, get_or_compute_peaks
+    try:
+        n = int(request.args.get('n', 200))
+    except (TypeError, ValueError):
+        n = 200
+    n = max(20, min(n, 500))
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    with session.lock:
+        clip = session.clips.get(file_name)
+        if clip is None:
+            return jsonify({'error': f"Clip not found: {file_name}"}), 404
+        audio_path = Path(clip.path)
+    if not audio_path.exists():
+        return jsonify({'error': 'Audio file missing on disk'}), 404
+    try:
+        peaks, duration = get_or_compute_peaks(session, file_name, audio_path, n)
+    except Exception as exc:
+        logger.exception("Peak computation failed for %s/%s", name, file_name)
+        return jsonify({'error': f'Peak computation failed: {exc}'}), 500
+    return jsonify({'peaks': peaks, 'duration': duration})
+
+
 @app.route('/api/projects/<name>/save', methods=['POST'])
 def save_project_route(name):
     """Persist in-memory diffs as a hidden draft (not the SA3 sidecars)."""

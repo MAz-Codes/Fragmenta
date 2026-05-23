@@ -31,7 +31,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.backend.data.auto_annotator import AUDIO_EXTENSIONS, _iter_audio_files
 
@@ -229,6 +229,9 @@ class ProjectSession:
     metadata: Dict[str, Any] = field(default_factory=dict)
     cancel_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    # file_name -> (peaks, duration). Lazily filled by get_or_compute_peaks.
+    # Cleared on Discard. Survives an annotate; safe to recompute on miss.
+    peaks_cache: Dict[str, Tuple[List[float], float]] = field(default_factory=dict)
 
     def _draft_snapshot(self) -> Dict[str, str]:
         """Map file_name -> prompt, only for clips whose prompt differs from
@@ -477,6 +480,10 @@ def delete_clip(name: str, file_name: str) -> None:
         if txt_path.exists():
             txt_path.unlink()
         session.clips.pop(file_name, None)
+        # Evict any cached peaks for this file (regardless of N).
+        for key in list(session.peaks_cache):
+            if key.startswith(f"{file_name}:"):
+                del session.peaks_cache[key]
         committed = session.metadata.get("committed_files") or []
         if file_name in committed:
             session.metadata["committed_files"] = [f for f in committed if f != file_name]
@@ -565,3 +572,46 @@ def get_session_handle(name: str) -> ProjectSession:
 
 def reset_cancel(session: ProjectSession) -> None:
     session.cancel_event.clear()
+
+
+# ---------- Waveform peaks --------------------------------------------------
+
+
+def _compute_peaks(audio_path: Path, n: int) -> Tuple[List[float], float]:
+    """Decode audio at low sample rate and return N normalized peak values.
+
+    Uses sr=8000 mono — way below audible quality but plenty for a 120px
+    thumbnail. Typical 30s clip decodes in ~50ms.
+    """
+    import librosa
+    import numpy as np
+
+    y, sr = librosa.load(str(audio_path), sr=8000, mono=True)
+    if len(y) == 0:
+        return ([0.0] * n, 0.0)
+    duration = float(len(y) / sr)
+
+    # Divide into N evenly spaced windows; peak-amplitude per window.
+    # array_split handles non-divisible lengths cleanly.
+    chunks = np.array_split(y, n)
+    peaks = np.array([float(np.abs(c).max()) if len(c) else 0.0 for c in chunks])
+    max_peak = peaks.max()
+    if max_peak > 0:
+        peaks = peaks / max_peak
+    return (peaks.tolist(), duration)
+
+
+def get_or_compute_peaks(
+    session: ProjectSession,
+    file_name: str,
+    audio_path: Path,
+    n: int = 200,
+) -> Tuple[List[float], float]:
+    """Memoized per-session peak computation. Cache key is `file_name:N`."""
+    cache_key = f"{file_name}:{n}"
+    cached = session.peaks_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    result = _compute_peaks(audio_path, n)
+    session.peaks_cache[cache_key] = result
+    return result
