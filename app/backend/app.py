@@ -2250,6 +2250,177 @@ def bulk_annotate_results():
         return jsonify({'results': list(_annotate_job['results']), 'state': _annotate_job['state']})
 
 
+# --- SA3 dataset-prep redesign (Phase 1) -------------------------------------
+# `/api/dataset/session` is the entry point for the new sidecar-native dataset
+# flow. See DATASET_PREP_REDESIGN.md. Coexists with the bulk-annotate routes
+# above for one release; those go away in Phase 5.
+
+@app.route('/api/dataset/session', methods=['POST'])
+def create_dataset_session():
+    """Create a new dataset session, optionally seeded from an audio folder.
+
+    Body: { "folder_path": "/abs/path/to/audio" }  (folder_path optional)
+    Returns: serialized session (id, clip_count, clips[]).
+    """
+    payload = request.json or {}
+    folder = (payload.get('folder_path') or '').strip()
+
+    from app.backend.data.clip_session import create_session
+
+    session = create_session()
+
+    if folder:
+        folder_path = Path(folder).expanduser()
+        if not folder_path.exists() or not folder_path.is_dir():
+            return jsonify({'error': f'Folder not found: {folder_path}'}), 400
+        added = session.add_audio_folder(folder_path)
+        if added == 0:
+            return jsonify({'error': f'No audio files found in {folder_path}'}), 400
+
+    return jsonify(session.to_dict())
+
+
+@app.route('/api/dataset/session/<session_id>', methods=['GET'])
+def get_dataset_session(session_id):
+    """Fetch the current state of a session (clip list + prompts)."""
+    from app.backend.data.clip_session import get_session
+
+    session = get_session(session_id)
+    if session is None:
+        return jsonify({'error': f'Session not found: {session_id}'}), 404
+    return jsonify(session.to_dict())
+
+
+@app.route('/api/dataset/session/<session_id>/annotate', methods=['POST'])
+def annotate_dataset_session(session_id):
+    """Run auto-annotation against every unlocked clip in the session.
+
+    Body: { "tier": "basic" | "rich" }
+    Returns: updated session + summary counts.
+
+    Phase 1: synchronous. Async with progress wiring lands in Phase 2 when
+    we hook up the live progress strip in Auto-Pilot.
+    """
+    payload = request.json or {}
+    tier = payload.get('tier', 'basic')
+    if tier not in ('basic', 'rich'):
+        return jsonify({'error': f'Invalid tier: {tier}'}), 400
+
+    from app.backend.data.clip_session import get_session
+    from app.backend.data.auto_annotator import (
+        annotate_file, load_label_sets, get_clap_tagger, clap_checkpoint_available,
+    )
+
+    session = get_session(session_id)
+    if session is None:
+        return jsonify({'error': f'Session not found: {session_id}'}), 404
+
+    if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
+        return jsonify({'error': 'CLAP checkpoint not downloaded yet.'}), 409
+
+    labels = load_label_sets(_annotator_labels_path())
+    clap_tagger = None
+    if tier == 'rich':
+        clap_tagger = get_clap_tagger(_clap_ckpt_path())
+        clap_tagger.ensure_loaded()
+
+    annotated = 0
+    skipped_locked = 0
+    errors = 0
+    for clip in session.clips:
+        if clip.locked:
+            skipped_locked += 1
+            continue
+        try:
+            result = annotate_file(Path(clip.path), tier, clap_tagger, labels)
+        except Exception as exc:
+            logger.warning("annotate_file failed for %s: %s", clip.path, exc)
+            errors += 1
+            continue
+        if result.get('error'):
+            errors += 1
+            continue
+        clip.prompt = result.get('prompt', '') or ''
+        annotated += 1
+
+    return jsonify({
+        **session.to_dict(),
+        'summary': {
+            'tier': tier,
+            'annotated': annotated,
+            'skipped_locked': skipped_locked,
+            'errors': errors,
+        },
+    })
+
+
+@app.route('/api/dataset/session/<session_id>/export', methods=['POST'])
+def export_dataset_session(session_id):
+    """Write the session to disk as a SA3 sidecar dataset.
+
+    Body: {
+      "output_dir": "/abs/path/to/output",
+      "copy_audio": true                  (default true)
+    }
+
+    If copy_audio is true, the output dir gets <audio> + <basename>.txt
+    pairs (a self-contained SA3 dataset). If false, sidecar .txt files are
+    written next to the *original* audio in place — useful when the audio
+    is a big library the user doesn't want to duplicate.
+    """
+    payload = request.json or {}
+    output_dir = (payload.get('output_dir') or '').strip()
+    copy_audio = bool(payload.get('copy_audio', True))
+
+    from app.backend.data.clip_session import get_session
+
+    session = get_session(session_id)
+    if session is None:
+        return jsonify({'error': f'Session not found: {session_id}'}), 404
+
+    if copy_audio and not output_dir:
+        return jsonify({'error': 'output_dir is required when copy_audio is true'}), 400
+
+    out_root: Optional[Path] = None
+    if copy_audio:
+        out_root = Path(output_dir).expanduser()
+        out_root.mkdir(parents=True, exist_ok=True)
+
+    import shutil
+
+    written = 0
+    empty_prompts = 0
+    missing_source = 0
+    for clip in session.clips:
+        src = Path(clip.path)
+        if not src.exists():
+            missing_source += 1
+            continue
+
+        if copy_audio:
+            dst_audio = out_root / clip.file_name
+            if dst_audio.resolve() != src.resolve():
+                shutil.copy2(src, dst_audio)
+            sidecar_dir = out_root
+        else:
+            sidecar_dir = src.parent
+
+        sidecar = sidecar_dir / (Path(clip.file_name).stem + '.txt')
+        sidecar.write_text(clip.prompt or '', encoding='utf-8')
+        written += 1
+        if not (clip.prompt or '').strip():
+            empty_prompts += 1
+
+    return jsonify({
+        'session_id': session.id,
+        'output_dir': str(out_root) if out_root else None,
+        'copy_audio': copy_audio,
+        'written': written,
+        'empty_prompts': empty_prompts,
+        'missing_source': missing_source,
+    })
+
+
 @app.route('/api/bulk-annotate', methods=['POST'])
 def bulk_annotate():
     payload = request.json or {}
