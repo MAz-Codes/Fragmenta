@@ -1112,7 +1112,10 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
 }
 
 function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
-    const [target, setTarget] = useState(10);
+    // 30s default matches the SA3 LoRA training --duration default
+    // (app/core/training/sa3_lora_runner.py). Clips shorter than that get
+    // silence-padded into each batch — wasted compute.
+    const [target, setTarget] = useState(30);
     const [overlap, setOverlap] = useState(0);
     const [strategy, setStrategy] = useState('hard');
     const [duration, setDuration] = useState(null);
@@ -1121,7 +1124,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
 
     useEffect(() => {
         if (!open) return;
-        setTarget(10);
+        setTarget(30);
         setOverlap(0);
         setStrategy('hard');
         setDialogError('');
@@ -1173,6 +1176,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                             onChange={(e) => setTarget(Math.max(0.5, parseFloat(e.target.value) || 0))}
                             inputProps={{ step: 0.5, min: 0.5, max: 60 }}
                             fullWidth
+                            helperText="Match the training --duration (30s default). Use ≤ 12s if you want Rich CLAP tagging to see the whole clip."
                         />
                         <TextField
                             label="Overlap (sec)"
