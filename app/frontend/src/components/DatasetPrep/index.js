@@ -24,6 +24,7 @@ import {
     RadioGroup,
     Select,
     Stack,
+    Switch,
     Table,
     TableBody,
     TableCell,
@@ -41,14 +42,14 @@ import {
     PlusIcon,
     SparklesIcon,
     SaveIcon,
-    Upload as UploadIcon,
-    CheckCircle2 as CommitIcon,
-    Undo2 as DiscardIcon,
+    Database as Database,
+    DatabaseZap as DatasetIcon,
     Square as StopIcon,
     Trash2 as TrashIcon,
     Play as PlayIcon,
     Pause as PauseIcon,
     Scissors as ScissorsIcon,
+    Music as MusicIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -236,13 +237,13 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/commit`);
             setProject(data);
             await refreshProjects();
-        } catch (e) { setError(extractError(e, 'Commit failed')); }
+        } catch (e) { setError(extractError(e, 'Create Dataset failed')); }
     }
 
     async function handleDiscard() {
         if (!project) return;
         const ok = window.confirm(
-            `Discard all uncommitted work in “${project.name}”? Audio files added since the last commit will be deleted. This cannot be undone.`,
+            `Delete all changes in “${project.name}” since the last created dataset? Audio files added since then will be removed. This cannot be undone.`,
         );
         if (!ok) return;
         setError('');
@@ -250,7 +251,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/discard`);
             setProject(data);
             await refreshProjects();
-        } catch (e) { setError(extractError(e, 'Discard failed')); }
+        } catch (e) { setError(extractError(e, 'Delete failed')); }
     }
 
     async function handleClipPromptChange(fileName, newPrompt) {
@@ -282,7 +283,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             <Box>
                 <Box sx={{ ...appStyles.sectionCardHeader, mb: 0.5 }}>
                     <Box component="span" sx={appStyles.sectionCardIcon}>
-                        <UploadIcon size={20} />
+                        <Database size={20} />
                     </Box>
                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>
                         Dataset Workbench
@@ -360,55 +361,9 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                         onSave={handleSave}
                         onCommit={handleCommit}
                         onDiscard={handleDiscard}
+                        onAddAudio={() => setIngestOpen(true)}
                         disabled={isAnnotating}
                     />
-
-                    <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
-                        <Button
-                            variant="outlined"
-                            startIcon={<FolderOpenIcon size={18} />}
-                            onClick={() => setIngestOpen(true)}
-                            disabled={isAnnotating}
-                        >
-                            Add audio
-                        </Button>
-                        <Button
-                            variant="contained"
-                            startIcon={<SparklesIcon size={18} />}
-                            onClick={() => handleAnnotate('all')}
-                            disabled={isAnnotating || project.clip_count === 0}
-                        >
-                            Auto-annotate all
-                        </Button>
-                        <FormControl size="small" sx={{ minWidth: 220 }}>
-                            <InputLabel id="annotate-tier-label">Annotation tier</InputLabel>
-                            <Select
-                                labelId="annotate-tier-label"
-                                label="Annotation tier"
-                                value={tier}
-                                onChange={(e) => changeTier(e.target.value)}
-                                disabled={isAnnotating}
-                            >
-                                <MenuItem value="basic">Basic — librosa only</MenuItem>
-                                <MenuItem value="rich">Rich — LAION-CLAP</MenuItem>
-                            </Select>
-                        </FormControl>
-                        <FormControlLabel
-                            control={
-                                <Checkbox
-                                    size="small"
-                                    checked={skipExisting}
-                                    onChange={(e) => setSkipExisting(e.target.checked)}
-                                    disabled={isAnnotating}
-                                />
-                            }
-                            label={<Typography variant="caption" color="text.secondary">Skip clips that already have a prompt</Typography>}
-                        />
-                    </Box>
-
-                    {tier === 'rich' && (
-                        <ClapVocabAccordion disabled={isAnnotating} />
-                    )}
 
                     {isAnnotating && annotateJob && (
                         <Box>
@@ -451,6 +406,52 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                             setSliceTarget(fname);
                         }}
                         disabled={isAnnotating}
+                        toolbar={
+                            <Stack spacing={1}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
+                                <Button
+                                    variant="contained"
+                                    color="warm"
+                                    size="small"
+                                    startIcon={<SparklesIcon size={16} />}
+                                    onClick={() => handleAnnotate('all')}
+                                    disabled={isAnnotating || project.clip_count === 0}
+                                >
+                                    Auto-annotate all
+                                </Button>
+                                <Tooltip title="Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.">
+                                    <FormControlLabel
+                                        control={
+                                            <Switch
+                                                size="small"
+                                                checked={tier === 'rich'}
+                                                onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
+                                                disabled={isAnnotating}
+                                            />
+                                        }
+                                        label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
+                                        sx={{ mr: 0 }}
+                                    />
+                                </Tooltip>
+                                <Box sx={{ flex: 1 }} />
+                                <FormControlLabel
+                                    control={
+                                        <Checkbox
+                                            size="small"
+                                            checked={skipExisting}
+                                            onChange={(e) => setSkipExisting(e.target.checked)}
+                                            disabled={isAnnotating}
+                                        />
+                                    }
+                                    label={<Typography variant="caption" color="text.secondary">skip already annotated clips</Typography>}
+                                    sx={{ mr: 0 }}
+                                />
+                                </Box>
+                                {tier === 'rich' && (
+                                    <ClapVocabAccordion disabled={isAnnotating} />
+                                )}
+                            </Stack>
+                        }
                     />
                     <audio
                         ref={audioRef}
@@ -579,8 +580,21 @@ function ClapVocabAccordion({ disabled }) {
     const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
 
     return (
-        <Accordion sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}>
-            <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
+        <Accordion
+            disableGutters
+            sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}
+        >
+            <AccordionSummary
+                expandIcon={<ChevronDownIcon size={18} />}
+                sx={{
+                    minHeight: 48,
+                    '&.Mui-expanded': { minHeight: 48 },
+                    '& .MuiAccordionSummary-content': {
+                        margin: '12px 0',
+                        '&.Mui-expanded': { margin: '12px 0' },
+                    },
+                }}
+            >
                 <Typography variant="subtitle1">CLAP Vocabulary</Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, alignSelf: 'center' }}>
                     {overridden ? 'custom' : 'defaults'} · {tagCount} tags
@@ -721,34 +735,49 @@ function LoadProjectDialog({ open, projects, currentName, onClose, onLoad }) {
     );
 }
 
-function ProjectHeader({ project, onSave, onCommit, onDiscard, disabled }) {
+function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disabled }) {
     const stateLabel = (() => {
         if (project.dirty && project.has_unsaved_changes) return 'Unsaved changes';
-        if (project.dirty && !project.has_unsaved_changes) return 'Draft saved · not committed';
-        if (!project.dirty) return 'All changes committed';
+        if (project.dirty && !project.has_unsaved_changes) return 'Draft saved · dataset not created';
+        if (!project.dirty) return 'Dataset created';
         return '';
     })();
     return (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <Box sx={{ flex: 1, minWidth: 240 }}>
-                <Typography variant="h6">{project.name}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                    {project.clip_count} clip{project.clip_count === 1 ? '' : 's'}
-                    {' · '}{stateLabel}
-                </Typography>
-            </Box>
-            <Stack direction="row" spacing={1}>
-                <Tooltip title="Discard uncommitted work — deletes audio added since the last commit">
+            <Stack direction="row" spacing={2} alignItems="center" sx={{ flex: 1, minWidth: 240 }}>
+                <Box>
+                    <Typography variant="h6">Project: &ldquo;{project.name}&rdquo;</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        {project.clip_count} clip{project.clip_count === 1 ? '' : 's'}
+                        {' · '}{stateLabel}
+                    </Typography>
+                </Box>
+                <Tooltip title="Add audio files to this project">
                     <span>
                         <Button
-                            variant="text"
+                            variant="outlined"
+                            size="small"
+                            startIcon={<MusicIcon size={16} />}
+                            onClick={onAddAudio}
+                            disabled={disabled}
+                        >
+                            Add audio
+                        </Button>
+                    </span>
+                </Tooltip>
+            </Stack>
+            <Stack direction="row" spacing={1}>
+                <Tooltip title="Delete unsaved changes — reverts to the last created dataset (removes any audio added since)">
+                    <span>
+                        <Button
+                            variant="outlined"
                             color="error"
                             size="small"
-                            startIcon={<DiscardIcon size={16} />}
+                            startIcon={<TrashIcon size={16} />}
                             onClick={onDiscard}
                             disabled={disabled || !project.dirty}
                         >
-                            Discard
+                            Delete
                         </Button>
                     </span>
                 </Tooltip>
@@ -765,16 +794,16 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, disabled }) {
                         </Button>
                     </span>
                 </Tooltip>
-                <Tooltip title="Commit — writes .txt sidecars (overwrites the previous commit)">
+                <Tooltip title="Create Dataset — writes the .txt sidecars (overwrites the previous dataset)">
                     <span>
                         <Button
                             variant="contained"
                             size="small"
-                            startIcon={<CommitIcon size={16} />}
+                            startIcon={<DatasetIcon size={16} />}
                             onClick={onCommit}
                             disabled={disabled || !project.dirty}
                         >
-                            Commit
+                            Create Dataset
                         </Button>
                     </span>
                 </Tooltip>
@@ -848,45 +877,59 @@ function Waveform({ projectName, fileName, isActive, progress }) {
     );
 }
 
-function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled, toolbar }) {
     if (!clips || clips.length === 0) {
         return (
-            <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
-                <Typography variant="body2">
-                    No clips yet. Use “Add audio” to bring in a folder.
-                </Typography>
-            </Box>
+            <Paper variant="outlined">
+                {toolbar && (
+                    <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+                        {toolbar}
+                    </Box>
+                )}
+                <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                    <Typography variant="body2">
+                        No clips yet. Use “Add audio” to bring in a folder.
+                    </Typography>
+                </Box>
+            </Paper>
         );
     }
     return (
-        <TableContainer component={Paper} variant="outlined">
-            <Table size="small">
-                <TableHead>
-                    <TableRow>
-                        <TableCell sx={{ width: '36%' }}>File</TableCell>
-                        <TableCell>Prompt</TableCell>
-                        <TableCell sx={{ width: 132, textAlign: 'right' }}>Actions</TableCell>
-                    </TableRow>
-                </TableHead>
-                <TableBody>
-                    {clips.map((c) => (
-                        <ClipRow
-                            key={c.file_name}
-                            projectName={projectName}
-                            clip={c}
-                            isPlaying={playingFile === c.file_name}
-                            playProgress={playingFile === c.file_name ? playProgress : 0}
-                            onPlayToggle={onPlayToggle}
-                            onPromptChange={onPromptChange}
-                            onAnnotate={onAnnotate}
-                            onDelete={onDelete}
-                            onSlice={onSlice}
-                            disabled={disabled}
-                        />
-                    ))}
-                </TableBody>
-            </Table>
-        </TableContainer>
+        <Paper variant="outlined">
+            {toolbar && (
+                <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
+                    {toolbar}
+                </Box>
+            )}
+            <TableContainer>
+                <Table size="small">
+                    <TableHead>
+                        <TableRow>
+                            <TableCell sx={{ width: '36%' }}>File</TableCell>
+                            <TableCell>Annotation</TableCell>
+                            <TableCell sx={{ width: 132, textAlign: 'right' }}>Actions</TableCell>
+                        </TableRow>
+                    </TableHead>
+                    <TableBody>
+                        {clips.map((c) => (
+                            <ClipRow
+                                key={c.file_name}
+                                projectName={projectName}
+                                clip={c}
+                                isPlaying={playingFile === c.file_name}
+                                playProgress={playingFile === c.file_name ? playProgress : 0}
+                                onPlayToggle={onPlayToggle}
+                                onPromptChange={onPromptChange}
+                                onAnnotate={onAnnotate}
+                                onDelete={onDelete}
+                                onSlice={onSlice}
+                                disabled={disabled}
+                            />
+                        ))}
+                    </TableBody>
+                </Table>
+            </TableContainer>
+        </Paper>
     );
 }
 
@@ -1164,7 +1207,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
             <DialogContent>
                 <Stack spacing={2.5} sx={{ pt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                        The original file will be replaced by the children on disk. Children inherit this clip's prompt and start out uncommitted — Discard will roll them back, Commit makes them permanent.
+                        The original file will be replaced by the children on disk. Children inherit this clip's annotation. They stay in the project until you Create Dataset (Delete reverts them).
                     </Typography>
 
                     <Stack direction="row" spacing={2}>
