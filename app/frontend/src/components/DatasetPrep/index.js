@@ -73,6 +73,11 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [loadOpen, setLoadOpen] = useState(false);
     const [ingestOpen, setIngestOpen] = useState(false);
     const [sliceTarget, setSliceTarget] = useState(null);  // file_name or null
+    // Single confirm-dialog state powering destructive actions. Mirrors the
+    // Free GPU / Start Fresh confirm style from App.js — replaces the
+    // browser-native window.confirm() prompts so the UX is consistent.
+    const [confirm, setConfirm] = useState(null);
+    const [confirmBusy, setConfirmBusy] = useState(false);
     const [error, setError] = useState('');
 
     const [errorCode, setErrorCode] = useState('');
@@ -86,6 +91,29 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
 
     const pollHandleRef = useRef(null);
     const isAnnotating = annotateJob?.state === 'running';
+
+    // --- Multi-row selection (for bulk Slice) -----------------------------
+    // Set<string> of clip file_names. Reset whenever the active project
+    // changes, since selections from a different project are meaningless.
+    const [selectedFiles, setSelectedFiles] = useState(() => new Set());
+    useEffect(() => { setSelectedFiles(new Set()); }, [selectedName]);
+
+    const toggleSelected = useCallback((fileName) => {
+        setSelectedFiles((prev) => {
+            const next = new Set(prev);
+            if (next.has(fileName)) next.delete(fileName);
+            else next.add(fileName);
+            return next;
+        });
+    }, []);
+    const toggleSelectAll = useCallback((clips) => {
+        setSelectedFiles((prev) => {
+            const allNames = clips.map((c) => c.file_name);
+            const allSelected = allNames.length > 0 && allNames.every((n) => prev.has(n));
+            return allSelected ? new Set() : new Set(allNames);
+        });
+    }, []);
+    const clearSelection = useCallback(() => setSelectedFiles(new Set()), []);
 
     // --- Per-row audio preview --------------------------------------------
     // One <audio> for the whole table. Rows just say "play me" / "pause";
@@ -240,37 +268,76 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         } catch (e) { setError(extractError(e, 'Create Dataset failed')); }
     }
 
-    async function handleDiscard() {
+    function handleDiscard() {
         if (!project) return;
-        const ok = window.confirm(
-            `Delete all changes in “${project.name}” since the last created dataset? Audio files added since then will be removed. This cannot be undone.`,
-        );
-        if (!ok) return;
-        setError('');
-        try {
-            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/discard`);
-            setProject(data);
-            await refreshProjects();
-        } catch (e) { setError(extractError(e, 'Delete failed')); }
+        setConfirm({
+            title: 'Delete unsaved changes',
+            body: `Delete all changes in “${project.name}” since the last created dataset? Audio files added since then will be removed.`,
+            warning: 'This cannot be undone.',
+            confirmLabel: 'Delete',
+            busyLabel: 'Deleting…',
+            danger: true,
+            onConfirm: async () => {
+                setError('');
+                try {
+                    const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/discard`);
+                    setProject(data);
+                    await refreshProjects();
+                } catch (e) { setError(extractError(e, 'Delete failed')); }
+            },
+        });
     }
 
-    async function handleDeleteProject(name) {
+    function handleDeleteProject(name) {
         if (!name) return;
-        const ok = window.confirm(
-            `Permanently delete project “${name}”? Audio files, sidecars, and any drafts will be removed from disk. This cannot be undone.`,
-        );
-        if (!ok) return;
-        setError('');
-        try {
-            await api.delete(`/api/projects/${encodeURIComponent(name)}`);
-            if (selectedName === name) {
-                stopPlayback();
-                setSelectedName('');
-                setProject(null);
-                try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
-            }
-            await refreshProjects();
-        } catch (e) { setError(extractError(e, 'Delete project failed')); }
+        setConfirm({
+            title: 'Delete project',
+            body: `Permanently delete project “${name}”? Audio files, sidecars, and any drafts will be removed from disk.`,
+            warning: 'This cannot be undone.',
+            confirmLabel: 'Delete',
+            busyLabel: 'Deleting…',
+            danger: true,
+            onConfirm: async () => {
+                setError('');
+                try {
+                    await api.delete(`/api/projects/${encodeURIComponent(name)}`);
+                    if (selectedName === name) {
+                        stopPlayback();
+                        setSelectedName('');
+                        setProject(null);
+                        try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
+                    }
+                    await refreshProjects();
+                } catch (e) { setError(extractError(e, 'Delete project failed')); }
+            },
+        });
+    }
+
+    function handleClearSelectedAnnotations() {
+        if (!project || selectedFiles.size === 0) return;
+        const count = selectedFiles.size;
+        const files = Array.from(selectedFiles);
+        setConfirm({
+            title: 'Clear annotations',
+            body: `Clear annotations on ${count} clip${count === 1 ? '' : 's'}? Buffered in memory until you Save or Create Dataset.`,
+            warning: 'Use the Delete button to revert; this action itself can’t be undone in place.',
+            confirmLabel: `Clear (${count})`,
+            busyLabel: 'Clearing…',
+            danger: true,
+            onConfirm: async () => {
+                setError('');
+                try {
+                    for (const f of files) {
+                        await api.patch(
+                            `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(f)}`,
+                            { prompt: '' },
+                        );
+                    }
+                    clearSelection();
+                    await refreshProject(project.name);
+                } catch (e) { setError(extractError(e, 'Clear annotations failed')); }
+            },
+        });
     }
 
     async function handleClipPromptChange(fileName, newPrompt) {
@@ -424,47 +491,78 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                             if (playingFile === fname) stopPlayback();
                             setSliceTarget(fname);
                         }}
+                        selectedFiles={selectedFiles}
+                        onToggleSelected={toggleSelected}
+                        onToggleSelectAll={() => toggleSelectAll(project.clips)}
                         disabled={isAnnotating}
                         toolbar={
                             <Stack spacing={1}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
-                                <Button
-                                    variant="contained"
-                                    color="warm"
-                                    size="small"
-                                    startIcon={<WandSparkles size={16} />}
-                                    onClick={() => handleAnnotate('all')}
-                                    disabled={isAnnotating || project.clip_count === 0}
-                                >
-                                    Auto-annotate all
-                                </Button>
-                                <Tooltip title="Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.">
-                                    <FormControlLabel
-                                        control={
-                                            <Switch
-                                                size="small"
-                                                checked={tier === 'rich'}
-                                                onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
-                                                disabled={isAnnotating}
-                                            />
-                                        }
-                                        label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
-                                        sx={{ mr: 0 }}
-                                    />
-                                </Tooltip>
-                                <Box sx={{ flex: 1 }} />
-                                <FormControlLabel
-                                    control={
-                                        <Checkbox
-                                            size="small"
-                                            checked={skipExisting}
-                                            onChange={(e) => setSkipExisting(e.target.checked)}
-                                            disabled={isAnnotating}
+                                    <Button
+                                        variant="contained"
+                                        color="warm"
+                                        size="small"
+                                        startIcon={<WandSparkles size={16} />}
+                                        onClick={() => handleAnnotate('all')}
+                                        disabled={isAnnotating || project.clip_count === 0}
+                                    >
+                                        Auto-annotate all
+                                    </Button>
+                                    <Tooltip title="Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.">
+                                        <FormControlLabel
+                                            control={
+                                                <Switch
+                                                    size="small"
+                                                    checked={tier === 'rich'}
+                                                    onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
+                                                    disabled={isAnnotating}
+                                                />
+                                            }
+                                            label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
+                                            sx={{ mr: 0 }}
                                         />
-                                    }
-                                    label={<Typography variant="caption" color="text.secondary">skip already annotated clips</Typography>}
-                                    sx={{ mr: 0 }}
-                                />
+                                    </Tooltip>
+                                    <Tooltip title="When on, Auto-annotate skips clips that already have an annotation. Off means every run overwrites existing prompts.">
+                                        <FormControlLabel
+                                            control={
+                                                <Switch
+                                                    size="small"
+                                                    checked={skipExisting}
+                                                    onChange={(e) => setSkipExisting(e.target.checked)}
+                                                    disabled={isAnnotating}
+                                                />
+                                            }
+                                            label={<Typography variant="caption" color="text.secondary">Skip already annotated</Typography>}
+                                            sx={{ mr: 0 }}
+                                        />
+                                    </Tooltip>
+                                    <Box sx={{ flex: 1 }} />
+                                    {selectedFiles.size > 0 && (
+                                        <Stack direction="row" spacing={1} alignItems="center">
+                                            <Button
+                                                variant="outlined"
+                                                size="small"
+                                                startIcon={<ScissorsIcon size={16} />}
+                                                onClick={() => {
+                                                    if (playingFile && selectedFiles.has(playingFile)) stopPlayback();
+                                                    setSliceTarget(Array.from(selectedFiles));
+                                                }}
+                                                disabled={isAnnotating}
+                                            >
+                                                Slice selected ({selectedFiles.size})
+                                            </Button>
+                                            <Button
+                                                variant="outlined"
+                                                color="error"
+                                                size="small"
+                                                startIcon={<TrashIcon size={16} />}
+                                                onClick={handleClearSelectedAnnotations}
+                                                disabled={isAnnotating}
+                                            >
+                                                Clear annotations ({selectedFiles.size})
+                                            </Button>
+                                        </Stack>
+                                    )}
                                 </Box>
                                 {tier === 'rich' && (
                                     <ClapVocabAccordion disabled={isAnnotating} />
@@ -527,10 +625,53 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                 fileName={sliceTarget}
                 onClose={() => setSliceTarget(null)}
                 onSliced={async () => {
+                    clearSelection();
                     if (project) await refreshProject(project.name);
                     await refreshProjects();
                 }}
             />
+
+            <Dialog
+                open={Boolean(confirm)}
+                onClose={confirmBusy ? undefined : () => setConfirm(null)}
+                aria-labelledby="dataset-confirm-title"
+            >
+                <DialogTitle id="dataset-confirm-title">
+                    {confirm?.title}
+                </DialogTitle>
+                <DialogContent>
+                    <Typography sx={appStyles.dialogBodyText}>
+                        {confirm?.body}
+                    </Typography>
+                    {confirm?.warning && (
+                        <Typography variant="body2" color="warning.main" sx={appStyles.dialogErrorText}>
+                            {confirm.warning}
+                        </Typography>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setConfirm(null)} disabled={confirmBusy}>
+                        Cancel
+                    </Button>
+                    <Button
+                        onClick={async () => {
+                            if (!confirm?.onConfirm) { setConfirm(null); return; }
+                            setConfirmBusy(true);
+                            try {
+                                await confirm.onConfirm();
+                            } finally {
+                                setConfirmBusy(false);
+                                setConfirm(null);
+                            }
+                        }}
+                        color={confirm?.danger ? 'error' : 'primary'}
+                        variant="contained"
+                        disabled={confirmBusy}
+                    >
+                        {confirmBusy ? (confirm?.busyLabel || 'Working…') : (confirm?.confirmLabel || 'Confirm')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Stack>
         </Paper>
     );
@@ -912,7 +1053,10 @@ function Waveform({ projectName, fileName, isActive, progress }) {
     );
 }
 
-function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled, toolbar }) {
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, selectedFiles, onToggleSelected, onToggleSelectAll, disabled, toolbar }) {
+    const totalSelected = selectedFiles ? selectedFiles.size : 0;
+    const allSelected = clips && clips.length > 0 && totalSelected === clips.length;
+    const partiallySelected = totalSelected > 0 && !allSelected;
     if (!clips || clips.length === 0) {
         return (
             <Paper variant="outlined">
@@ -940,6 +1084,15 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                 <Table size="small">
                     <TableHead>
                         <TableRow>
+                            <TableCell padding="checkbox">
+                                <Checkbox
+                                    size="small"
+                                    checked={allSelected}
+                                    indeterminate={partiallySelected}
+                                    onChange={onToggleSelectAll}
+                                    disabled={disabled || clips.length === 0}
+                                />
+                            </TableCell>
                             <TableCell sx={{ width: '36%' }}>File</TableCell>
                             <TableCell>Annotation</TableCell>
                             <TableCell sx={{ width: 132, textAlign: 'right' }}>Actions</TableCell>
@@ -958,6 +1111,8 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                                 onAnnotate={onAnnotate}
                                 onDelete={onDelete}
                                 onSlice={onSlice}
+                                selected={selectedFiles ? selectedFiles.has(c.file_name) : false}
+                                onToggleSelected={onToggleSelected}
                                 disabled={disabled}
                             />
                         ))}
@@ -973,14 +1128,21 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
 // identity intentionally ignored — they're stable in behavior, just inline
 // arrows from the parent, and re-creating a row only to re-bind a click
 // handler isn't worth the work. playProgress only matters on the active row.
-const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
+const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
     const dirty = draft !== clip.prompt;
 
     return (
-        <TableRow hover>
+        <TableRow hover selected={selected}>
+            <TableCell padding="checkbox">
+                <Checkbox
+                    size="small"
+                    checked={!!selected}
+                    onChange={() => onToggleSelected && onToggleSelected(clip.file_name)}
+                />
+            </TableCell>
             <TableCell sx={{ wordBreak: 'break-all' }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
                     <Tooltip title={isPlaying ? 'Pause' : 'Play'}>
@@ -1059,6 +1221,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
     if (prev.disabled !== next.disabled) return false;
     if (prev.projectName !== next.projectName) return false;
     if (prev.isPlaying !== next.isPlaying) return false;
+    if (prev.selected !== next.selected) return false;
     // playProgress only matters when this row is the active one — inactive
     // rows always receive playProgress=0 from the parent, so they're skipped.
     if (next.isPlaying && prev.playProgress !== next.playProgress) return false;
@@ -1204,6 +1367,10 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
 }
 
 function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
+    // `fileName` is either a string (single clip) or string[] (bulk).
+    const fileList = Array.isArray(fileName) ? fileName : (fileName ? [fileName] : []);
+    const isBulk = fileList.length > 1;
+
     // 30s default matches the SA3 LoRA training --duration default
     // (app/core/training/sa3_lora_runner.py). Clips shorter than that get
     // silence-padded into each batch — wasted compute.
@@ -1212,6 +1379,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
     const [strategy, setStrategy] = useState('hard');
     const [duration, setDuration] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0, failed: [] });
     const [dialogError, setDialogError] = useState('');
 
     useEffect(() => {
@@ -1221,42 +1389,64 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
         setStrategy('hard');
         setDialogError('');
         setDuration(null);
-        if (!projectName || !fileName) return;
-        // Reuse the peaks endpoint to pull duration cheaply (it's cached
-        // server-side, and the row's waveform already populated it).
-        api.get(`/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=20`)
-            .then(({ data }) => setDuration(data?.duration || null))
-            .catch(() => setDuration(null));
-    }, [open, projectName, fileName]);
+        setBulkProgress({ done: 0, total: 0, failed: [] });
+        if (!projectName || fileList.length === 0) return;
+        // Single-file: pull duration cheaply via the peaks endpoint (cached).
+        // Bulk: skip the duration probe — too-short clips get filtered server-side.
+        if (!isBulk) {
+            api.get(`/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileList[0])}/peaks?n=20`)
+                .then(({ data }) => setDuration(data?.duration || null))
+                .catch(() => setDuration(null));
+        }
+    // fileList recomputes every render but the underlying fileName prop is what matters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, projectName, Array.isArray(fileName) ? fileName.join('|') : fileName]);
 
     const stepSec = Math.max(0.5, target - overlap);
     const estChildren = duration && target > 0 ? Math.max(1, Math.ceil(duration / stepSec)) : null;
-    const tooShort = duration !== null && duration <= target;
+    const tooShort = !isBulk && duration !== null && duration <= target;
 
     async function submit() {
         setBusy(true);
         setDialogError('');
-        try {
-            await api.post(
-                `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/slice`,
-                { target_duration: target, overlap_sec: overlap, strategy },
-            );
-            await onSliced();
+        setBulkProgress({ done: 0, total: fileList.length, failed: [] });
+        const failed = [];
+        for (let i = 0; i < fileList.length; i++) {
+            const f = fileList[i];
+            try {
+                await api.post(
+                    `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(f)}/slice`,
+                    { target_duration: target, overlap_sec: overlap, strategy },
+                );
+            } catch (e) {
+                failed.push({ file: f, error: extractError(e, 'Slice failed') });
+            }
+            setBulkProgress({ done: i + 1, total: fileList.length, failed: [...failed] });
+        }
+        await onSliced();
+        setBusy(false);
+        if (failed.length === 0) {
             onClose();
-        } catch (e) {
-            setDialogError(extractError(e, 'Slice failed'));
-        } finally {
-            setBusy(false);
+        } else if (failed.length === fileList.length) {
+            setDialogError(`All ${failed.length} slices failed. First error: ${failed[0].error}`);
+        } else {
+            setDialogError(`${failed.length} of ${fileList.length} clips couldn't be sliced (likely shorter than the target). The rest were sliced.`);
         }
     }
 
+    const title = isBulk
+        ? `Slice ${fileList.length} clips`
+        : `Slice ${fileList[0] || ''}`;
+
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>Slice {fileName}</DialogTitle>
+        <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
+            <DialogTitle>{title}</DialogTitle>
             <DialogContent>
                 <Stack spacing={2.5} sx={{ pt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                        The original file will be replaced by the children on disk. Children inherit this clip's annotation. They stay in the project until you Create Dataset (Delete reverts them).
+                        {isBulk
+                            ? `Each of the ${fileList.length} selected clips will be replaced by its children. Clips shorter than the target are skipped. Children inherit each clip's annotation and stay in the project until you Create Dataset (Delete reverts them).`
+                            : `The original file will be replaced by the children on disk. Children inherit this clip's annotation. They stay in the project until you Create Dataset (Delete reverts them).`}
                     </Typography>
 
                     <Stack direction="row" spacing={2}>
@@ -1303,12 +1493,25 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                         </RadioGroup>
                     </FormControl>
 
-                    {duration !== null && (
+                    {!isBulk && duration !== null && (
                         <Typography variant="caption" color="text.secondary">
                             Source: {duration.toFixed(1)}s
                             {estChildren !== null && !tooShort && ` · ~${estChildren} children at this setting`}
                             {tooShort && ' · already shorter than the target — nothing to slice'}
                         </Typography>
+                    )}
+
+                    {busy && bulkProgress.total > 0 && (
+                        <Box>
+                            <LinearProgress
+                                variant="determinate"
+                                value={(bulkProgress.done / bulkProgress.total) * 100}
+                            />
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                                Slicing {bulkProgress.done} / {bulkProgress.total}
+                                {bulkProgress.failed.length > 0 && ` · ${bulkProgress.failed.length} skipped`}
+                            </Typography>
+                        </Box>
                     )}
 
                     {dialogError && <Alert severity="error">{dialogError}</Alert>}
@@ -1321,7 +1524,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                     onClick={submit}
                     disabled={busy || tooShort || target <= 0 || overlap >= target}
                 >
-                    {busy ? 'Slicing…' : 'Slice'}
+                    {busy ? 'Slicing…' : (isBulk ? `Slice ${fileList.length}` : 'Slice')}
                 </Button>
             </DialogActions>
         </Dialog>

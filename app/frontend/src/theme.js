@@ -341,6 +341,19 @@ let theme = createTheme({
                         color: 'rgba(255, 255, 255, 0.26)',
                     },
                 },
+                // The generic `outlined` rule above paints cyan; without an
+                // explicit error carve-out, `color="error"` on outlined
+                // buttons (Delete project, Clear annotations) gets clobbered
+                // and silently reads as cyan.
+                outlinedError: {
+                    borderColor: 'rgba(226, 107, 94, 0.55)',
+                    color: DARK.error,
+                    '&:hover': {
+                        borderColor: DARK.error,
+                        backgroundColor: 'rgba(226, 107, 94, 0.10)',
+                        color: DARK.error,
+                    },
+                },
                 text: {
                     color: DARK.text,
                     '&:hover': {
@@ -908,6 +921,15 @@ export const lightTheme = createTheme(theme, {
                     '&.Mui-disabled': {
                         borderColor: 'rgba(43, 31, 18, 0.12)',
                         color: 'rgba(43, 31, 18, 0.30)',
+                    },
+                },
+                outlinedError: {
+                    borderColor: 'rgba(184, 78, 69, 0.55)',
+                    color: LIGHT.error,
+                    '&:hover': {
+                        borderColor: LIGHT.error,
+                        backgroundColor: 'rgba(184, 78, 69, 0.10)',
+                        color: LIGHT.error,
                     },
                 },
                 text: {
