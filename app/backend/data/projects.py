@@ -540,6 +540,28 @@ def commit_project(name: str) -> Dict[str, Any]:
         return session.to_dict()
 
 
+def delete_project(name: str) -> None:
+    """Permanently remove a project — folder, sidecars, drafts, session.
+
+    Destructive: there is no recovery path. Caller should confirm with
+    the user before invoking.
+    """
+    proj_path = project_path(name)
+    if not proj_path.exists():
+        raise FileNotFoundError(f"Project not found: {name}")
+
+    # Cancel any in-flight annotate first, drop the session, then nuke
+    # the folder. Order matters: if we rm the folder while another
+    # thread is writing to it (e.g. annotate writing prompts to memory
+    # is fine, but the audio-stream endpoint could be holding a file
+    # handle), at least the session is gone so no fresh writes happen.
+    with _sessions_lock:
+        existing = _sessions.pop(name, None)
+    if existing is not None:
+        existing.cancel_event.set()
+    shutil.rmtree(proj_path, ignore_errors=True)
+
+
 def discard_project(name: str) -> Dict[str, Any]:
     """Throw away all uncommitted work.
 

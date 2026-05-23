@@ -2323,6 +2323,20 @@ def get_project_route(name):
         return jsonify({'error': str(exc)}), 500
 
 
+@app.route('/api/projects/<name>', methods=['DELETE'])
+def delete_project_route(name):
+    """Nuke the project folder + drop the in-memory session. Irreversible."""
+    from app.backend.data.projects import delete_project
+    try:
+        delete_project(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to delete project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'name': name, 'deleted': True})
+
+
 @app.route('/api/projects/<name>/ingest', methods=['POST'])
 def ingest_into_project_route(name):
     """Body: { folder_path: string, mode: "copy" | "symlink" }"""

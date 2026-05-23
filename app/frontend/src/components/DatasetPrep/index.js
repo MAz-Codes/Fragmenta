@@ -40,7 +40,7 @@ import {
     ChevronDown as ChevronDownIcon,
     FolderOpenIcon,
     PlusIcon,
-    SparklesIcon,
+    WandSparkles,
     SaveIcon,
     Database as Database,
     DatabaseZap as DatasetIcon,
@@ -254,6 +254,25 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         } catch (e) { setError(extractError(e, 'Delete failed')); }
     }
 
+    async function handleDeleteProject(name) {
+        if (!name) return;
+        const ok = window.confirm(
+            `Permanently delete project “${name}”? Audio files, sidecars, and any drafts will be removed from disk. This cannot be undone.`,
+        );
+        if (!ok) return;
+        setError('');
+        try {
+            await api.delete(`/api/projects/${encodeURIComponent(name)}`);
+            if (selectedName === name) {
+                stopPlayback();
+                setSelectedName('');
+                setProject(null);
+                try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
+            }
+            await refreshProjects();
+        } catch (e) { setError(extractError(e, 'Delete project failed')); }
+    }
+
     async function handleClipPromptChange(fileName, newPrompt) {
         if (!project) return;
         try {
@@ -413,7 +432,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                                     variant="contained"
                                     color="warm"
                                     size="small"
-                                    startIcon={<SparklesIcon size={16} />}
+                                    startIcon={<WandSparkles size={16} />}
                                     onClick={() => handleAnnotate('all')}
                                     disabled={isAnnotating || project.clip_count === 0}
                                 >
@@ -488,6 +507,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     setLoadOpen(false);
                     trySelectProject(name);
                 }}
+                onDeleteProject={handleDeleteProject}
             />
 
             <IngestDialog
@@ -684,7 +704,7 @@ function VocabCategory({ label, values, onChange, disabled }) {
     );
 }
 
-function LoadProjectDialog({ open, projects, currentName, onClose, onLoad }) {
+function LoadProjectDialog({ open, projects, currentName, onClose, onLoad, onDeleteProject }) {
     const [picked, setPicked] = useState(currentName || '');
 
     useEffect(() => {
@@ -702,21 +722,36 @@ function LoadProjectDialog({ open, projects, currentName, onClose, onLoad }) {
                 ) : (
                     <RadioGroup value={picked} onChange={(e) => setPicked(e.target.value)}>
                         {projects.map((p) => (
-                            <FormControlLabel
+                            <Box
                                 key={p.name}
-                                value={p.name}
-                                control={<Radio size="small" />}
-                                label={
-                                    <Box>
-                                        <Typography variant="body2">{p.name}</Typography>
-                                        <Typography variant="caption" color="text.secondary">
-                                            {p.clip_count} clip{p.clip_count === 1 ? '' : 's'}
-                                            {p.has_draft ? ' · has unsaved draft' : ''}
-                                        </Typography>
-                                    </Box>
-                                }
-                                sx={{ alignItems: 'flex-start', py: 0.5 }}
-                            />
+                                sx={{ display: 'flex', alignItems: 'center', gap: 1, py: 0.25 }}
+                            >
+                                <FormControlLabel
+                                    value={p.name}
+                                    control={<Radio size="small" />}
+                                    label={
+                                        <Box>
+                                            <Typography variant="body2">{p.name}</Typography>
+                                            <Typography variant="caption" color="text.secondary">
+                                                {p.clip_count} clip{p.clip_count === 1 ? '' : 's'}
+                                                {p.has_draft ? ' · has unsaved draft' : ''}
+                                            </Typography>
+                                        </Box>
+                                    }
+                                    sx={{ alignItems: 'flex-start', flex: 1, mr: 0 }}
+                                />
+                                <Tooltip title="Delete this project (folder, audio, sidecars, drafts) — irreversible">
+                                    <span>
+                                        <IconButton
+                                            size="small"
+                                            sx={{ color: 'text.disabled', '&:hover': { color: 'error.main', bgcolor: 'action.hover' } }}
+                                            onClick={() => onDeleteProject(p.name)}
+                                        >
+                                            <TrashIcon size={16} />
+                                        </IconButton>
+                                    </span>
+                                </Tooltip>
+                            </Box>
                         ))}
                     </RadioGroup>
                 )}
@@ -933,7 +968,12 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     );
 }
 
-function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
+// React.memo so the 60Hz audio-playhead ticks don't reconcile every row in
+// the table. Custom comparator: skip if visual props didn't change. Callback
+// identity intentionally ignored — they're stable in behavior, just inline
+// arrows from the parent, and re-creating a row only to re-bind a click
+// handler isn't worth the work. playProgress only matters on the active row.
+const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
@@ -985,7 +1025,7 @@ function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onP
                             onClick={() => onAnnotate(clip.file_name)}
                             disabled={disabled}
                         >
-                            <SparklesIcon size={16} />
+                            <WandSparkles size={16} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -1014,7 +1054,16 @@ function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onP
             </TableCell>
         </TableRow>
     );
-}
+}, (prev, next) => {
+    if (prev.clip !== next.clip) return false;
+    if (prev.disabled !== next.disabled) return false;
+    if (prev.projectName !== next.projectName) return false;
+    if (prev.isPlaying !== next.isPlaying) return false;
+    // playProgress only matters when this row is the active one — inactive
+    // rows always receive playProgress=0 from the parent, so they're skipped.
+    if (next.isPlaying && prev.playProgress !== next.playProgress) return false;
+    return true;
+});
 
 function CreateProjectDialog({ open, existingNames, onClose, onCreated }) {
     const [name, setName] = useState('');
