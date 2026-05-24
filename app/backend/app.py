@@ -2325,23 +2325,22 @@ def get_project_route(name):
 
 @app.route('/api/projects/<name>/template', methods=['PATCH'])
 def patch_project_template_route(name):
-    """Update the project's auto-annotation prompt template.
+    """Update the project's annotation-template preset.
 
-    Body: { "template": "TrackType: Music, Genre: {genre}, ..." }
-    Empty string is valid — it means "fall back to the built-in default".
+    Body: { "preset": "music" | "instrument" | "sfx" }
     """
-    from app.backend.data.projects import update_project_template
+    from app.backend.data.projects import update_project_template_preset
     payload = request.json or {}
-    if 'template' not in payload:
-        return jsonify({'error': 'template is required'}), 400
+    if 'preset' not in payload:
+        return jsonify({'error': 'preset is required'}), 400
     try:
-        return jsonify(update_project_template(name, payload['template']))
+        return jsonify(update_project_template_preset(name, payload['preset']))
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     except Exception as exc:
-        logger.exception("Failed to update template for %s", name)
+        logger.exception("Failed to update template preset for %s", name)
         return jsonify({'error': str(exc)}), 500
 
 
@@ -2673,13 +2672,9 @@ def annotate_project_route(name):
             }), 500
 
     proj_path = project_path(name)
-    # Resolve the prompt template once per job — empty/unset falls back to
-    # the SA3 AudioSparx default.
-    from app.backend.data.projects import DEFAULT_PROMPT_TEMPLATE
-    with session.lock:
-        active_template = (session.metadata.get('prompt_template') or '').strip()
-    if not active_template:
-        active_template = DEFAULT_PROMPT_TEMPLATE
+    # Resolve the active preset to a template string once per job.
+    from app.backend.data.projects import resolve_prompt_template
+    active_template = resolve_prompt_template(session)
 
     def runner():
         try:

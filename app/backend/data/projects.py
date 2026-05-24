@@ -42,26 +42,39 @@ PROJECT_DRAFT_FILENAME = ".draft.json"
 DEFAULT_INGEST_MODE = "copy"  # copy | symlink
 INGEST_MODES = ("copy", "symlink")
 
-# AudioSparx-style tag prompt — SA3's prompting guide
-# (vendor/stable-audio-3/docs/guides/prompting.md) recommends this shape
-# for music tracks ("higher quality, more semantically coherent outputs").
-# Each comma-separated segment is independently rendered: if any {var} in
-# a segment resolves to empty, the whole segment is dropped — no
-# "Genre: , BPM: , " punctuation rot when an attribute is missing.
-DEFAULT_PROMPT_TEMPLATE = (
-    "TrackType: Music, VocalType: Instrumental, "
-    "Genre: {genre}, Mood: {mood}, Instruments: {instruments}, "
-    "BPM: {bpm}, Key: {key}"
-)
-
-# Variables the annotator can fill in. Used by the frontend to render
-# the available-variables chip list, and by tier-awareness checks
-# (genre/mood/instruments are only populated by the Rich tier).
-TEMPLATE_VARIABLES = (
-    "genre", "mood", "instruments",
-    "bpm", "key", "brightness", "character",
-)
-RICH_TIER_VARIABLES = ("genre", "mood", "instruments")
+# SA3's prompting guide (vendor/stable-audio-3/docs/guides/prompting.md)
+# distinguishes three generation modes — music, stems / solo instruments,
+# and audio samples / SFX — each with its own AudioSparx-tag convention.
+# We ship one preset per mode and let the user pick a single id; the rest
+# is opinionated defaults. Each segment is rendered by apply_template's
+# segment-drop semantics, so missing CLAP attributes never leave dangling
+# punctuation.
+PROMPT_TEMPLATE_PRESETS: Dict[str, Dict[str, str]] = {
+    "music": {
+        "label": "Music",
+        "description": "Full instrumental tracks (SA3's `TrackType: Music` convention).",
+        "template": (
+            "TrackType: Music, VocalType: Instrumental, "
+            "Genre: {genre}, Mood: {mood}, Instruments: {instruments}, "
+            "BPM: {bpm}, Key: {key}"
+        ),
+    },
+    "instrument": {
+        "label": "Instrument / Stem",
+        "description": "Isolated parts or single-instrument pieces (`TrackType: Instrument`).",
+        "template": (
+            "TrackType: Instrument, "
+            "Instruments: {instruments}, Genre: {genre}, "
+            "BPM: {bpm}, Key: {key}, Mood: {mood}"
+        ),
+    },
+    "sfx": {
+        "label": "Sample / SFX",
+        "description": "Sound effects, one-shots, samples (`TrackType: SFX`).",
+        "template": "TrackType: SFX, {brightness}, {character}",
+    },
+}
+DEFAULT_PROMPT_TEMPLATE_PRESET = "music"
 
 # Names must look like reasonable filesystem folders.
 _VALID_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _\-.]{0,99}$")
@@ -128,7 +141,7 @@ def _default_metadata(name: str) -> Dict[str, Any]:
         "modified_at": now,
         "committed_at": None,
         "ingest_mode": DEFAULT_INGEST_MODE,
-        "prompt_template": "",
+        "prompt_template_preset": DEFAULT_PROMPT_TEMPLATE_PRESET,
         "source_folders": [],
         "committed_files": [],  # files written to disk + already committed
     }
@@ -291,10 +304,13 @@ class ProjectSession:
             "modified_at": self.metadata.get("modified_at"),
             "committed_at": self.metadata.get("committed_at"),
             "ingest_mode": self.metadata.get("ingest_mode", DEFAULT_INGEST_MODE),
-            "prompt_template": self.metadata.get("prompt_template", ""),
-            "default_prompt_template": DEFAULT_PROMPT_TEMPLATE,
-            "template_variables": list(TEMPLATE_VARIABLES),
-            "rich_tier_variables": list(RICH_TIER_VARIABLES),
+            "prompt_template_preset": (
+                self.metadata.get("prompt_template_preset") or DEFAULT_PROMPT_TEMPLATE_PRESET
+            ),
+            "prompt_template_presets": [
+                {"id": k, "label": v["label"], "description": v["description"], "template": v["template"]}
+                for k, v in PROMPT_TEMPLATE_PRESETS.items()
+            ],
             "source_folders": list(self.metadata.get("source_folders", [])),
             "saved_at": self.saved_at,
             "dirty": self.has_dirty_prompts() or self.has_uncommitted_files(),
@@ -684,13 +700,31 @@ def apply_template(template: str, attributes: Dict[str, Any]) -> str:
     return ", ".join(out_segments)
 
 
-def update_project_template(name: str, template: str) -> Dict[str, Any]:
-    """Persist a new prompt template on the project metadata + return state."""
-    if not isinstance(template, str):
-        raise ValueError("Template must be a string.")
+def resolve_prompt_template(session: "ProjectSession") -> str:
+    """Return the active template string for the project's selected preset.
+
+    Falls back to the music default if the stored preset id is unknown
+    (e.g. someone hand-edited .project.json to a bad value).
+    """
+    preset_id = (session.metadata.get("prompt_template_preset")
+                 or DEFAULT_PROMPT_TEMPLATE_PRESET)
+    preset = PROMPT_TEMPLATE_PRESETS.get(preset_id)
+    if preset is None:
+        preset = PROMPT_TEMPLATE_PRESETS[DEFAULT_PROMPT_TEMPLATE_PRESET]
+    return preset["template"]
+
+
+def update_project_template_preset(name: str, preset_id: str) -> Dict[str, Any]:
+    """Persist the user-selected preset id and return updated project state."""
+    if not isinstance(preset_id, str) or preset_id not in PROMPT_TEMPLATE_PRESETS:
+        valid = ", ".join(PROMPT_TEMPLATE_PRESETS.keys())
+        raise ValueError(f"Unknown preset id: {preset_id!r}. Valid: {valid}")
     session = _get_or_load_session(name)
     with session.lock:
-        session.metadata["prompt_template"] = template
+        session.metadata["prompt_template_preset"] = preset_id
+        # Drop the legacy free-form field so we stop carrying two parallel
+        # ways to configure annotation shape.
+        session.metadata.pop("prompt_template", None)
         _write_metadata(name, session.metadata)
     return get_project(name)
 
