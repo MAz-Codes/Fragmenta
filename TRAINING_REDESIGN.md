@@ -15,6 +15,8 @@ Rename `app/core/training/fine_tuner.py` → `app/core/training/sa3_trainer.py`.
 
 Once the rewire lands, `data/`, `metadata.json`, `dataset-config.json`, `_stage_dataset`'s materialization branch, `materialize_captions()`, and the deprecated config helpers all get deleted as a single chunk.
 
+Phase F adds **pre-encoded latents**: after Create Dataset succeeds, the Dataset Workbench offers to pre-compute SA3 latents for the project. Stored at `<project>/.latents/`; training auto-detects them and feeds the SA3 subprocess `--encoded_dir` for the ~5–10× per-step speedup. A persistent button on the Training tab is the fallback entrypoint for users who skip the dialog.
+
 ---
 
 ## 1. Why we're doing this
@@ -239,6 +241,107 @@ Ship after this is testable end-to-end with both old and new endpoints coexistin
 
 - `_safe_name` in fine_tuner: re-audit, ensure it handles project names with spaces / special characters identically to the dataset workbench's `sanitize_project_name`.
 - TrainingMonitor: review whether its current LossChart + step display still surfaces everything we want now that the dataset-status portion is gone. May want to add elapsed/eta.
+
+### Phase F — Pre-encoded latents
+
+A user-facing speedup: instead of decoding + autoencoding audio inside every training step, do it once up-front and let the training subprocess read pre-computed latents. SA3's `train_lora.py` already accepts `--encoded_dir`, and `vendor/stable-audio-3/scripts/pre_encode_dataset.py` is the canonical encoder.
+
+#### F.1 Where the latents live
+
+`<projects_dir>/<name>/.latents/` — a hidden subdirectory inside the project folder, so:
+
+- Project deletion → latents go with it automatically.
+- The `.` prefix keeps the user-visible folder clean (sidecars-only).
+- `<project>/.latents/<basename>.npy` + `<basename>.json` per clip (per pre_encode_dataset.py's output convention).
+
+Project staleness for v1: any **Create Dataset** (commit) wipes the `.latents/` directory, regardless of what changed. Simple, predictable, no per-file mtime tracking. The user re-encodes if they want the speedup back.
+
+#### F.2 The post-commit dialog
+
+Triggered: after `POST /api/projects/<name>/commit` returns successfully, IF the project hasn't opted out and isn't already encoded.
+
+```
+┌─ Pre-encode latents? ──────────────────────────────────────────┐
+│                                                                 │
+│  Speed up training by computing SA3 latents now (~5–10× faster │
+│  per training step). Takes a few minutes for 100 clips.        │
+│                                                                 │
+│       [Pre-encode now]   [Not now]   [Don't ask again]          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Pre-encode now** → kicks off the background job; dialog closes. A status banner appears inside the Dataset Workbench (`Pre-encoding · 47 / 187`).
+- **Not now** → close. Will ask again next commit.
+- **Don't ask again** → persist `suppress_pre_encode_prompt: true` to `.project.json`. User can still trigger via the Training-tab button.
+
+#### F.3 The Training-tab fallback button
+
+Persistent affordance regardless of how the dialog was dismissed. Lives next to the Dataset picker we're adding in Phase A.
+
+State machine:
+
+| Project state | Button label | Enabled? |
+|---|---|---|
+| No `.latents/` directory | `Pre-encode latents · N clips` | yes |
+| Encoding in progress | `Encoding… 47 / 187` | no (shows progress) |
+| `.latents/` populated | `✓ Pre-encoded · N clips` | no (or re-encode on click; debate later) |
+
+If a clip count mismatch is detected (e.g., user committed, encoded, then committed again — `.latents/` was wiped), the button just shows the "encode" affordance again.
+
+#### F.4 Backend orchestration
+
+New module: `app/backend/data/pre_encoder.py` (or just functions in `projects.py` — TBD). Mirrors the annotate-runner shape:
+
+- `pre_encode_project(name)` — launches a background thread, returns immediately.
+- `_pre_encode_jobs: Dict[str, dict]` — one job state per project (state, current, total, current_file, error, cancelled).
+- The runner spawns a subprocess that invokes `pre_encode_dataset.py` with the project folder as input and `.latents/` as output. Streams stdout for progress.
+
+#### F.5 New endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `POST /api/projects/<name>/pre-encode` | start a job (202) |
+| `GET  /api/projects/<name>/pre-encode/status` | poll (current / total / state) |
+| `POST /api/projects/<name>/pre-encode/cancel` | cancel an in-flight job |
+| `PATCH /api/projects/<name>/pre-encode/prompt` | persist `suppress_pre_encode_prompt` (Body: `{ suppress: bool }`) |
+
+The project's `GET /api/projects/<name>` response gains:
+
+- `latents_present: bool` (does `.latents/` have any `.npy` files)
+- `latents_count: int` (how many `.npy` files)
+- `pre_encode_job: { state, current, total, error } | null` (active job, if any)
+- `suppress_pre_encode_prompt: bool`
+
+#### F.6 Training integration
+
+Inside `SA3Trainer._stage_dataset`:
+
+```python
+project_dir = project_path(name)
+latents_dir = project_dir / ".latents"
+if latents_dir.exists() and any(latents_dir.glob("*.npy")):
+    self._data_dir = project_dir
+    self._encoded_dir = latents_dir          # subprocess gets --encoded_dir
+else:
+    self._data_dir = project_dir
+    self._encoded_dir = None                 # subprocess uses --data_dir only
+```
+
+`sa3_lora_runner.build_train_command` already takes an optional `encoded_dir` arg in SA3's train_lora.py CLI surface — just thread it through.
+
+#### F.7 Frontend wiring
+
+- `DatasetPrep` listens for commit success; if `latents_present === false` and `suppress_pre_encode_prompt === false`, opens the confirm dialog (use the shared `confirm` state already wired up for Delete / Clear annotations — same MUI Dialog).
+- Workbench status banner: a fourth member of the toolbar-Stack (alongside annotate-progress and CLAP vocab), shown only while a pre-encode job is `running`. Has a small `Stop` button that fires the cancel endpoint.
+- Training tab button: new sibling of the Dataset picker. Polls `/pre-encode/status` only while a job is running (no constant polling at idle).
+
+#### F.8 Cache invalidation
+
+On `commit_project`: `shutil.rmtree(project_dir / ".latents", ignore_errors=True)` before writing sidecars. Predictable. Next commit means next encode.
+
+On `discard_project`: project folder gets wiped wholesale (existing behavior), so `.latents/` goes with it.
+
+On `delete_clip` / `slice_clip`: also wipe `.latents/` — those clips would now be misaligned with the cached latents. Phase G could refine to only invalidate affected files; not for v1.
 
 ---
 
