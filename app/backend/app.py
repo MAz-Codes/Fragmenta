@@ -2323,6 +2323,28 @@ def get_project_route(name):
         return jsonify({'error': str(exc)}), 500
 
 
+@app.route('/api/projects/<name>/template', methods=['PATCH'])
+def patch_project_template_route(name):
+    """Update the project's auto-annotation prompt template.
+
+    Body: { "template": "TrackType: Music, Genre: {genre}, ..." }
+    Empty string is valid — it means "fall back to the built-in default".
+    """
+    from app.backend.data.projects import update_project_template
+    payload = request.json or {}
+    if 'template' not in payload:
+        return jsonify({'error': 'template is required'}), 400
+    try:
+        return jsonify(update_project_template(name, payload['template']))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to update template for %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
 @app.route('/api/projects/<name>/health', methods=['GET'])
 def project_health_route(name):
     """Per-clip health checks. Returns counts + file lists the UI can route
@@ -2651,6 +2673,13 @@ def annotate_project_route(name):
             }), 500
 
     proj_path = project_path(name)
+    # Resolve the prompt template once per job — empty/unset falls back to
+    # the SA3 AudioSparx default.
+    from app.backend.data.projects import DEFAULT_PROMPT_TEMPLATE
+    with session.lock:
+        active_template = (session.metadata.get('prompt_template') or '').strip()
+    if not active_template:
+        active_template = DEFAULT_PROMPT_TEMPLATE
 
     def runner():
         try:
@@ -2669,7 +2698,10 @@ def annotate_project_route(name):
                 logger.info("  annotating %d/%d: %s", i, len(target_names), file_name)
                 audio_path = proj_path / file_name
                 try:
-                    result = annotate_file(audio_path, tier, clap_tagger, labels)
+                    result = annotate_file(
+                        audio_path, tier, clap_tagger, labels,
+                        prompt_template=active_template,
+                    )
                 except Exception as exc:
                     logger.warning("annotate_file failed for %s: %s", file_name, exc)
                     with _project_annotate_jobs_lock:

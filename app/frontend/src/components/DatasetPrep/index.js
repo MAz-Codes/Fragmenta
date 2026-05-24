@@ -51,6 +51,7 @@ import {
     Scissors as ScissorsIcon,
     Music as MusicIcon,
     Activity as HealthIcon,
+    Type as TemplateIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -328,6 +329,15 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         });
     }
 
+    async function handleSaveTemplate(value) {
+        if (!project) return;
+        const { data } = await api.patch(
+            `/api/projects/${encodeURIComponent(project.name)}/template`,
+            { template: value },
+        );
+        setProject(data);
+    }
+
     function handleClearSelectedAnnotations() {
         if (!project || selectedFiles.size === 0) return;
         const count = selectedFiles.size;
@@ -469,6 +479,12 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     <HealthStrip
                         health={health}
                         onSelectFiles={(files) => setSelectedFiles(new Set(files))}
+                    />
+
+                    <TemplateCard
+                        project={project}
+                        tier={tier}
+                        onSave={handleSaveTemplate}
                     />
 
                     {isAnnotating && annotateJob && (
@@ -991,6 +1007,156 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                 </Tooltip>
             </Stack>
         </Box>
+    );
+}
+
+function TemplateCard({ project, tier, onSave }) {
+    const saved = project.prompt_template || '';
+    const defaultTemplate = project.default_prompt_template || '';
+    const variables = project.template_variables || [];
+    const richVars = new Set(project.rich_tier_variables || []);
+
+    const effectiveSaved = (saved.trim() ? saved : defaultTemplate);
+    const [draft, setDraft] = useState(effectiveSaved);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState('');
+
+    useEffect(() => {
+        setDraft(saved.trim() ? saved : defaultTemplate);
+    }, [project.name, saved, defaultTemplate]);
+
+    const isDefault = !saved.trim() || saved === defaultTemplate;
+    const dirty = draft !== effectiveSaved;
+
+    // Which {vars} are referenced in the current draft?
+    const referenced = new Set();
+    const re = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+    let m;
+    while ((m = re.exec(draft)) !== null) referenced.add(m[1]);
+    const richReferencedOnBasic = tier === 'basic'
+        && Array.from(referenced).some((v) => richVars.has(v));
+
+    async function save() {
+        setBusy(true); setErr('');
+        try {
+            // Persist the default as the empty string — it means "use whatever
+            // the backend ships." Future changes to the default propagate.
+            const value = (draft === defaultTemplate) ? '' : draft;
+            await onSave(value);
+        } catch (e) {
+            setErr(extractError(e, 'Save failed'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Accordion
+            disableGutters
+            sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}
+        >
+            <AccordionSummary
+                expandIcon={<ChevronDownIcon size={18} />}
+                sx={{
+                    minHeight: 48,
+                    '&.Mui-expanded': { minHeight: 48 },
+                    '& .MuiAccordionSummary-content': {
+                        margin: '12px 0',
+                        '&.Mui-expanded': { margin: '12px 0' },
+                    },
+                }}
+            >
+                <Box component="span" sx={{ ...appStyles.sectionCardIcon, mr: 1 }}>
+                    <TemplateIcon size={18} />
+                </Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500 }}>
+                    Annotation template
+                </Typography>
+                <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ ml: 1.5, alignSelf: 'center' }}
+                >
+                    {isDefault ? 'SA3 default' : 'custom'}
+                </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+                <Stack spacing={2}>
+                    <Typography variant="body2" color="text.secondary">
+                        Shape of every auto-annotation. Each comma-separated segment is
+                        rendered independently — if any {'{placeholder}'} in a segment
+                        resolves to empty (e.g. no BPM detected), the whole segment is
+                        dropped. The default follows SA3's AudioSparx tag convention.
+                    </Typography>
+                    <TextField
+                        multiline
+                        minRows={2}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                        placeholder={defaultTemplate}
+                        disabled={busy}
+                        fullWidth
+                    />
+                    <Box>
+                        <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
+                            Available placeholders:
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {variables.map((v) => {
+                                const isRichOnly = richVars.has(v);
+                                const usedHere = referenced.has(v);
+                                return (
+                                    <Tooltip
+                                        key={v}
+                                        title={isRichOnly
+                                            ? 'Filled by Rich-tier (CLAP) annotation only'
+                                            : 'Filled by basic-tier annotation'}
+                                    >
+                                        <Chip
+                                            size="small"
+                                            variant={usedHere ? 'filled' : 'outlined'}
+                                            color={isRichOnly ? 'warning' : 'default'}
+                                            label={`{${v}}`}
+                                            onClick={() => setDraft((d) => (
+                                                d.endsWith(' ') || d.length === 0
+                                                    ? `${d}{${v}}`
+                                                    : `${d} {${v}}`
+                                            ))}
+                                        />
+                                    </Tooltip>
+                                );
+                            })}
+                        </Box>
+                    </Box>
+                    {richReferencedOnBasic && (
+                        <Alert severity="info">
+                            Some placeholders need Rich annotation — those segments will drop
+                            silently while the tier toggle is set to Basic.
+                        </Alert>
+                    )}
+                    {err && <Alert severity="error">{err}</Alert>}
+                    <Stack direction="row" spacing={1} alignItems="center">
+                        <Button
+                            variant="text"
+                            size="small"
+                            onClick={() => setDraft(defaultTemplate)}
+                            disabled={busy || draft === defaultTemplate}
+                        >
+                            Reset to SA3 default
+                        </Button>
+                        <Box sx={{ flex: 1 }} />
+                        <Button
+                            variant="contained"
+                            size="small"
+                            onClick={save}
+                            disabled={busy || !dirty}
+                        >
+                            {busy ? 'Saving…' : 'Save template'}
+                        </Button>
+                    </Stack>
+                </Stack>
+            </AccordionDetails>
+        </Accordion>
     );
 }
 

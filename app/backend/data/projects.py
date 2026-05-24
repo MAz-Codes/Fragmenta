@@ -42,6 +42,27 @@ PROJECT_DRAFT_FILENAME = ".draft.json"
 DEFAULT_INGEST_MODE = "copy"  # copy | symlink
 INGEST_MODES = ("copy", "symlink")
 
+# AudioSparx-style tag prompt — SA3's prompting guide
+# (vendor/stable-audio-3/docs/guides/prompting.md) recommends this shape
+# for music tracks ("higher quality, more semantically coherent outputs").
+# Each comma-separated segment is independently rendered: if any {var} in
+# a segment resolves to empty, the whole segment is dropped — no
+# "Genre: , BPM: , " punctuation rot when an attribute is missing.
+DEFAULT_PROMPT_TEMPLATE = (
+    "TrackType: Music, VocalType: Instrumental, "
+    "Genre: {genre}, Mood: {mood}, Instruments: {instruments}, "
+    "BPM: {bpm}, Key: {key}"
+)
+
+# Variables the annotator can fill in. Used by the frontend to render
+# the available-variables chip list, and by tier-awareness checks
+# (genre/mood/instruments are only populated by the Rich tier).
+TEMPLATE_VARIABLES = (
+    "genre", "mood", "instruments",
+    "bpm", "key", "brightness", "character",
+)
+RICH_TIER_VARIABLES = ("genre", "mood", "instruments")
+
 # Names must look like reasonable filesystem folders.
 _VALID_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _\-.]{0,99}$")
 
@@ -271,6 +292,9 @@ class ProjectSession:
             "committed_at": self.metadata.get("committed_at"),
             "ingest_mode": self.metadata.get("ingest_mode", DEFAULT_INGEST_MODE),
             "prompt_template": self.metadata.get("prompt_template", ""),
+            "default_prompt_template": DEFAULT_PROMPT_TEMPLATE,
+            "template_variables": list(TEMPLATE_VARIABLES),
+            "rich_tier_variables": list(RICH_TIER_VARIABLES),
             "source_folders": list(self.metadata.get("source_folders", [])),
             "saved_at": self.saved_at,
             "dirty": self.has_dirty_prompts() or self.has_uncommitted_files(),
@@ -610,6 +634,65 @@ def get_session_handle(name: str) -> ProjectSession:
 
 def reset_cancel(session: ProjectSession) -> None:
     session.cancel_event.clear()
+
+
+# ---------- Prompt template -------------------------------------------------
+
+
+_TEMPLATE_VAR_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def _render_value(name: str, raw: Any) -> str:
+    """Stringify one variable value. Lists get joined; falsy is empty."""
+    if raw is None:
+        return ""
+    if isinstance(raw, (list, tuple)):
+        parts = [str(x).strip() for x in raw if str(x).strip()]
+        return ", ".join(parts)
+    text = str(raw).strip()
+    return text
+
+
+def apply_template(template: str, attributes: Dict[str, Any]) -> str:
+    """Segment-based templating with graceful missing-value handling.
+
+    The template is split on ',' (segments). For each segment, every
+    {var} placeholder is resolved against `attributes`. If any placeholder
+    in the segment resolves to empty/missing, the whole segment is dropped
+    — so a missing key/BPM/whatever doesn't leave dangling punctuation.
+
+    Segments without any placeholders (e.g. "TrackType: Music") always
+    appear.
+    """
+    if not template:
+        return ""
+    out_segments: List[str] = []
+    for raw_segment in template.split(","):
+        segment = raw_segment.strip()
+        if not segment:
+            continue
+        var_names = _TEMPLATE_VAR_RE.findall(segment)
+        if var_names:
+            resolved = {n: _render_value(n, attributes.get(n)) for n in var_names}
+            if any(not v for v in resolved.values()):
+                continue  # drop the segment — one of its vars is missing
+            segment = _TEMPLATE_VAR_RE.sub(
+                lambda m: resolved[m.group(1)],
+                segment,
+            )
+        out_segments.append(segment)
+    return ", ".join(out_segments)
+
+
+def update_project_template(name: str, template: str) -> Dict[str, Any]:
+    """Persist a new prompt template on the project metadata + return state."""
+    if not isinstance(template, str):
+        raise ValueError("Template must be a string.")
+    session = _get_or_load_session(name)
+    with session.lock:
+        session.metadata["prompt_template"] = template
+        _write_metadata(name, session.metadata)
+    return get_project(name)
 
 
 # ---------- Waveform peaks --------------------------------------------------

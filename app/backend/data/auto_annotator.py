@@ -433,6 +433,7 @@ def annotate_file(
     label_sets: Dict[str, List[str]],
     sr: int = 22050,
     max_seconds: float = 60.0,
+    prompt_template: Optional[str] = None,
 ) -> Dict[str, Any]:
     import librosa
     import warnings
@@ -470,7 +471,14 @@ def annotate_file(
         except Exception as exc:
             logger.warning("CLAP tagging failed for %s: %s", audio_path.name, exc)
 
-    prompt = _compose_prompt(parts)
+    # Template-driven prompt assembly. Falls back to the legacy descriptive
+    # prose if no template is supplied (call sites that haven't been
+    # threaded with project metadata yet).
+    if prompt_template is not None and prompt_template.strip():
+        from app.backend.data.projects import apply_template
+        prompt = apply_template(prompt_template, parts)
+    else:
+        prompt = _compose_prompt(parts)
     return {
         "file_name": audio_path.name,
         "prompt": prompt,
