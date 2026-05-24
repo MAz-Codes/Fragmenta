@@ -1026,16 +1026,24 @@ function TemplateSelector({ project, onChange, disabled }) {
             <Typography variant="caption" color="text.secondary">
                 Annotation style:
             </Typography>
-            <FormControl size="small" sx={{ minWidth: 200 }}>
+            <FormControl size="small" sx={{ minWidth: 240 }}>
                 <Select
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
                     disabled={disabled || presets.length === 0}
                 >
+                    {/* MenuItem must be a DIRECT child of Select — wrapping
+                        it in Tooltip breaks MUI's value lookup. Inlining the
+                        description as a second line instead. */}
                     {presets.map((p) => (
-                        <Tooltip key={p.id} title={p.description} placement="right">
-                            <MenuItem value={p.id}>{p.label}</MenuItem>
-                        </Tooltip>
+                        <MenuItem key={p.id} value={p.id}>
+                            <Box>
+                                <Typography variant="body2">{p.label}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    {p.description}
+                                </Typography>
+                            </Box>
+                        </MenuItem>
                     ))}
                 </Select>
             </FormControl>
@@ -1092,7 +1100,7 @@ function HealthStrip({ health, onSelectFiles }) {
     );
 
     return (
-        <Paper variant="outlined">
+        <Paper variant="outlined" sx={{ borderRadius: 2.5 }}>
             <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Box component="span" sx={appStyles.sectionCardIcon}>
                     <HealthIcon size={18} />
@@ -1262,7 +1270,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     const partiallySelected = totalSelected > 0 && !allSelected;
     if (!clips || clips.length === 0) {
         return (
-            <Paper variant="outlined">
+            <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
                 {toolbar && (
                     <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
                         {toolbar}
@@ -1277,7 +1285,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
         );
     }
     return (
-        <Paper variant="outlined">
+        <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
             {toolbar && (
                 <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
                     {toolbar}
