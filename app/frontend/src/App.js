@@ -63,9 +63,6 @@ import {
 import api from './api';
 import HfAuthDialog from './components/HfAuthDialog';
 import TabPanel from './components/TabPanel';
-import AudioUploadRow from './components/AudioUploadRow';
-import BulkAnnotatePanel from './components/BulkAnnotatePanel';
-import CsvImportPanel from './components/CsvImportPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import ModelUnwrapButton from './components/ModelUnwrapButton';
@@ -84,7 +81,6 @@ const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
-const DATASET_PREP_PREVIEW_KEY = 'fragmenta-dataset-prep-preview';
 
 function App() {
     const [tabValue, setTabValue] = useState(0);
@@ -98,13 +94,8 @@ function App() {
     // rail can be pinned at exactly the first card's top edge.
     const headerRef = useRef(null);
     const [navTopPx, setNavTopPx] = useState(94);
-    const [uploadRows, setUploadRows] = useState([
-        { file: null, prompt: '', audioUrl: '' }
-    ]);
     const [processingStatus, setProcessingStatus] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
-    const [processedCount, setProcessedCount] = useState(0);
-    const [chunksPreview, setChunksPreview] = useState([]);
 
     const [showWelcomePage, setShowWelcomePage] = useState(
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
@@ -112,16 +103,6 @@ function App() {
     const [performanceEnabled, setPerformanceEnabled] = useState(
         () => window.localStorage.getItem(PERFORMANCE_ENABLED_KEY) === 'true'
     );
-    const [datasetPrepPreview, setDatasetPrepPreview] = useState(
-        () => window.localStorage.getItem(DATASET_PREP_PREVIEW_KEY) === 'true'
-    );
-    const toggleDatasetPrepPreview = () => {
-        setDatasetPrepPreview((prev) => {
-            const next = !prev;
-            window.localStorage.setItem(DATASET_PREP_PREVIEW_KEY, next ? 'true' : 'false');
-            return next;
-        });
-    };
     const togglePerformance = () => {
         setPerformanceEnabled((prev) => {
             const next = !prev;
@@ -261,7 +242,6 @@ function App() {
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
     const [isStartingFresh, setIsStartingFresh] = useState(false);
-    const [uploadKey, setUploadKey] = useState(0);
     // Bumping this key forces the performance panel to remount, which is how
     // we flush its in-memory session state on Fresh Start (clearing localStorage
     // alone wouldn't reset the mounted panel's useState mirrors).
@@ -390,20 +370,6 @@ function App() {
         };
     }, []);
 
-    const addUploadRow = () => {
-        setUploadRows([...uploadRows, { file: null, prompt: '', audioUrl: '' }]);
-    };
-
-    const removeUploadRow = (index) => {
-        const newRows = uploadRows.filter((_, i) => i !== index);
-        setUploadRows(newRows);
-    };
-
-    const updateUploadRow = (index, data) => {
-        const newRows = [...uploadRows];
-        newRows[index] = data;
-        setUploadRows(newRows);
-    };
 
     const fetchSystemStatus = async () => {
         setIsStatusLoading(true);
@@ -622,35 +588,6 @@ function App() {
         };
     }, [isTraining]);
 
-    const processFiles = async () => {
-        setIsProcessing(true);
-        setProcessingStatus('Processing files...');
-
-        try {
-            const formData = new FormData();
-
-            uploadRows.forEach((row, index) => {
-                if (row.file && row.prompt) {
-                    formData.append(`file_${index}`, row.file);
-                    formData.append(`prompt_${index}`, row.prompt);
-                }
-            });
-
-            const response = await api.post('/api/process-files', formData);
-
-            setProcessingStatus(response.data.message);
-            setProcessedCount(response.data.processed_count);
-            setChunksPreview(response.data.chunks_preview || []);
-
-            setUploadRows([{ file: null, prompt: '', audioUrl: '' }]);
-
-            fetchSystemStatus();
-        } catch (error) {
-            setProcessingStatus(`Error: ${error.response?.data?.error || error.message}`);
-        } finally {
-            setIsProcessing(false);
-        }
-    };
 
     const fetchHyperparamSuggestion = async () => {
         setShowRationale(false);
@@ -700,7 +637,7 @@ function App() {
         setTrainingStartTime(Date.now());
         setTrainingHistory([]);
 
-        await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
+        await api.post('/api/clap/unload').catch(() => {});
 
         try {
             const { checkpointAuto, ...rest } = trainingConfig;
@@ -803,7 +740,7 @@ function App() {
 
         const totalRuns = Math.max(1, Math.min(10, batchCount));
 
-        await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
+        await api.post('/api/clap/unload').catch(() => {});
 
         stopGenerationRef.current = false;
         const abortController = new AbortController();
@@ -947,15 +884,11 @@ function App() {
         try {
             const response = await api.post('/api/start-fresh');
 
-            setUploadRows([{ file: null, prompt: '', audioUrl: '' }]);
-            setProcessedCount(0);
-            setChunksPreview([]);
             setGeneratedAudio(null);
             setGeneratedAudioBlob(null);
             setGeneratedFragments([]);
             setProcessingStatus('');
             setGenerationPrompt('');
-            setUploadKey(prev => prev + 1);
 
             // Wipe persisted performance session and force-remount the panel so
             // its in-memory state resets to defaults along with localStorage.
@@ -1238,116 +1171,9 @@ function App() {
                                 }}
                             >
 
-                            {/* Data Processing Tab */}
+                            {/* Dataset Tab */}
                             <TabPanel value={displayedTab} index={0}>
-                                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
-                                    <FormControlLabel
-                                        control={<Switch size="small" checked={datasetPrepPreview} onChange={toggleDatasetPrepPreview} />}
-                                        label={<Typography variant="caption" color="text.secondary">New dataset prep (preview)</Typography>}
-                                    />
-                                </Box>
-                                {datasetPrepPreview ? (
-                                    <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
-                                ) : (
-                                <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
-                                    <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
-                                        <Box sx={appStyles.primaryPaneContent}>
-                                            <CsvImportPanel key={`csv-${uploadKey}`} onCommitted={fetchSystemStatus} />
-
-                                            <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
-
-                                            <Paper sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }} variant="outlined">
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                                                    <UploadIcon size={20} />
-                                                    <Typography variant="h6">Manual Annotation</Typography>
-                                                </Box>
-                                                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                                                    Upload audio files one by one and annotate them yourself.
-                                                    Use this when you want full control over every annotation.
-                                                </Typography>
-
-                                                {uploadRows.map((row, index) => (
-                                                    <AudioUploadRow
-                                                        key={`${uploadKey}-${index}`}
-                                                        index={index}
-                                                        data={row}
-                                                        onChange={updateUploadRow}
-                                                        onRemove={removeUploadRow}
-                                                    />
-                                                ))}
-
-                                                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mt: 1 }}>
-                                                    <Button
-                                                        variant="outlined"
-                                                        startIcon={<AddIcon />}
-                                                        onClick={addUploadRow}
-                                                    >
-                                                        Add Another Row
-                                                    </Button>
-                                                    <Box sx={{ flex: 1 }} />
-                                                    <Button
-                                                        variant="contained"
-                                                        onClick={processFiles}
-                                                        disabled={isProcessing || uploadRows.every((r) => !r.file)}
-                                                        startIcon={isProcessing ? <CircularProgress size={20} /> : <UploadIcon />}
-                                                    >
-                                                        {isProcessing ? 'Saving…' : 'Save to dataset'}
-                                                    </Button>
-                                                </Box>
-                                            </Paper>
-                                        </Box>
-                                    </Grid>
-
-                                    <Grid item xs={12} md={4}>
-
-                                        {!systemStatus && (
-                                            <Paper sx={[appStyles.elevatedInfoCard, appStyles.datasetStatusSticky(navTopPx)]}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <FolderOpenIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
-                                                </Box>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
-                                                    <CircularProgress size={18} />
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Scanning dataset…
-                                                    </Typography>
-                                                </Box>
-                                            </Paper>
-                                        )}
-
-                                        {systemStatus && (
-                                            <Paper sx={[appStyles.elevatedInfoCard, appStyles.datasetStatusSticky(navTopPx)]}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <FolderOpenIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
-                                                    {isStatusLoading && (
-                                                        <CircularProgress size={14} sx={{ ml: 1 }} />
-                                                    )}
-                                                </Box>
-                                                <Typography variant="body2">Raw Files: {systemStatus.raw_files}</Typography>
-                                                <Typography variant="body2" sx={appStyles.emphasizedPrimaryBody2}>
-                                                    Total Duration: {formatDuration(systemStatus.total_duration || 0)}
-                                                </Typography>
-                                                <Typography variant="body2">
-                                                    Custom Metadata: {systemStatus.has_metadata_json ? 'Yes' : 'Not Found'}
-                                                </Typography>
-                                                {systemStatus.raw_file_names && systemStatus.raw_file_names.length > 0 && (
-                                                    <Box sx={appStyles.recentFilesBlock}>
-                                                        <Typography variant="body2" color="textSecondary">
-                                                            Recent files: {systemStatus.raw_file_names.join(', ')}
-                                                        </Typography>
-                                                    </Box>
-                                                )}
-                                            </Paper>
-                                        )}
-
-                                    </Grid>
-                                </Grid>
-                                )}
+                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
                             </TabPanel>
 
                             {/* Training Tab */}
