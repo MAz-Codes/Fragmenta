@@ -1918,6 +1918,10 @@ def get_gpu_memory_status():
 
 
 
+def _annotator_labels_default_path():
+    return Path(get_config().project_root) / 'config' / 'annotator_labels.json'
+
+
 def _annotator_labels_user_path():
     return Path(get_config().project_root) / 'config' / 'annotator_labels.user.json'
 
