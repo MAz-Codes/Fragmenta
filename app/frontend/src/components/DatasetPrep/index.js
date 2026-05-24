@@ -51,7 +51,6 @@ import {
     Scissors as ScissorsIcon,
     Music as MusicIcon,
     Activity as HealthIcon,
-    Type as TemplateIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -347,7 +346,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         const count = selectedFiles.size;
         const files = Array.from(selectedFiles);
         setConfirm({
-            title: 'Clear annotations',
+            title: 'Clear',
             body: `Clear annotations on ${count} clip${count === 1 ? '' : 's'}? Buffered in memory until you Save or Create Dataset.`,
             warning: 'Use the Delete button to revert; this action itself can’t be undone in place.',
             confirmLabel: `Clear (${count})`,
@@ -485,12 +484,6 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                         onSelectFiles={(files) => setSelectedFiles(new Set(files))}
                     />
 
-                    <TemplateSelector
-                        project={project}
-                        onChange={handleChangeTemplatePreset}
-                        disabled={isAnnotating}
-                    />
-
                     {isAnnotating && annotateJob && (
                         <Box>
                             <LinearProgress
@@ -548,6 +541,28 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                                     >
                                         Auto-annotate all
                                     </Button>
+                                    <FormControl size="small" sx={{ minWidth: 180 }}>
+                                        <Select
+                                            value={project.prompt_template_preset || 'music'}
+                                            onChange={(e) => handleChangeTemplatePreset(e.target.value)}
+                                            disabled={isAnnotating}
+                                            renderValue={(v) => {
+                                                const p = (project.prompt_template_presets || []).find((x) => x.id === v);
+                                                return p ? p.label : v;
+                                            }}
+                                        >
+                                            {(project.prompt_template_presets || []).map((p) => (
+                                                <MenuItem key={p.id} value={p.id}>
+                                                    <Box>
+                                                        <Typography variant="body2">{p.label}</Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {p.description}
+                                                        </Typography>
+                                                    </Box>
+                                                </MenuItem>
+                                            ))}
+                                        </Select>
+                                    </FormControl>
                                     <Tooltip title="Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.">
                                         <FormControlLabel
                                             control={
@@ -1010,54 +1025,6 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                     </span>
                 </Tooltip>
             </Stack>
-        </Box>
-    );
-}
-
-function TemplateSelector({ project, onChange, disabled }) {
-    const presets = project.prompt_template_presets || [];
-    const value = project.prompt_template_preset || 'music';
-    const active = presets.find((p) => p.id === value);
-    return (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            <Box component="span" sx={appStyles.sectionCardIcon}>
-                <TemplateIcon size={16} />
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-                Annotation style:
-            </Typography>
-            <FormControl size="small" sx={{ minWidth: 240 }}>
-                <Select
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    disabled={disabled || presets.length === 0}
-                >
-                    {/* MenuItem must be a DIRECT child of Select — wrapping
-                        it in Tooltip breaks MUI's value lookup. Inlining the
-                        description as a second line instead. */}
-                    {presets.map((p) => (
-                        <MenuItem key={p.id} value={p.id}>
-                            <Box>
-                                <Typography variant="body2">{p.label}</Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                    {p.description}
-                                </Typography>
-                            </Box>
-                        </MenuItem>
-                    ))}
-                </Select>
-            </FormControl>
-            {active && (
-                <Tooltip title={active.template}>
-                    <Typography
-                        variant="caption"
-                        color="text.disabled"
-                        sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                    >
-                        {active.template}
-                    </Typography>
-                </Tooltip>
-            )}
         </Box>
     );
 }
