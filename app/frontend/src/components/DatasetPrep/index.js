@@ -50,6 +50,7 @@ import {
     Pause as PauseIcon,
     Scissors as ScissorsIcon,
     Music as MusicIcon,
+    Activity as HealthIcon,
 } from 'lucide-react';
 import api from '../../api';
 import { appStyles } from '../../theme';
@@ -557,30 +558,16 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                                     </Tooltip>
                                     <Box sx={{ flex: 1 }} />
                                     {selectedFiles.size > 0 && (
-                                        <Stack direction="row" spacing={1} alignItems="center">
-                                            <Button
-                                                variant="outlined"
-                                                size="small"
-                                                startIcon={<ScissorsIcon size={16} />}
-                                                onClick={() => {
-                                                    if (playingFile && selectedFiles.has(playingFile)) stopPlayback();
-                                                    setSliceTarget(Array.from(selectedFiles));
-                                                }}
-                                                disabled={isAnnotating}
-                                            >
-                                                Slice selected ({selectedFiles.size})
-                                            </Button>
-                                            <Button
-                                                variant="outlined"
-                                                color="error"
-                                                size="small"
-                                                startIcon={<TrashIcon size={16} />}
-                                                onClick={handleClearSelectedAnnotations}
-                                                disabled={isAnnotating}
-                                            >
-                                                Clear annotations ({selectedFiles.size})
-                                            </Button>
-                                        </Stack>
+                                        <Button
+                                            variant="outlined"
+                                            color="error"
+                                            size="small"
+                                            startIcon={<TrashIcon size={16} />}
+                                            onClick={handleClearSelectedAnnotations}
+                                            disabled={isAnnotating}
+                                        >
+                                            Clear annotations ({selectedFiles.size})
+                                        </Button>
                                     )}
                                 </Box>
                                 {tier === 'rich' && (
@@ -1010,94 +997,137 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
 function HealthStrip({ health, onSelectFiles }) {
     if (!health || health.total_clips === 0) return null;
     const empty = health.empty_prompts || { count: 0, files: [] };
-    const tooLong = health.too_long || { count: 0, files: [] };
     const tooShort = health.too_short || { count: 0, files: [] };
     const mixedSR = health.mixed_sample_rates || { count: 0, files: [] };
     const loud = health.loudness_outliers || { count: 0, files: [] };
     const dups = health.duplicate_annotations || { count: 0, group_count: 0, files: [] };
-    const issues = empty.count + tooLong.count + tooShort.count
+    const issues = empty.count + tooShort.count
         + mixedSR.count + loud.count + dups.count;
 
-    if (issues === 0) {
-        return (
-            <Typography variant="caption" color="success.main">
-                All clean · {health.total_clips} clip{health.total_clips === 1 ? '' : 's'} ready
-            </Typography>
-        );
-    }
+    // Three-tier status driven by the share of unique clips touched by any
+    // health check. A single file showing up in multiple categories only
+    // counts once.
+    const affected = new Set([
+        ...empty.files,
+        ...tooShort.files,
+        ...mixedSR.files,
+        ...loud.files,
+        ...dups.files,
+    ]);
+    const affectedRatio = health.total_clips > 0 ? affected.size / health.total_clips : 0;
+    let status;
+    if (affected.size === 0) status = 'ok';
+    else if (affectedRatio > 0.5) status = 'bad';
+    else status = 'warn';
+
+    const statusColor = (
+        status === 'ok' ? 'success.main'
+        : status === 'warn' ? 'warm.main'
+        : 'error.main'
+    );
+    const statusText = (
+        status === 'ok'
+            ? `All clean · ${health.total_clips} clip${health.total_clips === 1 ? '' : 's'} ready`
+            : `${affected.size} of ${health.total_clips} clip${health.total_clips === 1 ? '' : 's'} flagged`
+    );
 
     return (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-            <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
-                Health:
-            </Typography>
-            {empty.count > 0 && (
-                <Tooltip title="Click to select these clips — then Auto-annotate them.">
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="warning"
-                        label={`${empty.count} empty annotation${empty.count === 1 ? '' : 's'}`}
-                        onClick={() => onSelectFiles(empty.files)}
-                    />
-                </Tooltip>
+        <Paper variant="outlined">
+            <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Box component="span" sx={appStyles.sectionCardIcon}>
+                    <HealthIcon size={18} />
+                </Box>
+                <Typography variant="subtitle1" sx={{ fontWeight: 500, flex: 1 }}>
+                    Dataset health
+                </Typography>
+                <Box
+                    sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        bgcolor: statusColor,
+                        // Soft halo so the dot reads as a status indicator,
+                        // not stray decoration.
+                        boxShadow: (theme) =>
+                            `0 0 0 3px ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'}`,
+                    }}
+                />
+                <Typography variant="caption" sx={{ color: statusColor }}>
+                    {statusText}
+                </Typography>
+            </Box>
+
+            {issues > 0 && (
+                <Box
+                    sx={{
+                        px: 2,
+                        py: 1.25,
+                        borderTop: 1,
+                        borderColor: 'divider',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.75,
+                        flexWrap: 'wrap',
+                    }}
+                >
+                    {empty.count > 0 && (
+                        <Tooltip title="Click to select these clips — then Auto-annotate them.">
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="warning"
+                                label={`${empty.count} empty annotation${empty.count === 1 ? '' : 's'}`}
+                                onClick={() => onSelectFiles(empty.files)}
+                            />
+                        </Tooltip>
+                    )}
+                    {tooShort.count > 0 && (
+                        <Tooltip title={`Shorter than ${tooShort.threshold_sec}s — gets silence-padded into each batch. Consider deleting. Click to select.`}>
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                label={`${tooShort.count} too short (< ${tooShort.threshold_sec}s)`}
+                                onClick={() => onSelectFiles(tooShort.files)}
+                            />
+                        </Tooltip>
+                    )}
+                    {mixedSR.count > 0 && (
+                        <Tooltip title={`Dataset has mixed sample rates (${(mixedSR.rates || []).join(' Hz, ')} Hz). The dominant is ${mixedSR.dominant_sr} Hz; click to select the minority and resample or delete.`}>
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="warning"
+                                label={`${mixedSR.count} off-rate (≠ ${mixedSR.dominant_sr} Hz)`}
+                                onClick={() => onSelectFiles(mixedSR.files)}
+                            />
+                        </Tooltip>
+                    )}
+                    {loud.count > 0 && (
+                        <Tooltip title={`Loudness more than ${loud.threshold_db} dB from the dataset median (${loud.median_db?.toFixed(1)} dB). Click to select; consider normalizing or removing.`}>
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="warning"
+                                label={`${loud.count} loudness outlier${loud.count === 1 ? '' : 's'}`}
+                                onClick={() => onSelectFiles(loud.files)}
+                            />
+                        </Tooltip>
+                    )}
+                    {dups.count > 0 && (
+                        <Tooltip title={`${dups.group_count} group${dups.group_count === 1 ? '' : 's'} of clips share the same annotation. Bad for training diversity — click to select all of them.`}>
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="warning"
+                                label={`${dups.count} duplicate annotation${dups.count === 1 ? '' : 's'}`}
+                                onClick={() => onSelectFiles(dups.files)}
+                            />
+                        </Tooltip>
+                    )}
+                </Box>
             )}
-            {tooLong.count > 0 && (
-                <Tooltip title={`Longer than ${tooLong.threshold_sec}s — gets randomly cropped by the dataloader. Click to select for slicing.`}>
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="warning"
-                        label={`${tooLong.count} too long (> ${tooLong.threshold_sec}s)`}
-                        onClick={() => onSelectFiles(tooLong.files)}
-                    />
-                </Tooltip>
-            )}
-            {tooShort.count > 0 && (
-                <Tooltip title={`Shorter than ${tooShort.threshold_sec}s — gets silence-padded into each batch. Consider deleting. Click to select.`}>
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="error"
-                        label={`${tooShort.count} too short (< ${tooShort.threshold_sec}s)`}
-                        onClick={() => onSelectFiles(tooShort.files)}
-                    />
-                </Tooltip>
-            )}
-            {mixedSR.count > 0 && (
-                <Tooltip title={`Dataset has mixed sample rates (${(mixedSR.rates || []).join(' Hz, ')} Hz). The dominant is ${mixedSR.dominant_sr} Hz; click to select the minority and resample or delete.`}>
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="warning"
-                        label={`${mixedSR.count} off-rate (≠ ${mixedSR.dominant_sr} Hz)`}
-                        onClick={() => onSelectFiles(mixedSR.files)}
-                    />
-                </Tooltip>
-            )}
-            {loud.count > 0 && (
-                <Tooltip title={`Loudness more than ${loud.threshold_db} dB from the dataset median (${loud.median_db?.toFixed(1)} dB). Click to select; consider normalizing or removing.`}>
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="warning"
-                        label={`${loud.count} loudness outlier${loud.count === 1 ? '' : 's'}`}
-                        onClick={() => onSelectFiles(loud.files)}
-                    />
-                </Tooltip>
-            )}
-            {dups.count > 0 && (
-                <Tooltip title={`${dups.group_count} group${dups.group_count === 1 ? '' : 's'} of clips share the same annotation. Bad for training diversity — click to select all of them.`}>
-                    <Chip
-                        size="small"
-                        variant="outlined"
-                        color="warning"
-                        label={`${dups.count} duplicate annotation${dups.count === 1 ? '' : 's'}`}
-                        onClick={() => onSelectFiles(dups.files)}
-                    />
-                </Tooltip>
-            )}
-        </Box>
+        </Paper>
     );
 }
 
@@ -1481,19 +1511,11 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
 }
 
 function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
-    // `fileName` is either a string (single clip) or string[] (bulk).
-    const fileList = Array.isArray(fileName) ? fileName : (fileName ? [fileName] : []);
-    const isBulk = fileList.length > 1;
-
-    // 30s default matches the SA3 LoRA training --duration default
-    // (app/core/training/sa3_lora_runner.py). Clips shorter than that get
-    // silence-padded into each batch — wasted compute.
     const [target, setTarget] = useState(30);
     const [overlap, setOverlap] = useState(0);
     const [strategy, setStrategy] = useState('hard');
     const [duration, setDuration] = useState(null);
     const [busy, setBusy] = useState(false);
-    const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0, failed: [] });
     const [dialogError, setDialogError] = useState('');
 
     useEffect(() => {
@@ -1503,64 +1525,41 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
         setStrategy('hard');
         setDialogError('');
         setDuration(null);
-        setBulkProgress({ done: 0, total: 0, failed: [] });
-        if (!projectName || fileList.length === 0) return;
-        // Single-file: pull duration cheaply via the peaks endpoint (cached).
-        // Bulk: skip the duration probe — too-short clips get filtered server-side.
-        if (!isBulk) {
-            api.get(`/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileList[0])}/peaks?n=20`)
-                .then(({ data }) => setDuration(data?.duration || null))
-                .catch(() => setDuration(null));
-        }
-    // fileList recomputes every render but the underlying fileName prop is what matters
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, projectName, Array.isArray(fileName) ? fileName.join('|') : fileName]);
+        if (!projectName || !fileName) return;
+        // Reuse the peaks endpoint to pull duration cheaply (cached server-side).
+        api.get(`/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=20`)
+            .then(({ data }) => setDuration(data?.duration || null))
+            .catch(() => setDuration(null));
+    }, [open, projectName, fileName]);
 
     const stepSec = Math.max(0.5, target - overlap);
     const estChildren = duration && target > 0 ? Math.max(1, Math.ceil(duration / stepSec)) : null;
-    const tooShort = !isBulk && duration !== null && duration <= target;
+    const tooShort = duration !== null && duration <= target;
 
     async function submit() {
         setBusy(true);
         setDialogError('');
-        setBulkProgress({ done: 0, total: fileList.length, failed: [] });
-        const failed = [];
-        for (let i = 0; i < fileList.length; i++) {
-            const f = fileList[i];
-            try {
-                await api.post(
-                    `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(f)}/slice`,
-                    { target_duration: target, overlap_sec: overlap, strategy },
-                );
-            } catch (e) {
-                failed.push({ file: f, error: extractError(e, 'Slice failed') });
-            }
-            setBulkProgress({ done: i + 1, total: fileList.length, failed: [...failed] });
-        }
-        await onSliced();
-        setBusy(false);
-        if (failed.length === 0) {
+        try {
+            await api.post(
+                `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/slice`,
+                { target_duration: target, overlap_sec: overlap, strategy },
+            );
+            await onSliced();
             onClose();
-        } else if (failed.length === fileList.length) {
-            setDialogError(`All ${failed.length} slices failed. First error: ${failed[0].error}`);
-        } else {
-            setDialogError(`${failed.length} of ${fileList.length} clips couldn't be sliced (likely shorter than the target). The rest were sliced.`);
+        } catch (e) {
+            setDialogError(extractError(e, 'Slice failed'));
+        } finally {
+            setBusy(false);
         }
     }
 
-    const title = isBulk
-        ? `Slice ${fileList.length} clips`
-        : `Slice ${fileList[0] || ''}`;
-
     return (
         <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>{title}</DialogTitle>
+            <DialogTitle>Slice {fileName || ''}</DialogTitle>
             <DialogContent>
                 <Stack spacing={2.5} sx={{ pt: 1 }}>
                     <Typography variant="body2" color="text.secondary">
-                        {isBulk
-                            ? `Each of the ${fileList.length} selected clips will be replaced by its children. Clips shorter than the target are skipped. Children inherit each clip's annotation and stay in the project until you Create Dataset (Delete reverts them).`
-                            : `The original file will be replaced by the children on disk. Children inherit this clip's annotation. They stay in the project until you Create Dataset (Delete reverts them).`}
+                        The original file will be replaced by the children on disk. Children inherit this clip's annotation. They stay in the project until you Create Dataset (Delete reverts them).
                     </Typography>
 
                     <Stack direction="row" spacing={2}>
@@ -1572,7 +1571,6 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                             onChange={(e) => setTarget(Math.max(0.5, parseFloat(e.target.value) || 0))}
                             inputProps={{ step: 0.5, min: 0.5, max: 60 }}
                             fullWidth
-                            helperText="Match the training --duration (30s default). Use ≤ 12s if you want Rich CLAP tagging to see the whole clip."
                         />
                         <TextField
                             label="Overlap (sec)"
@@ -1607,25 +1605,12 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                         </RadioGroup>
                     </FormControl>
 
-                    {!isBulk && duration !== null && (
+                    {duration !== null && (
                         <Typography variant="caption" color="text.secondary">
                             Source: {duration.toFixed(1)}s
                             {estChildren !== null && !tooShort && ` · ~${estChildren} children at this setting`}
                             {tooShort && ' · already shorter than the target — nothing to slice'}
                         </Typography>
-                    )}
-
-                    {busy && bulkProgress.total > 0 && (
-                        <Box>
-                            <LinearProgress
-                                variant="determinate"
-                                value={(bulkProgress.done / bulkProgress.total) * 100}
-                            />
-                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                                Slicing {bulkProgress.done} / {bulkProgress.total}
-                                {bulkProgress.failed.length > 0 && ` · ${bulkProgress.failed.length} skipped`}
-                            </Typography>
-                        </Box>
                     )}
 
                     {dialogError && <Alert severity="error">{dialogError}</Alert>}
@@ -1638,7 +1623,7 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
                     onClick={submit}
                     disabled={busy || tooShort || target <= 0 || overlap >= target}
                 >
-                    {busy ? 'Slicing…' : (isBulk ? `Slice ${fileList.length}` : 'Slice')}
+                    {busy ? 'Slicing…' : 'Slice'}
                 </Button>
             </DialogActions>
         </Dialog>

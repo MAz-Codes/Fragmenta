@@ -750,15 +750,19 @@ def _clip_loudness_db(audio_path: Path) -> Optional[float]:
 
 def compute_health(
     name: str,
-    long_threshold_sec: float = 30.0,
     short_threshold_sec: float = 1.0,
     loudness_outlier_db: float = 6.0,
 ) -> Dict[str, Any]:
     """Per-clip checks that surface dataset problems before training.
 
-    Duration defaults match the SA3 LoRA --duration default (30s) and the
-    practical "this is so short it's mostly silence-padding" floor (1s).
-    Loudness outliers: |dB - median_dB| > loudness_outlier_db (default 6).
+    Note: we don't flag "too long" clips. The SA3 dataloader handles them
+    via random-crop per __getitem__ — long files just get sampled at
+    different windows across epochs. Slicing remains useful for annotation
+    granularity and CLAP's 10s window, but it's not a correctness issue.
+
+    short_threshold_sec defaults to 1s — clips below this end up mostly
+    silence-padded into the training window. Loudness outliers: |dB -
+    median_dB| > loudness_outlier_db (default 6).
     """
     import statistics
     from collections import defaultdict
@@ -768,7 +772,6 @@ def compute_health(
         clips = list(session.clips.values())
 
     empty_prompts: List[str] = []
-    too_long: List[str] = []
     too_short: List[str] = []
     sr_by_file: Dict[str, int] = {}
     loudness_by_file: Dict[str, float] = {}
@@ -780,17 +783,14 @@ def compute_health(
         else:
             prompt_groups[c.prompt.strip().lower()].append(c.file_name)
 
-        # Duration (header-only, ~free)
+        # Duration (header-only, ~free) — only used for the too-short check now.
         dur = session.duration_cache.get(c.file_name)
         if dur is None:
             dur = _clip_duration_sec(Path(c.path))
             if dur is not None:
                 session.duration_cache[c.file_name] = dur
-        if dur is not None:
-            if dur > long_threshold_sec:
-                too_long.append(c.file_name)
-            elif dur < short_threshold_sec:
-                too_short.append(c.file_name)
+        if dur is not None and dur < short_threshold_sec:
+            too_short.append(c.file_name)
 
         # Sample rate (header-only)
         sr = session.samplerate_cache.get(c.file_name)
@@ -836,17 +836,11 @@ def compute_health(
     dup_files = sorted({f for group in dup_groups for f in group})
 
     empty_prompts.sort()
-    too_long.sort()
     too_short.sort()
 
     return {
         "total_clips": len(clips),
         "empty_prompts": {"count": len(empty_prompts), "files": empty_prompts},
-        "too_long": {
-            "count": len(too_long),
-            "threshold_sec": long_threshold_sec,
-            "files": too_long,
-        },
         "too_short": {
             "count": len(too_short),
             "threshold_sec": short_threshold_sec,
