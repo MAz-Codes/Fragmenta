@@ -9,6 +9,7 @@ generate() doesn't expose a per-step callback yet — the flag is checked
 between calls, not inside them. A finer-grained cancel hook is a Phase
 3.1 follow-up.
 """
+import math
 import os
 import platform
 import re
@@ -17,7 +18,7 @@ import threading
 import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -34,7 +35,8 @@ logger = get_logger("AudioGenerator")
 # poll real progress instead of a fake ticker. Reset on each new generation.
 _generation_state: Dict[str, Any] = {
     "is_generating": False,
-    "phase": "idle",        # "idle" | "loading" | "sampling" | "decoding" | "complete" | "failed"
+    # idle | loading | sampling | loop_stitching | decoding | complete | failed
+    "phase": "idle",
     "step": 0,
     "total_steps": 0,
     "progress": 0,          # 0-100, derived
@@ -359,11 +361,32 @@ class AudioGenerator:
         inpaint_audio_path: Optional[str] = None,
         inpaint_starts: Optional[list] = None,   # list[float], seconds
         inpaint_ends: Optional[list] = None,
+        # Phase 7: seamless looping ----------------------------------------
+        loop_stitch: Optional[str] = None,       # "inpaint" | "crossfade" | None
+        loop_bars: Optional[int] = None,
+        loop_bpm: Optional[float] = None,
         **_ignored_legacy_kwargs: Any,
     ) -> Path:
         self._stop_requested = False
         if self._stop_requested:                  # honour pre-call stop
             raise GenerationStopped()
+
+        # Validate loop args before doing any heavy work.
+        if loop_stitch is not None:
+            if loop_stitch not in ("inpaint", "crossfade"):
+                raise ValueError(
+                    f"loop_stitch must be 'inpaint', 'crossfade', or None; got {loop_stitch!r}"
+                )
+            if not loop_bars or not loop_bpm:
+                raise ValueError(
+                    "loop_stitch requires loop_bars and loop_bpm "
+                    "(seamless loops are tempo-aware)"
+                )
+            if loop_stitch == "inpaint" and inpaint_audio_path:
+                raise ValueError(
+                    "loop_stitch='inpaint' is incompatible with inpaint_audio_path "
+                    "(the loop algorithm itself uses inpainting as a second pass)"
+                )
 
         _set_progress(
             is_generating=True, phase="loading",
@@ -389,32 +412,49 @@ class AudioGenerator:
 
         duration = float(min(max(1.0, float(duration)), float(max_dur)))
 
+        # For loop_stitch="inpaint" we need slack for TWO operations:
+        # tempo conform (up to 15% stretch in safe range) AND head-trim
+        # to the first detected beat (up to 1.5 s). 50% headroom covers
+        # both; after align+crop we have exactly `duration` of tempo-
+        # correct, phase-aligned audio.
+        target_samples = int(round(duration * 44100))
+        gen_duration = duration
+        if loop_stitch == "inpaint":
+            gen_duration = min(float(max_dur), duration * 1.5 + 1.5)
+
+        # Loop-inpaint runs the sampler twice; surface that in the progress
+        # bar so 100% only lands after both passes finish.
+        total_steps_logical = (
+            2 * effective_steps if loop_stitch == "inpaint" else effective_steps
+        )
+
         if self._stop_requested:                  # one more check before the heavy call
             raise GenerationStopped()
 
         # Sampler callback — fires per ODE step. Also gives us a cheap
         # cancellation hook: raising mid-callback aborts the sampler.
-        def _sampler_callback(info: Dict[str, Any]) -> None:
-            if self._stop_requested:
-                raise GenerationStopped()
-            i = info.get("i")
-            if isinstance(i, int):
-                # Sampler reports i=0..steps-1; user-facing step is 1-based
-                # and capped at effective_steps so 100% only on completion.
-                _set_progress(step=min(i + 1, effective_steps))
+        # The offset lets us continue progress across the loop-inpaint pass.
+        def _make_callback(offset: int) -> Callable[[Dict[str, Any]], None]:
+            def _cb(info: Dict[str, Any]) -> None:
+                if self._stop_requested:
+                    raise GenerationStopped()
+                i = info.get("i")
+                if isinstance(i, int):
+                    _set_progress(step=min(offset + i + 1, total_steps_logical))
+            return _cb
 
-        _set_progress(phase="sampling", total_steps=int(effective_steps), step=0)
+        _set_progress(phase="sampling", total_steps=int(total_steps_logical), step=0)
 
         gen_kwargs = dict(
             prompt=prompt,
             negative_prompt=negative_prompt or None,
-            duration=duration,
+            duration=gen_duration,
             steps=effective_steps,
             cfg_scale=effective_cfg,
             seed=int(seed),
             batch_size=int(batch_size),
             chunked_decode=chunked_decode,
-            callback=_sampler_callback,
+            callback=_make_callback(0),
         )
         if init_audio is not None:
             gen_kwargs["init_audio"] = init_audio
@@ -442,12 +482,226 @@ class AudioGenerator:
                           error=str(exc), ended_at=time.time())
             raise
 
-        _set_progress(phase="decoding", step=effective_steps)
+        # --- Seamless loop processing (Phase 7) ------------------------------
+        if loop_stitch == "inpaint":
+            _set_progress(phase="loop_stitching", step=effective_steps)
+            # Phase-align AND tempo-conform the baseline BEFORE the inpaint
+            # pass. align_for_loop: tempo-stretches (uniform, so seam
+            # relationship survives), head-trims to first detected beat
+            # (puts the downbeat at sample 0 so multiple channels lock at
+            # the bar boundary), and crops to exact target_samples. The
+            # inpaint pass then smooths the resulting boundary.
+            audio = self._align_baseline_for_loop(
+                audio,
+                target_samples=target_samples,
+                target_bpm=float(loop_bpm),
+            )
+            try:
+                audio = self._make_loop_inpaint(
+                    audio,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt or None,
+                    duration=duration,
+                    steps=effective_steps,
+                    cfg_scale=effective_cfg,
+                    seed=int(seed),
+                    batch_size=int(batch_size),
+                    chunked_decode=chunked_decode,
+                    bars=int(loop_bars),
+                    bpm=float(loop_bpm),
+                    callback=_make_callback(effective_steps),
+                )
+            except GenerationStopped:
+                _set_progress(phase="idle", is_generating=False, ended_at=time.time())
+                raise
+            except Exception as exc:
+                _set_progress(phase="failed", is_generating=False,
+                              error=str(exc), ended_at=time.time())
+                raise
+        elif loop_stitch == "crossfade":
+            _set_progress(phase="loop_stitching", step=effective_steps)
+            audio = self._crossfade_seam(audio, fade_sec=0.1, sr=44100)
+
+        _set_progress(phase="decoding", step=total_steps_logical)
         try:
             return self._finalize(audio, prompt=prompt, model_id=model_id)
         finally:
             _set_progress(phase="complete", is_generating=False,
-                          step=effective_steps, ended_at=time.time())
+                          step=total_steps_logical, ended_at=time.time())
+
+    # --- Phase 7: seamless loop helpers --------------------------------------
+    def _align_baseline_for_loop(
+        self,
+        audio: torch.Tensor,
+        *,
+        target_samples: int,
+        target_bpm: float,
+    ) -> torch.Tensor:
+        """Phase-align + tempo-conform a baseline tensor to exact target_samples.
+
+        Delegates the librosa work to `align_for_loop` in audio_post_process
+        (numpy-domain). Returns a torch tensor of shape `[B=1, C, target_samples]`
+        on the same device and dtype as the input.
+
+        Falls back to a plain crop/pad of the input if alignment fails — the
+        wrap-and-inpaint that runs next still smooths the seam, only the phase
+        / tempo accuracy is lost.
+        """
+        if audio.shape[-1] < target_samples:
+            pad = target_samples - audio.shape[-1]
+            return torch.nn.functional.pad(audio, (0, pad))
+
+        try:
+            from app.core.generation.audio_post_process import align_for_loop
+            # SA3 returns [B, C, T] — pull the first batch into [T, C] for librosa.
+            full = audio[0].detach().cpu().numpy().astype(np.float32).T  # [T, C]
+            aligned = align_for_loop(
+                full,
+                sr=44100,
+                target_samples=target_samples,
+                target_bpm=target_bpm,
+            )
+            # Back to [B=1, C, T]
+            result = (
+                torch.from_numpy(np.ascontiguousarray(aligned.T))
+                .unsqueeze(0)
+                .to(audio.device)
+                .to(audio.dtype)
+            )
+        except Exception as exc:
+            logger.warning(
+                "align_for_loop failed (%s); falling back to plain crop", exc,
+            )
+            return audio[..., :target_samples]
+
+        if result.shape[-1] != target_samples:
+            # Defensive guard against align_for_loop returning the wrong size.
+            if result.shape[-1] > target_samples:
+                result = result[..., :target_samples]
+            else:
+                pad = target_samples - result.shape[-1]
+                result = torch.nn.functional.pad(result, (0, pad))
+        return result
+
+    def _make_loop_inpaint(
+        self,
+        baseline: torch.Tensor,
+        *,
+        prompt: str,
+        negative_prompt: Optional[str],
+        duration: float,
+        steps: int,
+        cfg_scale: float,
+        seed: int,
+        batch_size: int,
+        chunked_decode: Optional[bool],
+        bars: int,
+        bpm: float,
+        callback: Callable[[Dict[str, Any]], None],
+    ) -> torch.Tensor:
+        """Wrap-and-inpaint seamless looping (Phase 7).
+
+        SA3 has no circular sampling, so we exploit inpainting:
+          1. Roll the baseline by N/2 so the boundary between sample[N-1]
+             and sample[0] sits at the centre of the wrapped audio.
+          2. Inpaint a small region around the centre — SA3 regenerates it
+             with full context from the rest of the (now-shifted) clip.
+          3. Roll back. The new boundary is spectrally consistent because it
+             was generated as a continuous waveform inside the wrap.
+
+        Mask half-width = 0.5 bar, clamped to [0.25, 2.0] seconds.
+        """
+        if baseline.ndim != 3:
+            raise RuntimeError(f"Unexpected baseline shape {tuple(baseline.shape)}")
+
+        sr = 44100
+        try:
+            sr = int(self.model.model_config.get("sample_rate", 44100))
+        except Exception:
+            pass
+
+        N = baseline.shape[-1]
+        half_samples = N // 2
+
+        wrapped = torch.roll(baseline, shifts=half_samples, dims=-1)
+        # SA3 inpaint takes a single (sr, [C, T]) tuple; drop the batch dim
+        # (one conditioning produces one consistent seam — multi-batch here
+        # would just diverge the seam regen per batch member without help).
+        wrapped_first = wrapped[0]
+
+        bar_sec = 60.0 / float(bpm) * 4.0
+        # Mask half-width: 0.5 bar by default, floored at 0.25 s (SA3's
+        # minimum useful inpaint span), capped absolutely at 2.0 s so long
+        # bars don't lose too much musical content, AND capped at 1/4 of
+        # the clip duration so the inpaint never covers more than half the
+        # clip. Tighter caps starve the model of context near the seam and
+        # collapse the inpainted region to near-silence — empirically the
+        # 25% cap is the sweet spot.
+        r_sec = max(
+            0.25,
+            min(2.0, 0.5 * bar_sec, 0.25 * duration),
+        )
+        seam_t = half_samples / float(sr)
+        mask_start = max(0.0, seam_t - r_sec)
+        mask_end = min(duration, seam_t + r_sec)
+
+        inpainted = self.model.generate(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            duration=duration,
+            steps=steps,
+            cfg_scale=cfg_scale,
+            # Reuse the seed; SA3 advances global RNG during the first call,
+            # so the inpaint pass naturally samples different noise.
+            seed=seed,
+            batch_size=batch_size,
+            chunked_decode=chunked_decode,
+            inpaint_audio=(sr, wrapped_first),
+            inpaint_mask_start_seconds=float(mask_start),
+            inpaint_mask_end_seconds=float(mask_end),
+            callback=callback,
+        )
+
+        # Match the baseline length exactly before unrolling. Lengths usually
+        # match (same duration request), but SA3 rounds duration up to chunk
+        # alignment internally — guard against off-by-one.
+        if inpainted.shape[-1] > N:
+            inpainted = inpainted[..., :N]
+        elif inpainted.shape[-1] < N:
+            pad = N - inpainted.shape[-1]
+            inpainted = torch.nn.functional.pad(inpainted, (0, pad))
+
+        return torch.roll(inpainted, shifts=-half_samples, dims=-1)
+
+    @staticmethod
+    def _crossfade_seam(audio: torch.Tensor, fade_sec: float, sr: int) -> torch.Tensor:
+        """Equal-power loop crossfade — fallback to wrap-and-inpaint.
+
+        Blends the first `fade_sec` of audio into the last `fade_sec` so a
+        looping player spectrally morphs from tail content into head content
+        across the fade. Not bit-exact at the boundary, but fast and never
+        fails. For true seamlessness use loop_stitch='inpaint'.
+
+        Length unchanged; the input tensor is not modified in place.
+        """
+        n = audio.shape[-1]
+        fade_n = max(1, int(fade_sec * sr))
+        if fade_n >= n // 2:
+            return audio  # clip too short for a useful fade
+
+        head = audio[..., :fade_n]
+        tail = audio[..., -fade_n:]
+
+        t = torch.linspace(
+            0.0, math.pi / 2.0, fade_n,
+            device=audio.device, dtype=audio.dtype,
+        )
+        fade_in = torch.sin(t) ** 2
+        fade_out = torch.cos(t) ** 2
+
+        out = audio.clone()
+        out[..., -fade_n:] = tail * fade_out + head * fade_in
+        return out
 
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod

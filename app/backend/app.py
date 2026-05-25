@@ -294,26 +294,34 @@ _SA3_MODEL_IDS = {
 
 @app.route('/api/generate', methods=['POST'])
 def generate_audio():
-    """SA3 inference. Phase 3 of SA3_INTEGRATION_PLAN.md.
+    """SA3 inference. Phase 3 + Phase 7 of SA3_INTEGRATION_PLAN.md.
 
-    Schema (post-clean-cut):
+    Schema:
         {
-            "model_id":        "sa3-small-music",      # required, SA3 IDs only
-            "prompt":          "techno kick",
-            "duration":        5.0,
-            "steps":           8,                       # optional; default by model
-            "cfg_scale":       1.0,                     # optional; default by model
-            "seed":            -1,
-            "negative_prompt": null,
-            "batch_size":      1,
-            "align_bars":      null,                    # bars-mode passthrough
-            "align_bpm":       null,
-            "chunked_decode":  null
+            "model_id":           "sa3-small-music",   # required, SA3 IDs only
+            "prompt":             "techno kick",
+            "duration":           5.0,
+            "steps":              8,                    # optional; default by model
+            "cfg_scale":          1.0,                  # optional; default by model
+            "seed":               -1,
+            "negative_prompt":    null,
+            "batch_size":         1,
+            "align_bars":         null,                 # bars-mode passthrough
+            "align_bpm":          null,
+            "chunked_decode":     null,
+            "loras":              [{"path":"…","strength":1.0}, …],
+            "init_audio_path":    null,                 # audio-to-audio source
+            "init_noise_level":   1.0,
+            "inpaint_audio_path": null,                 # inpainting source
+            "inpaint_starts":     [4.0],                # list or single float
+            "inpaint_ends":       [8.0],
+            "loop_stitch":        null                  # "inpaint" | "crossfade" | null
         }
 
-    LoRA stacking (`loras: [...]`), audio-to-audio (`init_audio_path`) and
-    inpainting (`inpaint_audio_path`) are Phase 4 / Phase 7 work and will
-    be silently ignored if sent now.
+    Phase 7 seamless looping: when `loop_stitch` is set, `align_bars` and
+    `align_bpm` are required (the seam-smoothing pass needs bar duration
+    for mask sizing). `align_to_grid` is skipped when a stitch is applied
+    so head-trim / end-snap don't break the seamless boundary.
     """
     if not request.json:
         return jsonify(APIResponse.error("No JSON data provided", status_code=400)), 400
@@ -420,6 +428,25 @@ def generate_audio():
                 "inpaint_starts and inpaint_ends must be the same length.",
                 status_code=400)), 400
 
+        # Phase 7: seamless looping. Bars/BPM are required so the seam-
+        # smoothing pass knows how much audio to regenerate at the join.
+        loop_stitch = data.get('loop_stitch')
+        if loop_stitch is not None:
+            if loop_stitch not in ("inpaint", "crossfade"):
+                return jsonify(APIResponse.error(
+                    f"loop_stitch must be 'inpaint', 'crossfade', or null; got {loop_stitch!r}.",
+                    status_code=400)), 400
+            if not do_align:
+                return jsonify(APIResponse.error(
+                    "loop_stitch requires align_bars and align_bpm "
+                    "(seamless loops are tempo-aware).",
+                    status_code=400)), 400
+            if loop_stitch == "inpaint" and inpaint_audio_path:
+                return jsonify(APIResponse.error(
+                    "loop_stitch='inpaint' is incompatible with inpaint_audio_path "
+                    "(the loop algorithm itself uses inpainting as a second pass).",
+                    status_code=400)), 400
+
         # LoRA stack: list of { path, strength }. Validate each entry.
         loras_raw = data.get('loras') or []
         if not isinstance(loras_raw, list):
@@ -460,9 +487,10 @@ def generate_audio():
     # post-processor room for head-trim + drift correction without running short.
     # Proportional (8% of target, clamped to [0.5s, 2.0s]) so fast tempos don't
     # waste 30% of generation time on a fixed 1.5s buffer and slow ones get
-    # enough margin.
+    # enough margin. Skipped when loop_stitch is set: the loop pass needs the
+    # exact requested duration so the seam lands at the right sample.
     effective_duration = duration
-    if do_align:
+    if do_align and not loop_stitch:
         headroom = max(0.5, min(2.0, duration * 0.08))
         effective_duration = duration + headroom
         logger.debug(
@@ -489,12 +517,18 @@ def generate_audio():
             inpaint_audio_path=inpaint_audio_path,
             inpaint_starts=inpaint_starts,
             inpaint_ends=inpaint_ends,
+            loop_stitch=loop_stitch,
+            loop_bars=int(align_bars) if (loop_stitch and align_bars) else None,
+            loop_bpm=float(align_bpm) if (loop_stitch and align_bpm) else None,
         )
 
         if not output_path.exists():
             raise GenerationError(prompt, model_id, "Generated audio file not found")
 
-        if do_align:
+        # Skip align_to_grid when a stitch ran — head-trim / end-snap would
+        # shift the seam off its sample-exact location and reintroduce a
+        # click. The stitch pass already gave us a duration-exact loop.
+        if do_align and not loop_stitch:
             try:
                 from app.core.generation.audio_post_process import align_to_grid
                 align_to_grid(
@@ -507,6 +541,11 @@ def generate_audio():
                 # Never fail the request because alignment failed — the user
                 # would rather have the raw clip than an error toast.
                 logger.warning(f"Grid alignment skipped after error: {exc}")
+        elif loop_stitch:
+            logger.info(
+                f"loop_stitch={loop_stitch} applied (bars={align_bars}, "
+                f"bpm={align_bpm}); align_to_grid skipped to preserve seam"
+            )
 
         logger.info(
             f"Audio generation completed: {output_path.name} "

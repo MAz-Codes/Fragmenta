@@ -200,6 +200,9 @@ export default function PerformanceChannel({
                 // Only forward alignment params in bars mode — seconds mode
                 // generates raw audio with no post-processing.
                 ...(inBarsMode ? { alignBars: bars, alignBpm: bpm } : {}),
+                // Phase 7: bars-mode + channel-looping ⇒ ask the backend
+                // to wrap-inpaint the seam so the clip loops seamlessly.
+                ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
             });
             const blobs = Array.isArray(result) ? result : [result];
             const next = blobs.map((b, i) => ({ index: i, blob: b }));
@@ -655,13 +658,25 @@ export default function PerformanceChannel({
                     </IconButton>
                 </MidiMappable>
                 <MidiMappable id={ctrlId('loop')} label={ctrlLabel('Loop')} kind="trigger" onChange={handleLoopToggle}>
-                    <IconButton
-                        onClick={handleLoopToggle}
-                        sx={styles.loopBtn(color, looping)}
-                        size="small"
+                    <Tooltip
+                        title={
+                            looping
+                                ? (durationMode === 'bars'
+                                    ? 'Seamless loop — next generation will be inpaint-stitched at the bar boundary'
+                                    : 'Playback loop on')
+                                : 'Loop off'
+                        }
+                        placement="top"
+                        enterDelay={400}
                     >
-                        <LoopIcon size={14} />
-                    </IconButton>
+                        <IconButton
+                            onClick={handleLoopToggle}
+                            sx={styles.loopBtn(color, looping)}
+                            size="small"
+                        >
+                            <LoopIcon size={14} />
+                        </IconButton>
+                    </Tooltip>
                 </MidiMappable>
                 <Box sx={styles.meterTrack}>
                     <Box ref={meterRef} sx={styles.meterFill(color)} />

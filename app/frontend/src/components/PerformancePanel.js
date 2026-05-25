@@ -530,7 +530,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, batchSize = 1 }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1 }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -584,6 +584,9 @@ function PerformancePanelInner({
                     ? { loras: [{ path: selectedLora, strength: loraMultiplier }] }
                     : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
+                // Phase 7: seamless looping. Bars-mode + channel-looping
+                // signals "I want a loop"; backend wrap-inpaints the seam.
+                ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
             blobs.push(response.data);

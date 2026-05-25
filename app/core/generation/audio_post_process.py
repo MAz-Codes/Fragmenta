@@ -1,12 +1,20 @@
 """Beat-align and tempo-conform a generated WAV to a target BPM and bar count.
 
+SA3 generates at the exact requested duration via variable-length flow
+matching, so the post-processor's role is **drift correction**, not length
+control: it only nudges the audio when librosa detects that the realised
+tempo has drifted from the target. The tempo-conform gate is intentionally
+tight — `|rate - 1| > 5%` AND `rate in [0.85, 1.15]` — so we never warp
+audibly when SA3 was already close.
+
 Pipeline (in order):
   1. Detect tempo + beat grid via librosa (with target BPM as prior).
   2. Head-trim to the first detected beat (or first onset as fallback),
      followed by a 3 ms equal-power fade-in to mask the trim seam.
-  3. Tempo-conform via phase-vocoder time-stretch, but ONLY when the
-     detected tempo is meaningfully off (>2 %) — skipping the stretch when
-     already close preserves transients.
+  3. Tempo-conform via phase-vocoder time-stretch, ONLY when the detected
+     tempo drifts >5% from target AND the resulting stretch lies inside
+     the safe range [0.85, 1.15]. Outside this window we leave the audio
+     alone and let the user re-roll.
   4. End-anchored truncation: snap the cut to the nearest detected beat
      within ±½ beat of the mathematical target sample count, so loops
      don't end mid-note. Followed by an 8 ms equal-power fade-out so the
@@ -27,17 +35,26 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
-# Safe range for phase-vocoder time-stretching. Wider than the previous
-# [0.7, 1.4] so we actually warp in more cases — librosa's vocoder produces
-# acceptable audio across this range for music, and the alternative
-# (no warp at all) drifts off the grid completely on loop.
+# Liberal module-default range for `_best_stretch_rate`. Kept wide so any
+# future force-warp caller has room; the bars-mode drift-correction path
+# (`align_to_grid`) overrides with tighter bounds below.
 _STRETCH_SAFE_MIN = 0.6
 _STRETCH_SAFE_MAX = 1.7
 
-# Don't bother time-stretching when the detected tempo is already within
-# this fraction of target — the stretch artifacts (smeared transients)
-# cost more than the sub-percent alignment gain.
-_STRETCH_DEADBAND = 0.02
+# Bars-mode drift correction. SA3 hits the requested duration exactly via
+# variable-length generation, so the post-processor only kicks in when the
+# detected tempo of the generated audio drifts from the requested target.
+# Tight gates avoid audible vocoder artifacts when SA3 was already close.
+_BARS_MODE_STRETCH_MIN = 0.85
+_BARS_MODE_STRETCH_MAX = 1.15
+_BARS_MODE_DEADBAND = 0.05
+
+# Loop-mode (Phase 7) is stricter — a 5% tempo slack compounds visibly when
+# multiple loop channels run side-by-side, even though loop iteration
+# lengths are sample-exact. 0.5% is below librosa's noise floor for beat
+# detection on rhythmic content, so we won't be acting on noise, but we
+# WILL correct anything detectable that the looser bars-mode would skip.
+_LOOP_MODE_DEADBAND = 0.005
 
 # Fade durations applied at trim points. Kept very short — the fade is
 # click-prevention, not a perceptible ramp. Performance Mode loops these
@@ -91,8 +108,13 @@ def align_to_grid(
 
     # --- Tempo conform -----------------------------------------------------
     if detected_bpm is not None:
-        rate, effective_bpm = _best_stretch_rate(detected_bpm, target_bpm)
-        if rate is not None and abs(rate - 1.0) > _STRETCH_DEADBAND:
+        rate, effective_bpm = _best_stretch_rate(
+            detected_bpm,
+            target_bpm,
+            safe_min=_BARS_MODE_STRETCH_MIN,
+            safe_max=_BARS_MODE_STRETCH_MAX,
+        )
+        if rate is not None and abs(rate - 1.0) > _BARS_MODE_DEADBAND:
             audio = _time_stretch_multichannel(audio, rate)
             # Beats have moved — re-detect from the warped audio so the
             # end-snap step below sees current beat positions.
@@ -111,13 +133,15 @@ def align_to_grid(
         elif rate is not None:
             logger.info(
                 f"align_to_grid: detected {detected_bpm:.2f} BPM is within "
-                f"{_STRETCH_DEADBAND * 100:.0f}% of target {target_bpm:.2f}; "
+                f"{_BARS_MODE_DEADBAND * 100:.0f}% of target {target_bpm:.2f}; "
                 f"skipping stretch to preserve transients"
             )
         else:
             logger.info(
                 f"align_to_grid: detected {detected_bpm:.2f} BPM has no safe "
-                f"interpretation vs target {target_bpm:.2f}; skipping warp"
+                f"interpretation vs target {target_bpm:.2f} within "
+                f"[{_BARS_MODE_STRETCH_MIN:.2f}, {_BARS_MODE_STRETCH_MAX:.2f}]; "
+                f"skipping warp (user re-roll recommended)"
             )
     else:
         logger.info("align_to_grid: no usable tempo detected; skipping warp")
@@ -150,6 +174,113 @@ def align_to_grid(
 
     sf.write(str(input_path), audio, sr, subtype="PCM_16")
     return input_path
+
+
+# --- Phase 7 loop alignment -----------------------------------------------
+
+def align_for_loop(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    target_samples: int,
+    target_bpm: float,
+) -> np.ndarray:
+    """Align a baseline clip for seamless looping at an exact length.
+
+    Pipeline (in-memory, no disk I/O):
+      1. Detect tempo + beat grid via librosa.
+      2. Time-stretch (uniformly) if detected BPM drifts past the bars-mode
+         deadband AND the required rate is in the safe range. Drift
+         beyond the safe range is left alone (caller can re-roll).
+      3. Head-trim to the first detected beat (or first onset as fallback),
+         within the first ~1.5 s. This is the phase-alignment step — it
+         puts the loop's "downbeat" at sample 0 so multiple channels'
+         beats coincide when launched on a bar boundary.
+      4. Crop or zero-pad to exactly `target_samples`. No end-snap: the
+         loop iteration length is sample-exact so it stays phase-locked
+         to the master clock across iterations.
+
+    Returns a `np.ndarray` of shape `(target_samples, channels)` (or 1-D
+    if input was 1-D). The caller is expected to wrap-and-inpaint the
+    output to smooth the seam — `align_for_loop` does no fade.
+    """
+    if audio.ndim == 1:
+        audio = audio[:, np.newaxis]
+        squeeze_out = True
+    else:
+        squeeze_out = False
+    audio = np.ascontiguousarray(audio, dtype=np.float32)
+
+    mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
+    detected_bpm, beat_samples = _detect_grid(mono, sr, start_bpm=target_bpm)
+
+    # --- 1+2: tempo conform ---------------------------------------------
+    if detected_bpm is not None:
+        rate, effective_bpm = _best_stretch_rate(
+            detected_bpm,
+            target_bpm,
+            safe_min=_BARS_MODE_STRETCH_MIN,
+            safe_max=_BARS_MODE_STRETCH_MAX,
+        )
+        if rate is not None and abs(rate - 1.0) > _LOOP_MODE_DEADBAND:
+            audio = _time_stretch_multichannel(audio, rate)
+            mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
+            _, beat_samples = _detect_grid(mono, sr, start_bpm=target_bpm)
+            interp = (
+                f" (interpreted as {effective_bpm:.2f} BPM)"
+                if abs(effective_bpm - detected_bpm) > 1e-2 else ""
+            )
+            logger.info(
+                "align_for_loop: detected %.2f BPM%s, stretched by %.4f to "
+                "match %.2f target",
+                detected_bpm, interp, rate, target_bpm,
+            )
+        elif rate is not None:
+            logger.info(
+                "align_for_loop: detected %.2f BPM within %.2f%% of %.2f target; "
+                "no stretch",
+                detected_bpm, _LOOP_MODE_DEADBAND * 100, target_bpm,
+            )
+        else:
+            logger.info(
+                "align_for_loop: detected %.2f BPM has no safe stretch to "
+                "%.2f target within [%.2f, %.2f]; leaving tempo as-is",
+                detected_bpm, target_bpm,
+                _BARS_MODE_STRETCH_MIN, _BARS_MODE_STRETCH_MAX,
+            )
+    else:
+        logger.info("align_for_loop: no usable tempo detected; skipping stretch")
+
+    # --- 3: head-trim to first beat / onset (phase alignment) -----------
+    head_offset = 0
+    if beat_samples is not None and len(beat_samples) > 0:
+        first_beat = int(beat_samples[0])
+        if 0 < first_beat < sr * 1.5:
+            head_offset = first_beat
+    if head_offset == 0:
+        # Onset fallback when beat tracking didn't lock — gives at least
+        # a transient-aligned start instead of mid-attack on sample 0.
+        head_offset = _detect_first_onset_sample(mono, sr)
+        if head_offset >= sr * 1.5:
+            head_offset = 0
+    if head_offset > 0:
+        audio = audio[head_offset:]
+        logger.info(
+            "align_for_loop: head-trimmed %.1f ms to first beat/onset",
+            head_offset / sr * 1000,
+        )
+
+    # --- 4: crop or pad to exact target_samples -------------------------
+    if audio.shape[0] > target_samples:
+        audio = audio[:target_samples]
+    elif audio.shape[0] < target_samples:
+        pad = target_samples - audio.shape[0]
+        audio = np.concatenate(
+            [audio, np.zeros((pad, audio.shape[1]), dtype=audio.dtype)],
+            axis=0,
+        )
+
+    return audio.squeeze(1) if squeeze_out else audio
 
 
 # --- helpers ---------------------------------------------------------------
@@ -232,6 +363,9 @@ def _equal_power_ramp(n: int, *, fade_in: bool, dtype) -> np.ndarray:
 def _best_stretch_rate(
     detected_bpm: float,
     target_bpm: float,
+    *,
+    safe_min: float = _STRETCH_SAFE_MIN,
+    safe_max: float = _STRETCH_SAFE_MAX,
 ) -> Tuple[Optional[float], float]:
     """Pick the time-stretch rate that maps detected → target, considering
     half-time and double-time interpretations of the detected tempo. Returns
@@ -240,20 +374,20 @@ def _best_stretch_rate(
     nothing safe is available.
 
     Order of preference:
-      1. Detected as-is, if it lands inside the safe stretch range.
+      1. Detected as-is, if it lands inside [safe_min, safe_max].
       2. Octave-corrected (detected × 0.5 or × 2.0), only when the as-is
          interpretation is out of range. This is the librosa half-/double-
          time error recovery path.
     """
     rate_asis = target_bpm / detected_bpm
-    if _STRETCH_SAFE_MIN <= rate_asis <= _STRETCH_SAFE_MAX:
+    if safe_min <= rate_asis <= safe_max:
         return rate_asis, detected_bpm
 
     candidates = []
     for octave_factor in (0.5, 2.0):
         interpreted = detected_bpm * octave_factor
         rate = target_bpm / interpreted
-        if _STRETCH_SAFE_MIN <= rate <= _STRETCH_SAFE_MAX:
+        if safe_min <= rate <= safe_max:
             candidates.append((abs(rate - 1.0), rate, interpreted))
     if not candidates:
         return None, detected_bpm
