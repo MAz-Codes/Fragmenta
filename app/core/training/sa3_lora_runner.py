@@ -1,12 +1,11 @@
 """Helpers for the SA3 LoRA training pipeline.
 
 Responsibilities:
-  * Materialize <basename>.txt captions from Fragmenta's data/metadata.json
-    (SA3's train_lora.py expects .txt sidecars; the rest of Fragmenta keeps
-    using metadata.json as the editable source of truth).
   * Pre-stage the base model in an app-folder HF cache so the training
     subprocess finds it without falling back to ~/.cache/huggingface.
   * Build the train_lora.py subprocess command + env.
+  * Convert PyTorch Lightning .ckpt LoRA outputs to SA3-native .safetensors
+    with the base_model and run name embedded in the metadata header.
 """
 from __future__ import annotations
 
@@ -27,51 +26,11 @@ SA3_BASE_MODELS: Dict[str, Tuple[str, str]] = {
 }
 
 
-# --- Caption materializer ---------------------------------------------------
-
-def materialize_captions(metadata_json_path: Path, data_dir: Path) -> Dict[str, Any]:
-    """Write <basename>.txt sidecars next to every audio file in data_dir.
-
-    Reads metadata.json (Fragmenta's editable source of truth) and emits one
-    .txt per row. Idempotent — files are only touched when contents differ.
-    Returns {"written": int, "skipped": int, "missing_audio": list}.
-    """
-    if not metadata_json_path.exists():
-        raise FileNotFoundError(f"metadata.json not found at {metadata_json_path}")
-    try:
-        rows = json.loads(metadata_json_path.read_text())
-    except Exception as e:
-        raise ValueError(f"metadata.json is not valid JSON: {e}")
-    if not isinstance(rows, list):
-        raise ValueError("metadata.json must be a list of {file_name, prompt} rows")
-
-    written = 0
-    skipped = 0
-    missing_audio: List[str] = []
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        file_name = row.get("file_name") or row.get("filename")
-        prompt = (row.get("prompt") or "").strip()
-        if not file_name or not prompt:
-            continue
-        audio_path = data_dir / file_name
-        if not audio_path.exists():
-            missing_audio.append(file_name)
-            continue
-        txt_path = audio_path.with_suffix(".txt")
-        if txt_path.exists() and txt_path.read_text() == prompt:
-            skipped += 1
-            continue
-        txt_path.write_text(prompt)
-        written += 1
-
-    return {
-        "written": written,
-        "skipped": skipped,
-        "missing_audio": missing_audio,
-    }
+# Extensions SA3's training data loader actually accepts.
+# Source: vendor/stable-audio-3/stable_audio_3/data/dataset.py:91.
+# Single source of truth — both the health check and the hyperparam suggester
+# use this so what we count matches what the loader will train on.
+SA3_AUDIO_EXTENSIONS: Tuple[str, ...] = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".opus")
 
 
 # --- Base model pre-staging -------------------------------------------------
@@ -103,21 +62,39 @@ def prestage_base_model(
 
     from huggingface_hub import snapshot_download
 
+    allow_patterns = [
+        "*.safetensors", "*.json", "*.txt", "*.model",
+        "tokenizer*", "*.tiktoken",
+    ]
+
     if progress_callback:
         progress_callback(5, f"Staging {sa3_name} base model in {hub_dir.name}/...")
 
-    local_snap = snapshot_download(
-        repo_id=repo_id,
-        cache_dir=str(hub_dir),
-        token=token,
-        allow_patterns=[
-            "*.safetensors", "*.json", "*.txt", "*.model",
-            "tokenizer*", "*.tiktoken",
-        ],
-    )
-
-    if progress_callback:
-        progress_callback(15, "Base model ready.")
+    # Prefer cache. snapshot_download otherwise phones home on every run to
+    # check the model's revision — wasteful and noisy when the user just
+    # downloaded the weights through the Checkpoint Manager. If anything's
+    # missing, fall back to an online fetch.
+    try:
+        local_snap = snapshot_download(
+            repo_id=repo_id,
+            cache_dir=str(hub_dir),
+            token=token,
+            allow_patterns=allow_patterns,
+            local_files_only=True,
+        )
+        if progress_callback:
+            progress_callback(15, "Base model ready (from cache).")
+    except Exception:
+        if progress_callback:
+            progress_callback(8, "Cache miss — fetching from HuggingFace…")
+        local_snap = snapshot_download(
+            repo_id=repo_id,
+            cache_dir=str(hub_dir),
+            token=token,
+            allow_patterns=allow_patterns,
+        )
+        if progress_callback:
+            progress_callback(15, "Base model ready.")
 
     return Path(local_snap)
 
@@ -182,6 +159,84 @@ def build_train_command(
     return cmd
 
 
+# --- Checkpoint conversion (.ckpt → .safetensors with base_model metadata) ---
+
+def convert_run_checkpoints_to_safetensors(
+    run_dir: Path,
+    base_model: str,
+    model_name: Optional[str] = None,
+    delete_originals: bool = True,
+) -> List[Path]:
+    """Convert PyTorch Lightning .ckpt files in a run's checkpoints/ directory
+    to SA3's native .safetensors LoRA format, with `base_model` injected into
+    the safetensors metadata header so /api/loras can filter by it.
+
+    Why: SA3's `train_lora.py` writes Lightning .ckpt files. The inference
+    LoRA picker (/api/loras) globs for *.safetensors only. Without this
+    conversion, every trained LoRA is functionally orphaned — saved
+    correctly to disk but invisible to the inference loader.
+
+    Idempotent: skips any .ckpt whose .safetensors sibling already exists
+    with a non-zero size.
+
+    Returns the list of paths to the produced .safetensors files (sorted).
+    """
+    ckpt_dir = run_dir / "checkpoints"
+    if not ckpt_dir.exists():
+        return []
+
+    # Imports deferred so this module can be imported without the SA3 vendor
+    # being on sys.path (e.g., during pure orchestrator construction).
+    from app.core.config import get_config
+    sa3_vendor = get_config().get_path("stable_audio_3")
+    pp = sys.path[:]
+    if str(sa3_vendor) not in pp:
+        sys.path.insert(0, str(sa3_vendor))
+    try:
+        from stable_audio_3.models.lora.utils import load_lora_checkpoint
+        from safetensors.torch import save_file as st_save_file
+    finally:
+        # Don't permanently mutate sys.path from a helper call.
+        if sys.path != pp:
+            sys.path[:] = pp
+
+    written: List[Path] = []
+    for ckpt_path in sorted(ckpt_dir.glob("*.ckpt")):
+        out_path = ckpt_path.with_suffix(".safetensors")
+        if out_path.exists() and out_path.stat().st_size > 0:
+            # Already converted (older artifact or a previous pass). Just
+            # bookkeep so the caller sees it in the return list.
+            written.append(out_path)
+            continue
+        try:
+            state_dict, lora_config = load_lora_checkpoint(ckpt_path)
+        except Exception:
+            # Corrupt or truncated ckpt — skip rather than crash the
+            # post-training pass.
+            continue
+
+        # Top-level metadata is what /api/loras' safetensors reader inspects
+        # directly. We also keep the canonical `lora_config` JSON blob so
+        # SA3's own load_lora_checkpoint() can parse the file as-is.
+        metadata = {
+            "lora_config": json.dumps(lora_config or {}),
+            "base_model": base_model,
+        }
+        if model_name:
+            metadata["model_name"] = model_name
+        # Cast fp16 to keep file sizes consistent with SA3's standard format.
+        fp16_dict = {k: (v.half() if v.is_floating_point() else v)
+                     for k, v in state_dict.items()}
+        st_save_file(fp16_dict, str(out_path), metadata=metadata)
+        if delete_originals:
+            try:
+                ckpt_path.unlink()
+            except OSError:
+                pass
+        written.append(out_path)
+    return sorted(written)
+
+
 def build_train_env(sa3_vendor_dir: Path, hub_dir: Path) -> Dict[str, str]:
     """Subprocess env: redirect HF cache into the app folder + silence WANDB."""
     env = os.environ.copy()
@@ -198,4 +253,10 @@ def build_train_env(sa3_vendor_dir: Path, hub_dir: Path) -> Dict[str, str]:
     env["TRANSFORMERS_CACHE"] = str(hub_dir)
     env["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     env["WANDB_DISABLED"] = "1"
+    # Force the training subprocess into offline mode for HF — we already
+    # pre-staged the base model in prestage_base_model(), so any remaining
+    # network call from the SA3 internals would be a noisy revision check
+    # against a cache we know is current.
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
     return env

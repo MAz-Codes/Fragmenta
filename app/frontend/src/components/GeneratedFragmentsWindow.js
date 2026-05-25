@@ -1,8 +1,29 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Paper, Box, Typography, Button, List, ListItem, IconButton } from '@mui/material';
-import { Square as StopIcon, Play as PlayIcon, Download as DownloadIcon } from 'lucide-react';
-import api from '../api';
+import { Paper, Box, Typography, List, ListItem, IconButton, Tooltip } from '@mui/material';
+import {
+    Square as StopIcon,
+    Play as PlayIcon,
+    CloudDownload as DownloadIcon,
+    AudioLines as TitleIcon,
+    Info as InfoIcon,
+} from 'lucide-react';
 import { generatedFragmentsWindowStyles } from '../theme';
+
+// Compact human-readable "X ago" with absolute fallback for stale items.
+function relativeTime(createdAt) {
+    if (!createdAt) return '';
+    const sec = Math.max(0, (Date.now() - createdAt) / 1000);
+    if (sec < 10) return 'just now';
+    if (sec < 60) return `${Math.floor(sec)}s ago`;
+    const min = sec / 60;
+    if (min < 60) return `${Math.floor(min)}m ago`;
+    const hr = min / 60;
+    if (hr < 24) return `${Math.floor(hr)}h ago`;
+    const day = hr / 24;
+    if (day < 7) return `${Math.floor(day)}d ago`;
+    // Older than a week — show absolute date, no time
+    return new Date(createdAt).toLocaleDateString();
+}
 
 export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
     const [playingFragment, setPlayingFragment] = useState(null);
@@ -31,14 +52,11 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
     }, []);
 
     return (
-        <Paper
-            variant="outlined"
-            sx={generatedFragmentsWindowStyles.rootPaper}
-        >
+        <Paper variant="outlined" sx={generatedFragmentsWindowStyles.rootPaper}>
             <Box sx={generatedFragmentsWindowStyles.headerRow}>
                 <Box sx={generatedFragmentsWindowStyles.titleRow}>
                     <Box component="span" sx={generatedFragmentsWindowStyles.titleIcon}>
-                        <DownloadIcon size={20} />
+                        <TitleIcon size={20} />
                     </Box>
                     <Typography variant="h6" sx={generatedFragmentsWindowStyles.titleText}>
                         Generated Fragments
@@ -50,71 +68,106 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
             </Box>
 
             {fragments.length === 0 ? (
-                <Box
-                    sx={generatedFragmentsWindowStyles.emptyState}
-                >
-                    <Typography variant="body2">
-                        No fragments generated yet
-                    </Typography>
+                <Box sx={generatedFragmentsWindowStyles.emptyState}>
+                    <Typography variant="body2">No fragments generated yet</Typography>
                 </Box>
             ) : (
-                <List
-                    sx={generatedFragmentsWindowStyles.listRoot}
-                >
-                    {fragments.slice().reverse().map((fragment) => (
-                        <ListItem
-                            key={fragment.id}
-                            sx={generatedFragmentsWindowStyles.listItem}
-                        >
-                            <Box sx={generatedFragmentsWindowStyles.fragmentRow}>
+                <List sx={generatedFragmentsWindowStyles.listRoot}>
+                    {fragments.slice().reverse().map((fragment) => {
+                        const isPlaying = playingFragment === fragment.id;
+                        const ago = relativeTime(fragment.createdAt);
+                        // The compact line keeps duration + relative time inline.
+                        // CFG, seed, full timestamp, and model go in the info
+                        // tooltip — accessible but not pushing the row out.
+                        const tooltipLines = [
+                            `Seed: ${fragment.seed ?? '—'}`,
+                            `CFG: ${fragment.cfgScale ?? '—'}`,
+                            fragment.steps != null ? `Steps: ${fragment.steps}` : null,
+                            fragment.modelId ? `Model: ${fragment.modelId}` : null,
+                            fragment.editMode ? `Mode: ${fragment.editMode}` : null,
+                            fragment.timestamp ? `Generated: ${fragment.timestamp}` : null,
+                        ].filter(Boolean).join('\n');
+
+                        return (
+                            <ListItem
+                                key={fragment.id}
+                                sx={generatedFragmentsWindowStyles.listItem}
+                            >
+                                <Tooltip
+                                    title={isPlaying ? 'Stop' : 'Play'}
+                                    placement="top"
+                                    arrow
+                                >
+                                    <IconButton
+                                        size="small"
+                                        onClick={() => handlePlayPause(fragment)}
+                                        sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
+                                    >
+                                        {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                                    </IconButton>
+                                </Tooltip>
+
                                 <Box sx={generatedFragmentsWindowStyles.fragmentMeta}>
                                     <Typography
-                                        variant="subtitle2"
+                                        variant="body2"
                                         sx={generatedFragmentsWindowStyles.fragmentPrompt}
+                                        title={fragment.prompt}
                                     >
                                         {fragment.batchTotal > 1 && (
-                                            <Box component="span" sx={{ fontWeight: 700, mr: 0.75 }}>
-                                                [{fragment.batchIndex}/{fragment.batchTotal}]
+                                            <Box component="span" sx={generatedFragmentsWindowStyles.batchTag}>
+                                                {fragment.batchIndex}/{fragment.batchTotal}
                                             </Box>
                                         )}
                                         {fragment.prompt}
                                     </Typography>
-                                    <Typography variant="caption" color="textSecondary">
-                                        {fragment.duration}s
-                                        {fragment.cfgScale !== undefined && ` • CFG ${fragment.cfgScale}`}
-                                        {fragment.seed !== undefined && ` • Seed ${fragment.seed}`}
-                                        {' • '}{fragment.timestamp}
-                                    </Typography>
                                 </Box>
-                                <Box sx={generatedFragmentsWindowStyles.fragmentActions}>
+
+                                <Typography
+                                    variant="caption"
+                                    color="textSecondary"
+                                    sx={generatedFragmentsWindowStyles.fragmentMetaInline}
+                                >
+                                    {fragment.duration}s
+                                    {ago && ` · ${ago}`}
+                                </Typography>
+
+                                <Tooltip
+                                    title={
+                                        <Box component="span" sx={{ whiteSpace: 'pre-line' }}>
+                                            {tooltipLines}
+                                        </Box>
+                                    }
+                                    arrow
+                                    placement="top"
+                                >
+                                    <Box
+                                        component="span"
+                                        sx={generatedFragmentsWindowStyles.fragmentInfoIcon}
+                                    >
+                                        <InfoIcon size={14} />
+                                    </Box>
+                                </Tooltip>
+
+                                <Tooltip title="Download" placement="top" arrow>
                                     <IconButton
                                         size="small"
-                                        onClick={() => handlePlayPause(fragment)}
-                                        color={playingFragment === fragment.id ? "primary" : "default"}
-                                        sx={generatedFragmentsWindowStyles.playPauseButton(playingFragment === fragment.id)}
-                                    >
-                                        {playingFragment === fragment.id ? <StopIcon /> : <PlayIcon />}
-                                    </IconButton>
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        startIcon={<DownloadIcon />}
                                         onClick={() => onDownload(fragment)}
+                                        sx={generatedFragmentsWindowStyles.downloadButton}
                                     >
-                                        Download
-                                    </Button>
-                                </Box>
-                            </Box>
+                                        <DownloadIcon size={16} />
+                                    </IconButton>
+                                </Tooltip>
 
-                            <audio
-                                ref={el => setAudioRef(fragment.id, el)}
-                                src={fragment.audioUrl}
-                                onEnded={() => setPlayingFragment(null)}
-                                onPause={() => setPlayingFragment(null)}
-                                style={generatedFragmentsWindowStyles.hiddenAudio}
-                            />
-                        </ListItem>
-                    ))}
+                                <audio
+                                    ref={el => setAudioRef(fragment.id, el)}
+                                    src={fragment.audioUrl}
+                                    onEnded={() => setPlayingFragment(null)}
+                                    onPause={() => setPlayingFragment(null)}
+                                    style={generatedFragmentsWindowStyles.hiddenAudio}
+                                />
+                            </ListItem>
+                        );
+                    })}
                 </List>
             )}
         </Paper>

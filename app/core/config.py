@@ -65,7 +65,9 @@ class ProjectConfig:
         }
 
         self._ensure_directories()
-        # SA3-TODO(Phase 2): populated by the Checkpoint Manager catalog. Empty until then.
+        # Back-compat shim for the legacy get_model_config() / get_base_model_configs()
+        # accessors. The SA3 catalog now lives in app/core/model_manager.py; this
+        # dict stays empty.
         self.model_configs: Dict[str, Dict[str, str]] = {}
 
     def _ensure_directories(self) -> None:
@@ -80,28 +82,9 @@ class ProjectConfig:
         return self.paths[path_name]
 
     def get_model_config(self, model_name: str) -> Dict[str, str]:
-        # SA3-TODO(Phase 2): Checkpoint Manager owns the catalog now.
         if model_name not in self.model_configs:
-            raise ValueError(f"Unknown model: {model_name} (SA3 catalog not yet wired)")
+            raise ValueError(f"Unknown model: {model_name}")
         return self.model_configs[model_name]
-
-    def get_dataset_config_path(self) -> str:
-        # SA3-TODO(Phase 5): SA3 reads <basename>.txt sidecars; legacy dataset-config.json
-        # is obsolete. Path is preserved for callers but the file is no longer generated.
-        return str(self.paths["models_config"] / "dataset-config.json")
-
-    def get_custom_metadata_path(self) -> str:
-        # SA3-TODO(Phase 5): replaced by app/core/training/sa3_lora_runner.py caption materializer.
-        return ""
-
-    def get_metadata_json_path(self) -> str:
-        return str(self.paths["data"] / "metadata.json")
-
-    def update_dataset_config(self) -> None:
-        # SA3-TODO(Phase 5): SA3 datasets use <basename>.txt sidecars (see Appendix B
-        # in SA3_INTEGRATION_PLAN.md). Fragmenta no longer maintains a dataset-config.json.
-        # This is a no-op pending the new caption materializer in sa3_lora_runner.py.
-        return
 
     def to_dict(self) -> Dict[str, Any]:
         return {

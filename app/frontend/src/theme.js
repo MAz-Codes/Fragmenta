@@ -272,7 +272,7 @@ let theme = createTheme({
                         'inset 0 -1px 0 rgba(0, 0, 0, 0.35), ' +
                         'inset 1px 0 0 rgba(255, 255, 255, 0.08), ' +
                         'inset -1px 0 0 rgba(0, 0, 0, 0.20)',
-                    transition: 'box-shadow 220ms ease, transform 220ms ease, background-color 220ms ease',
+                    transition: 'box-shadow 220ms ease, background-color 220ms ease',
                     '&:hover': {
                         backgroundColor: 'rgba(46, 50, 54, 0.46)',
                         boxShadow:
@@ -281,7 +281,6 @@ let theme = createTheme({
                             'inset 0 1px 0 rgba(255, 255, 255, 0.30), ' +
                             'inset 0 -1px 0 rgba(0, 0, 0, 0.40), ' +
                             '0 0 0 1px rgba(39, 159, 187, 0.30)',
-                        transform: 'translateY(-2px)',
                     },
                 },
             },
@@ -448,6 +447,27 @@ let theme = createTheme({
                 select: { display: 'flex', alignItems: 'center', fontSize: '0.8rem' },
             },
         },
+        // Every overlay component (Select, Menu, Autocomplete, Dialog, Drawer)
+        // bottoms out at MuiModal, which by default locks body scroll AND pads
+        // the body by the scrollbar width to keep layout stable. With a
+        // scrollable page, that pad reads as a right-side gutter every time
+        // anything overlays the page. We disable the lock globally; the
+        // backdrop still catches clicks, so modals stay modal — the user just
+        // doesn't get a visible content shift. Dialog/Drawer get their own
+        // entries below; this catches Popover/Menu/Autocomplete which already
+        // share styleOverrides blocks here.
+        MuiModal: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiPopover: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiMenu: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiDrawer: {
+            defaultProps: { disableScrollLock: true },
+        },
         MuiMenuItem: {
             styleOverrides: {
                 root: {
@@ -535,6 +555,7 @@ let theme = createTheme({
             },
         },
         MuiDialog: {
+            defaultProps: { disableScrollLock: true },
             styleOverrides: {
                 paper: {
                     backgroundColor: DARK.paper,
@@ -880,7 +901,7 @@ export const lightTheme = createTheme(theme, {
                         '0 3px 10px rgba(43, 31, 18, 0.06), ' +
                         'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
                         'inset 0 -1px 0 rgba(43, 31, 18, 0.08)',
-                    transition: 'box-shadow 220ms ease, transform 220ms ease, background-color 220ms ease',
+                    transition: 'box-shadow 220ms ease, background-color 220ms ease',
                     '&:hover': {
                         backgroundColor: 'rgba(252, 246, 232, 0.82)',
                         boxShadow:
@@ -889,7 +910,6 @@ export const lightTheme = createTheme(theme, {
                             'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
                             'inset 0 -1px 0 rgba(43, 31, 18, 0.10), ' +
                             '0 0 0 1px rgba(31, 126, 148, 0.25)',
-                        transform: 'translateY(-2px)',
                     },
                 },
             },
@@ -993,6 +1013,18 @@ export const lightTheme = createTheme(theme, {
                 },
             },
         },
+        MuiModal: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiPopover: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiMenu: {
+            defaultProps: { disableScrollLock: true },
+        },
+        MuiDrawer: {
+            defaultProps: { disableScrollLock: true },
+        },
         MuiMenuItem: {
             styleOverrides: {
                 root: {
@@ -1062,6 +1094,7 @@ export const lightTheme = createTheme(theme, {
             },
         },
         MuiDialog: {
+            defaultProps: { disableScrollLock: true },
             styleOverrides: {
                 paper: {
                     backgroundColor: LIGHT.paper,
@@ -1465,7 +1498,6 @@ export const appStyles = {
         mb: 2,
         borderRadius: 2.5,
         transition: 'all 0.3s ease',
-        '&:hover': { transform: 'translateY(-1px)' },
     },
     // Sticks the Dataset Status card to the top of the viewport during
     // page scroll, mirroring the left nav rail's anchored position.
@@ -1556,6 +1588,24 @@ export const appStyles = {
         display: 'flex',
         alignItems: 'center',
         gap: 2,
+    },
+    // Header row for a field: label + an info icon that exposes the help text
+    // on hover. Used across the Training tab's Advanced settings to keep the
+    // form compact — captions live in tooltips, not below every control.
+    fieldLabelRow: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.5,
+        mb: 1,
+    },
+    fieldHelpIcon: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        cursor: 'help',
+        color: 'text.secondary',
+        opacity: 0.5,
+        transition: 'opacity 150ms ease',
+        '&:hover': { opacity: 0.95 },
     },
     sliderFlexGrow: {
         flex: 1,
@@ -1699,7 +1749,6 @@ export const appStyles = {
         mb: 2,
         borderRadius: 2.5,
         transition: 'all 0.3s ease',
-        '&:hover': { transform: 'translateY(-1px)' },
     },
     boldBodyText: {
         fontWeight: 'bold',
@@ -1912,18 +1961,22 @@ export const audioUploadRowStyles = {
 
 export const generatedFragmentsWindowStyles = {
     // Theme-driven coloring — MuiPaper handles bg/border/shadow.
+    // Card grows with content up to a sensible cap, then scrolls.
     rootPaper: {
         p: 2,
-        height: 240,
         display: 'flex',
         flexDirection: 'column',
         borderRadius: 2.5,
+        // Tall enough to show ~9 rows before scrolling. Min keeps the empty
+        // state from collapsing the layout when no fragments exist yet.
+        minHeight: 240,
+        maxHeight: 520,
     },
     headerRow: {
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        mb: 2,
+        mb: 1.5,
     },
     titleRow: {
         display: 'flex',
@@ -1946,57 +1999,83 @@ export const generatedFragmentsWindowStyles = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        height: '100%',
+        flex: 1,
         color: 'text.secondary',
     },
     listRoot: {
         flex: 1,
         overflow: 'auto',
-        maxHeight: 180,
+        // Each row is ~40px (single-line layout); cap so the card height
+        // never exceeds rootPaper.maxHeight regardless of fragment count.
+        p: 0,
         '& .MuiListItem-root': {
             border: '1px solid',
             borderColor: 'divider',
             borderRadius: 1.5,
-            mb: 1,
+            mb: 0.75,
             bgcolor: 'background.default',
             '&:last-child': { mb: 0 },
         },
     },
+    // One-row, Spotify-style layout:
+    //   [▶]   prompt text (ellipsis)    Xs · ago    (i)   [⬇]
     listItem: {
         display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        py: 1,
-    },
-    fragmentRow: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        mb: 1,
+        alignItems: 'center',
+        gap: 1,
+        py: 0.5,
+        px: 1,
+        minHeight: 40,
     },
     fragmentMeta: {
         flex: 1,
         minWidth: 0,
     },
     fragmentPrompt: {
-        fontWeight: 'bold',
+        fontWeight: 500,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
-        display: '-webkit-box',
-        WebkitLineClamp: 2,
-        WebkitBoxOrient: 'vertical',
+        whiteSpace: 'nowrap',
     },
-    fragmentActions: {
-        display: 'flex',
-        gap: 1,
+    batchTag: {
+        display: 'inline-block',
+        fontWeight: 700,
+        fontSize: '0.7rem',
+        px: 0.5,
+        py: 0,
+        mr: 0.75,
+        borderRadius: 0.75,
+        bgcolor: 'action.selected',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+    },
+    fragmentMetaInline: {
         flexShrink: 0,
+        whiteSpace: 'nowrap',
+        fontVariantNumeric: 'tabular-nums',
+    },
+    fragmentInfoIcon: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        color: 'text.secondary',
+        opacity: 0.5,
+        cursor: 'help',
+        transition: 'opacity 150ms ease',
+        '&:hover': { opacity: 0.95 },
     },
     playPauseButton: (isPlaying) => (muiTheme) => ({
+        flexShrink: 0,
         border: '1px solid',
         borderColor: isPlaying
             ? 'primary.main'
             : (muiTheme.palette.mode === 'dark' ? 'rgba(194, 207, 228, 0.22)' : 'rgba(15, 23, 42, 0.2)'),
+        color: isPlaying ? 'primary.main' : 'inherit',
     }),
+    downloadButton: {
+        flexShrink: 0,
+        color: 'text.secondary',
+        '&:hover': { color: 'primary.main' },
+    },
     hiddenAudio: {
         display: 'none',
     },
@@ -2011,7 +2090,6 @@ export const trainingMonitorStyles = {
         flexDirection: 'column',
         borderRadius: 2.5,
         transition: 'all 0.3s ease',
-        '&:hover': { transform: 'translateY(-1px)' },
     },
     headerRow: {
         display: 'flex',

@@ -13,6 +13,7 @@ import os
 import platform
 import re
 import sys
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -21,6 +22,57 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import soundfile as sf
 import torch
+
+from utils.logger import get_logger
+
+logger = get_logger("AudioGenerator")
+
+
+# Live progress from the SA3 sampler. SA3's `model.generate(**sampler_kwargs)`
+# forwards `callback=fn` into the sampler, which fires it per ODE step with
+# `{'i': step_index, ...}`. We mirror that into this dict so the frontend can
+# poll real progress instead of a fake ticker. Reset on each new generation.
+_generation_state: Dict[str, Any] = {
+    "is_generating": False,
+    "phase": "idle",        # "idle" | "loading" | "sampling" | "decoding" | "complete" | "failed"
+    "step": 0,
+    "total_steps": 0,
+    "progress": 0,          # 0-100, derived
+    "batch_index": 0,
+    "batch_total": 0,
+    "started_at": None,
+    "ended_at": None,
+    "error": None,
+}
+_generation_state_lock = threading.Lock()
+
+
+def get_generation_progress() -> Dict[str, Any]:
+    """Snapshot of the current generation's live progress. Cheap to call."""
+    with _generation_state_lock:
+        return dict(_generation_state)
+
+
+def _set_progress(**kwargs: Any) -> None:
+    """Merge fields into _generation_state under the lock. Recomputes
+    `progress` automatically when step/total_steps land in the same update."""
+    with _generation_state_lock:
+        _generation_state.update(kwargs)
+        total = int(_generation_state.get("total_steps") or 0)
+        step = int(_generation_state.get("step") or 0)
+        _generation_state["progress"] = (
+            int(round(100 * step / total)) if total > 0 else 0
+        )
+
+
+def _reset_progress() -> None:
+    with _generation_state_lock:
+        _generation_state.update({
+            "is_generating": False, "phase": "idle",
+            "step": 0, "total_steps": 0, "progress": 0,
+            "batch_index": 0, "batch_total": 0,
+            "started_at": None, "ended_at": None, "error": None,
+        })
 
 # Vendored SA3 lives at <repo>/vendor/stable-audio-3 — put it on sys.path so
 # `import stable_audio_3` resolves without a global pip install.
@@ -148,6 +200,24 @@ class AudioGenerator:
         os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
         os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
         os.environ["HF_HUB_OFFLINE"] = "1"
+        # huggingface_hub captures HF_HUB_CACHE and HF_HUB_OFFLINE as
+        # module-level constants AT IMPORT TIME. The Flask backend imports
+        # huggingface_hub (transitively, via model_manager.py) before we ever
+        # set these env vars, so the constants point at ~/.cache/huggingface/
+        # and offline=False. Setting os.environ now has no effect on already-
+        # captured constants. We have to monkey-patch them directly.
+        # Same trick we used for the CLAP loader.
+        prev_hub_constants = {}
+        try:
+            import huggingface_hub.constants as _hf_const
+            prev_hub_constants = {
+                "HF_HUB_CACHE": _hf_const.HF_HUB_CACHE,
+                "HF_HUB_OFFLINE": _hf_const.HF_HUB_OFFLINE,
+            }
+            _hf_const.HF_HUB_CACHE = str(hub_dir)
+            _hf_const.HF_HUB_OFFLINE = True
+        except Exception:
+            _hf_const = None
         try:
             try:
                 from stable_audio_3 import StableAudioModel
@@ -187,6 +257,11 @@ class AudioGenerator:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
+            # Restore the patched constants so we don't permanently alter
+            # global huggingface_hub state for anything else in-process.
+            if _hf_const is not None and prev_hub_constants:
+                _hf_const.HF_HUB_CACHE = prev_hub_constants["HF_HUB_CACHE"]
+                _hf_const.HF_HUB_OFFLINE = prev_hub_constants["HF_HUB_OFFLINE"]
         self._model_id = model_id
         self._device = device
 
@@ -217,17 +292,30 @@ class AudioGenerator:
         if cur_paths:
             try:
                 from stable_audio_3.models.lora import remove_lora_by_index
+                # SA3 applies LoRA to the DiffusionCond's DiT (.model) and
+                # conditioner (.conditioner) — mirror StableAudioModel's own
+                # set_lora_strength which iterates both submodules.
+                # `self.model` is StableAudioModel; `self.model.model` is the
+                # inner DiffusionCond. Each call walks named_modules() and
+                # is no-op if no LoRA at that index exists.
                 # remove_lora_by_index pops index 0 each time; loop len-times.
+                inner = self.model.model
                 for _ in range(len(cur_paths)):
-                    remove_lora_by_index(self.model.model, 0)
-                    remove_lora_by_index(self.model.conditioner, 0)
-            except Exception:
-                # If removal API is unavailable, reload the base model entirely
-                # so we don't carry stale adapters.
+                    remove_lora_by_index(inner.model, 0)
+                    remove_lora_by_index(inner.conditioner, 0)
+            except Exception as exc:
+                # If removal fails (e.g. an upstream API change), force a
+                # base-model reload so we don't carry stale adapters. KEEP
+                # _model_id intact — _ensure_model needs it to know what to
+                # reload. (Previous code zeroed it; the reload then raised
+                # "Unknown SA3 model_id: None".)
+                logger.warning(
+                    "LoRA removal failed (%s); reloading base model %s",
+                    exc, self._model_id,
+                )
                 self.model = None
-                self._model_id = None
 
-        if self.model is None:
+        if self.model is None and self._model_id is not None:
             # Forced full reload (only if remove failed above).
             self._ensure_model(self._model_id, device=self._device, half=True)
 
@@ -277,6 +365,12 @@ class AudioGenerator:
         if self._stop_requested:                  # honour pre-call stop
             raise GenerationStopped()
 
+        _set_progress(
+            is_generating=True, phase="loading",
+            step=0, total_steps=0, error=None,
+            started_at=time.time(), ended_at=None,
+        )
+
         self._ensure_model(model_id, device=device, half=half)
         self._apply_loras(loras or [])
 
@@ -298,6 +392,19 @@ class AudioGenerator:
         if self._stop_requested:                  # one more check before the heavy call
             raise GenerationStopped()
 
+        # Sampler callback — fires per ODE step. Also gives us a cheap
+        # cancellation hook: raising mid-callback aborts the sampler.
+        def _sampler_callback(info: Dict[str, Any]) -> None:
+            if self._stop_requested:
+                raise GenerationStopped()
+            i = info.get("i")
+            if isinstance(i, int):
+                # Sampler reports i=0..steps-1; user-facing step is 1-based
+                # and capped at effective_steps so 100% only on completion.
+                _set_progress(step=min(i + 1, effective_steps))
+
+        _set_progress(phase="sampling", total_steps=int(effective_steps), step=0)
+
         gen_kwargs = dict(
             prompt=prompt,
             negative_prompt=negative_prompt or None,
@@ -307,6 +414,7 @@ class AudioGenerator:
             seed=int(seed),
             batch_size=int(batch_size),
             chunked_decode=chunked_decode,
+            callback=_sampler_callback,
         )
         if init_audio is not None:
             gen_kwargs["init_audio"] = init_audio
@@ -323,10 +431,23 @@ class AudioGenerator:
                     list(inpaint_ends) if len(inpaint_ends) > 1 else float(inpaint_ends[0])
                 )
 
-        audio = self.model.generate(**gen_kwargs)
-        # audio: torch.Tensor[B, channels=2, samples] in [-1, 1] @ 44.1 kHz
+        try:
+            audio = self.model.generate(**gen_kwargs)
+            # audio: torch.Tensor[B, channels=2, samples] in [-1, 1] @ 44.1 kHz
+        except GenerationStopped:
+            _set_progress(phase="idle", is_generating=False, ended_at=time.time())
+            raise
+        except Exception as exc:
+            _set_progress(phase="failed", is_generating=False,
+                          error=str(exc), ended_at=time.time())
+            raise
 
-        return self._finalize(audio, prompt=prompt, model_id=model_id)
+        _set_progress(phase="decoding", step=effective_steps)
+        try:
+            return self._finalize(audio, prompt=prompt, model_id=model_id)
+        finally:
+            _set_progress(phase="complete", is_generating=False,
+                          step=effective_steps, ended_at=time.time())
 
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod

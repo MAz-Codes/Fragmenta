@@ -23,11 +23,10 @@ soundfile>=0.13.1
 scipy>=1.13,<2
 numba>=0.60,<1
 numpy>=2.2.6,<3
+
+matplotlib>=3.8
 pandas>=2.2,<3
 
-# Optional rich-tier dataset annotator. Imported lazily by auto_annotator.py
-# only when the user selects Rich annotation. The 630MB .pt checkpoint is
-# managed separately via the Checkpoint Manager.
 laion-clap>=1.1.6
 
 setuptools<70

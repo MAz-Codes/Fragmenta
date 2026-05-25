@@ -3,7 +3,7 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
-from app.core.training.fine_tuner import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
+from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -15,7 +15,7 @@ import threading
 import time
 import json
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from werkzeug.serving import WSGIRequestHandler
 
 sys.path.append(os.path.abspath(
@@ -202,10 +202,19 @@ def start_training():
             raise ValueError("No training configuration provided")
 
         # Required fields.
-        required_fields = ['modelName', 'baseModel']
-        missing = [f for f in required_fields if f not in training_config]
+        required_fields = ['modelName', 'baseModel', 'projectName']
+        missing = [f for f in required_fields if not training_config.get(f)]
         if missing:
             return jsonify({'error': f"Missing required fields: {missing}"}), 400
+
+        # Project must exist on disk (Dataset Workbench created it).
+        from app.backend.data.projects import project_path
+        proj_dir = project_path(training_config['projectName'])
+        if not proj_dir.exists():
+            return jsonify({
+                'error': f"Project not found: {training_config['projectName']}. "
+                         "Create or load it in the Dataset tab first.",
+            }), 400
 
         # SA3 base validation. LoRA training requires a CFG-aware *-base
         # checkpoint; the post-trained / distilled checkpoints have had
@@ -220,6 +229,25 @@ def start_training():
                     f"as a training base."
                 )
             }), 400
+
+        # Same-name collision check. If a previous run for this modelName
+        # already wrote checkpoints, refuse unless the caller passes
+        # overwrite=true. Stops a re-train from quietly co-mingling with
+        # stale artifacts from the previous run.
+        if not training_config.get('overwrite'):
+            from app.core.training.sa3_trainer import SA3Trainer
+            existing = SA3Trainer.existing_run_info(training_config['modelName'])
+            if existing:
+                return jsonify({
+                    'error': 'run_exists',
+                    'code': 'run_exists',
+                    'message': (
+                        f"A run named “{existing['run_name']}” already exists "
+                        f"with {existing['checkpoint_count']} checkpoint(s). "
+                        "Confirm overwrite to replace it."
+                    ),
+                    **existing,
+                }), 409
 
         # SA3-aligned defaults. Phase 5 ships LoRA-only — no `mode` switch.
         training_config['mode'] = 'lora'
@@ -513,22 +541,74 @@ def list_loras():
     checkpoint step. We surface every step so the user can A/B-test
     checkpoints inside a single run.
 
-    Legacy SA2 LoRAs (.ckpt files) are skipped — they're architecturally
-    incompatible with the SA3 engine and would only confuse the picker.
+    Lightning .ckpt files from prior runs get lazily converted to
+    .safetensors on demand so the picker can see them.
+
+    Query:
+        base_model (optional) — filter to LoRAs compatible with this base
+            (e.g. ?base_model=sa3-small-music or ?base_model=sa3-small-music-base).
+            A small-music LoRA is compatible with both small-music and
+            small-music-base (same backbone, different CFG distillation
+            state); the matcher strips a trailing `-base` from both sides
+            before comparing.
     """
+    requested_base = (request.args.get('base_model') or '').strip()
+
+    def _base_root(model_id: str) -> str:
+        """Strip the `-base` suffix so LoRAs trained against `*-base` filter
+        as compatible with their post-trained sibling (same architecture)."""
+        if not model_id:
+            return ''
+        return model_id[:-5] if model_id.endswith('-base') else model_id
+
+    requested_root = _base_root(requested_base)
+
     try:
         config = get_config()
         fine_tuned_dir = config.get_path("models_fine_tuned")
-        loras = []
+        # Grouping: one entry per LoRA *run* (modelName), with `all_checkpoints`
+        # listing every snapshot oldest→latest. `path` defaults to the latest
+        # checkpoint so picking the LoRA without changing the sub-picker uses
+        # the final state of training.
+        loras_by_name: Dict[str, Dict[str, Any]] = {}
         if fine_tuned_dir.exists():
             try:
                 from safetensors import safe_open
             except ImportError:
                 return jsonify({"loras": []})
 
+            # Lazy migration: any run dir that still has Lightning .ckpt
+            # files (from a training run that completed before the
+            # auto-convert step landed) gets a one-time conversion here so
+            # the picker can see it. Cheap: no-op if .safetensors already
+            # exists for each .ckpt.
+            from app.core.training.sa3_lora_runner import convert_run_checkpoints_to_safetensors
+
             for run_dir in sorted(fine_tuned_dir.iterdir()):
                 if not run_dir.is_dir():
                     continue
+                ckpt_dir = run_dir / "checkpoints"
+                if ckpt_dir.is_dir() and any(ckpt_dir.glob("*.ckpt")):
+                    # Read the run's base_model from its training_metadata.json
+                    # so the converted .safetensors carries the right tag.
+                    meta_path = run_dir / "training_metadata.json"
+                    base_model = None
+                    model_name = run_dir.name
+                    if meta_path.exists():
+                        try:
+                            rm = json.loads(meta_path.read_text())
+                            base_model = rm.get("base_model")
+                            model_name = rm.get("model_name") or model_name
+                        except Exception:
+                            pass
+                    if base_model:
+                        try:
+                            convert_run_checkpoints_to_safetensors(
+                                run_dir, base_model=base_model, model_name=model_name,
+                            )
+                        except Exception as conv_err:
+                            logger.warning("Could not auto-convert %s: %s", run_dir.name, conv_err)
+
                 # SA3 checkpoints live under <run>/checkpoints/. Fall back
                 # to the run dir itself for runs that don't follow that
                 # convention.
@@ -551,11 +631,23 @@ def list_loras():
                             meta = f.metadata() or {}
                     except Exception:
                         meta = {}
-                    # `train_lora.py` embeds these via get_lora_state_dict;
-                    # missing keys mean we can't safely use the file.
+                    # SA3 canonically nests rank/alpha/adapter_type inside a
+                    # `lora_config` JSON metadata key (see save_lora_safetensors
+                    # in vendor/.../models/lora/utils.py). Parse it so the
+                    # picker can surface those values; fall back to top-level
+                    # for forward-compat with any future shape.
+                    lora_config = {}
+                    if meta.get("lora_config"):
+                        try:
+                            lora_config = json.loads(meta["lora_config"])
+                        except Exception:
+                            lora_config = {}
+
+                    # `train_lora.py` doesn't embed base_model itself — we add
+                    # it during the .ckpt→.safetensors conversion step.
+                    # Fall back to training_metadata.json for legacy runs.
                     base_model = meta.get("base_model") or meta.get("base_model_id")
                     if not base_model:
-                        # Best-effort fallback: read the run's metadata json.
                         run_meta_path = run_dir / "training_metadata.json"
                         if run_meta_path.exists():
                             try:
@@ -566,18 +658,68 @@ def list_loras():
                     if not base_model or not str(base_model).startswith("sa3-"):
                         continue  # not a SA3 LoRA
 
-                    loras.append({
-                        "id": f"{run_dir.name}::{ckpt.stem}",
-                        "name": run_dir.name,
+                    # Filter by requested base if the caller specified one.
+                    # Treat `sa3-small-music` and `sa3-small-music-base` as
+                    # compatible: same backbone, only differ in CFG state.
+                    if requested_root and _base_root(base_model) != requested_root:
+                        continue
+
+                    rel_path = str(ckpt.relative_to(config.project_root))
+                    rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
+                    alpha = _safe_int(
+                        lora_config.get("alpha")
+                        or meta.get("lora_alpha")
+                        or meta.get("alpha")
+                    )
+                    adapter_type = (
+                        lora_config.get("adapter_type")
+                        or meta.get("adapter_type")
+                        or "lora"
+                    )
+
+                    entry = loras_by_name.get(run_dir.name)
+                    if entry is None:
+                        entry = {
+                            "id": run_dir.name,
+                            "name": run_dir.name,
+                            "base_model": base_model,
+                            "rank": rank,
+                            "alpha": alpha,
+                            "adapter_type": adapter_type,
+                            "all_checkpoints": [],
+                        }
+                        loras_by_name[run_dir.name] = entry
+
+                    entry["all_checkpoints"].append({
+                        "path": rel_path,
                         "checkpoint": ckpt.stem,
-                        "path": str(ckpt.relative_to(config.project_root)),
-                        "base_model": base_model,
-                        "rank": _safe_int(meta.get("rank")),
-                        "alpha": _safe_int(meta.get("lora_alpha") or meta.get("alpha")),
-                        "adapter_type": meta.get("adapter_type") or "lora",
                         "size_bytes": ckpt.stat().st_size,
                         "mtime": ckpt.stat().st_mtime,
                     })
+
+        # Finalize each LoRA entry — sort checkpoints by training step
+        # extracted from the filename (Lightning writes "epoch=X-step=Y.ckpt"
+        # which converts to "epoch=X-step=Y.safetensors"). mtime is unreliable
+        # because the lazy .ckpt→.safetensors converter can rewrite files in
+        # alphabetical (not training-step) order.
+        import re as _re
+        _step_pat = _re.compile(r"step=(\d+)")
+
+        def _step_of(checkpoint_stem: str) -> int:
+            m = _step_pat.search(checkpoint_stem)
+            return int(m.group(1)) if m else -1
+
+        loras = []
+        for entry in loras_by_name.values():
+            ckpts = sorted(entry["all_checkpoints"], key=lambda c: _step_of(c["checkpoint"]))
+            entry["all_checkpoints"] = [c["path"] for c in ckpts]
+            latest = ckpts[-1]
+            entry["path"] = latest["path"]
+            entry["checkpoint"] = latest["checkpoint"]
+            entry["size_bytes"] = latest["size_bytes"]
+            entry["mtime"] = latest["mtime"]
+            loras.append(entry)
+        loras.sort(key=lambda e: e["mtime"], reverse=True)
 
         return jsonify({"loras": loras})
     except Exception as e:
@@ -655,109 +797,31 @@ def update_lora_strength():
         return jsonify(APIResponse.error(str(e), status_code=500)), 500
 
 
-@app.route('/api/status', methods=['GET'])
-def get_status():
-    _log_api_call('status')
-    try:
-        config = get_config()
-        data_dir = config.get_path("data")
-        metadata_json = Path(config.get_metadata_json_path())
-        custom_metadata = Path(config.get_custom_metadata_path())
-
-        try:
-            import torchaudio
-        except ImportError:
-            torchaudio = None
-        try:
-            import soundfile as sf
-        except ImportError:
-            sf = None
-
-        def _duration(path: Path) -> float:
-            import warnings
-            try:
-                with warnings.catch_warnings():
-                    # /api/status polls every few seconds; without this, every
-                    # torchaudio.info call spams pages of deprecation noise.
-                    warnings.simplefilter("ignore")
-                    if torchaudio is not None:
-                        info = torchaudio.info(str(path))
-                        return info.num_frames / info.sample_rate
-                    if sf is not None:
-                        f = sf.SoundFile(str(path))
-                        return len(f) / f.samplerate
-            except Exception as exc:
-                print(f"Error reading {path}: {exc}")
-            return 0.0
-
-        # Prefer metadata.json as the source of truth for "the dataset" — it spans
-        # files that may live outside data/ (e.g. CSV import with copy_files=false).
-        # Fall back to scanning data/ if metadata is absent.
-        file_names = []
-        total_duration = 0.0
-        if metadata_json.exists():
-            try:
-                with open(metadata_json, 'r', encoding='utf-8') as f:
-                    entries = json.load(f) or []
-            except Exception as exc:
-                print(f"Could not read metadata.json: {exc}")
-                entries = []
-            for item in entries:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get('file_name')
-                if not name:
-                    continue
-                file_names.append(name)
-                # Files are staged into data/ (copy or symlink) at commit time, so
-                # resolve by basename rather than trusting the stored `path` field
-                # (legacy entries may use an incorrect prefix).
-                p = data_dir / name
-                if not p.exists():
-                    stored = item.get('path') or ''
-                    candidate = Path(stored)
-                    if not candidate.is_absolute():
-                        candidate = config.project_root / stored
-                    if candidate.is_file():
-                        p = candidate
-                if p.is_file():
-                    total_duration += _duration(p)
-        else:
-            audio_files = list(data_dir.glob("*.wav")) + \
-                list(data_dir.glob("*.mp3")) + list(data_dir.glob("*.flac"))
-            for audio_file in audio_files:
-                total_duration += _duration(audio_file)
-            file_names = [f.name for f in audio_files]
-
-        status_response = {
-            'status': 'running',
-            'raw_files': len(file_names),
-            'processed_segments': len(file_names),
-            'raw_file_names': file_names[:10],
-            'total_duration': total_duration,
-            'has_metadata_json': metadata_json.exists(),
-            'has_custom_metadata': custom_metadata.exists(),
-            'trained_models': len(list(config.get_path("models_fine_tuned").glob("*"))) if config.get_path("models_fine_tuned").exists() else 0,
-            'training': get_training_status()
-        }
-
-        return jsonify(status_response)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/training/suggest-hyperparams', methods=['GET'])
 def training_suggest_hyperparams():
     """Heuristic hyperparameter suggester for the Training tab's Suggest button.
 
-    Query: mode=lora|full (default lora).
-    Returns: {ok, stats, config, rationale} — see hyperparam_suggester.suggest.
+    Query:
+        project_name (required) — Dataset Workbench project to analyse
+        base_model  (optional) — picked SA3 base, e.g. sa3-medium-base. Used to
+                                  pick a -XS adapter when VRAM is tight and to
+                                  emit base-model-aware warnings.
+    Returns: {ok, stats, config, rationale, warnings} — see hyperparam_suggester.suggest.
     """
     try:
+        from app.backend.data.projects import project_path
         from app.core.training.hyperparam_suggester import suggest
-        mode = request.args.get('mode', 'lora')
-        config = get_config()
-        result = suggest(config.get_path('data'), mode=mode)
+        project_name = request.args.get('project_name', '').strip()
+        base_model = request.args.get('base_model', '').strip() or None
+        if not project_name:
+            return jsonify({'ok': False, 'error': "project_name is required."}), 400
+        proj_dir = project_path(project_name)
+        if not proj_dir.exists():
+            return jsonify({
+                'ok': False,
+                'error': f"Project not found: {project_name}",
+            }), 404
+        result = suggest(proj_dir, base_model=base_model)
         return jsonify(result)
     except Exception as exc:
         logger.exception("hyperparam suggestion failed")
@@ -1223,49 +1287,6 @@ def get_model_storage():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/start-fresh', methods=['POST'])
-def start_fresh():
-    try:
-        config = get_config()
-        data_dir = config.get_path("data")
-        config_dir = config.get_path("models_config")
-
-        data_files_deleted = 0
-        if data_dir.exists():
-            # iterdir() (vs glob("*")) catches dotfiles too — e.g. the
-            # hyperparam suggester's .duration_cache.json, which should
-            # absolutely be wiped on Fresh Start.
-            for file_path in data_dir.iterdir():
-                if file_path.is_file() and not file_path.name.endswith('.py'):
-                    file_path.unlink()
-                    data_files_deleted += 1
-
-        config_files_deleted = 0
-        if config_dir.exists():
-            for file_path in config_dir.glob("custom_metadata.py"):
-                if file_path.is_file():
-                    file_path.unlink()
-                    config_files_deleted += 1
-
-        labels_reset = False
-        user_labels_path = _annotator_labels_user_path()
-        if user_labels_path.exists():
-            user_labels_path.unlink()
-            labels_reset = True
-
-        data_dir.mkdir(exist_ok=True, parents=True)
-
-        return jsonify({
-            'message': f'Fresh start completed! Deleted {data_files_deleted} data files and {config_files_deleted} config metadata files.',
-            'data_files_deleted': data_files_deleted,
-            'config_files_deleted': config_files_deleted,
-            'annotator_labels_reset': labels_reset
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/unwrap-model', methods=['POST'])
 def unwrap_model():
     try:
@@ -1416,6 +1437,21 @@ def delete_wrapped_checkpoint():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/generation-progress', methods=['GET'])
+def get_generation_progress_route():
+    """Live progress for the in-flight `/api/generate` call.
+
+    Returns the same dict as audio_generator.get_generation_progress():
+        is_generating, phase ("idle"|"loading"|"sampling"|"decoding"|
+        "complete"|"failed"), step, total_steps, progress (0-100),
+        batch_index, batch_total, started_at, ended_at, error.
+
+    Cheap (just a dict copy under a lock); safe to poll at ~200ms.
+    """
+    from app.core.generation.audio_generator import get_generation_progress
+    return jsonify(get_generation_progress())
 
 
 @app.route('/api/stop-generation', methods=['POST'])

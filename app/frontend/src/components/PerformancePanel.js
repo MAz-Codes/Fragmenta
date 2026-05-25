@@ -35,6 +35,7 @@ import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
 import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair } from '../utils/cueAudio';
+import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
     listPresetNames,
@@ -1407,7 +1408,7 @@ function PerformancePanelInner({
                 {(() => {
                     const isBaseModel = baseModels.some(m => m.name === selectedModel);
                     const compatibleLoras = isBaseModel
-                        ? availableLoras.filter(l => l.base_model === selectedModel)
+                        ? filterLorasForModel(availableLoras, selectedModel)
                         : [];
                     const currentLora = compatibleLoras.find(
                         l => l.path === selectedLora ||

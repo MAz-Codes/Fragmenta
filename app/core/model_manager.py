@@ -237,6 +237,21 @@ class ModelManager:
             for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id)):
                 if d.exists():
                     bytes_total += self._dir_size(d)
+
+        # Surface the most recent in-flight job for this model so the
+        # frontend can resume the progress bar after the Checkpoint Manager
+        # dialog is closed and reopened. The job lives on the backend; only
+        # the polling died with the dismissed UI.
+        active_job = None
+        with self._jobs_lock:
+            in_flight = [
+                j for j in self._jobs.values()
+                if j.model_id == model_id and j.status in ("queued", "running")
+            ]
+            if in_flight:
+                in_flight.sort(key=lambda j: j.started_at or "", reverse=True)
+                active_job = in_flight[0].to_dict()
+
         return {
             "id": model_id,
             "kind": info.get("kind"),
@@ -250,6 +265,7 @@ class ModelManager:
             "user_visible": info.get("user_visible", False),
             "downloaded": downloaded,
             "downloaded_bytes": bytes_total,
+            "active_job": active_job,
         }
 
     def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:

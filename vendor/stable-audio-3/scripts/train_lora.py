@@ -215,7 +215,11 @@ def train(args):
             )
             checkpoint_dir = args.save_dir if args.save_dir else None
     elif args.logger == "csv":
-        logger = pl.loggers.CSVLogger(args.save_dir)
+        # Fragmenta patch: PL's CSVLogger default flushes every 100 steps,
+        # which delays loss values reaching the live monitor by ~30s on a
+        # 1000-step run. Flush per-step so the loss curve populates from
+        # step 0 instead of waiting for end-of-epoch-0.
+        logger = pl.loggers.CSVLogger(args.save_dir, flush_logs_every_n_steps=1)
         checkpoint_dir = args.save_dir if args.save_dir else None
     else:
         logger = None

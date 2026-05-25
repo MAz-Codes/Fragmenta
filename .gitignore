@@ -14,6 +14,7 @@ parts/
 sdist/
 var/
 ....venv
+redesign
 .venv-sa3
 DATASET_PREP_REDESIGN.md
 models/pretrained/sa3

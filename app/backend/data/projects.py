@@ -884,12 +884,18 @@ def compute_health(
     import statistics
     from collections import defaultdict
 
+    # Single source of truth for what SA3's loader actually accepts. Fragmenta
+    # ingest accepts a wider set (.m4a, .aac) — those files would be silently
+    # skipped at train time, so we surface them here.
+    from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
+
     session = _get_or_load_session(name)
     with session.lock:
         clips = list(session.clips.values())
 
     empty_prompts: List[str] = []
     too_short: List[str] = []
+    unsupported_format: List[str] = []
     sr_by_file: Dict[str, int] = {}
     loudness_by_file: Dict[str, float] = {}
     prompt_groups: Dict[str, List[str]] = defaultdict(list)
@@ -899,6 +905,10 @@ def compute_health(
             empty_prompts.append(c.file_name)
         else:
             prompt_groups[c.prompt.strip().lower()].append(c.file_name)
+
+        ext = Path(c.file_name).suffix.lower()
+        if ext not in SA3_AUDIO_EXTENSIONS:
+            unsupported_format.append(c.file_name)
 
         # Duration (header-only, ~free) — only used for the too-short check now.
         dur = session.duration_cache.get(c.file_name)
@@ -954,6 +964,7 @@ def compute_health(
 
     empty_prompts.sort()
     too_short.sort()
+    unsupported_format.sort()
 
     return {
         "total_clips": len(clips),
@@ -962,6 +973,11 @@ def compute_health(
             "count": len(too_short),
             "threshold_sec": short_threshold_sec,
             "files": too_short,
+        },
+        "unsupported_format": {
+            "count": len(unsupported_format),
+            "accepted": sorted(SA3_AUDIO_EXTENSIONS),
+            "files": unsupported_format,
         },
         "mixed_sample_rates": {
             "count": len(sr_minority),

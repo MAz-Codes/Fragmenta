@@ -32,11 +32,24 @@ const hardwareLabel = (hw) => ({
 }[hw] || hw);
 
 export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged }) {
-    const [jobId, setJobId] = useState(null);
-    const [job, setJob] = useState(null);    
+    const [jobId, setJobId] = useState(checkpoint.active_job?.job_id || null);
+    const [job, setJob] = useState(checkpoint.active_job || null);
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
     const pollTimer = useRef(null);
+
+    // If the parent's refresh tells us about an in-flight job and we don't
+    // already have one locally (typical case: dialog was closed mid-download
+    // and just got reopened), adopt it. Don't stomp a freshly-started local
+    // job_id with stale catalog data — only sync when the local state is empty
+    // or a *different* job is now active for this checkpoint.
+    useEffect(() => {
+        const incoming = checkpoint.active_job?.job_id || null;
+        if (incoming && incoming !== jobId) {
+            setJobId(incoming);
+            setJob(checkpoint.active_job);
+        }
+    }, [checkpoint.active_job, jobId]);
 
     useEffect(() => {
         if (!jobId) return undefined;

@@ -1,19 +1,35 @@
 import React, { useState } from 'react';
 import { lossChartStyles } from '../theme';
 
-// Exponential moving average. alpha controls smoothness:
-//   alpha → 1   = no smoothing (output equals input)
-//   alpha → 0   = heavy smoothing (output flat-ish line)
-// Diffusion loss is intrinsically noisy because each step samples a random
-// timestep with different difficulty, so a small alpha (heavy smoothing) is
-// what makes the underlying trend visible.
-const EMA_ALPHA = 0.06;
+// Bias-corrected exponential moving average — same math as the EMA used in
+// TensorBoard's loss curves and Adam's bias-corrected moments. Standard EMA
+// (out[0] = values[0]) makes the smoothed line lag the data for the first
+// 1/alpha steps; diffusion loss spikes high on step 0 (random init), so a
+// naive EMA spends ~17 steps "catching down". The 1/(1-(1-α)^(i+1)) factor
+// cancels that startup bias: by construction out[0] equals values[0], and
+// out[i] converges to the plain EMA at steady state.
+//
+// alpha is *adaptive* to the run length: more data → more smoothing is OK
+// because the underlying trend has more support; short runs need a tighter
+// window so the smoothed line still resembles the data.
+function pickAlpha(n) {
+    if (n < 50) return 0.25;
+    if (n < 200) return 0.15;
+    if (n < 1000) return 0.08;
+    return 0.05;
+}
 
-function smoothEMA(values, alpha = EMA_ALPHA) {
+function smoothEMA(values, alpha) {
     if (values.length === 0) return [];
-    const out = [values[0]];
-    for (let i = 1; i < values.length; i++) {
-        out.push(alpha * values[i] + (1 - alpha) * out[i - 1]);
+    const a = alpha ?? pickAlpha(values.length);
+    const w = 1 - a;
+    const out = [];
+    let ema = 0;
+    for (let i = 0; i < values.length; i++) {
+        ema = w * ema + a * values[i];
+        const correction = 1 - Math.pow(w, i + 1);
+        // correction → a at i=0 (so out[0] = values[0]) and → 1 at large i.
+        out.push(ema / Math.max(correction, 1e-9));
     }
     return out;
 }

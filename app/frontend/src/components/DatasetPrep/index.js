@@ -20,9 +20,11 @@ import {
     LinearProgress,
     MenuItem,
     Paper,
+    Portal,
     Radio,
     RadioGroup,
     Select,
+    Snackbar,
     Stack,
     Switch,
     Table,
@@ -84,6 +86,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [errorCode, setErrorCode] = useState('');
     const [errorExtra, setErrorExtra] = useState(null);
     const [annotateJob, setAnnotateJob] = useState(null);
+    const [notice, setNotice] = useState(null);  // { severity, message } | null
     const [tier, setTier] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.tier') || 'basic'; }
         catch { return 'basic'; }
@@ -191,21 +194,45 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
 
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
+    const pollAnnotateStatus = useCallback(async function poll(name) {
+        try {
+            const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/annotate/status`);
+            setAnnotateJob(data.job);
+            if (data.job.state === 'done') {
+                await refreshProject(name);
+                return;
+            }
+            if (data.job.state === 'error') {
+                setError(data.job.error || 'Annotation failed');
+                return;
+            }
+            // Only keep polling while the backend is actively annotating. Other
+            // states ('idle', 'cancelled', missing) terminate the loop so a
+            // freshly-mounted tab doesn't poll forever for a non-existent job.
+            if (data.job.state === 'running') {
+                pollHandleRef.current = window.setTimeout(() => poll(name), 500);
+            }
+        } catch (e) { setError(extractError(e, 'Status poll failed')); }
+    }, [refreshProject]);
+
     useEffect(() => {
         if (selectedName) {
             try { window.localStorage.setItem('fragmenta.datasetPrep.lastProject', selectedName); } catch {}
             refreshProject(selectedName);
+            // Re-bootstrap progress polling on (re)mount or project switch, so
+            // the progress strip survives tab changes while a job runs.
+            pollAnnotateStatus(selectedName);
         } else {
             setProject(null);
+            setAnnotateJob(null);
         }
-    }, [selectedName, refreshProject]);
-
-    useEffect(() => () => {
-        if (pollHandleRef.current) {
-            window.clearTimeout(pollHandleRef.current);
-            pollHandleRef.current = null;
-        }
-    }, []);
+        return () => {
+            if (pollHandleRef.current) {
+                window.clearTimeout(pollHandleRef.current);
+                pollHandleRef.current = null;
+            }
+        };
+    }, [selectedName, refreshProject, pollAnnotateStatus]);
 
     function changeTier(value) {
         setTier(value);
@@ -221,22 +248,6 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             if (!ok) return;
         }
         setSelectedName(nextName);
-    }
-
-    async function pollAnnotateStatus(name) {
-        try {
-            const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/annotate/status`);
-            setAnnotateJob(data.job);
-            if (data.job.state === 'done') {
-                await refreshProject(name);
-                return;
-            }
-            if (data.job.state === 'error') {
-                setError(data.job.error || 'Annotation failed');
-                return;
-            }
-            pollHandleRef.current = window.setTimeout(() => pollAnnotateStatus(name), 500);
-        } catch (e) { setError(extractError(e, 'Status poll failed')); }
     }
 
     async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
@@ -270,6 +281,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         try {
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/save`);
             setProject(data);
+            setNotice({ severity: 'success', message: `Draft saved · ${data.clip_count} clips` });
         } catch (e) { setError(extractError(e, 'Save failed')); }
     }
 
@@ -280,6 +292,10 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/commit`);
             setProject(data);
             await refreshProjects();
+            setNotice({
+                severity: 'success',
+                message: `Dataset created · ${data.clip_count} clips written to disk`,
+            });
         } catch (e) { setError(extractError(e, 'Create Dataset failed')); }
     }
 
@@ -298,6 +314,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/discard`);
                     setProject(data);
                     await refreshProjects();
+                    setNotice({ severity: 'info', message: 'Unsaved changes discarded' });
                 } catch (e) { setError(extractError(e, 'Delete failed')); }
             },
         });
@@ -713,6 +730,25 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     </Button>
                 </DialogActions>
             </Dialog>
+            <Portal>
+                <Snackbar
+                    open={Boolean(notice)}
+                    autoHideDuration={4000}
+                    onClose={() => setNotice(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+                >
+                    {notice ? (
+                        <Alert
+                            onClose={() => setNotice(null)}
+                            severity={notice.severity}
+                            variant="filled"
+                            sx={{ width: '100%' }}
+                        >
+                            {notice.message}
+                        </Alert>
+                    ) : undefined}
+                </Snackbar>
+            </Portal>
         </Stack>
         </Paper>
     );
@@ -1036,8 +1072,9 @@ function HealthStrip({ health, onSelectFiles }) {
     const mixedSR = health.mixed_sample_rates || { count: 0, files: [] };
     const loud = health.loudness_outliers || { count: 0, files: [] };
     const dups = health.duplicate_annotations || { count: 0, group_count: 0, files: [] };
+    const unsupported = health.unsupported_format || { count: 0, accepted: [], files: [] };
     const issues = empty.count + tooShort.count
-        + mixedSR.count + loud.count + dups.count;
+        + mixedSR.count + loud.count + dups.count + unsupported.count;
 
     // Three-tier status driven by the share of unique clips touched by any
     // health check. A single file showing up in multiple categories only
@@ -1048,6 +1085,7 @@ function HealthStrip({ health, onSelectFiles }) {
         ...mixedSR.files,
         ...loud.files,
         ...dups.files,
+        ...unsupported.files,
     ]);
     const affectedRatio = health.total_clips > 0 ? affected.size / health.total_clips : 0;
     let status;
@@ -1157,6 +1195,17 @@ function HealthStrip({ health, onSelectFiles }) {
                                 color="warning"
                                 label={`${dups.count} duplicate annotation${dups.count === 1 ? '' : 's'}`}
                                 onClick={() => onSelectFiles(dups.files)}
+                            />
+                        </Tooltip>
+                    )}
+                    {unsupported.count > 0 && (
+                        <Tooltip title={`SA3 only trains on ${(unsupported.accepted || []).join(', ')}. These clips will be silently skipped at train time — re-export them as .wav (or another accepted format) before committing. Click to select.`}>
+                            <Chip
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                label={`${unsupported.count} unsupported format${unsupported.count === 1 ? '' : 's'}`}
+                                onClick={() => onSelectFiles(unsupported.files)}
                             />
                         </Tooltip>
                     )}

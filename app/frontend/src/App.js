@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import {
     Container,
     Box,
@@ -61,6 +61,7 @@ import {
     Menu as MenuIcon,
 } from 'lucide-react';
 import api from './api';
+import { filterLorasForModel } from './utils/loraMatch';
 import HfAuthDialog from './components/HfAuthDialog';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
@@ -132,21 +133,27 @@ function App() {
     });
 
     const [trainingConfig, setTrainingConfig] = useState({
-        mode: 'lora',                         // SA3 is LoRA-only; field kept for back-compat
-        steps: 5000,                          // SA3 trains by step count, not epochs
-        checkpointSteps: 500,
+        steps: 1000,                          // SA3 quick-start
+        checkpointSteps: 250,
         checkpointAuto: true,
-        batchSize: 1,
+        batchSize: 1,                         // SA3 examples all use 1
         learningRate: 1e-4,
         modelName: 'my_lora',
         baseModel: 'sa3-small-music-base',    // only *-base checkpoints are valid targets
         precision: 'bf16',
-        duration: 30.0,                       // max clip seconds per sample
+        duration: 30.0,                       // training window in seconds
 
         loraRank: 16,
         loraAlpha: 16,
         loraDropout: 0,
         adapterType: 'dora-rows',             // SA3 upstream default
+        seed: 42,                              // reproducible by default
+
+        // SA3 docs' "common case" layer filter — prevents conditioner-hijacking
+        // on small datasets. Stored as space-separated strings (the format SA3's
+        // CLI consumes) so the Advanced TextFields can edit them directly.
+        include: 'transformer.layers',
+        exclude: 'seconds_total to_local_embed',
     });
     const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
@@ -226,8 +233,6 @@ function App() {
         document.body.removeChild(link);
     };
 
-    const [systemStatus, setSystemStatus] = useState(null);
-    const [isStatusLoading, setIsStatusLoading] = useState(false);
     const [availableModels, setAvailableModels] = useState([]);
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
@@ -239,6 +244,36 @@ function App() {
         { name: 'sa3-small-sfx-base',   displayName: 'Small - SFX (Base)',   description: 'CPU/GPU · ≤ 120s',         kind: 'base', downloaded: false },
         { name: 'sa3-medium-base',      displayName: 'Medium (Base)',        description: 'CUDA + Flash-Attn · ≤ 380s', kind: 'base', downloaded: false },
     ]);
+
+    // Dataset Workbench projects available as training inputs. Refreshed on
+    // mount and every time the Training tab becomes visible (in case the user
+    // just committed a project on the Dataset tab).
+    const [trainingProjects, setTrainingProjects] = useState([]);
+    const [trainingProject, setTrainingProject] = useState(() => {
+        try { return window.localStorage.getItem('fragmenta.training.lastProject') || ''; }
+        catch { return ''; }
+    });
+    const refreshTrainingProjects = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/projects');
+            setTrainingProjects(data.projects || []);
+        } catch { /* non-fatal */ }
+    }, []);
+    useEffect(() => { refreshTrainingProjects(); }, [refreshTrainingProjects]);
+    useEffect(() => {
+        if (tabValue === 1) refreshTrainingProjects();
+    }, [tabValue, refreshTrainingProjects]);
+    useEffect(() => {
+        try {
+            if (trainingProject) window.localStorage.setItem('fragmenta.training.lastProject', trainingProject);
+        } catch {}
+    }, [trainingProject]);
+    // If the persisted project no longer exists, clear it so the picker shows "(none)".
+    useEffect(() => {
+        if (trainingProject && trainingProjects.length > 0 && !trainingProjects.some(p => p.name === trainingProject)) {
+            setTrainingProject('');
+        }
+    }, [trainingProject, trainingProjects]);
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
     const [isStartingFresh, setIsStartingFresh] = useState(false);
@@ -371,18 +406,6 @@ function App() {
     }, []);
 
 
-    const fetchSystemStatus = async () => {
-        setIsStatusLoading(true);
-        try {
-            const response = await api.get('/api/status');
-            setSystemStatus(response.data);
-        } catch (error) {
-            console.error('Error fetching system status:', error);
-        } finally {
-            setIsStatusLoading(false);
-        }
-    };
-
     const fetchAvailableModels = async () => {
         try {
             const response = await api.get('/api/models');
@@ -471,7 +494,6 @@ function App() {
     };
 
     useEffect(() => {
-        fetchSystemStatus();
         fetchAvailableModels();
         fetchBaseModelsStatus();
         fetchAvailableLoras();
@@ -532,10 +554,10 @@ function App() {
                         const newEntry = {
                             timestamp: Date.now(),
                             progress: currentStatus.progress || 0,
-                            current_epoch: currentStatus.current_epoch || 0,
-                            current_step: currentStatus.current_step || 0,
+                            current_step: currentStatus.current_step ?? currentStatus.step ?? 0,
                             loss: currentStatus.loss,
-                            checkpoints_saved: currentStatus.checkpoints_saved || 0,
+                            checkpoints_saved: currentStatus.checkpoints_saved
+                                ?? (currentStatus.checkpoints?.length || 0),
                             is_training: currentStatus.is_training,
                             message: currentStatus.error ||
                                 (currentStatus.progress > 0 ? `Progress: ${currentStatus.progress}%` : 'Starting...')
@@ -544,7 +566,6 @@ function App() {
                         const lastEntry = prev[prev.length - 1];
                         if (!lastEntry ||
                             lastEntry.progress !== newEntry.progress ||
-                            lastEntry.current_epoch !== newEntry.current_epoch ||
                             lastEntry.current_step !== newEntry.current_step ||
                             lastEntry.loss !== newEntry.loss ||
                             lastEntry.checkpoints_saved !== newEntry.checkpoints_saved ||
@@ -566,11 +587,9 @@ function App() {
                             setTrainingProgress(100);
                         }
                         setTimeout(() => {
-                            fetchSystemStatus();
-                            // refreshAllModels picks up the new LoRA too if
-                            // this was a LoRA run — without it, the LoRA
-                            // picker stays empty until the user manually hits
-                            // refresh.
+                            // refreshAllModels picks up the new LoRA — without it,
+                            // the LoRA picker stays empty until the user manually
+                            // hits refresh.
                             refreshAllModels();
                         }, 0);
                     }
@@ -591,9 +610,20 @@ function App() {
 
     const fetchHyperparamSuggestion = async () => {
         setShowRationale(false);
+        if (!trainingProject) {
+            setSuggestionDialog({
+                open: true,
+                data: { ok: false, error: "Pick a dataset project first." },
+                loading: false,
+            });
+            return;
+        }
         setSuggestionDialog({ open: true, data: null, loading: true });
         try {
-            const resp = await api.get(`/api/training/suggest-hyperparams?mode=${trainingConfig.mode}`);
+            const url = `/api/training/suggest-hyperparams`
+                + `?project_name=${encodeURIComponent(trainingProject)}`
+                + `&base_model=${encodeURIComponent(trainingConfig.baseModel || '')}`;
+            const resp = await api.get(url);
             setSuggestionDialog({ open: true, data: resp.data, loading: false });
         } catch (e) {
             setSuggestionDialog({
@@ -607,11 +637,25 @@ function App() {
     const applyHyperparamSuggestion = () => {
         const cfg = suggestionDialog.data?.config;
         if (!cfg) return;
-        setTrainingConfig({ ...trainingConfig, ...cfg });
+        // Suggester returns include/exclude as arrays; the form edits them as
+        // space-separated strings. Backend's sa3_trainer accepts either.
+        const normalized = {
+            ...cfg,
+            include: Array.isArray(cfg.include) ? cfg.include.join(' ') : (cfg.include || ''),
+            exclude: Array.isArray(cfg.exclude) ? cfg.exclude.join(' ') : (cfg.exclude || ''),
+        };
+        setTrainingConfig({ ...trainingConfig, ...normalized });
         setSuggestionDialog({ open: false, data: null, loading: false });
     };
 
-    const startTraining = async () => {
+    // Confirm dialog for the same-name LoRA collision case.
+    const [overwriteConfirm, setOverwriteConfirm] = useState(null);
+
+    const startTraining = async (overwrite = false) => {
+        // Defensive: an `onClick={startTraining}` would pass React's
+        // SyntheticEvent in as the first arg; coerce so it can never
+        // leak into the JSON payload as a circular DOM reference.
+        overwrite = overwrite === true;
         const selectedBaseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
         if (!selectedBaseModel) {
             showModelWarning({
@@ -631,6 +675,16 @@ function App() {
             return;
         }
 
+        if (!trainingProject) {
+            showModelWarning({
+                title: 'Dataset Required',
+                message: 'Pick a dataset project before starting training. '
+                       + 'Create one in the Dataset tab if you don\'t have any yet.',
+                canOpenModels: false,
+            });
+            return;
+        }
+
         setIsTraining(true);
         setTrainingProgress(0);
         setTrainingError(null);
@@ -643,13 +697,28 @@ function App() {
             const { checkpointAuto, ...rest } = trainingConfig;
             const payload = {
                 ...rest,
+                projectName: trainingProject,
                 checkpointSteps: checkpointAuto ? null : trainingConfig.checkpointSteps,
+                overwrite: overwrite,
             };
             const response = await api.post('/api/start-training', payload);
             setProcessingStatus('Training started successfully!');
         } catch (error) {
             const errorData = error.response?.data;
             const errorMessage = errorData?.error || error.message;
+
+            // Same-name collision (HTTP 409) — surface a confirm dialog so the
+            // user can choose to overwrite the previous run rather than
+            // co-mingling its checkpoints.
+            if (error.response?.status === 409 && errorData?.code === 'run_exists') {
+                setIsTraining(false);
+                setOverwriteConfirm({
+                    runName: errorData.run_name,
+                    checkpointCount: errorData.checkpoint_count,
+                    message: errorData.message,
+                });
+                return;
+            }
 
             if (errorData?.checkpoint_warning) {
                 setTrainingError(errorMessage);
@@ -692,7 +761,15 @@ function App() {
         }
 
         // LoRA stack — only attach slots that have a path picked.
-        const activeLoras = (loraStack || []).filter(s => s.path);
+        // Two pickers feed this:
+        //   1. LoraStack widget (multi-slot, with per-slot strength) — power user.
+        //   2. Single-LoRA dropdown at the top of the generation panel — simple.
+        // LoraStack wins if both are populated; otherwise the simple dropdown
+        // is treated as a one-slot stack at strength 1.0.
+        const stackEntries = (loraStack || []).filter(s => s.path);
+        const activeLoras = stackEntries.length
+            ? stackEntries
+            : (selectedLora ? [{ path: selectedLora, strength: 1.0 }] : []);
         if (activeLoras.length) {
             baseRequestData.loras = activeLoras.map(s => ({
                 path: s.path,
@@ -730,8 +807,6 @@ function App() {
             return;
         }
 
-        // LoRA stacking is Phase 4; ignore selectedLora for now.
-
         const parsedSeed = parseInt(seedValue, 10);
         if (!randomSeed && (Number.isNaN(parsedSeed) || parsedSeed < 0)) {
             setProcessingStatus('Please enter a non-negative integer seed, or enable Random Seed');
@@ -749,14 +824,26 @@ function App() {
         setIsGenerating(true);
         setGenerationProgress(0);
 
+        // Real progress polling — the backend exposes /api/generation-progress
+        // which reflects the SA3 sampler's per-ODE-step callback. We poll at
+        // ~250ms; sampling is N steps total (8 for distilled, ~50 for base)
+        // so each step takes hundreds of ms to several seconds — finer polling
+        // is unnecessary.
         let progressInterval;
         const startProgressTicker = () => {
-            progressInterval = setInterval(() => {
-                setGenerationProgress(prev => {
-                    if (prev >= 90) return prev;
-                    return prev + Math.random() * 3;
-                });
-            }, 1000);
+            progressInterval = setInterval(async () => {
+                try {
+                    const r = await api.get('/api/generation-progress');
+                    const d = r.data || {};
+                    // Don't drop to 0 just because backend briefly reports
+                    // idle between batch elements; clamp monotonic until
+                    // we hand off to setGenerationProgress(100) on response.
+                    const pct = Number(d.progress) || 0;
+                    setGenerationProgress(prev => Math.max(prev, Math.min(95, pct)));
+                } catch {
+                    /* poll failure is non-fatal — bar just freezes briefly */
+                }
+            }, 250);
         };
         const stopProgressTicker = () => {
             if (progressInterval) {
@@ -820,12 +907,14 @@ function App() {
                     cfgScale,
                     steps,
                     seed: seedForRun,
+                    modelId: selectedModel,
                     batchIndex,
                     batchTotal: totalRuns,
                     audioUrl,
                     audioBlob: response.data,
                     filename: fragmentFilename,
-                    timestamp: new Date().toLocaleString()
+                    timestamp: new Date().toLocaleString(),
+                    createdAt: Date.now(),
                 };
 
                 setGeneratedFragments(prev => [...prev, newFragment]);
@@ -878,16 +967,15 @@ function App() {
     };
 
     const handleStartFresh = async () => {
+        // Frontend-only soft reset — clears generation outputs and the in-memory
+        // performance session. Dataset / training artifacts are managed per
+        // their respective per-project / per-run UIs and aren't touched here.
         setIsStartingFresh(true);
         setShowStartFreshDialog(false);
-
         try {
-            const response = await api.post('/api/start-fresh');
-
             setGeneratedAudio(null);
             setGeneratedAudioBlob(null);
             setGeneratedFragments([]);
-            setProcessingStatus('');
             setGenerationPrompt('');
 
             // Wipe persisted performance session and force-remount the panel so
@@ -896,12 +984,7 @@ function App() {
             clearPerformanceSession();
             setPerformanceResetKey(prev => prev + 1);
 
-            setProcessingStatus(response.data.message);
-
-            fetchSystemStatus();
-
-        } catch (error) {
-            setProcessingStatus(`Start fresh error: ${error.response?.data?.error || error.message}`);
+            setProcessingStatus('Session reset · generation outputs cleared, performance session restarted.');
         } finally {
             setIsStartingFresh(false);
         }
@@ -1189,34 +1272,6 @@ function App() {
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Training Configuration</Typography>
                                                 </Box>
 
-                                                <Box sx={{ mb: 2 }}>
-                                                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 0.5 }}>
-                                                        Training mode
-                                                    </Typography>
-                                                    <ToggleButtonGroup
-                                                        value={trainingConfig.mode}
-                                                        exclusive
-                                                        size="small"
-                                                        onChange={(e, newMode) => {
-                                                            if (newMode !== null) {
-                                                                setTrainingConfig({ ...trainingConfig, mode: newMode });
-                                                            }
-                                                        }}
-                                                        fullWidth
-                                                    >
-                                                        <Tooltip title="LoRA adapter — small (~50 MB) trainable layer attached to the frozen base model. Works on 16 GB cards. Recommended for most use cases.">
-                                                            <ToggleButton value="lora">
-                                                                LoRA Adapter
-                                                            </ToggleButton>
-                                                        </Tooltip>
-                                                        <Tooltip title="Full fine-tune — rewrites the entire base model. Produces a ~5 GB checkpoint. Requires ≥24 GB VRAM for the large base.">
-                                                            <ToggleButton value="full">
-                                                                Full Fine-tune
-                                                            </ToggleButton>
-                                                        </Tooltip>
-                                                    </ToggleButtonGroup>
-                                                </Box>
-
                                                 <TextField
                                                     fullWidth
                                                     label="Fine-tuned Model Name"
@@ -1227,6 +1282,44 @@ function App() {
                                                     })}
                                                     sx={appStyles.fieldMarginBottom}
                                                 />
+
+                                                <Box sx={appStyles.fieldMarginBottom}>
+                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                        Dataset
+                                                    </Typography>
+                                                    {trainingProjects.length === 0 ? (
+                                                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                                            No projects yet — create one in the Dataset tab.
+                                                        </Typography>
+                                                    ) : (
+                                                        <Select
+                                                            fullWidth
+                                                            size="small"
+                                                            displayEmpty
+                                                            value={trainingProject}
+                                                            onChange={(e) => setTrainingProject(e.target.value)}
+                                                            renderValue={(val) => {
+                                                                if (!val) return <Typography variant="body2" color="text.secondary">Pick a project…</Typography>;
+                                                                const p = trainingProjects.find(x => x.name === val);
+                                                                return p
+                                                                    ? `${p.name} (${p.clip_count ?? 0} clips)`
+                                                                    : val;
+                                                            }}
+                                                        >
+                                                            {trainingProjects.map(p => (
+                                                                <MenuItem key={p.name} value={p.name}>
+                                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                                        <Typography variant="body2">{p.name}</Typography>
+                                                                        <Typography variant="caption" color="text.secondary">
+                                                                            {(p.clip_count ?? 0)} clip{p.clip_count === 1 ? '' : 's'}
+                                                                            {p.has_draft ? ' · draft pending' : ''}
+                                                                        </Typography>
+                                                                    </Box>
+                                                                </MenuItem>
+                                                            ))}
+                                                        </Select>
+                                                    )}
+                                                </Box>
 
                                                 <Box sx={appStyles.fieldMarginBottom}>
                                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
@@ -1298,7 +1391,12 @@ function App() {
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Training Steps</Typography>
+                                                                <Box sx={appStyles.fieldLabelRow}>
+                                                                    <Typography>Training Steps</Typography>
+                                                                    <Tooltip arrow placement="top" title="SA3's documented quick-start is 1 000 steps. LoRAs typically overfit well before that; watch the loss curve.">
+                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                    </Tooltip>
+                                                                </Box>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.steps}
@@ -1333,13 +1431,15 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
-                                                                <Typography variant="caption" color="text.secondary">
-                                                                    SA3 LoRAs typically converge in 2 000 – 10 000 steps depending on dataset size.
-                                                                </Typography>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Adapter Type</Typography>
+                                                                <Box sx={appStyles.fieldLabelRow}>
+                                                                    <Typography>Adapter Type</Typography>
+                                                                    <Tooltip arrow placement="top" title="DoRA-rows is SA3's upstream default and works best for most stylistic LoRAs. The -xs variants freeze SVD bases and only train a tiny core matrix — far fewer parameters, useful when VRAM is tight. BoRA scales both rows and columns independently (more expressive, more parameters).">
+                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                    </Tooltip>
+                                                                </Box>
                                                                 <Select
                                                                     fullWidth
                                                                     size="small"
@@ -1358,14 +1458,16 @@ function App() {
                                                                     <MenuItem value="dora-cols-xs">DoRA-cols-XS (compact)</MenuItem>
                                                                     <MenuItem value="bora-xs">BoRA-XS (compact)</MenuItem>
                                                                 </Select>
-                                                                <Typography variant="caption" color="text.secondary">
-                                                                    DoRA-rows is upstream's default and works best for most stylistic LoRAs.
-                                                                </Typography>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
                                                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                                                                    <Typography>Checkpoint Interval (steps)</Typography>
+                                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                                                        <Typography>Checkpoint Interval (steps)</Typography>
+                                                                        <Tooltip arrow placement="top" title="How often a LoRA .safetensors snapshot gets written. Auto picks ~10 checkpoints per run (capped 250–1 000 steps). Lower = more granular but more disk; higher = fewer files to compare.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
                                                                     <FormControlLabel
                                                                         sx={{ m: 0 }}
                                                                         control={
@@ -1465,7 +1567,12 @@ function App() {
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Batch Size</Typography>
+                                                                <Box sx={appStyles.fieldLabelRow}>
+                                                                    <Typography>Batch Size</Typography>
+                                                                    <Tooltip arrow placement="top" title="SA3 examples use 1. Each extra sample adds ~1–2 GB of activations. Raise only on roomy GPUs (≥24 GB); medium-base activations are heavy. Lower if you hit CUDA OOM.">
+                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                    </Tooltip>
+                                                                </Box>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.batchSize}
@@ -1474,8 +1581,9 @@ function App() {
                                                                             batchSize: value
                                                                         })}
                                                                         min={1}
-                                                                        max={32}
+                                                                        max={8}
                                                                         step={1}
+                                                                        marks
                                                                         valueLabelDisplay="auto"
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
@@ -1486,21 +1594,23 @@ function App() {
                                                                             const val = parseInt(e.target.value, 10) || 1;
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                batchSize: Math.max(1, Math.min(32, val))
+                                                                                batchSize: Math.max(1, Math.min(8, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 1, max: 32, step: 1 }}
+                                                                        inputProps={{ min: 1, max: 8, step: 1 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Lower this if you hit CUDA out-of-memory; raise it for faster training on large GPUs.
-                                                                </Typography>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Precision</Typography>
+                                                                <Box sx={appStyles.fieldLabelRow}>
+                                                                    <Typography>Base-model Precision</Typography>
+                                                                    <Tooltip arrow placement="top" title="Cast applied to the frozen base weights only; LoRA parameters stay in fp32 for the optimizer. bf16 halves the VRAM used by the base with negligible quality cost on Ampere and newer cards.">
+                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                    </Tooltip>
+                                                                </Box>
                                                                 <FormControl fullWidth size="small">
                                                                     <Select
                                                                         value={trainingConfig.precision}
@@ -1509,24 +1619,23 @@ function App() {
                                                                             precision: e.target.value
                                                                         })}
                                                                     >
-                                                                        <MenuItem value="auto">Auto (recommended)</MenuItem>
-                                                                        <MenuItem value="bf16-mixed">bf16-mixed (Ampere+ GPUs)</MenuItem>
-                                                                        <MenuItem value="16-mixed">16-mixed (older GPUs)</MenuItem>
-                                                                        <MenuItem value="32">32 (full precision, highest VRAM)</MenuItem>
+                                                                        <MenuItem value="bf16">bf16 (recommended — halves VRAM, negligible quality cost)</MenuItem>
+                                                                        <MenuItem value="fp16">fp16 (legacy — only if your GPU lacks bf16 support)</MenuItem>
                                                                     </Select>
                                                                 </FormControl>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Auto picks bf16-mixed on modern CUDA, 16-mixed on older cards, fp32 on CPU/MPS.
-                                                                </Typography>
                                                             </Grid>
 
-                                                            {trainingConfig.mode === 'lora' && (
-                                                                <Grid item xs={12}>
-                                                                    <Typography variant="subtitle2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
-                                                                        LoRA settings
-                                                                    </Typography>
+                                                            <Grid item xs={12}>
+                                                                <Typography variant="subtitle2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
+                                                                    LoRA settings
+                                                                </Typography>
 
-                                                                    <Typography gutterBottom>Rank</Typography>
+                                                                    <Box sx={appStyles.fieldLabelRow}>
+                                                                        <Typography>Rank</Typography>
+                                                                        <Tooltip arrow placement="top" title="Capacity of the LoRA update — rank-k matrices A (k×in) and B (out×k) are trained. Higher rank = more expressive but larger file and more VRAM. r=16 fits comfortably on 16 GB and is SA3's default.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraRank}
@@ -1556,11 +1665,12 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Higher rank = more capacity but more VRAM. r=16 fits comfortably on 16 GB.
-                                                                    </Typography>
-
-                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Alpha</Typography>
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Alpha</Typography>
+                                                                        <Tooltip arrow placement="top" title="Scaling factor for the LoRA update. Effective scaling is alpha / rank — setting alpha = rank gives a scaling of 1.0. Conventional choice: alpha = rank.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraAlpha}
@@ -1586,11 +1696,12 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Scaling factor for the LoRA update. Conventional choice: alpha = rank.
-                                                                    </Typography>
-
-                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Dropout</Typography>
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Dropout</Typography>
+                                                                        <Tooltip arrow placement="top" title="Regularization probability applied to LoRA inputs during training. 0 is fine for most cases — raise to ~0.05 if you see overfitting on small datasets.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraDropout}
@@ -1616,11 +1727,86 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Regularization for the LoRA layers. 0 is fine for most cases; raise if overfitting on small datasets.
-                                                                    </Typography>
-                                                                </Grid>
-                                                            )}
+
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Seed</Typography>
+                                                                        <Tooltip arrow placement="top" title="Random seed for reproducibility — same dataset + same hyperparameters + same seed produces the same LoRA. Change it to re-roll with different sampling behaviour.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
+                                                                    <TextField
+                                                                        type="number"
+                                                                        size="small"
+                                                                        fullWidth
+                                                                        value={trainingConfig.seed}
+                                                                        onChange={(e) => {
+                                                                            const v = parseInt(e.target.value, 10);
+                                                                            setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                seed: Number.isFinite(v) ? v : 42,
+                                                                            });
+                                                                        }}
+                                                                        inputProps={{ min: 0, step: 1 }}
+                                                                    />
+
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Training Window (seconds)</Typography>
+                                                                        <Tooltip arrow placement="top" title="Audio fed to the model per training step. Long clips get random-cropped to this length each step; short clips get silence-padded. Raise beyond 30s only after pre-encoded latents land (Phase 6).">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={trainingConfig.duration}
+                                                                            onChange={(e, value) => setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                duration: value,
+                                                                            })}
+                                                                            min={5}
+                                                                            max={30}
+                                                                            step={1}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={trainingConfig.duration}
+                                                                            onChange={(e) => {
+                                                                                const v = Math.max(5, Math.min(30, parseFloat(e.target.value) || 30));
+                                                                                setTrainingConfig({ ...trainingConfig, duration: v });
+                                                                            }}
+                                                                            inputProps={{ min: 5, max: 30, step: 1 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Include layers</Typography>
+                                                                        <Tooltip arrow placement="top" title="Space-separated substrings — only layers whose fully-qualified name contains one of these get LoRA. Empty = all matching Linear/Conv1d layers. Example: transformer.layers.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
+                                                                    <TextField
+                                                                        fullWidth
+                                                                        size="small"
+                                                                        value={trainingConfig.include}
+                                                                        onChange={(e) => setTrainingConfig({ ...trainingConfig, include: e.target.value })}
+                                                                    />
+
+                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
+                                                                        <Typography>Exclude layers</Typography>
+                                                                        <Tooltip arrow placement="top" title="Space-separated substrings — matching layers are skipped, even if they also match Include. SA3-docs default (seconds_total to_local_embed) prevents conditioner-hijacking on small datasets.">
+                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                        </Tooltip>
+                                                                    </Box>
+                                                                    <TextField
+                                                                        fullWidth
+                                                                        size="small"
+                                                                        value={trainingConfig.exclude}
+                                                                        onChange={(e) => setTrainingConfig({ ...trainingConfig, exclude: e.target.value })}
+                                                                    />
+                                                            </Grid>
 
                                                         </Grid>
                                                     </AccordionDetails>
@@ -1644,8 +1830,8 @@ function App() {
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
-                                                        onClick={startTraining}
-                                                        disabled={isTraining || !trainingConfig.baseModel || (() => {
+                                                        onClick={() => startTraining(false)}
+                                                        disabled={isTraining || !trainingProject || !trainingConfig.baseModel || (() => {
                                                             // Check if the selected base model is downloaded
                                                             const baseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
                                                             return baseModel ? !baseModel.downloaded : true;
@@ -1677,10 +1863,7 @@ function App() {
                                                     trainingProgress={trainingProgress}
                                                     trainingStatus={trainingStatus}
                                                     trainingHistory={trainingHistory}
-                                                    trainingStartTime={trainingStartTime}
                                                     trainingError={trainingError}
-                                                    trainingConfig={trainingConfig}
-                                                    systemStatus={systemStatus}
                                                     indicatorState={trainingIndicatorState}
                                                 />
                                             </Box>
@@ -1880,8 +2063,8 @@ function App() {
                                                     Two-step: pick LoRA name, then pick which saved checkpoint
                                                     of that LoRA to load (defaults to latest). */}
                                                 {baseModels.find(m => m.name === selectedModel) && (() => {
-                                                    const compatibleLoras = availableLoras.filter(
-                                                        l => l.base_model === selectedModel
+                                                    const compatibleLoras = filterLorasForModel(
+                                                        availableLoras, selectedModel,
                                                     );
                                                     if (compatibleLoras.length === 0) return null;
                                                     // Derive which LoRA the current checkpoint path belongs to,
@@ -2055,12 +2238,14 @@ function App() {
                                                                                         cfgScale: params.cfg_scale,
                                                                                         steps: params.steps,
                                                                                         seed: params.seed,
+                                                                                        modelId: params.model_id,
                                                                                         batchIndex: 1,
                                                                                         batchTotal: 1,
                                                                                         audioUrl,
                                                                                         audioBlob: blob,
                                                                                         filename,
                                                                                         timestamp: new Date().toLocaleString(),
+                                                                                        createdAt: Date.now(),
                                                                                         editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
                                                                                     },
                                                                                 ]);
@@ -2336,22 +2521,23 @@ function App() {
                         </Box>
                     </Box>
 
-                    {/* Start Fresh Confirmation Dialog */}
+                    {/* Reset session — frontend-only soft reset of generation +
+                        performance state. Datasets and trained LoRAs are
+                        managed in their own UIs and aren't affected. */}
                     <Dialog
                         open={showStartFreshDialog}
                         onClose={() => setShowStartFreshDialog(false)}
                         aria-labelledby="start-fresh-dialog-title"
                     >
                         <DialogTitle id="start-fresh-dialog-title">
-                            Start Fresh - Delete All Data
+                            Reset session
                         </DialogTitle>
                         <DialogContent>
                             <Typography sx={appStyles.dialogBodyText}>
-                                This will permanently delete all uploaded audio files, processed segments, and metadata files.
-                                This action cannot be undone.
-                            </Typography>
-                            <Typography variant="body2" color="error" sx={appStyles.dialogErrorText}>
-                                Are you sure you want to continue?
+                                Clears the current generation outputs (audio + fragments)
+                                and restarts the Performance panel from a blank session.
+                                MIDI mappings, downloaded models, dataset projects, and
+                                trained LoRAs are <strong>not</strong> affected.
                             </Typography>
                         </DialogContent>
                         <DialogActions>
@@ -2360,11 +2546,11 @@ function App() {
                             </Button>
                             <Button
                                 onClick={handleStartFresh}
-                                color="error"
+                                color="primary"
                                 variant="contained"
                                 disabled={isStartingFresh}
                             >
-                                {isStartingFresh ? 'Deleting...' : 'Delete All Data'}
+                                {isStartingFresh ? 'Resetting…' : 'Reset session'}
                             </Button>
                         </DialogActions>
                     </Dialog>
@@ -2502,7 +2688,7 @@ function App() {
                             <ListItemIcon>
                                 {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
                             </ListItemIcon>
-                            <ListItemText>{isStartingFresh ? 'Starting…' : 'Fresh Start'}</ListItemText>
+                            <ListItemText>{isStartingFresh ? 'Resetting…' : 'Reset session'}</ListItemText>
                         </MenuItem>
                         <Divider />
                         {(isIconOnlySidebar || isMobileLayout) && (
@@ -2601,7 +2787,7 @@ function App() {
                             {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
                         </IconButton>
                         <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {isStartingFresh ? 'Starting…' : 'Fresh Start'}
+                            {isStartingFresh ? 'Resetting…' : 'Reset session'}
                         </Typography>
                     </Box>
 
@@ -2753,13 +2939,22 @@ function App() {
                         </Typography>
                     )}
                     {!suggestionDialog.loading && suggestionDialog.data?.ok && (() => {
-                        const { stats, config, rationale } = suggestionDialog.data;
+                        const { stats, config, rationale, warnings } = suggestionDialog.data;
+                        const includeStr = (config.include || []).join(', ') || '(all layers)';
+                        const excludeStr = (config.exclude || []).join(', ') || '(none)';
                         return (
                             <Box>
                                 <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                                     {stats.file_count} files · {stats.duration_human}
-                                    {stats.vram_gb ? ` · GPU ${stats.vram_gb} GB` : ''}
+                                    {stats.median_clip_sec ? ` · median ${stats.median_clip_sec.toFixed(1)}s` : ''}
+                                    {stats.vram_gb ? ` · GPU ${stats.vram_gb} GB` : ' · no GPU'}
                                 </Typography>
+
+                                {(warnings || []).map((w, i) => (
+                                    <Alert key={i} severity="warning" sx={{ mb: 1 }} variant="outlined">
+                                        {w}
+                                    </Alert>
+                                ))}
 
                                 <Box sx={{
                                     display: 'grid',
@@ -2767,24 +2962,31 @@ function App() {
                                     rowGap: 0.75,
                                     columnGap: 2,
                                     fontVariantNumeric: 'tabular-nums',
+                                    mt: warnings && warnings.length ? 2 : 0,
                                     mb: 2,
                                 }}>
+                                    <Typography variant="body2">Steps</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.steps.toLocaleString()}</Typography>
                                     <Typography variant="body2">Batch size</Typography>
                                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.batchSize}</Typography>
                                     <Typography variant="body2">Learning rate</Typography>
                                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.learningRate}</Typography>
-                                    <Typography variant="body2">Epochs</Typography>
-                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.epochs}</Typography>
-                                    {trainingConfig.mode === 'lora' && (
-                                        <>
-                                            <Typography variant="body2">LoRA rank / alpha</Typography>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                {config.loraRank} / {config.loraAlpha}
-                                            </Typography>
-                                        </>
-                                    )}
-                                    <Typography variant="body2" color="textSecondary">Total steps</Typography>
-                                    <Typography variant="body2" color="textSecondary">{stats.total_steps}</Typography>
+                                    <Typography variant="body2">Training window</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.duration.toFixed(0)}s</Typography>
+                                    <Typography variant="body2">Adapter · rank / α</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                        {config.adapterType} · {config.loraRank} / {config.loraAlpha}
+                                    </Typography>
+                                    <Typography variant="body2">Dropout · precision</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                        {config.loraDropout} · {config.precision}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">Include layers</Typography>
+                                    <Typography variant="body2" color="textSecondary">{includeStr}</Typography>
+                                    <Typography variant="body2" color="textSecondary">Exclude layers</Typography>
+                                    <Typography variant="body2" color="textSecondary">{excludeStr}</Typography>
+                                    <Typography variant="body2" color="textSecondary">Checkpoint every</Typography>
+                                    <Typography variant="body2" color="textSecondary">{config.checkpointSteps.toLocaleString()} steps</Typography>
                                 </Box>
 
                                 <Button
@@ -2821,6 +3023,38 @@ function App() {
                         disabled={!suggestionDialog.data?.ok}
                     >
                         Apply
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <Dialog
+                open={Boolean(overwriteConfirm)}
+                onClose={() => setOverwriteConfirm(null)}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle>Overwrite existing run?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2">
+                        {overwriteConfirm?.message}
+                    </Typography>
+                    <Alert severity="warning" sx={{ mt: 2 }} variant="outlined">
+                        The previous run dir for <strong>{overwriteConfirm?.runName}</strong> will
+                        be deleted, including <strong>{overwriteConfirm?.checkpointCount} checkpoint(s)</strong>,
+                        training.log, metrics.csv and any Lightning logs. This cannot be undone.
+                    </Alert>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOverwriteConfirm(null)}>Cancel</Button>
+                    <Button
+                        color="error"
+                        variant="contained"
+                        onClick={() => {
+                            setOverwriteConfirm(null);
+                            startTraining(true);
+                        }}
+                    >
+                        Overwrite and train
                     </Button>
                 </DialogActions>
             </Dialog>
