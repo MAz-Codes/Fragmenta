@@ -105,37 +105,25 @@ pip install --upgrade pip "setuptools<70" wheel build --quiet
 echo "Package tools updated"
 echo ""
 
-echo "Installing PyTorch..."
-pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" "numpy==1.23.5" --quiet
-echo "PyTorch installed"
-echo ""
-
-echo "Installing core dependencies (skipping flash-attn on macOS)..."
-echo "This may take several minutes on first install..."
-
-# Install everything except flash-attn first
-grep -v "flash-attn" requirements.txt > /tmp/requirements_temp.txt
-pip install -r /tmp/requirements_temp.txt --quiet \
+# requirements.txt declares --extra-index-url for the CUDA torch wheels at
+# the top of the file, and gates flash-attn behind sys_platform == 'linux'
+# so pip skips it cleanly on macOS. One install resolves the whole graph;
+# no manual torch/numpy pre-installs needed. The Stable Audio 3 vendor
+# lives at vendor/stable-audio-3 and is loaded via sys.path from Python —
+# nothing to pip-install for it here.
+echo "Installing dependencies from requirements.txt..."
+echo "(first run takes several minutes — torch + transformers are large)"
+pip install -r requirements.txt --quiet \
     --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary || {
     echo "Retrying with verbose output..."
-    pip install -r /tmp/requirements_temp.txt \
-        --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
+    pip install -r requirements.txt \
+        --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary || {
+        echo "ERROR: failed to install dependencies. Check the log above."
+        read -p "Press Enter to exit..."
+        exit 1
+    }
 }
-rm /tmp/requirements_temp.txt
-
-echo ""
-echo "Attempting to install flash-attn (optional, will skip if CUDA not available)..."
-pip install "flash-attn>=2.8.3" --quiet 2>/dev/null || {
-    echo "flash-attn skipped (not needed on macOS)"
-}
-
 echo "Dependencies installed"
-echo ""
-
-echo "Installing audio generation engine..."
-cd vendor/stable-audio-tools && pip install -e . --quiet \
-    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary && cd ../..
-echo "Audio engine installed"
 echo ""
 
 echo "Verifying PyTorch installation..."

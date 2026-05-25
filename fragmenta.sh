@@ -114,8 +114,9 @@ if ! find_python_311; then
         echo ""
         echo "ERROR: Python 3.11 is required but could not be installed automatically."
         echo ""
-        echo "Fragmenta pins numpy 1.23.5 / pandas 2.0.2, which only have wheels for"
-        echo "Python 3.11. Newer Pythons (3.12, 3.13) will fail to install dependencies."
+        echo "Fragmenta 0.2 pins torch==2.7.1 + flash-attn cp311 wheels — these wheels"
+        echo "ship only for Python 3.11. Newer Pythons (3.12, 3.13) will fail to resolve"
+        echo "the binary dependencies."
         echo ""
         echo "Install Python 3.11 manually, then rerun this script:"
         echo "  - Ubuntu 22.04 / Debian 12: sudo apt install python3.11 python3.11-venv python3.11-dev"
@@ -163,52 +164,26 @@ cd "$PROJECT_ROOT"
 echo "Updating pip..."
 pip install --upgrade pip "setuptools<70" wheel build --quiet
 
-echo "Installing all dependencies..."
-echo "Installing requested packages (this may take a few minutes)..."
-
-echo "Ensuring numpy compatibility..."
-pip install "numpy==1.23.5"
-
-echo "Installing PyTorch (CUDA 12.8 wheels)..."
-pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" \
-    --extra-index-url https://download.pytorch.org/whl/cu128 \
-    --progress-bar on
-
-echo "Installing remaining dependencies (flash-attn handled separately)..."
-REQ_TMP="$(mktemp)"
-grep -v "^flash-attn" requirements.txt > "$REQ_TMP"
-pip install -r "$REQ_TMP" --progress-bar on \
+# requirements.txt already declares --extra-index-url for the CUDA 12.8 torch
+# wheels at the top of the file, and resolves flash-attn from a pinned wheel
+# URL behind a sys_platform == 'linux' marker. A single pip install resolves
+# the whole graph — no manual torch/numpy/flash-attn pre-installs needed.
+# The Stable Audio 3 vendor lives at vendor/stable-audio-3 and is loaded via
+# sys.path from Python, not pip; nothing to install for it here.
+echo "Installing dependencies from requirements.txt..."
+echo "(first run takes several minutes — torch + transformers are large)"
+pip install -r requirements.txt --progress-bar on \
     --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
 REQ_STATUS=$?
-rm -f "$REQ_TMP"
 if [ $REQ_STATUS -ne 0 ]; then
-    echo "ERROR: Failed to install core dependencies"
-    exit 1
-fi
-
-echo "Attempting flash-attn (optional, Linux + CUDA only)..."
-pip install "flash-attn>=2.8.3" --no-build-isolation --progress-bar on || \
-    echo "flash-attn install failed — continuing without it (optional optimization)"
-
-echo "Installing bundled stable-audio-tools..."
-if [ -d "$PROJECT_ROOT/vendor/stable-audio-tools" ]; then
-    (
-        cd "$PROJECT_ROOT/vendor/stable-audio-tools" || exit 1
-        pip install -e . --quiet \
-            --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary
-    ) || {
-        echo "ERROR: Failed to install bundled stable-audio-tools"
-        exit 1
-    }
-else
-    echo "ERROR: stable-audio-tools directory not found at $PROJECT_ROOT/vendor/stable-audio-tools"
+    echo "ERROR: Failed to install dependencies. Check the log above."
     exit 1
 fi
 
 echo "Verifying key installations..."
 python3 -c 'import torch; print(f"PyTorch {torch.__version__} with CUDA {torch.cuda.is_available()}")' 2>/dev/null || echo "PyTorch issue"
 python3 -c 'import webview; print("pywebview ready")' 2>/dev/null || echo "pywebview issue"
-python3 -c 'import flash_attn; print(f"Flash Attention {flash_attn.__version__}")' 2>/dev/null || echo "Flash Attention not available (optional)"
+python3 -c 'import flash_attn; print(f"Flash Attention {flash_attn.__version__}")' 2>/dev/null || echo "Flash Attention not available (Linux + CUDA only)"
 
 echo "Starting Fragmenta..."
 python3 start.py

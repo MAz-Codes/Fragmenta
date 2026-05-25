@@ -91,34 +91,21 @@ echo Updating pip...
 python -m pip install --upgrade pip "setuptools<70" wheel build
 if errorlevel 1 goto :end_fail
 
-echo Installing PyTorch (CUDA 12.8 wheels)...
-python -m pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" "numpy==1.23.5" --index-url https://download.pytorch.org/whl/cu128
-if errorlevel 1 goto :end_fail
-
-echo Installing remaining dependencies from requirements.txt...
-echo This may take a few minutes...
-echo Note: skipping flash-attn on Windows (Linux-only optimization).
-findstr /V "flash-attn" requirements.txt > "%TEMP%\requirements_windows.txt"
-python -m pip install -r "%TEMP%\requirements_windows.txt" ^
+REM requirements.txt declares --extra-index-url for the CUDA 12.8 torch wheels
+REM at the top of the file, and gates flash-attn behind sys_platform == 'linux'
+REM so pip skips it cleanly on Windows. One install resolves the whole graph;
+REM no manual torch/numpy pre-installs needed. The Stable Audio 3 vendor lives
+REM at vendor\stable-audio-3 and is loaded via sys.path from Python — nothing
+REM to pip-install for it here.
+echo Installing dependencies from requirements.txt...
+echo (first run takes several minutes - torch + transformers are large)
+python -m pip install -r requirements.txt ^
     --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
-set "PIP_RESULT=%ERRORLEVEL%"
-del "%TEMP%\requirements_windows.txt" >nul 2>&1
-if not "%PIP_RESULT%"=="0" (
-    echo ERROR: failed to install dependencies. Check your internet connection and try again.
+if errorlevel 1 (
+    echo ERROR: failed to install dependencies. Check the log above.
     goto :end_fail
 )
 echo Dependencies installed successfully.
-
-echo Installing bundled stable-audio-tools...
-pushd "%PROJECT_ROOT%\vendor\stable-audio-tools"
-python -m pip install -e . --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
-set "SAT_RESULT=%ERRORLEVEL%"
-popd
-if not "%SAT_RESULT%"=="0" (
-    echo ERROR: failed to install stable-audio-tools.
-    goto :end_fail
-)
-echo stable-audio-tools installed successfully.
 
 REM ---------------------------------------------------------------------------
 REM  Launch
