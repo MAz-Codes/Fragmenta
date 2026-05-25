@@ -26,6 +26,19 @@ SA3_BASE_MODELS: Dict[str, Tuple[str, str]] = {
 }
 
 
+# Each *-base config references its T5Gemma conditioner at a subfolder of the
+# *post-trained sibling* repo (e.g., medium-base's t5gemma lives at
+# stabilityai/stable-audio-3-medium / t5gemma-b-b-ul2/). Without that subtree
+# in the cache, training crashes inside the conditioner constructor when SA3
+# does `AutoTokenizer.from_pretrained(repo_id, subfolder=...)`.
+# Keep in sync with model_config.json's `conditioning.configs[0].config.repo_id`.
+SA3_T5GEMMA_SIBLINGS: Dict[str, Tuple[str, str]] = {
+    "sa3-small-music-base": ("stabilityai/stable-audio-3-small-music", "t5gemma-b-b-ul2"),
+    "sa3-small-sfx-base":   ("stabilityai/stable-audio-3-small-sfx",   "t5gemma-b-b-ul2"),
+    "sa3-medium-base":      ("stabilityai/stable-audio-3-medium",      "t5gemma-b-b-ul2"),
+}
+
+
 # Extensions SA3's training data loader actually accepts.
 # Source: vendor/stable-audio-3/stable_audio_3/data/dataset.py:91.
 # Single source of truth — both the health check and the hyperparam suggester
@@ -96,6 +109,40 @@ def prestage_base_model(
         if progress_callback:
             progress_callback(15, "Base model ready.")
 
+    # Pre-stage the T5Gemma conditioner from the post-trained sibling repo.
+    # SA3's *-base model_config.json points the prompt conditioner at
+    # e.g. stabilityai/stable-audio-3-medium / t5gemma-b-b-ul2/, NOT at the
+    # base repo. Without this subtree in the cache, the training subprocess
+    # (HF_HUB_OFFLINE=1) crashes when AutoTokenizer.from_pretrained tries
+    # to phone home.
+    sibling = SA3_T5GEMMA_SIBLINGS.get(sa3_model_id)
+    if sibling:
+        sib_repo, sib_subfolder = sibling
+        sib_patterns = [f"{sib_subfolder}/*"]
+        if progress_callback:
+            progress_callback(16, f"Staging T5Gemma conditioner from {sib_repo}…")
+        try:
+            snapshot_download(
+                repo_id=sib_repo,
+                cache_dir=str(hub_dir),
+                token=token,
+                allow_patterns=sib_patterns,
+                local_files_only=True,
+            )
+            if progress_callback:
+                progress_callback(18, "T5Gemma conditioner ready (from cache).")
+        except Exception:
+            if progress_callback:
+                progress_callback(17, f"T5Gemma cache miss — fetching from {sib_repo}…")
+            snapshot_download(
+                repo_id=sib_repo,
+                cache_dir=str(hub_dir),
+                token=token,
+                allow_patterns=sib_patterns,
+            )
+            if progress_callback:
+                progress_callback(18, "T5Gemma conditioner ready.")
+
     return Path(local_snap)
 
 
@@ -107,6 +154,7 @@ def build_train_command(
     sa3_vendor_dir: Path,
     sa3_model_name: str,
     data_dir: Path,
+    encoded_dir: Optional[Path] = None,
     save_dir: Path,
     rank: int = 16,
     lora_alpha: Optional[int] = None,
@@ -121,6 +169,14 @@ def build_train_command(
     exclude: Optional[List[str]] = None,
     seed: int = 42,
     checkpoint_every: int = 500,
+    # `--log_every` controls how often DiffusionCondTrainingWrapper calls
+    # self.log(). 50 is SA3's example value and gives a much cleaner chart
+    # than per-step logging — diffusion loss is intrinsically noisy (each
+    # step samples a random timestep), so per-step values bounce wildly and
+    # the trend is hard to read. Sampling every 50 steps gives ~20 points
+    # for a 1000-step run, which the EMA smoother turns into a legible
+    # descent. First point arrives after step 49 (≈15s on small, ≈50s on
+    # medium, dominated by first-step JIT warmup anyway).
     log_every: int = 50,
     num_workers: int = 2,
     name: str = "fragmenta-lora",
@@ -150,6 +206,11 @@ def build_train_command(
         # monitor doesn't surface demo audio, no need to spend cycles.
         "--demo_every", "1000000",
     ]
+    if encoded_dir is not None:
+        # Phase 6 — feed pre-encoded latents directory. SA3's train_lora.py
+        # then uses PreEncodedDataset instead of SampleDataset and skips
+        # the SAME autoencoder pass per step.
+        cmd += ["--encoded_dir", str(encoded_dir)]
     if lora_alpha is not None:
         cmd += ["--lora_alpha", str(int(lora_alpha))]
     if include:

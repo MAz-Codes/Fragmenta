@@ -131,6 +131,15 @@ export default function TrainingMonitor({
                     <Box sx={trainingMonitorStyles.lossChartBox}>
                         <LossChart data={lossPoints} />
                     </Box>
+                    <Typography
+                        variant="caption"
+                        color="textSecondary"
+                        sx={trainingMonitorStyles.lossDisclaimer}
+                    >
+                        LoRA diffusion loss is noisy by design — each step samples
+                        a random noise level. Judge the result with your ears, not
+                        only with this chart.
+                    </Typography>
                 </Box>
             )}
 

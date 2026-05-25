@@ -106,6 +106,23 @@ class SA3Trainer:
     # --- Public API --------------------------------------------------------
 
     def start(self) -> Dict[str, Any]:
+        # Mark training as in-flight BEFORE any blocking work. /api/start-training
+        # can block for tens of seconds (T5Gemma sibling fetch, base-model
+        # prestaging) — during that window the frontend polls
+        # /api/training-status and would otherwise see is_training=False from
+        # the __init__ default and interpret it as "training complete".
+        self.status.update({
+            "is_training": True,
+            "status": "staging",
+            "started_at": time.time(),
+            "ended_at": None,
+            "step": 0,
+            "total_steps": int(self.config.get("steps") or DEFAULT_STEPS),
+            "loss": None,
+            "error": None,
+            "checkpoints": [],
+            "message": "Preparing dataset and base model…",
+        })
         try:
             self._maybe_wipe_run_dir()
             self._resolve_paths()
@@ -130,6 +147,7 @@ class SA3Trainer:
             self.status["error"] = str(e)
             self.status["status"] = "failed"
             self.status["is_training"] = False
+            self.status["ended_at"] = time.time()
             logger.error("Training failed to start: %s", e)
             return {"error": str(e)}
 
@@ -308,6 +326,45 @@ class SA3Trainer:
         )
         self._data_dir = proj_dir
 
+        # Phase 6 — opt into pre-encoded latents if a compatible .latents/
+        # cache exists. SA3's `train_lora.py --encoded_dir` then skips the
+        # autoencoder pass per step. The cache is AE-bound (same-s vs
+        # same-l) so we verify the manifest matches the picked base before
+        # using it — otherwise we'd feed the DiT mis-shaped latents.
+        self._encoded_dir: Optional[Path] = None
+        try:
+            from app.backend.data.pre_encoder import (
+                latents_dir, latents_count, latents_match_base,
+            )
+            ldir = latents_dir(project_name)
+            base_model = self.config.get("baseModel")
+            if ldir.exists() and latents_count(project_name) > 0:
+                if latents_match_base(project_name, base_model):
+                    self._encoded_dir = ldir
+                    self.status["log_tail"].append(
+                        f"Using pre-encoded latents: {latents_count(project_name)} "
+                        f"file(s) · {ldir}"
+                    )
+                    logger.info(
+                        "Pre-encoded latents detected for project '%s' (%d files) — "
+                        "skipping SAME autoencoder per step.",
+                        project_name, latents_count(project_name),
+                    )
+                else:
+                    logger.warning(
+                        "Pre-encoded latents exist for project '%s' but were "
+                        "produced by a different autoencoder than the chosen "
+                        "base (%s) — falling back to live encoding.",
+                        project_name, base_model,
+                    )
+                    self.status["log_tail"].append(
+                        f"Note: project has cached latents but they're for a "
+                        f"different autoencoder than {base_model}. Training "
+                        "will re-encode audio per step."
+                    )
+        except Exception as exc:
+            logger.warning("Pre-encoded latents probe failed: %s", exc)
+
     def _stage_base_model(self) -> None:
         cfg = get_config()
         base_model = self.config.get("baseModel")
@@ -328,6 +385,10 @@ class SA3Trainer:
         def _cb(pct: int, msg: str) -> None:
             self.status["message"] = msg
             self.status["log_tail"].append(f"[stage] {msg}")
+            # Mirror to the project logger so the terminal shows what's
+            # happening during long blocking operations (e.g. first-time
+            # T5Gemma sibling fetch can take ~30s on medium-base).
+            logger.info("[stage] %s", msg)
 
         prestage_base_model(base_model, hub_dir, token=token, progress_callback=_cb)
         self._hub_dir = hub_dir
@@ -355,6 +416,7 @@ class SA3Trainer:
             sa3_vendor_dir=sa3_vendor,
             sa3_model_name=sa3_name,
             data_dir=self._data_dir,
+            encoded_dir=getattr(self, "_encoded_dir", None),
             save_dir=self.run_dir / "checkpoints",
             rank=int(self.config.get("loraRank") or DEFAULT_RANK),
             lora_alpha=self.config.get("loraAlpha"),

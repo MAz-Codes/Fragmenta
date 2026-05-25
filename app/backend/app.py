@@ -2652,6 +2652,66 @@ def annotate_project_status_route(name):
     return jsonify({'name': name, 'job': snapshot})
 
 
+# --- Phase 6: pre-encoded latents -----------------------------------------
+
+@app.route('/api/projects/<name>/pre-encode', methods=['POST'])
+def pre_encode_project_route(name):
+    """Kick off SA3 pre-encoding for a project. Returns the job state (202)."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import start_pre_encode
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    # silent=True so an empty/no-Content-Type body is treated as {} instead of
+    # Flask returning 415 — callers usually fire-and-forget without a payload.
+    body = request.get_json(silent=True) or {}
+    autoencoder = (body.get('autoencoder') or '').strip() or None
+    try:
+        job = start_pre_encode(name, autoencoder=autoencoder)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to start pre-encode")
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'name': name, 'job': job}), 202
+
+
+@app.route('/api/projects/<name>/pre-encode/status', methods=['GET'])
+def pre_encode_status_route(name):
+    """Poll the current job state. Cheap (dict copy under lock)."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import get_pre_encode_job
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    return jsonify({'name': name, 'job': get_pre_encode_job(name)})
+
+
+@app.route('/api/projects/<name>/pre-encode/cancel', methods=['POST'])
+def pre_encode_cancel_route(name):
+    """Cooperative cancel. Signals SIGINT → SIGTERM → SIGKILL on the subprocess."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import cancel_pre_encode
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    cancelled = cancel_pre_encode(name)
+    return jsonify({'name': name, 'cancelled': cancelled})
+
+
+@app.route('/api/projects/<name>/pre-encode/prompt', methods=['PATCH'])
+def pre_encode_prompt_route(name):
+    """Persist the 'Don't ask again' choice from the post-commit dialog.
+
+    Body: { "suppress": bool }
+    """
+    from app.backend.data.projects import project_path, update_pre_encode_suppression
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    body = request.get_json(silent=True) or {}
+    if 'suppress' not in body:
+        return jsonify({'error': "Body must contain 'suppress': bool."}), 400
+    updated = update_pre_encode_suppression(name, bool(body['suppress']))
+    return jsonify(updated)
+
+
 @app.route('/api/clap/unload', methods=['POST'])
 def clap_unload_route():
     """Free CLAP weights from VRAM (e.g. before starting training or generation)."""

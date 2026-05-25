@@ -2182,6 +2182,13 @@ export const trainingMonitorStyles = {
         height: 200,
         width: '100%',
     },
+    lossDisclaimer: {
+        display: 'block',
+        mt: 0.75,
+        fontStyle: 'italic',
+        lineHeight: 1.4,
+        opacity: 0.75,
+    },
     errorAlert: {
         mb: 2,
     },

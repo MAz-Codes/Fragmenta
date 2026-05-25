@@ -87,6 +87,9 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [errorExtra, setErrorExtra] = useState(null);
     const [annotateJob, setAnnotateJob] = useState(null);
     const [notice, setNotice] = useState(null);  // { severity, message } | null
+    // Phase 6 — pre-encoded latents
+    const [preEncodeJob, setPreEncodeJob] = useState(null);
+    const [preEncodeOffer, setPreEncodeOffer] = useState(false); // post-commit dialog
     const [tier, setTier] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.tier') || 'basic'; }
         catch { return 'basic'; }
@@ -94,7 +97,9 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [skipExisting, setSkipExisting] = useState(true);
 
     const pollHandleRef = useRef(null);
+    const preEncodePollRef = useRef(null);
     const isAnnotating = annotateJob?.state === 'running';
+    const isPreEncoding = preEncodeJob?.state === 'running' || preEncodeJob?.state === 'queued';
 
     // --- Multi-row selection (for bulk Slice) -----------------------------
     // Set<string> of clip file_names. Reset whenever the active project
@@ -215,6 +220,26 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         } catch (e) { setError(extractError(e, 'Status poll failed')); }
     }, [refreshProject]);
 
+    // Phase 6 — pre-encode polling. Same survives-tab-switch shape as the
+    // annotate poller above.
+    const pollPreEncodeStatus = useCallback(async function poll(name) {
+        try {
+            const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/pre-encode/status`);
+            setPreEncodeJob(data.job);
+            if (data.job.state === 'complete') {
+                refreshProject(name);
+                return;
+            }
+            if (data.job.state === 'failed') {
+                setError(data.job.error || 'Pre-encoding failed');
+                return;
+            }
+            if (data.job.state === 'running' || data.job.state === 'queued') {
+                preEncodePollRef.current = window.setTimeout(() => poll(name), 750);
+            }
+        } catch (e) { /* non-fatal — bar just freezes */ }
+    }, [refreshProject]);
+
     useEffect(() => {
         if (selectedName) {
             try { window.localStorage.setItem('fragmenta.datasetPrep.lastProject', selectedName); } catch {}
@@ -222,17 +247,23 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             // Re-bootstrap progress polling on (re)mount or project switch, so
             // the progress strip survives tab changes while a job runs.
             pollAnnotateStatus(selectedName);
+            pollPreEncodeStatus(selectedName);
         } else {
             setProject(null);
             setAnnotateJob(null);
+            setPreEncodeJob(null);
         }
         return () => {
             if (pollHandleRef.current) {
                 window.clearTimeout(pollHandleRef.current);
                 pollHandleRef.current = null;
             }
+            if (preEncodePollRef.current) {
+                window.clearTimeout(preEncodePollRef.current);
+                preEncodePollRef.current = null;
+            }
         };
-    }, [selectedName, refreshProject, pollAnnotateStatus]);
+    }, [selectedName, refreshProject, pollAnnotateStatus, pollPreEncodeStatus]);
 
     function changeTier(value) {
         setTier(value);
@@ -285,6 +316,34 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
         } catch (e) { setError(extractError(e, 'Save failed')); }
     }
 
+    async function handleStartPreEncode() {
+        if (!project) return;
+        setError('');
+        try {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/pre-encode`);
+            setPreEncodeJob(data.job);
+            pollPreEncodeStatus(project.name);
+        } catch (e) { setError(extractError(e, 'Pre-encode failed to start')); }
+    }
+
+    async function handleCancelPreEncode() {
+        if (!project) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(project.name)}/pre-encode/cancel`);
+        } catch (e) { setError(extractError(e, 'Cancel failed')); }
+    }
+
+    async function persistPreEncodeSuppression(suppress) {
+        if (!project) return;
+        try {
+            const { data } = await api.patch(
+                `/api/projects/${encodeURIComponent(project.name)}/pre-encode/prompt`,
+                { suppress: !!suppress },
+            );
+            setProject(data);
+        } catch (e) { /* non-fatal — dialog still closes */ }
+    }
+
     async function handleCommit() {
         if (!project) return;
         setError('');
@@ -292,6 +351,13 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/commit`);
             setProject(data);
             await refreshProjects();
+            // Phase 6 — post-commit pre-encode prompt.
+            // Open the dialog unless: (a) latents already present (re-commit
+            // wiped them but we still avoid re-asking immediately), or
+            // (b) the user previously chose "Don't ask again".
+            if (!data.suppress_pre_encode_prompt && !data.latents_present && data.clip_count > 0) {
+                setPreEncodeOffer(true);
+            }
             setNotice({
                 severity: 'success',
                 message: `Dataset created · ${data.clip_count} clips written to disk`,
@@ -525,6 +591,30 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                         </Box>
                     )}
 
+                    {isPreEncoding && preEncodeJob && (
+                        <Box>
+                            <LinearProgress
+                                variant={preEncodeJob.total > 0 ? 'determinate' : 'indeterminate'}
+                                value={preEncodeJob.total > 0 ? (preEncodeJob.current / preEncodeJob.total) * 100 : undefined}
+                            />
+                            <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
+                                    Pre-encoding latents · {preEncodeJob.current} / {preEncodeJob.total}
+                                    {preEncodeJob.autoencoder ? ` · ${preEncodeJob.autoencoder}` : ''}
+                                </Typography>
+                                <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="error"
+                                    startIcon={<StopIcon size={14} />}
+                                    onClick={handleCancelPreEncode}
+                                >
+                                    Stop
+                                </Button>
+                            </Box>
+                        </Box>
+                    )}
+
                     <ClipTable
                         projectName={selectedName}
                         clips={project.clips}
@@ -730,6 +820,51 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                     </Button>
                 </DialogActions>
             </Dialog>
+
+            {/* Phase 6 — post-commit pre-encode dialog. Surfaces after a
+                successful Create Dataset commit unless the user previously
+                chose "Don't ask again". */}
+            <Dialog
+                open={preEncodeOffer}
+                onClose={() => setPreEncodeOffer(false)}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle>Pre-encode latents?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                        Encode your audio into SA3 latents now to speed up training. The
+                        autoencoder runs once up-front instead of every training step.
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                        Takes a few minutes for ~50 clips. Latents live in
+                        <code> {project?.name}/.latents/</code> and get wiped automatically
+                        when you next commit or edit a clip.
+                    </Typography>
+                </DialogContent>
+                <DialogActions sx={{ flexWrap: 'wrap' }}>
+                    <Button
+                        onClick={() => {
+                            persistPreEncodeSuppression(true);
+                            setPreEncodeOffer(false);
+                        }}
+                        sx={{ mr: 'auto' }}
+                    >
+                        Don't ask again
+                    </Button>
+                    <Button onClick={() => setPreEncodeOffer(false)}>Not now</Button>
+                    <Button
+                        variant="contained"
+                        onClick={() => {
+                            setPreEncodeOffer(false);
+                            handleStartPreEncode();
+                        }}
+                    >
+                        Pre-encode now
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
             <Portal>
                 <Snackbar
                     open={Boolean(notice)}

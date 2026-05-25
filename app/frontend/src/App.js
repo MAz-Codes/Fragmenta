@@ -59,6 +59,7 @@ import {
     Wand2 as WandIcon,
     Trash2 as DeleteIcon,
     Menu as MenuIcon,
+    CheckCircle2 as CheckCircleIcon,
 } from 'lucide-react';
 import api from './api';
 import { filterLorasForModel } from './utils/loraMatch';
@@ -253,6 +254,14 @@ function App() {
         try { return window.localStorage.getItem('fragmenta.training.lastProject') || ''; }
         catch { return ''; }
     });
+    // Phase 6 — pre-encode state for the selected training project.
+    // { latents_count, latents_present, job: {state, current, total, ...} | null }
+    const [trainingPreEncode, setTrainingPreEncode] = useState({
+        latents_count: 0,
+        latents_present: false,
+        job: null,
+    });
+    const preEncodePollRef = useRef(null);
     const refreshTrainingProjects = useCallback(async () => {
         try {
             const { data } = await api.get('/api/projects');
@@ -274,6 +283,70 @@ function App() {
             setTrainingProject('');
         }
     }, [trainingProject, trainingProjects]);
+
+    // Phase 6 — refresh pre-encode state when the user changes which project
+    // they're training on, and keep polling while a job is in flight.
+    const refreshTrainingPreEncode = useCallback(async (name) => {
+        if (!name) {
+            setTrainingPreEncode({ latents_count: 0, latents_present: false, job: null });
+            return;
+        }
+        try {
+            const [proj, status] = await Promise.all([
+                api.get(`/api/projects/${encodeURIComponent(name)}`),
+                api.get(`/api/projects/${encodeURIComponent(name)}/pre-encode/status`),
+            ]);
+            setTrainingPreEncode({
+                latents_count: proj.data.latents_count ?? 0,
+                latents_present: !!proj.data.latents_present,
+                job: status.data.job ?? null,
+            });
+        } catch { /* non-fatal */ }
+    }, []);
+
+    useEffect(() => {
+        refreshTrainingPreEncode(trainingProject);
+    }, [trainingProject, refreshTrainingPreEncode]);
+
+    // Poll while a job is queued/running. Clean up on project change or unmount.
+    useEffect(() => {
+        const job = trainingPreEncode.job;
+        const inFlight = job && (job.state === 'queued' || job.state === 'running');
+        if (!inFlight || !trainingProject) {
+            if (preEncodePollRef.current) {
+                window.clearTimeout(preEncodePollRef.current);
+                preEncodePollRef.current = null;
+            }
+            return;
+        }
+        preEncodePollRef.current = window.setTimeout(() => {
+            refreshTrainingPreEncode(trainingProject);
+        }, 750);
+        return () => {
+            if (preEncodePollRef.current) {
+                window.clearTimeout(preEncodePollRef.current);
+                preEncodePollRef.current = null;
+            }
+        };
+    }, [trainingProject, trainingPreEncode.job, refreshTrainingPreEncode]);
+
+    const startTrainingPreEncode = useCallback(async () => {
+        if (!trainingProject) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`);
+            refreshTrainingPreEncode(trainingProject);
+        } catch (e) {
+            console.error('Failed to start pre-encode', e);
+        }
+    }, [trainingProject, refreshTrainingPreEncode]);
+
+    const cancelTrainingPreEncode = useCallback(async () => {
+        if (!trainingProject) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(trainingProject)}/pre-encode/cancel`);
+            refreshTrainingPreEncode(trainingProject);
+        } catch (e) { /* non-fatal */ }
+    }, [trainingProject, refreshTrainingPreEncode]);
 
     const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
     const [isStartingFresh, setIsStartingFresh] = useState(false);
@@ -1319,6 +1392,69 @@ function App() {
                                                             ))}
                                                         </Select>
                                                     )}
+
+                                                    {/* Phase 6 — pre-encode latents button. State machine:
+                                                        no latents → "Pre-encode latents · N clips" (clickable, outlined)
+                                                        running   → "Encoding… X / Y" (disabled, with Stop button)
+                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint). */}
+                                                    {trainingProject && (() => {
+                                                        const job = trainingPreEncode.job;
+                                                        const inFlight = job && (job.state === 'queued' || job.state === 'running');
+                                                        const ready = trainingPreEncode.latents_present && !inFlight;
+                                                        const project = trainingProjects.find(p => p.name === trainingProject);
+                                                        const clipCount = project?.clip_count ?? 0;
+                                                        let label = `Pre-encode latents · ${clipCount} clip${clipCount === 1 ? '' : 's'}`;
+                                                        if (inFlight) {
+                                                            label = job.total > 0
+                                                                ? `Encoding… ${job.current} / ${job.total}`
+                                                                : 'Encoding…';
+                                                        } else if (ready) {
+                                                            label = `Pre-encoded · ${trainingPreEncode.latents_count} latent${trainingPreEncode.latents_count === 1 ? '' : 's'}`;
+                                                        }
+                                                        return (
+                                                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                <Button
+                                                                    fullWidth
+                                                                    size="small"
+                                                                    variant="outlined"
+                                                                    onClick={startTrainingPreEncode}
+                                                                    disabled={inFlight || ready || clipCount === 0}
+                                                                    color={ready ? 'success' : 'primary'}
+                                                                    startIcon={ready ? <CheckCircleIcon size={14} /> : null}
+                                                                    sx={{
+                                                                        justifyContent: 'center',
+                                                                        textTransform: 'none',
+                                                                        // Make the "done" state visibly disabled (gray border /
+                                                                        // muted text) while still showing the success-green
+                                                                        // checkmark so the user can read the status at a glance.
+                                                                        ...(ready ? {
+                                                                            '&.Mui-disabled': {
+                                                                                color: 'text.disabled',
+                                                                                borderColor: 'divider',
+                                                                                '& .MuiButton-startIcon': {
+                                                                                    color: 'success.main',
+                                                                                    opacity: 0.8,
+                                                                                },
+                                                                            },
+                                                                        } : {}),
+                                                                    }}
+                                                                >
+                                                                    {label}
+                                                                </Button>
+                                                                {inFlight && (
+                                                                    <Button
+                                                                        size="small"
+                                                                        variant="text"
+                                                                        color="error"
+                                                                        onClick={cancelTrainingPreEncode}
+                                                                        sx={{ minWidth: 0, textTransform: 'none' }}
+                                                                    >
+                                                                        Stop
+                                                                    </Button>
+                                                                )}
+                                                            </Box>
+                                                        );
+                                                    })()}
                                                 </Box>
 
                                                 <Box sx={appStyles.fieldMarginBottom}>

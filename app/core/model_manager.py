@@ -301,18 +301,53 @@ class ModelManager:
             from app.backend.data.auto_annotator import clap_checkpoint_available
             return clap_checkpoint_available(self.models_dir)
         # Canonical: HF cache layout under <app>/models/pretrained/sa3/hub/.
+        # Look for the *top-level* model.safetensors only — NOT recursive —
+        # because a sibling repo may have only its conditioner subfolder
+        # downloaded (e.g. via the eager T5Gemma companion fetch when the
+        # user installed the matching *-base), and that doesn't make the
+        # post-trained model "downloaded".
+        main_present = False
         hub = self._hub_cache_dir_for(model_id)
         if hub.is_dir():
             snaps = hub / "snapshots"
             if snaps.is_dir():
                 for sub in snaps.iterdir():
-                    if any(sub.rglob("*.safetensors")):
-                        return True
-        # Fallback: legacy flat layout (predates the unification). Counts as
-        # downloaded for inference purposes; trainer will re-stage into hub.
-        legacy = self._legacy_flat_dir_for(model_id)
-        if legacy.is_dir() and any(legacy.rglob("*.safetensors")):
-            return True
+                    if any(sub.glob("*.safetensors")):
+                        main_present = True
+                        break
+        if not main_present:
+            # Fallback: legacy flat layout (predates the unification). Counts
+            # as downloaded for inference purposes; trainer will re-stage into
+            # hub.
+            legacy = self._legacy_flat_dir_for(model_id)
+            if legacy.is_dir() and any(legacy.glob("*.safetensors")):
+                main_present = True
+        if not main_present:
+            return False
+
+        # Base models need a T5Gemma conditioner that lives in a subfolder
+        # of the *post-trained sibling* repo. "Installed" must mean "ready
+        # to train / generate" — without the companion the first run blocks
+        # for 30s+ on an HF fetch.
+        return self._is_companion_present(model_id)
+
+    def _is_companion_present(self, model_id: str) -> bool:
+        from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+        sibling = SA3_T5GEMMA_SIBLINGS.get(model_id)
+        if not sibling:
+            return True  # nothing to check (post-trained / autoencoder / tagger)
+        sib_repo, sib_subfolder = sibling
+        safe = "models--" + sib_repo.replace("/", "--")
+        sib_hub = self.hub_dir / safe
+        snaps = sib_hub / "snapshots"
+        if not snaps.is_dir():
+            return False
+        for sub in snaps.iterdir():
+            if (sub / sib_subfolder).is_dir():
+                # Any non-empty file presence is good enough — the eager
+                # fetch always pulls the tokenizer + config + safetensors.
+                if any((sub / sib_subfolder).iterdir()):
+                    return True
         return False
 
     # --- HF auth --------------------------------------------------------------
@@ -447,6 +482,28 @@ class ModelManager:
                         "tokenizer*", "*.tiktoken",
                     ],
                 )
+
+                # Companion fetch: base models reference their T5Gemma
+                # conditioner in a subfolder of the *post-trained sibling*
+                # repo. Without it the training subprocess crashes at
+                # AutoTokenizer.from_pretrained, and inference can't build
+                # the conditioner either. Pull it eagerly so "Installed"
+                # actually means "ready to use".
+                from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+                sibling = SA3_T5GEMMA_SIBLINGS.get(job.model_id)
+                if sibling:
+                    sib_repo, sib_subfolder = sibling
+                    if progress_callback:
+                        progress_callback(
+                            min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
+                            f"Fetching T5Gemma conditioner from {sib_repo}…",
+                        )
+                    snapshot_download(
+                        repo_id=sib_repo,
+                        cache_dir=str(cache_dir),
+                        token=token,
+                        allow_patterns=[f"{sib_subfolder}/*"],
+                    )
             job.status = "complete"
             job.downloaded_bytes = self._dir_size(target)
             if progress_callback:

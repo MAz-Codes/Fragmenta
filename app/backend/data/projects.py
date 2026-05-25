@@ -298,6 +298,15 @@ class ProjectSession:
 
     def to_dict(self) -> Dict[str, Any]:
         ordered = sorted(self.clips.values(), key=lambda c: c.file_name)
+        # Phase 6 — pre-encoded latents state. The latents live inside the
+        # project at .latents/. Surface presence + count for the UI, plus
+        # the per-project "don't ask again" flag for the post-commit dialog.
+        proj_path = project_path(self.name)
+        latents_dir = proj_path / ".latents"
+        latents_npy = (
+            [p for p in latents_dir.glob("*.npy") if p.name != "silence.npy"]
+            if latents_dir.exists() else []
+        )
         return {
             "name": self.name,
             "created_at": self.metadata.get("created_at"),
@@ -318,6 +327,9 @@ class ProjectSession:
             "uncommitted_files": [c.file_name for c in ordered if not c.committed],
             "clips": [c.to_dict() for c in ordered],
             "clip_count": len(self.clips),
+            "latents_present": bool(latents_npy),
+            "latents_count": len(latents_npy),
+            "suppress_pre_encode_prompt": bool(self.metadata.get("suppress_pre_encode_prompt")),
         }
 
 
@@ -543,6 +555,8 @@ def delete_clip(name: str, file_name: str) -> None:
         committed = session.metadata.get("committed_files") or []
         if file_name in committed:
             session.metadata["committed_files"] = [f for f in committed if f != file_name]
+    # Invalidate latents — outside the lock so we don't block under FS I/O.
+    _invalidate_latents(name)
 
 
 # ---------- Save / Commit / Discard -----------------------------------------
@@ -563,12 +577,40 @@ def save_project(name: str) -> Dict[str, Any]:
         return session.to_dict()
 
 
+def _invalidate_latents(name: str) -> None:
+    """Phase 6 — wipe any pre-encoded latents for this project.
+
+    Latents are bound to specific source-clip content; any mutation that
+    changes the source set (commit, delete_clip, slice_clip) renders them
+    misaligned. v1 strategy is wipe-and-recompute; per-clip invalidation
+    is a follow-up (not worth the complexity for the speed-up we get).
+    """
+    latents_dir = project_path(name) / ".latents"
+    if latents_dir.exists():
+        shutil.rmtree(latents_dir, ignore_errors=True)
+
+
+def update_pre_encode_suppression(name: str, suppress: bool) -> Dict[str, Any]:
+    """Persist the 'Don't ask again' choice from the post-commit dialog.
+
+    Stored on .project.json so it survives restart. The Training-tab
+    fallback button is always available regardless of this flag.
+    """
+    session = _get_or_load_session(name)
+    with session.lock:
+        session.metadata["suppress_pre_encode_prompt"] = bool(suppress)
+        _write_metadata(name, session.metadata)
+        return session.to_dict()
+
+
 def commit_project(name: str) -> Dict[str, Any]:
     """Flush in-memory state to disk as the canonical SA3 dataset.
 
     Overwrites existing sidecars. Marks all current audio as committed.
-    Deletes any draft.
+    Deletes any draft. Wipes any pre-encoded latents — re-encode is
+    explicit via the post-commit dialog or the Training-tab button.
     """
+    _invalidate_latents(name)
     session = _get_or_load_session(name)
     proj_path = project_path(name)
     with session.lock:
@@ -1072,6 +1114,10 @@ def slice_clip(
                 committed=False,
                 parent=file_name,
             )
+
+    # Slicing replaces the parent's audio with N children → any cached
+    # latents reference the deleted parent and are now misaligned.
+    _invalidate_latents(name)
 
     return {
         "parent": file_name,
