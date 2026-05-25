@@ -107,6 +107,16 @@ if errorlevel 1 (
 )
 echo Dependencies installed successfully.
 
+REM laion-clap pins numpy<2 in its metadata (conflicts with SA3's
+REM numpy>=2.2.6) but works fine at runtime with numpy 2.x. Install
+REM without re-resolving its deps — requirements.txt above already
+REM brought in everything laion-clap actually imports at runtime.
+echo Installing laion-clap (auto-annotator) with --no-deps...
+python -m pip install "laion-clap>=1.1.6" --no-deps
+if errorlevel 1 (
+    echo WARNING: laion-clap install failed - auto-annotation features may not work.
+)
+
 REM ---------------------------------------------------------------------------
 REM  Launch
 REM ---------------------------------------------------------------------------

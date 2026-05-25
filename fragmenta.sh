@@ -180,6 +180,14 @@ if [ $REQ_STATUS -ne 0 ]; then
     exit 1
 fi
 
+# laion-clap pins numpy<2 in its metadata (conflicts with SA3's
+# numpy>=2.2.6) but works fine at runtime with numpy 2.x. Install
+# without re-resolving its deps — requirements.txt above already
+# brought in everything laion-clap actually imports at runtime.
+echo "Installing laion-clap (auto-annotator) with --no-deps..."
+pip install "laion-clap>=1.1.6" --no-deps --quiet || \
+    echo "WARNING: laion-clap install failed — auto-annotation features may not work"
+
 echo "Verifying key installations..."
 python3 -c 'import torch; print(f"PyTorch {torch.__version__} with CUDA {torch.cuda.is_available()}")' 2>/dev/null || echo "PyTorch issue"
 python3 -c 'import webview; print("pywebview ready")' 2>/dev/null || echo "pywebview issue"
