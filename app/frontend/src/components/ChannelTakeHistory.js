@@ -65,7 +65,7 @@ export default function ChannelTakeHistory({
         <Box sx={styles.takeHistoryPanel}>
             <Box sx={styles.takeHistoryHeader}>
                 <Box component="span" sx={styles.takeHistoryHeaderText}>
-                    Fragments
+                    Takes
                 </Box>
                 {takes.length > 0 && (
                     <Tooltip title="Clear take history" placement="top" arrow>

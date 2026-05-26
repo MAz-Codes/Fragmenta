@@ -1794,7 +1794,12 @@ export const appStyles = {
     bottomDock: (muiTheme) => ({
         position: 'fixed',
         left: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
-        bottom: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
+        // Bottom = page Container.pb + TabPanel.pb so the dock's bottom
+        // edge sits at the same y as the page's lower bar (e.g. the
+        // Performance model/LoRA/Ckpt strip), through any resize.
+        // Container.pb = { xs: 1.5, sm: 2, md: 3 } (theme.container)
+        // TabPanel.pb  = { xs: 2,   sm: 2, md: 3 } (tabPanelStyles.root)
+        bottom: { xs: muiTheme.spacing(3.5), sm: muiTheme.spacing(4), md: muiTheme.spacing(6) },
         zIndex: 1350,
         display: 'flex',
         flexDirection: 'column',
@@ -1850,7 +1855,10 @@ export const appStyles = {
         return {
             position: 'fixed',
             left: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
-            bottom: { xs: muiTheme.spacing(1.5), sm: muiTheme.spacing(2), md: muiTheme.spacing(3) },
+            // Mirror bottomDock's bottom math so the collapsed hamburger
+            // sits at the same y as the page's lower bar — see bottomDock
+            // above for the breakdown.
+            bottom: { xs: muiTheme.spacing(3.5), sm: muiTheme.spacing(4), md: muiTheme.spacing(6) },
             zIndex: 1350,
             width: { xs: 38, sm: 42 },
             height: { xs: 38, sm: 42 },
@@ -2372,18 +2380,45 @@ export const perfTokens = {
         heavy: 700,    // single-letter glyph buttons (M, S, L)
     },
     height: {
-        compact: 26,   // primary compact controls (Link, MIDI, Q, BPM, transport)
+        iconSm: 18,    // smallest tap targets (take-history clear)
+        iconMd: 20,    // take-row icon buttons (audition, star, delete, commit)
         sub: 22,       // small subordinate square toggles (mute, solo, loop)
+        compact: 26,   // primary compact controls (Link, MIDI, Q, BPM, transport)
         cta: 28,       // primary CTA pill (Generate)
+    },
+    // Icon glyph sizes paired with their host control. Inside a 26px button
+    // use `md`; inside 18–22px buttons use `sm`; inside the channel transport
+    // play/stop (26px but the glyph reads as the primary action) use `lg`.
+    icon: {
+        sm: 12,
+        md: 14,
+        lg: 16,
+    },
+    // Radius ladder. `sharp` (2px) is the deliberate Ableton-style accent on
+    // Link/MIDI rectangles. Everything else uses the MUI scale (1 / 1.5 / 2.5).
+    radius: {
+        sharp: '2px',
+        sm: 1,
+        md: 1.5,
+        lg: 2.5,
     },
     // Composable mixin for any ALL-CAPS label/badge — applies size, case,
     // weight, and tracking in one go. Use directly in sx:
     //   sx={{ ...perfTokens.caps }}
+    // Scope: scientific-control labels only (GAIN, LPF, PAN, BPM, DBFS, etc.)
     caps: {
         fontSize: '0.62rem',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
         fontWeight: 600,
+    },
+    // Mixin for sentence-case sub-labels next to a control widget
+    // (Steps, Seed, Auto BPM, Main out, Cue out). Muted color + snug tracking,
+    // body-size text — distinct from `caps` (scientific) and plain body text.
+    labelMuted: {
+        fontSize: '0.72rem',
+        color: 'text.disabled',
+        letterSpacing: '0.04em',
     },
     // Mixin for numeric value readouts (e.g. dB, BPM, durations).
     num: {
@@ -2391,8 +2426,6 @@ export const perfTokens = {
         fontVariantNumeric: 'tabular-nums',
         letterSpacing: '0.04em',
     },
-    // Sharp 2px radius is the deliberate Ableton-style accent on Link/MIDI.
-    // Everything else lives on the MUI scale via shape.borderRadius (= 1.5).
 };
 
 export const performancePanelStyles = {
@@ -2403,17 +2436,59 @@ export const performancePanelStyles = {
         width: '100%',
         minHeight: 0,
     },
+    // Stateless icon-button shape. Pairs an outer size (xs/sm/md/lg → 18/20/22/26)
+    // with one of two intents: 'menu' (resting color text.secondary, hover
+    // text.primary — used for buttons that open menus) or 'danger' (resting
+    // text.disabled, hover error.main — used for deletes). Stateful color-bound
+    // toggles (takeIconBtn, transportBtn, loopBtn, mute/solo) stay parameterized
+    // — they're not just icon buttons.
+    compactIconBtn: (size = 'md', variant = 'menu') => {
+        const sz = { xs: 18, sm: 20, md: 22, lg: 26 }[size];
+        return {
+            width: sz,
+            height: sz,
+            borderRadius: 1,
+            color: variant === 'danger' ? 'text.disabled' : 'text.secondary',
+            '&:hover': {
+                color: variant === 'danger' ? 'error.main' : 'text.primary',
+                bgcolor: 'action.hover',
+            },
+        };
+    },
+    // Shared shell for the top transport bar and the bottom generation bar.
+    // Holds everything visually unifying (border, radius, gradient, alignment)
+    // — gap and mt stay inline so the dense transport row (gap 1) can stay
+    // compact while the grouped generation row (gap 2.5) breathes.
+    barCard: {
+        display: 'flex',
+        alignItems: 'center',
+        px: 1.5,
+        py: 0.75,
+        borderRadius: 2,
+        border: '1px solid',
+        borderColor: 'divider',
+        background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
+        flexWrap: { xs: 'wrap', md: 'nowrap' },
+    },
     // Single source of truth for every "pill" control in the master + bottom
     // bar (Q select, BPM input, Steps select, Seed input, Model picker, LoRA
     // picker, etc.). Spread this into the control's `sx` to lock height,
     // radius, font size, padding, and ellipsis behavior — no per-instance
     // overrides needed.
     pillControl: {
+        // Force fontFamily inheritance — the global MuiSelect theme override
+        // sets FONT_DISPLAY ("Bricolage Grotesque") which would otherwise
+        // make the Q / Model / Steps Select triggers render in a different
+        // font than the surrounding ButtonBase / TextField text on the bar
+        // (which inherits FONT_BODY from the body). Inheriting at the slot
+        // level wins over the theme override and keeps every pill matched.
         '& .MuiOutlinedInput-root': {
+            fontFamily: 'inherit',
             height: perfTokens.height.compact,
             borderRadius: 1.5,
         },
         '& .MuiSelect-select': {
+            fontFamily: 'inherit',
             // Explicit padding on all four sides — top/bottom 0 keeps the
             // text in the 26px row, RIGHT must reserve space for the
             // chevron (MUI's chevron is absolutely positioned ~7px from
@@ -2437,6 +2512,7 @@ export const performancePanelStyles = {
         // set `inputProps={{ style: { fontSize: perfTokens.fontSize.sm } }}`
         // to win against MUI's .MuiInputBase-inputSizeSmall 14px default.
         '& .MuiOutlinedInput-input': {
+            fontFamily: 'inherit',
             fontSize: perfTokens.fontSize.sm,
             fontWeight: perfTokens.weight.bold,
         },
@@ -2599,16 +2675,17 @@ export const performancePanelStyles = {
         alignItems: 'center',
     },
     masterValue: {
+        ...perfTokens.num,
         textAlign: 'center',
         color: 'primary.main',
-        fontSize: perfTokens.fontSize.sm,
-        letterSpacing: '0.04em',
     },
     masterPeakValue: {
+        ...perfTokens.num,
         textAlign: 'center',
         color: 'text.disabled',
+        // Visually subordinate to the main dB readout — kept xs intentionally
+        // even though `num` sets sm.
         fontSize: perfTokens.fontSize.xs,
-        letterSpacing: '0.04em',
     },
     masterTransport: {
         display: 'flex',
@@ -2692,34 +2769,40 @@ export const performanceChannelStyles = {
         display: 'flex',
         gap: 0.5,
     },
-    muteBtn: (active) => ({
-        width: perfTokens.height.sub,
-        height: perfTokens.height.sub,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: 700,
-        borderRadius: 1,
-        color: active ? '#fff' : 'text.secondary',
-        backgroundColor: active ? 'rgba(227, 108, 97, 0.85)' : 'transparent',
-        border: '1px solid',
-        borderColor: active ? 'rgba(227, 108, 97, 0.85)' : 'divider',
-        '&:hover': {
-            backgroundColor: active ? 'rgba(227, 108, 97, 0.95)' : 'rgba(227, 108, 97, 0.18)',
-        },
-    }),
-    soloBtn: (active) => ({
-        width: perfTokens.height.sub,
-        height: perfTokens.height.sub,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: 700,
-        borderRadius: 1,
-        color: active ? '#0c1018' : 'text.secondary',
-        backgroundColor: active ? 'rgba(227, 163, 75, 0.95)' : 'transparent',
-        border: '1px solid',
-        borderColor: active ? 'rgba(227, 163, 75, 0.95)' : 'divider',
-        '&:hover': {
-            backgroundColor: active ? 'rgba(227, 163, 75, 1)' : 'rgba(227, 163, 75, 0.2)',
-        },
-    }),
+    muteBtn: (active) => (theme) => {
+        const c = theme.palette.error.main;
+        return {
+            width: perfTokens.height.sub,
+            height: perfTokens.height.sub,
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: 700,
+            borderRadius: 1,
+            color: active ? '#fff' : 'text.secondary',
+            backgroundColor: active ? `${c}D9` : 'transparent',   // D9 ≈ 85%
+            border: '1px solid',
+            borderColor: active ? `${c}D9` : 'divider',
+            '&:hover': {
+                backgroundColor: active ? c : `${c}2E`,            // 2E ≈ 18%
+            },
+        };
+    },
+    soloBtn: (active) => (theme) => {
+        const c = theme.palette.warning.main;
+        return {
+            width: perfTokens.height.sub,
+            height: perfTokens.height.sub,
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: 700,
+            borderRadius: 1,
+            color: active ? '#0c1018' : 'text.secondary',
+            backgroundColor: active ? `${c}F2` : 'transparent',   // F2 ≈ 95%
+            border: '1px solid',
+            borderColor: active ? `${c}F2` : 'divider',
+            '&:hover': {
+                backgroundColor: active ? c : `${c}33`,            // 33 ≈ 20%
+            },
+        };
+    },
     promptBox: {
         display: 'flex',
         flexDirection: 'column',
@@ -2765,10 +2848,12 @@ export const performanceChannelStyles = {
     // pill next to it). Use for the Takes select.
     channelPillControl: {
         '& .MuiOutlinedInput-root': {
+            fontFamily: 'inherit',
             height: perfTokens.height.cta,
             borderRadius: 1.5,
         },
         '& .MuiSelect-select': {
+            fontFamily: 'inherit',
             padding: '0 28px 0 10px !important',
             lineHeight: `${perfTokens.height.cta}px`,
             fontSize: perfTokens.fontSize.sm,
@@ -2788,11 +2873,12 @@ export const performanceChannelStyles = {
     generatePill: (color, { generating, disabled }) => ({
         position: 'relative',
         overflow: 'hidden',
-        // Compact pill anchored to the right edge of the CTA row — the
-        // outer span uses `marginLeft: auto` to push the pill against
-        // the row's right side, and this width gives a comfortable
-        // click target without dominating the row.
-        width: 130,
+        // Fills whatever space the wrapping span gives it. Sizing lives
+        // on the parent row (the pill is a flex child via the wrapper
+        // span), so this stays free of magic widths and the right edge
+        // tracks the row's right edge instead of poking past it.
+        boxSizing: 'border-box',
+        width: '100%',
         height: perfTokens.height.cta,
         px: 1.5,
         borderRadius: 1.5,
@@ -2953,15 +3039,13 @@ export const performanceChannelStyles = {
         textOverflow: 'ellipsis',
     },
     waveformPlaceholder: {
+        ...perfTokens.caps,
         position: 'absolute',
         inset: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         color: 'text.disabled',
-        fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.sm,
-        letterSpacing: perfTokens.letterSpacing.wide,
         pointerEvents: 'none',
     },
     knobsGrid: {
@@ -2987,11 +3071,9 @@ export const performanceChannelStyles = {
         '& .MuiSlider-track': { width: fat ? 4 : 2, border: 'none' },
     }),
     knobLabel: {
+        ...perfTokens.caps,
         display: 'block',
-        fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.xs,
         color: 'text.secondary',
-        letterSpacing: perfTokens.letterSpacing.wide,
         mt: 0.75,
     },
     transportRow: {

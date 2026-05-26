@@ -17,7 +17,7 @@ import {
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
 } from 'lucide-react';
-import { performanceChannelStyles as styles, perfTokens } from '../theme';
+import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import api from '../api';
@@ -444,6 +444,38 @@ export default function PerformanceChannel({
                     disabled={generating}
                 />
                 <Box sx={{ ...styles.durationRow, minHeight: 26, height: 26 }}>
+                    {durationMode === 'seconds' ? (
+                        <>
+                            <Typography sx={styles.durationLabel}>{duration.toFixed(0)}s</Typography>
+                            <Slider
+                                value={duration}
+                                onChange={(_, v) => setDuration(v)}
+                                min={2}
+                                max={maxDuration}
+                                step={1}
+                                size="small"
+                                sx={styles.durationSlider(color)}
+                            />
+                        </>
+                    ) : (
+                        <Select
+                            value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
+                            onChange={(e) => setBars(Number(e.target.value))}
+                            size="small"
+                            sx={{ ...panelStyles.pillControl, flex: 1 }}
+                        >
+                            {availableBars.map(b => (
+                                <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                    {b} {b === 1 ? 'bar' : 'bars'}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    )}
+
+                    {/* Sec/Bars mode toggle — moved to the right of the row so
+                        it mirrors the Generate row layout (content fills left,
+                        modifier sits right). Width matches the ×N selector so
+                        the right column reads as a uniform stack. */}
                     <Box
                         sx={{
                             display: 'inline-flex',
@@ -452,6 +484,7 @@ export default function PerformanceChannel({
                             borderRadius: 0.75,
                             overflow: 'hidden',
                             height: '100%',
+                            flexShrink: 0,
                         }}
                     >
                         {[
@@ -483,48 +516,6 @@ export default function PerformanceChannel({
                             );
                         })}
                     </Box>
-
-                    {durationMode === 'seconds' ? (
-                        <>
-                            <Typography variant="caption" sx={styles.durationLabel}>{duration.toFixed(0)}s</Typography>
-                            <Slider
-                                value={duration}
-                                onChange={(_, v) => setDuration(v)}
-                                min={2}
-                                max={maxDuration}
-                                step={1}
-                                size="small"
-                                sx={styles.durationSlider(color)}
-                            />
-                        </>
-                    ) : (
-                        <Select
-                            value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
-                            onChange={(e) => setBars(Number(e.target.value))}
-                            size="small"
-                            sx={{
-                                flex: 1,
-                                fontSize: perfTokens.fontSize.sm,
-                                height: '100%',
-                                '& .MuiOutlinedInput-input': {
-                                    py: 0,
-                                    pl: 1,
-                                    minHeight: 'unset',
-                                },
-                                '& .MuiSelect-select': {
-                                    py: 0,
-                                    pl: 1,
-                                    minHeight: 'unset',
-                                },
-                            }}
-                        >
-                            {availableBars.map(b => (
-                                <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                    {b} {b === 1 ? 'bar' : 'bars'}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    )}
                 </Box>
                 <Box sx={{
                     display: 'flex',
@@ -533,37 +524,9 @@ export default function PerformanceChannel({
                     mt: 0.5,
                     width: '100%',
                 }}>
-                    {/* Takes selector — how many candidates the next Generate
-                        will produce. Compact dropdown matching the bar pill
-                        language; the Generate pill next to it takes the rest
-                        of the row. */}
-                    <Tooltip
-                        title="Number of candidates to generate. Each take lands in the channel's take history."
-                        placement="top"
-                        enterDelay={500}
-                    >
-                        <Select
-                            value={batchSize}
-                            onChange={(e) => setBatchSize(Number(e.target.value))}
-                            disabled={generating}
-                            size="small"
-                            sx={{ ...styles.channelPillControl, width: 62, flexShrink: 0 }}
-                            renderValue={(v) => `×${v}`}
-                        >
-                            {BATCH_OPTIONS.map((n) => (
-                                <MenuItem
-                                    key={n}
-                                    value={n}
-                                    sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}
-                                >
-                                    ×{n}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </Tooltip>
-
-                    {/* Generate pill — wide CTA. Fills left-to-right with live
-                        progress while generating; resets when complete. */}
+                    {/* Generate pill — wide CTA on the left so the eye lands
+                        on the primary action first. Fills left-to-right with
+                        live progress while generating; resets when complete. */}
                     <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
                         <Tooltip
                             title={
@@ -577,7 +540,7 @@ export default function PerformanceChannel({
                             }
                             placement="top"
                         >
-                            <span style={{ display: 'inline-flex', marginLeft: 'auto' }}>
+                            <span style={{ display: 'inline-flex', flex: 1, minWidth: 0 }}>
                                 <ButtonBase
                                     onClick={handleGenerate}
                                     disabled={!canGenerate || !prompt.trim() || generating}
@@ -599,6 +562,35 @@ export default function PerformanceChannel({
                             </span>
                         </Tooltip>
                     </MidiMappable>
+
+                    {/* Takes selector — sits right of Generate so the row
+                        reads "Generate × 4" (action then modifier). Width
+                        matches the Sec/Bars toggle above so the right column
+                        reads as a uniform stack of modifiers. */}
+                    <Tooltip
+                        title="Number of candidates to generate. Each take lands in the channel's take history."
+                        placement="top"
+                        enterDelay={500}
+                    >
+                        <Select
+                            value={batchSize}
+                            onChange={(e) => setBatchSize(Number(e.target.value))}
+                            disabled={generating}
+                            size="small"
+                            sx={{ ...styles.channelPillControl, width: 74, flexShrink: 0 }}
+                            renderValue={(v) => `×${v}`}
+                        >
+                            {BATCH_OPTIONS.map((n) => (
+                                <MenuItem
+                                    key={n}
+                                    value={n}
+                                    sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}
+                                >
+                                    ×{n}
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </Tooltip>
                 </Box>
             </Box>
 
@@ -610,7 +602,7 @@ export default function PerformanceChannel({
                     style={{ width: '100%', height: 42, display: 'block' }}
                 />
                 {!loaded && (
-                    <Typography variant="caption" sx={styles.waveformPlaceholder}>
+                    <Typography sx={styles.waveformPlaceholder}>
                         Empty
                     </Typography>
                 )}
@@ -635,7 +627,7 @@ export default function PerformanceChannel({
 
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Box component="span" sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary', letterSpacing: perfTokens.letterSpacing.wide, minWidth: 28 }}>PAN</Box>
+                    <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', minWidth: 28 }}>PAN</Box>
                     <MidiMappable
                         id={ctrlId('pan')}
                         label={ctrlLabel('Pan')}

@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import { Trash2 as DeleteIcon, X as CloseIcon } from 'lucide-react';
 import { useMidi, formatMidi } from './MidiContext';
-import { perfTokens } from '../theme';
+import { perfTokens, performancePanelStyles as panelStyles } from '../theme';
 
 const CHANNEL_OPTIONS = [
     { value: 0, label: 'Any' },
@@ -62,11 +62,11 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
             }}
         >
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-                <Typography variant="subtitle2" sx={{ letterSpacing: '0.08em', textTransform: 'uppercase', color: 'text.secondary' }}>
+                <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
                     MIDI Settings
                 </Typography>
-                <IconButton size="small" onClick={onClose}>
-                    <CloseIcon size={14} />
+                <IconButton size="small" onClick={onClose} sx={panelStyles.compactIconBtn('lg')}>
+                    <CloseIcon size={perfTokens.icon.md} />
                 </IconButton>
             </Box>
 
@@ -78,7 +78,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
 
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                 <Box>
-                    <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                    <Typography sx={{ ...perfTokens.labelMuted, color: 'text.secondary', display: 'block', mb: 0.5 }}>
                         Input device
                     </Typography>
                     <FormControl size="small" fullWidth>
@@ -92,19 +92,20 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                 const found = inputs.find(i => i.id === value);
                                 return found ? found.name : 'Disconnected';
                             }}
+                            sx={{ fontSize: perfTokens.fontSize.sm }}
                         >
-                            <MenuItem value="">
+                            <MenuItem value="" sx={{ fontSize: perfTokens.fontSize.sm }}>
                                 <em>None</em>
                             </MenuItem>
                             {inputs.map((input) => (
-                                <MenuItem key={input.id} value={input.id}>
+                                <MenuItem key={input.id} value={input.id} sx={{ fontSize: perfTokens.fontSize.sm }}>
                                     {input.name}
                                 </MenuItem>
                             ))}
                         </Select>
                     </FormControl>
                     {config.deviceName && !inputs.some(i => i.name === config.deviceName) && (
-                        <Typography variant="caption" sx={{ color: 'warning.main', display: 'block', mt: 0.5 }}>
+                        <Typography sx={{ fontSize: perfTokens.fontSize.xs, color: 'warning.main', display: 'block', mt: 0.5 }}>
                             Saved device "{config.deviceName}" not connected
                         </Typography>
                     )}
@@ -112,7 +113,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
 
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Box sx={{ flex: 1 }}>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, color: 'text.secondary', display: 'block', mb: 0.5 }}>
                             Channel filter
                         </Typography>
                         <FormControl size="small" fullWidth>
@@ -120,16 +121,17 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                 value={config.channelFilter}
                                 onChange={(e) => setChannelFilter(Number(e.target.value))}
                                 disabled={!supported}
+                                sx={{ fontSize: perfTokens.fontSize.sm }}
                             >
                                 {CHANNEL_OPTIONS.map(opt => (
-                                    <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                                    <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: perfTokens.fontSize.sm }}>{opt.label}</MenuItem>
                                 ))}
                             </Select>
                         </FormControl>
                     </Box>
 
                     <Box sx={{ flex: 1 }}>
-                        <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, color: 'text.secondary', display: 'block', mb: 0.5 }}>
                             Takeover
                         </Typography>
                         <ToggleButtonGroup
@@ -138,10 +140,10 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                             exclusive
                             onChange={(_, v) => { if (v) setTakeover(v); }}
                             fullWidth
-                            sx={{ height: 40 }}
+                            sx={{ height: perfTokens.height.compact }}
                         >
-                            <ToggleButton value="jump" sx={{ fontSize: perfTokens.fontSize.body }}>Jump</ToggleButton>
-                            <ToggleButton value="pickup" sx={{ fontSize: perfTokens.fontSize.body }}>Pickup</ToggleButton>
+                            <ToggleButton value="jump" sx={{ fontSize: perfTokens.fontSize.sm, textTransform: 'none' }}>Jump</ToggleButton>
+                            <ToggleButton value="pickup" sx={{ fontSize: perfTokens.fontSize.sm, textTransform: 'none' }}>Pickup</ToggleButton>
                         </ToggleButtonGroup>
                     </Box>
                 </Box>
@@ -149,14 +151,14 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                 <Divider sx={{ my: 0.5 }} />
 
                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Typography variant="caption" sx={{ color: 'text.secondary', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
                         Mappings ({config.mappings.length})
                     </Typography>
                     <Button
                         size="small"
                         onClick={clearAll}
                         disabled={config.mappings.length === 0}
-                        sx={{ fontSize: perfTokens.fontSize.small, textTransform: 'none' }}
+                        sx={{ fontSize: perfTokens.fontSize.sm, textTransform: 'none' }}
                     >
                         Clear all
                     </Button>
@@ -174,7 +176,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                 >
                     {sortedMappings.length === 0 ? (
                         <Box sx={{ p: 2, textAlign: 'center' }}>
-                            <Typography variant="caption" sx={{ color: 'text.disabled', fontStyle: 'italic' }}>
+                            <Typography sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.disabled', fontStyle: 'italic' }}>
                                 No mappings yet. Enable MIDI mode (the MIDI button), click a control, then move a hardware knob, fader, or button.
                             </Typography>
                         </Box>
@@ -194,10 +196,10 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                 }}
                             >
                                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                                    <Typography variant="body2" sx={{ fontSize: perfTokens.fontSize.body, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <Typography sx={{ fontSize: perfTokens.fontSize.sm, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                         {m.label}
                                     </Typography>
-                                    <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: perfTokens.fontSize.small, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
+                                    <Typography sx={{ color: 'text.secondary', fontSize: perfTokens.fontSize.xs, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace' }}>
                                         {formatMidi(m.midi)}
                                     </Typography>
                                 </Box>
@@ -205,9 +207,9 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                     <IconButton
                                         size="small"
                                         onClick={() => clearMapping(m.controlId)}
-                                        sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                                        sx={panelStyles.compactIconBtn('sm', 'danger')}
                                     >
-                                        <DeleteIcon size={13} />
+                                        <DeleteIcon size={perfTokens.icon.sm} />
                                     </IconButton>
                                 </Tooltip>
                             </Box>
@@ -215,7 +217,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     )}
                 </Box>
 
-                <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: perfTokens.fontSize.small, lineHeight: 1.4 }}>
+                <Typography sx={{ color: 'text.disabled', fontSize: perfTokens.fontSize.xs, lineHeight: 1.4 }}>
                     Pickup = ignore the hardware until its position matches the on-screen value (no jumps).
                     Right-click a control while in MIDI mode to clear its mapping.
                 </Typography>

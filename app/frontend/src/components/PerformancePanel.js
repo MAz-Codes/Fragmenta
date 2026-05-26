@@ -657,18 +657,7 @@ function PerformancePanelInner({
 
     return (
         <Box sx={styles.root}>
-            <Paper sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                px: 1.25,
-                py: 0.75,
-                borderRadius: 2,
-                border: '1px solid',
-                borderColor: 'divider',
-                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
-                flexWrap: { xs: 'wrap', md: 'nowrap' },
-            }}>
+            <Paper sx={{ ...styles.barCard, gap: 1 }}>
                 {/* Link — compact rectangle, Ableton-style */}
                 <Tooltip
                     title={
@@ -691,8 +680,8 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 1,
-                                minWidth: 46,
+                                px: 0.5,
+                                minWidth: 38,
                                 height: perfTokens.height.compact,
                                 borderRadius: '2px',
                                 // Three states matching Ableton Live's button:
@@ -748,8 +737,8 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 1,
-                                minWidth: 46,
+                                px: 0.5,
+                                minWidth: 38,
                                 height: perfTokens.height.compact,
                                 borderRadius: '2px',
                                 bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
@@ -773,9 +762,9 @@ function PerformancePanelInner({
                         <IconButton
                             size="small"
                             onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <SettingsIcon size={14} />
+                            <SettingsIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -795,9 +784,9 @@ function PerformancePanelInner({
                             size="small"
                             onClick={handleOpenAudioMenu}
                             disabled={!cueSupported}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <AudioSetupIcon size={14} />
+                            <AudioSetupIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -840,9 +829,9 @@ function PerformancePanelInner({
                         <IconButton
                             size="small"
                             onClick={openPresetMenu}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <SaveIcon size={14} />
+                            <SaveIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -968,9 +957,9 @@ function PerformancePanelInner({
                                         <IconButton
                                             size="small"
                                             onClick={(e) => handleDeletePreset(name, e)}
-                                            sx={{ ml: 1, width: perfTokens.height.sub, height: perfTokens.height.sub }}
+                                            sx={{ ...styles.compactIconBtn('md', 'danger'), ml: 1 }}
                                         >
-                                            <CloseXIcon size={12} />
+                                            <CloseXIcon size={perfTokens.icon.sm} />
                                         </IconButton>
                                     </Tooltip>
                                 </MenuItem>
@@ -1015,8 +1004,8 @@ function PerformancePanelInner({
                             }}
                         >
                             {LAUNCH_QUANTIZE_OPTIONS.map((opt) => (
-                                <MenuItem key={opt.value} value={opt.value}>
-                                    <Typography variant="body2">{opt.label}</Typography>
+                                <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                    {opt.label}
                                 </MenuItem>
                             ))}
                         </Select>
@@ -1105,6 +1094,47 @@ function PerformancePanelInner({
                         Stop All
                     </Button>
                 </MidiMappable>
+
+                {/* Main / Cue output channel-pair selectors. Pushed to the right
+                    edge of the bar via ml: 'auto' so the transport controls keep
+                    their cluster on the left. Pairs are derived from the current
+                    device's maxChannelCount; Stage 1 stores the selection,
+                    Stage 2 wires the ChannelMergerNode routing. */}
+                {(() => {
+                    const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
+                    const pairs = Array.from({ length: pairCount }, (_, i) => ({
+                        value: i,
+                        label: `${i * 2 + 1}–${i * 2 + 2}`,
+                    }));
+                    const fieldGroup = (label, value, onChange) => (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <Typography component="span" sx={perfTokens.labelMuted}>{label}</Typography>
+                            <FormControl size="small" sx={{ ...styles.pillControl, width: 84 }}>
+                                <Select value={value} onChange={onChange}>
+                                    {pairs.map(p => (
+                                        <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                            Ch {p.label}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Box>
+                    );
+                    return (
+                        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {fieldGroup(
+                                'Main out',
+                                Math.min(mainOutputPair, pairCount - 1),
+                                (e) => setMainOutputPair(Number(e.target.value)),
+                            )}
+                            {fieldGroup(
+                                'Cue out',
+                                Math.min(cueOutputPair, pairCount - 1),
+                                (e) => setCueOutputPair(Number(e.target.value)),
+                            )}
+                        </Box>
+                    );
+                })()}
             </Paper>
 
             {error && (
@@ -1167,13 +1197,13 @@ function PerformancePanelInner({
                     </Box>
 
                     <Box sx={styles.masterReadouts}>
-                        <Typography variant="caption" sx={styles.masterValue}>
+                        <Typography sx={styles.masterValue}>
                             <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
                                 DBFS
                             </Box>
                             {' '}{formatDb(masterDb)}
                         </Typography>
-                        <Typography variant="caption" sx={styles.masterPeakValue}>
+                        <Typography sx={styles.masterPeakValue}>
                             <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
                                 Pk
                             </Box>
@@ -1181,83 +1211,10 @@ function PerformancePanelInner({
                         </Typography>
                     </Box>
 
-                    {/* Main / Cue output channel pair selection. Pairs are
-                        derived from the current device's maxChannelCount.
-                        Stage 1: selections are stored but routing still goes
-                        through the stereo destination — channel-pair routing
-                        via ChannelMergerNode lands in Stage 2. */}
-                    {(() => {
-                        const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
-                        const pairs = Array.from({ length: pairCount }, (_, i) => ({
-                            value: i,
-                            label: `${i * 2 + 1}–${i * 2 + 2}`,
-                        }));
-                        const labelSx = {
-                            fontSize: perfTokens.fontSize.sm,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                            display: 'block',
-                            mb: 0.25,
-                        };
-                        const selectSx = {
-                            width: '100%',
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                            '& .MuiSelect-select': {
-                                fontSize: perfTokens.fontSize.sm,
-                                py: 0.5,
-                            },
-                        };
-                        return (
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.5 }}>
-                                <Box>
-                                    <Typography component="span" sx={labelSx}>Main Out</Typography>
-                                    <FormControl size="small" sx={selectSx}>
-                                        <Select
-                                            value={Math.min(mainOutputPair, pairCount - 1)}
-                                            onChange={(e) => setMainOutputPair(Number(e.target.value))}
-                                        >
-                                            {pairs.map(p => (
-                                                <MenuItem key={p.value} value={p.value}>
-                                                    <Typography variant="body2">Ch {p.label}</Typography>
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                </Box>
-                                <Box>
-                                    <Typography component="span" sx={labelSx}>Cue Out</Typography>
-                                    <FormControl size="small" sx={selectSx}>
-                                        <Select
-                                            value={Math.min(cueOutputPair, pairCount - 1)}
-                                            onChange={(e) => setCueOutputPair(Number(e.target.value))}
-                                        >
-                                            {pairs.map(p => (
-                                                <MenuItem key={p.value} value={p.value}>
-                                                    <Typography variant="body2">Ch {p.label}</Typography>
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                </Box>
-                            </Box>
-                        );
-                    })()}
                 </Box>
             </Box>
 
-            <Paper sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2.5,
-                px: 1.5,
-                py: 0.75,
-                mt: 1,
-                borderRadius: 2,
-                border: '1px solid',
-                borderColor: 'divider',
-                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.04) 0%, rgba(159, 138, 230, 0.03) 100%)',
-                flexWrap: { xs: 'wrap', md: 'nowrap' },
-            }}>
+            <Paper sx={{ ...styles.barCard, gap: 2.5, mt: 1 }}>
                 {/* Model + artifact pickers — moved here from the top row so the
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
@@ -1279,10 +1236,8 @@ function PerformancePanelInner({
                         }}
                     >
                         {baseModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Base Models ──
-                                </Typography>
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Base Models ──
                             </MenuItem>
                         )}
                         {baseModels.map((model) => (
@@ -1290,28 +1245,25 @@ function PerformancePanelInner({
                                 key={model.name}
                                 value={String(model.name)}
                                 disabled={!model.downloaded}
+                                sx={{ fontSize: perfTokens.fontSize.sm }}
                             >
-                                <Typography variant="body2">
-                                    {model.displayName || model.name}
-                                </Typography>
+                                {model.displayName || model.name}
                             </MenuItem>
                         ))}
                         {availableModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Fine-tuned Models ──
-                                </Typography>
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Fine-tuned Models ──
                             </MenuItem>
                         )}
                         {availableModels.map((model) => (
                             <MenuItem
                                 key={model.name}
                                 value={String(model.name)}
-                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
                             >
-                                <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {model.name}
-                                </Typography>
+                                </Box>
                                 <Tooltip title="Delete fine-tuned model">
                                     <IconButton
                                         size="small"
@@ -1321,12 +1273,9 @@ function PerformancePanelInner({
                                             e.preventDefault();
                                             handleDeleteFineTuned(model.name);
                                         }}
-                                        sx={{
-                                            color: 'text.disabled',
-                                            '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                        }}
+                                        sx={styles.compactIconBtn('md', 'danger')}
                                     >
-                                        <DeleteIcon size={14} />
+                                        <DeleteIcon size={perfTokens.icon.md} />
                                     </IconButton>
                                 </Tooltip>
                             </MenuItem>
@@ -1383,13 +1332,13 @@ function PerformancePanelInner({
                                             sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
                                         >
                                             <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                <Typography variant="body2">{lora.name}</Typography>
-                                                <Typography variant="caption" color="textSecondary">
+                                                <Box sx={{ fontSize: perfTokens.fontSize.sm }}>{lora.name}</Box>
+                                                <Box sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
                                                     rank={lora.rank}
                                                     {lora.all_checkpoints?.length > 1
                                                         ? ` · ${lora.all_checkpoints.length} ckpts`
                                                         : ''}
-                                                </Typography>
+                                                </Box>
                                             </Box>
                                             <Tooltip title="Delete LoRA">
                                                 <IconButton
@@ -1400,12 +1349,9 @@ function PerformancePanelInner({
                                                         e.preventDefault();
                                                         handleDeleteLora(lora.name);
                                                     }}
-                                                    sx={{
-                                                        color: 'text.disabled',
-                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                                    }}
+                                                    sx={styles.compactIconBtn('md', 'danger')}
                                                 >
-                                                    <DeleteIcon size={14} />
+                                                    <DeleteIcon size={perfTokens.icon.md} />
                                                 </IconButton>
                                             </Tooltip>
                                         </MenuItem>
@@ -1424,11 +1370,9 @@ function PerformancePanelInner({
                                     }}
                                 >
                                     {(currentLora?.all_checkpoints || []).map((ckpt, i, arr) => (
-                                        <MenuItem key={ckpt} value={ckpt}>
-                                            <Typography variant="body2">
-                                                {parseCheckpointLabel(ckpt)}
-                                                {i === arr.length - 1 ? ' (latest)' : ''}
-                                            </Typography>
+                                        <MenuItem key={ckpt} value={ckpt} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                            {parseCheckpointLabel(ckpt)}
+                                            {i === arr.length - 1 ? ' (latest)' : ''}
                                         </MenuItem>
                                     ))}
                                 </Select>
@@ -1438,10 +1382,7 @@ function PerformancePanelInner({
                 })()}
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Box
-                        component="span"
-                        sx={{ fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}
-                    >
+                    <Box component="span" sx={perfTokens.labelMuted}>
                         Steps
                     </Box>
                     <Tooltip
@@ -1461,13 +1402,13 @@ function PerformancePanelInner({
                                 renderValue={(value) => `${value}`}
                             >
                                 {isSmallModel && (
-                                    <MenuItem value={8}>
-                                        <Typography variant="body2">8 (locked)</Typography>
+                                    <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                        8 (locked)
                                     </MenuItem>
                                 )}
                                 {[50, 100, 150, 200, 250].map((n) => (
-                                    <MenuItem key={n} value={n}>
-                                        <Typography variant="body2">{n}</Typography>
+                                    <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                        {n}
                                     </MenuItem>
                                 ))}
                             </Select>
@@ -1476,10 +1417,7 @@ function PerformancePanelInner({
                 </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Box
-                        component="span"
-                        sx={{ fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}
-                    >
+                    <Box component="span" sx={perfTokens.labelMuted}>
                         Seed
                     </Box>
                     <FormControlLabel
@@ -1524,15 +1462,8 @@ function PerformancePanelInner({
                     title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
                 >
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography
-                            component="span"
-                            sx={{
-                                fontSize: perfTokens.fontSize.sm,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                color: 'text.disabled',
-                            }}
-                        >
-                            Auto bpm
+                        <Typography component="span" sx={perfTokens.labelMuted}>
+                            Auto BPM
                         </Typography>
                         <Switch
                             size="small"
