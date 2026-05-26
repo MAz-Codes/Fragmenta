@@ -147,7 +147,9 @@ function PerformancePanelInner({
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
-    const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
+    const [promptKey, setPromptKey] = useState(session.promptKey ?? '');
+    const [promptTempo, setPromptTempo] = useState(session.promptTempo ?? '');
+    const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
     const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
     const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
 
@@ -238,7 +240,9 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('bpm', bpm); }, [bpm, updateGlobal]);
     useEffect(() => { updateGlobal('launchQuantum', launchQuantum); }, [launchQuantum, updateGlobal]);
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
-    useEffect(() => { updateGlobal('injectBpm', injectBpm); }, [injectBpm, updateGlobal]);
+    useEffect(() => { updateGlobal('promptKey', promptKey); }, [promptKey, updateGlobal]);
+    useEffect(() => { updateGlobal('promptTempo', promptTempo); }, [promptTempo, updateGlobal]);
+    useEffect(() => { updateGlobal('promptTimeSig', promptTimeSig); }, [promptTimeSig, updateGlobal]);
     useEffect(() => {
         updateGlobal('masterReverbIR', masterReverbIR);
         engineRef.current?.setMasterReverbIR?.(masterReverbIR);
@@ -596,10 +600,25 @@ function PerformancePanelInner({
             throw new Error(msg);
         }
 
+        // Auto-inject the prompt fields (Key / Tempo / Time sig) when set.
+        // Skip a field if its value already appears in the user's prompt so
+        // we don't double-up. Tempo gets a " BPM" suffix unless the user
+        // already typed it.
         const trimmed = (prompt || '').trim();
-        const hasExplicitBpm = /\b\d{2,3}\s*bpm\b/i.test(trimmed);
-        const finalPrompt = injectBpm && !hasExplicitBpm
-            ? `${trimmed}${trimmed ? ', ' : ''}${Math.round(bpm)} BPM`
+        const lower = trimmed.toLowerCase();
+        const additions = [];
+        if (promptKey.trim() && !lower.includes(promptKey.trim().toLowerCase())) {
+            additions.push(promptKey.trim());
+        }
+        if (promptTempo.trim() && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
+            const t = promptTempo.trim();
+            additions.push(/bpm/i.test(t) ? t : `${t} BPM`);
+        }
+        if (promptTimeSig.trim() && !lower.includes(promptTimeSig.trim().toLowerCase())) {
+            additions.push(promptTimeSig.trim());
+        }
+        const finalPrompt = additions.length > 0
+            ? `${trimmed}${trimmed ? ', ' : ''}${additions.join(', ')}`
             : trimmed;
 
         let baseSeed;
@@ -1695,21 +1714,64 @@ function PerformancePanelInner({
                     />
                 </Box>
 
-                <Tooltip
-                    placement="right"
-                    title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
-                >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography component="span" sx={perfTokens.labelMuted}>
-                            Auto BPM
-                        </Typography>
-                        <Switch
-                            size="small"
-                            checked={injectBpm}
-                            onChange={(e) => setInjectBpm(e.target.checked)}
-                        />
+                {/* Prompt auto-inject — Key / Tempo / Time sig fields. Each
+                    is appended to every generated prompt when populated; empty
+                    fields are skipped. Replaces the old Auto BPM toggle. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Prompt
                     </Box>
-                </Tooltip>
+                    <Tooltip title="Musical key to auto-inject (e.g. C minor). Leave empty to skip." placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Key"
+                            value={promptKey}
+                            onChange={(e) => setPromptKey(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Key to inject into prompt',
+                                style: {
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 78 }}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Tempo to auto-inject (e.g. 120). BPM is appended automatically." placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="BPM"
+                            value={promptTempo}
+                            onChange={(e) => setPromptTempo(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Tempo to inject into prompt',
+                                style: {
+                                    fontVariantNumeric: 'tabular-nums',
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 62 }}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Time signature to auto-inject (e.g. 4/4). Leave empty to skip." placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Time"
+                            value={promptTimeSig}
+                            onChange={(e) => setPromptTimeSig(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Time signature to inject into prompt',
+                                style: {
+                                    fontVariantNumeric: 'tabular-nums',
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 62 }}
+                        />
+                    </Tooltip>
+                </Box>
             </Paper>
         </Box>
     );

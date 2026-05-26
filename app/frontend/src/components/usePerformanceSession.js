@@ -101,6 +101,13 @@ function defaultSession(channelCount) {
         // levels. We only persist the IR choice and the delay division.
         masterReverbIR: 'hall',
         masterDelayDivision: '1/4',
+        // Prompt auto-inject fields. Each is appended (comma-separated) to
+        // every generated prompt when non-empty. Empty = no injection.
+        // Replaces the old `injectBpm` switch — the master BPM no longer
+        // auto-injects; the user opts in by typing a tempo here.
+        promptKey: '',
+        promptTempo: '',
+        promptTimeSig: '',
         channels: Array.from({ length: channelCount }, () => ({
             ...CHANNEL_DEFAULT,
             knobs: { ...CHANNEL_DEFAULT.knobs },
