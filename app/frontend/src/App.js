@@ -80,12 +80,31 @@ const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
 
+// Persisted across reload so the user lands back where they were.
+// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance.
+const TAB_STORAGE_KEY = 'fragmenta.lastTab';
+const TAB_COUNT = 4;
+const readStoredTab = () => {
+    try {
+        const raw = window.localStorage.getItem(TAB_STORAGE_KEY);
+        const n = Number(raw);
+        return Number.isFinite(n) && n >= 0 && n < TAB_COUNT ? n : 0;
+    } catch {
+        return 0;
+    }
+};
+
 function App() {
-    const [tabValue, setTabValue] = useState(0);
+    const [tabValue, setTabValue] = useState(readStoredTab);
     // Lags behind tabValue by ~fadeDuration so content swap happens
     // while the panel is invisible (cross-fade between pages).
-    const [displayedTab, setDisplayedTab] = useState(0);
+    const [displayedTab, setDisplayedTab] = useState(readStoredTab);
     const TAB_FADE_MS = 180;
+
+    // Persist the active tab so a reload returns the user to it.
+    useEffect(() => {
+        try { window.localStorage.setItem(TAB_STORAGE_KEY, String(tabValue)); } catch {}
+    }, [tabValue]);
     // Header sticky chrome only kicks in once the page has scrolled.
     const [isScrolled, setIsScrolled] = useState(false);
     // Measure the header's actual rendered height so the fixed nav
