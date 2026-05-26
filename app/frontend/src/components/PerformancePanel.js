@@ -374,6 +374,64 @@ function PerformancePanelInner({
     })();
 
     const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-small-');
+    // Distilled (post-trained) SA3 variants — names that DON'T end in `-base`.
+    // The Steps dropdown only locks at 8 for these; the *-base checkpoints let
+    // the user pick a real step count.
+    const isDistilledSA3 = !!resolvedBaseModel
+        && resolvedBaseModel.startsWith('sa3-')
+        && !resolvedBaseModel.endsWith('-base');
+
+    // Split baseModels by `kind` for the model-picker grouping. The render
+    // helper is also hoisted to component scope so its MenuItems land as
+    // direct children of <Select>, not nested inside a Fragment.
+    const distilledBaseModels = baseModels.filter(m => m.kind !== 'base');
+    const trueBaseModels = baseModels.filter(m => m.kind === 'base');
+    const renderBaseModelRow = (model) => (
+        <MenuItem
+            key={model.name}
+            value={String(model.name)}
+            disabled={!model.downloaded}
+            sx={{
+                fontSize: perfTokens.fontSize.sm,
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 1,
+                pr: 0.5,
+            }}
+        >
+            <Box component="span" sx={{
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+            }}>
+                {model.displayName || model.name}
+            </Box>
+            {!model.downloaded && (
+                <Tooltip title="Not downloaded — open Checkpoint Manager">
+                    <IconButton
+                        size="small"
+                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            onOpenCheckpointManager?.();
+                        }}
+                        sx={{
+                            ...styles.compactIconBtn('md'),
+                            // Override the MenuItem-disabled pointer-events:none
+                            // so the download button stays clickable, and the
+                            // dimmed opacity so it reads as actionable.
+                            pointerEvents: 'auto',
+                            opacity: 1,
+                        }}
+                    >
+                        <DownloadIcon size={perfTokens.icon.md} />
+                    </IconButton>
+                </Tooltip>
+            )}
+        </MenuItem>
+    );
 
     if (!engineRef.current) {
         engineRef.current = new PerformanceEngine(CHANNEL_COUNT);
@@ -1495,81 +1553,24 @@ function PerformancePanelInner({
                             return value;
                         }}
                     >
-                        {(() => {
-                            // Split baseModels by their `kind` field so distilled
-                            // (post-trained) variants aren't grouped under "Base".
-                            const distilled = baseModels.filter(m => m.kind !== 'base');
-                            const bases = baseModels.filter(m => m.kind === 'base');
-                            // Inline row used by both groups. Renders the model name
-                            // and, if the model isn't downloaded yet, a Download
-                            // button that opens the Checkpoint Manager. The button's
-                            // `pointer-events: auto` overrides the MenuItem-disabled
-                            // `pointer-events: none` so the click still fires.
-                            const modelRow = (model) => (
-                                <MenuItem
-                                    key={model.name}
-                                    value={String(model.name)}
-                                    disabled={!model.downloaded}
-                                    sx={{
-                                        fontSize: perfTokens.fontSize.sm,
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        gap: 1,
-                                        pr: 0.5,
-                                    }}
-                                >
-                                    <Box component="span" sx={{
-                                        flex: 1,
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                    }}>
-                                        {model.displayName || model.name}
-                                    </Box>
-                                    {!model.downloaded && (
-                                        <Tooltip title="Not downloaded — open Checkpoint Manager">
-                                            <IconButton
-                                                size="small"
-                                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    e.preventDefault();
-                                                    onOpenCheckpointManager?.();
-                                                }}
-                                                sx={{
-                                                    ...styles.compactIconBtn('md'),
-                                                    // Override the MenuItem-disabled
-                                                    // pointer-events: none so this
-                                                    // button stays clickable, and
-                                                    // override the dimmed opacity so
-                                                    // it reads as actionable.
-                                                    pointerEvents: 'auto',
-                                                    opacity: 1,
-                                                }}
-                                            >
-                                                <DownloadIcon size={perfTokens.icon.md} />
-                                            </IconButton>
-                                        </Tooltip>
-                                    )}
-                                </MenuItem>
-                            );
-                            return (
-                                <>
-                                    {distilled.length > 0 && (
-                                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                            ── Distilled ──
-                                        </MenuItem>
-                                    )}
-                                    {distilled.map(modelRow)}
-                                    {bases.length > 0 && (
-                                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                            ── Base ──
-                                        </MenuItem>
-                                    )}
-                                    {bases.map(modelRow)}
-                                </>
-                            );
-                        })()}
+                        {/* Distilled (post-trained) and Base SA3 variants are
+                            split by their `kind` field. modelRow is defined
+                            inline at component scope so MUI Select sees the
+                            generated MenuItems as direct flat children — wrapping
+                            them in an IIFE-returned Fragment broke selection
+                            (Select couldn't find the option matching `value`). */}
+                        {distilledBaseModels.length > 0 && (
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Distilled ──
+                            </MenuItem>
+                        )}
+                        {distilledBaseModels.map(renderBaseModelRow)}
+                        {trueBaseModels.length > 0 && (
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Base ──
+                            </MenuItem>
+                        )}
+                        {trueBaseModels.map(renderBaseModelRow)}
                         {availableModels.length > 0 && (
                             <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
                                 ── Fine-tuned ──
@@ -1745,20 +1746,20 @@ function PerformancePanelInner({
                     <Tooltip
                         placement="right"
                         title={
-                            isSmallModel
-                                ? 'Locked at 8 steps for the distilled small model'
+                            isDistilledSA3
+                                ? 'Locked at 8 steps for distilled SA3 models — pick a *-base checkpoint to override'
                                 : 'Diffusion steps per generation (more = higher quality, slower)'
                         }
                     >
                         <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
 
                             <Select
-                                value={isSmallModel ? 8 : steps}
+                                value={isDistilledSA3 ? 8 : steps}
                                 onChange={(e) => onStepsChange?.(Number(e.target.value))}
-                                disabled={isSmallModel}
+                                disabled={isDistilledSA3}
                                 renderValue={(value) => `${value}`}
                             >
-                                {isSmallModel && (
+                                {isDistilledSA3 && (
                                     <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
                                         8 (locked)
                                     </MenuItem>
