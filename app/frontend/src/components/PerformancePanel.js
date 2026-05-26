@@ -6,6 +6,7 @@ import {
     Slider,
     Button,
     Alert,
+    Divider,
     FormControl,
     FormControlLabel,
     Switch,
@@ -27,6 +28,7 @@ import {
     X as CloseXIcon,
     Headphones as CueIcon,
     Volume2 as AudioSetupIcon,
+    RotateCcw as RestoreIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -44,6 +46,12 @@ import {
     loadPresetIntoSession,
     clearPerformanceSession,
 } from './usePerformanceSession';
+import {
+    channelScope,
+    presetChannelScope,
+    copyScope,
+    clearScope as clearTakeScope,
+} from '../utils/takeStorage';
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
@@ -79,9 +87,20 @@ const formatDb = (db) => {
 };
 
 export default function PerformancePanel(props) {
+    // Reset key for the inner panel. Bumping it forces a full remount of
+    // PerformancePanelInner, which makes usePerformanceSession re-read from
+    // localStorage and every PerformanceChannel re-hydrate from IDB. The
+    // MidiProvider sits outside so MIDI mappings survive a reset (they
+    // have their own clearMidiConfig pathway when needed).
+    const [resetKey, setResetKey] = useState(0);
+    const triggerReset = useCallback(() => setResetKey((k) => k + 1), []);
     return (
         <MidiProvider>
-            <PerformancePanelInner {...props} />
+            <PerformancePanelInner
+                key={resetKey}
+                {...props}
+                onPresetLoaded={triggerReset}
+            />
         </MidiProvider>
     );
 }
@@ -103,6 +122,7 @@ function PerformancePanelInner({
     seedValue = '',
     onRandomSeedChange,
     onSeedValueChange,
+    onPresetLoaded,
 }) {
     const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
 
@@ -253,7 +273,7 @@ function PerformancePanelInner({
         }
     };
 
-    const handleRestoreDefaults = () => {
+    const handleRestoreDefaults = async () => {
         if (!restoreArmed) {
             // First click arms; second click within 3 s commits. Disarms
             // automatically so the destructive path is never one accidental
@@ -265,29 +285,64 @@ function PerformancePanelInner({
         }
         clearPerformanceSession();
         clearMidiConfig();
+        // Drop every channel's take blobs from IDB so a fresh start is
+        // actually fresh. Presets keep their own scopes and survive.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, (_, i) =>
+                clearTakeScope(channelScope(i)).catch(() => { /* ignore */ })
+            )
+        );
         closePresetMenu();
         onPresetLoaded?.();
     };
 
-    const handleSaveAs = () => {
+    const handleSaveAs = async () => {
         const name = saveAsName.trim();
         if (!name) return;
         savePreset(name, session);
+        // Copy each channel's session-scope blobs into the preset-scope so
+        // the preset's takes survive overwrites of the live session. Done
+        // after the metadata save so a quota failure here still leaves a
+        // recoverable (if blob-less) preset entry.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, async (_, i) => {
+                const dst = presetChannelScope(name, i);
+                // Replace, don't merge — a re-save of the same preset name
+                // should reflect the current session exactly.
+                await clearTakeScope(dst).catch(() => { /* ignore */ });
+                await copyScope(channelScope(i), dst).catch(() => { /* ignore */ });
+            })
+        );
         setSaveAsName('');
         refreshPresetNames();
     };
 
-    const handleLoadPreset = (name) => {
+    const handleLoadPreset = async (name) => {
         if (!loadPresetIntoSession(name)) return;
+        // Swap the IDB session-scope blobs to match the loaded preset's
+        // metadata. MUST complete before onPresetLoaded triggers remount —
+        // otherwise the new channels hydrate from a stale session scope.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, async (_, i) => {
+                const dst = channelScope(i);
+                await clearTakeScope(dst).catch(() => { /* ignore */ });
+                await copyScope(presetChannelScope(name, i), dst).catch(() => { /* ignore */ });
+            })
+        );
         closePresetMenu();
         // Force-remount via the App-level reset key. Same pathway as Fresh
         // Start, just with a different localStorage payload pre-loaded.
         onPresetLoaded?.();
     };
 
-    const handleDeletePreset = (name, e) => {
+    const handleDeletePreset = async (name, e) => {
         e?.stopPropagation();
         deletePreset(name);
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, (_, i) =>
+                clearTakeScope(presetChannelScope(name, i)).catch(() => { /* ignore */ })
+            )
+        );
         refreshPresetNames();
     };
 
@@ -523,7 +578,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1 }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, onBlob }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -551,7 +606,6 @@ function PerformancePanelInner({
         }
 
         const count = Math.max(1, Math.min(4, batchSize | 0));
-        const blobs = [];
         for (let i = 0; i < count; i++) {
             // Sequential rather than parallel — the backend serves one
             // generation at a time anyway, and parallelizing would just
@@ -582,9 +636,13 @@ function PerformancePanelInner({
                 ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
-            blobs.push(response.data);
+            // Stream: hand each blob to the caller as it arrives so the take
+            // can land in the channel's history (and the first one can
+            // auto-load) without waiting for the rest of the batch. Awaited
+            // so the callback's async work (blob load, setState) finishes
+            // before the next backend round-trip starts.
+            await onBlob?.(response.data, i);
         }
-        return blobs;
     };
 
     const handleChannelStateChange = (index, change) => {
@@ -657,7 +715,15 @@ function PerformancePanelInner({
 
     return (
         <Box sx={styles.root}>
-            <Paper sx={{ ...styles.barCard, gap: 1 }}>
+            <Paper sx={{
+                ...styles.barCard,
+                gap: 1,
+                // Top-only drop shadow — keeps the bar visually lifted from
+                // the app surface above it without casting darkness down onto
+                // the channels grid below. Negative Y inverts the direction
+                // of MUI's default Paper elevation.
+                boxShadow: '0 -2px 6px rgba(0, 0, 0, 0.12)',
+            }}>
                 {/* Link — compact rectangle, Ableton-style */}
                 <Tooltip
                     title={
@@ -795,33 +861,95 @@ function PerformancePanelInner({
                     open={Boolean(audioMenuAnchor)}
                     onClose={handleCloseAudioMenu}
                     MenuListProps={{ sx: { py: 0 } }}
-                    PaperProps={{ sx: { minWidth: 280, borderRadius: 1.5 } }}
+                    PaperProps={{
+                        sx: {
+                            width: 300,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                        },
+                    }}
                 >
-                    <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}>
-                        Audio Setup
-                    </MenuItem>
-                    <MenuItem
-                        onClick={() => handlePickAudioDevice('')}
-                        selected={outputDeviceId === ''}
-                        sx={{ fontSize: perfTokens.fontSize.sm }}
-                    >
-                        <ListItemText primary="System device (default)" />
-                    </MenuItem>
-                    {audioDevices.length === 0 && (
-                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.sm }}>
-                            No additional output devices detected
-                        </MenuItem>
-                    )}
-                    {audioDevices.map(d => (
+                    {/* Title bar — matches the Presets / MIDI menus. */}
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: 1,
+                    }}>
+                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
+                            Audio Output
+                        </Typography>
+                        <IconButton onClick={handleCloseAudioMenu} sx={styles.compactIconBtn('md')}>
+                            <CloseXIcon size={perfTokens.icon.sm} />
+                        </IconButton>
+                    </Box>
+
+                    <Divider />
+
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block' }}>
+                            Output device
+                        </Typography>
+                    </Box>
+                    <Box sx={{ pb: 0.75, px: 0.75 }}>
                         <MenuItem
-                            key={d.deviceId}
-                            onClick={() => handlePickAudioDevice(d.deviceId)}
-                            selected={outputDeviceId === d.deviceId}
-                            sx={{ fontSize: perfTokens.fontSize.sm }}
+                            onClick={() => handlePickAudioDevice('')}
+                            selected={outputDeviceId === ''}
+                            sx={{
+                                borderRadius: 1,
+                                py: 0.5,
+                                px: 1,
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: 500,
+                            }}
                         >
-                            <ListItemText primary={d.label || `Output (${d.deviceId.slice(0, 6)}…)`} />
+                            <Box component="span" sx={{
+                                flex: 1,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}>
+                                System device (default)
+                            </Box>
                         </MenuItem>
-                    ))}
+                        {audioDevices.length === 0 && (
+                            <Box sx={{ px: 1, py: 0.5 }}>
+                                <Typography sx={{
+                                    fontSize: perfTokens.fontSize.xs,
+                                    color: 'text.disabled',
+                                    fontStyle: 'italic',
+                                }}>
+                                    No additional output devices detected
+                                </Typography>
+                            </Box>
+                        )}
+                        {audioDevices.map(d => (
+                            <MenuItem
+                                key={d.deviceId}
+                                onClick={() => handlePickAudioDevice(d.deviceId)}
+                                selected={outputDeviceId === d.deviceId}
+                                sx={{
+                                    borderRadius: 1,
+                                    py: 0.5,
+                                    px: 1,
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 500,
+                                }}
+                            >
+                                <Box component="span" sx={{
+                                    flex: 1,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                }}>
+                                    {d.label || `Output (${d.deviceId.slice(0, 6)}…)`}
+                                </Box>
+                            </MenuItem>
+                        ))}
+                    </Box>
                 </Menu>
 
                 <Tooltip title="Save / load presets">
@@ -842,103 +970,115 @@ function PerformancePanelInner({
                     MenuListProps={{ sx: { py: 0 } }}
                     PaperProps={{
                         sx: {
-                            minWidth: 240,
-                            borderRadius: 1.5,
+                            width: 300,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
                         },
                     }}
                 >
-                    {/* SAVE section — type a name and click save (or press Enter) */}
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography
-                            sx={{
-                                fontSize: perfTokens.fontSize.md,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                fontWeight: 700,
-                                color: 'text.secondary',
-                                textTransform: 'uppercase',
-                            }}
-                        >
-                            Save
+                    {/* Title bar — matches the MIDI settings popover so the two
+                        top-bar menus speak the same visual language. */}
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: 1,
+                    }}>
+                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
+                            Presets
                         </Typography>
+                        <IconButton onClick={closePresetMenu} sx={styles.compactIconBtn('md')}>
+                            <CloseXIcon size={perfTokens.icon.sm} />
+                        </IconButton>
                     </Box>
-                    <Box sx={{ px: 1.5, pb: 1.25, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                        <TextField
-                            autoFocus
-                            size="small"
-                            placeholder="Preset name"
-                            value={saveAsName}
-                            onChange={(e) => setSaveAsName(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveAs();
-                                e.stopPropagation();
-                            }}
-                            sx={{
-                                flex: 1,
-                                '& .MuiOutlinedInput-root': {
-                                    borderRadius: 1.5,
+
+                    <Divider />
+
+                    {/* SAVE — type a name, Enter or click Save. */}
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 1.25 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block', mb: 0.75 }}>
+                            Save current session as
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                            <TextField
+                                autoFocus
+                                size="small"
+                                placeholder="Preset name"
+                                value={saveAsName}
+                                onChange={(e) => setSaveAsName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveAs();
+                                    e.stopPropagation();
+                                }}
+                                sx={{
+                                    flex: 1,
+                                    '& .MuiOutlinedInput-root': {
+                                        borderRadius: 1.5,
+                                        height: perfTokens.height.compact,
+                                        fontSize: perfTokens.fontSize.sm,
+                                    },
+                                }}
+                            />
+                            <Button
+                                size="small"
+                                variant="contained"
+                                onClick={handleSaveAs}
+                                disabled={!saveAsName.trim()}
+                                sx={{
                                     height: perfTokens.height.compact,
                                     fontSize: perfTokens.fontSize.sm,
-                                },
-                            }}
-                        />
-                        <Button
-                            size="small"
-                            variant="contained"
-                            onClick={handleSaveAs}
-                            disabled={!saveAsName.trim()}
-                            sx={{
-                                height: perfTokens.height.compact,
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                borderRadius: 1.5,
-                                minWidth: 56,
-                                px: 1.25,
-                            }}
-                        >
-                            Save
-                        </Button>
-                    </Box>
-                    {saveAsName.trim() && presetNames.includes(saveAsName.trim()) && (
-                        <Box sx={{ px: 1.5, pb: 0.75 }}>
-                            <Typography
-                                variant="caption"
-                                color="warning.main"
-                                sx={{ fontSize: perfTokens.fontSize.sm }}
+                                    fontWeight: 600,
+                                    borderRadius: 1.5,
+                                    minWidth: 60,
+                                    px: 1.5,
+                                    textTransform: 'none',
+                                }}
                             >
+                                Save
+                            </Button>
+                        </Box>
+                        {saveAsName.trim() && presetNames.includes(saveAsName.trim()) && (
+                            <Typography sx={{
+                                fontSize: perfTokens.fontSize.xs,
+                                color: 'warning.main',
+                                fontStyle: 'italic',
+                                mt: 0.5,
+                            }}>
                                 Will overwrite existing preset.
                             </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
-
-                    {/* LOAD section — list of saved presets */}
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography
-                            sx={{
-                                fontSize: perfTokens.fontSize.md,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                fontWeight: 700,
-                                color: 'text.secondary',
-                                textTransform: 'uppercase',
-                            }}
-                        >
-                            Load
-                        </Typography>
+                        )}
                     </Box>
-                    {presetNames.length === 0 ? (
-                        <Box sx={{ px: 1.5, pb: 1.25 }}>
-                            <Typography
-                                variant="caption"
-                                color="text.disabled"
-                                sx={{ fontSize: perfTokens.fontSize.sm }}
-                            >
-                                No presets saved yet.
+
+                    <Divider />
+
+                    {/* LOAD — saved presets. */}
+                    <Box sx={{
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: presetNames.length === 0 ? 1.25 : 0.5,
+                    }}>
+                        <Typography sx={{
+                            ...perfTokens.labelMuted,
+                            display: 'block',
+                            mb: presetNames.length === 0 ? 0.5 : 0,
+                        }}>
+                            Saved presets
+                        </Typography>
+                        {presetNames.length === 0 && (
+                            <Typography sx={{
+                                fontSize: perfTokens.fontSize.xs,
+                                color: 'text.disabled',
+                                fontStyle: 'italic',
+                            }}>
+                                No presets saved yet
                             </Typography>
-                        </Box>
-                    ) : (
-                        <Box sx={{ pb: 0.5 }}>
+                        )}
+                    </Box>
+                    {presetNames.length > 0 && (
+                        <Box sx={{ pb: 0.75, px: 0.75 }}>
                             {presetNames.map((name) => (
                                 <MenuItem
                                     key={name}
@@ -947,13 +1087,22 @@ function PerformancePanelInner({
                                         display: 'flex',
                                         justifyContent: 'space-between',
                                         gap: 1,
+                                        borderRadius: 1,
+                                        py: 0.5,
+                                        px: 1,
                                         fontSize: perfTokens.fontSize.sm,
-                                        fontWeight: 600,
-                                        letterSpacing: perfTokens.letterSpacing.wide,
+                                        fontWeight: 500,
                                     }}
                                 >
-                                    <ListItemText primary={name} primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.sm } }} />
-                                    <Tooltip title="Delete preset">
+                                    <Box component="span" sx={{
+                                        flex: 1,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {name}
+                                    </Box>
+                                    <Tooltip title="Delete preset" placement="left" arrow>
                                         <IconButton
                                             size="small"
                                             onClick={(e) => handleDeletePreset(name, e)}
@@ -967,30 +1116,42 @@ function PerformancePanelInner({
                         </Box>
                     )}
 
-                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
+                    <Divider />
 
-                    {/* Destructive: wipes session + MIDI mappings. Two-click arm
-                        prevents accidental clicks; the menu auto-disarms after 3 s. */}
-                    <Tooltip
-                        title={restoreArmed
-                            ? 'Click again within 3s to confirm — this clears all panel settings AND MIDI mappings'
-                            : 'Reset panel settings and clear MIDI mappings'}
-                    >
-                        <MenuItem
-                            onClick={handleRestoreDefaults}
-                            sx={{
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                color: restoreArmed ? 'error.main' : 'text.secondary',
-                            }}
+                    {/* Danger zone — armed-to-confirm wipes session config, takes,
+                        and MIDI mappings. Auto-disarms after 3 s. */}
+                    <Box sx={{ px: 0.75, py: 0.75 }}>
+                        <Tooltip
+                            title={restoreArmed
+                                ? 'Click again within 3s to confirm — clears session, takes, and MIDI mappings'
+                                : 'Reset all panel settings, clear takes, and clear MIDI mappings'}
+                            placement="left"
+                            arrow
                         >
-                            <ListItemText
-                                primary={restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
-                                primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.sm } }}
-                            />
-                        </MenuItem>
-                    </Tooltip>
+                            <MenuItem
+                                onClick={handleRestoreDefaults}
+                                sx={(theme) => ({
+                                    borderRadius: 1,
+                                    py: 0.5,
+                                    px: 1,
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 500,
+                                    color: restoreArmed ? theme.palette.error.main : 'text.secondary',
+                                    bgcolor: restoreArmed ? `${theme.palette.error.main}14` : 'transparent',
+                                    '&:hover': {
+                                        bgcolor: restoreArmed
+                                            ? `${theme.palette.error.main}26`
+                                            : 'action.hover',
+                                        color: restoreArmed ? theme.palette.error.main : 'text.primary',
+                                    },
+                                    transition: 'background-color 120ms, color 120ms',
+                                })}
+                            >
+                                <RestoreIcon size={perfTokens.icon.sm} style={{ marginRight: 8, flexShrink: 0 }} />
+                                {restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
+                            </MenuItem>
+                        </Tooltip>
+                    </Box>
                 </Menu>
 
                 <Tooltip placement="right" title="Launch quantization — match Live's">

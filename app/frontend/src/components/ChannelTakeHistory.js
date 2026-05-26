@@ -22,8 +22,9 @@ import { performanceChannelStyles as styles } from '../theme';
 
 /**
  * Per-channel rolling take history. Always visible (empty-state included)
- * so the user knows the strip exists. Newest takes at the top; scrolls
- * vertically when the list grows past ~5 visible rows.
+ * so the user knows the strip exists. Chronological order — oldest at
+ * the top, newest at the bottom; scrolls vertically when the list grows
+ * past ~4 visible rows.
  *
  * Each row exposes four actions, all visible by default (no hover-reveal —
  * Performance use is fast, can't afford the discoverability tax):
@@ -156,10 +157,10 @@ export default function ChannelTakeHistory({
                                             size="small"
                                             onClick={() => onCommit(take.id)}
                                             disabled={isCommitted}
-                                            sx={styles.takeIconBtn(color, isCommitted)}
+                                            sx={styles.takeIconBtn(color, isCommitted, true)}
                                             aria-label="Load take into channel"
                                         >
-                                            <CommitIcon size={12} />
+                                            <CommitIcon size={12} strokeWidth={isCommitted ? 3 : 2} />
                                         </IconButton>
                                     </span>
                                 </Tooltip>

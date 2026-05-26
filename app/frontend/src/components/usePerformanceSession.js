@@ -72,7 +72,15 @@ const CHANNEL_DEFAULT = {
     muted: false,
     soloed: false,
     batchSize: 1,
-    knobs: { gain: -6, pan: 0, filter: 18000, delay: 0, reverb: 0 },
+    knobs: { gain: -6, pan: 0, filter: 0, delay: 0, reverb: 0 },
+    // Take history metadata (id, prompt, duration, createdAt, starred,
+    // number). The Blob audio bodies live in IndexedDB under the
+    // `session-ch{N}` scope — see utils/takeStorage.js. Cleared on Fresh
+    // Start and overwritten on preset load.
+    takes: [],
+    // Which take was loaded into the channel strip last; restored on reload
+    // so the channel comes back ready to play instead of empty.
+    committedTakeId: null,
 };
 
 function defaultSession(channelCount) {

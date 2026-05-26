@@ -2360,7 +2360,8 @@ export const lossChartStyles = {
 // SIZE LADDER (3 sizes, no more):
 export const perfTokens = {
     fontSize: {
-        // 0.62rem — ALL-CAPS labels only (knob labels, PAN, unit suffixes).
+        // 0.62rem — smallest sentence-case body text (LoRA subtitle, dropdown
+        // section dividers, mapping monospace, footnotes, masterPeakValue).
         xs: '0.62rem',
         // 0.72rem — body: buttons, dropdowns, prompt, value readouts, take
         // history entries, sentence-case labels, mapping rows.
@@ -2406,8 +2407,10 @@ export const perfTokens = {
     // weight, and tracking in one go. Use directly in sx:
     //   sx={{ ...perfTokens.caps }}
     // Scope: scientific-control labels only (GAIN, LPF, PAN, BPM, DBFS, etc.)
+    // Sits one notch under the xs body ladder (0.58rem vs 0.62rem) so caps
+    // text reads as a label / annotation, not as body content.
     caps: {
-        fontSize: '0.62rem',
+        fontSize: '0.58rem',
         textTransform: 'uppercase',
         letterSpacing: '0.08em',
         fontWeight: 600,
@@ -3002,13 +3005,24 @@ export const performanceChannelStyles = {
         },
         transition: 'background-color 120ms',
     }),
-    takeIconBtn: (color, active) => ({
+    // takeIconBtn — used by audition, star, and commit buttons in the take
+    // history rows. The optional `filled` flag flips the active state from a
+    // ghost (color + transparent bg) to a chip (white glyph on channel-color
+    // bg + 1px ring). The commit button uses `filled` so the "loaded" take
+    // reads as a definitively selected pill, not just a tinted icon.
+    takeIconBtn: (color, active, filled = false) => ({
         width: 20,
         height: 20,
         borderRadius: 0.75,
-        color: active ? color : 'text.disabled',
-        '&:hover': { color, bgcolor: 'action.hover' },
-        '&.Mui-disabled': { color, opacity: 0.85 },
+        color: filled && active ? '#0c1018' : (active ? color : 'text.disabled'),
+        backgroundColor: filled && active ? color : 'transparent',
+        border: filled && active ? `1px solid ${color}` : '1px solid transparent',
+        '&:hover': filled && active
+            ? { backgroundColor: color, color: '#0c1018' }
+            : { color, bgcolor: 'action.hover' },
+        '&.Mui-disabled': filled && active
+            ? { color: '#0c1018', backgroundColor: color, opacity: 1 }
+            : { color, opacity: 0.85 },
     }),
     takeDeleteBtn: {
         width: 20,

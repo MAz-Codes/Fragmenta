@@ -110,10 +110,23 @@ export class ChannelStrip {
         this.isMuted = false;
         this.isSoloed = false;
 
+        // High-pass and low-pass in series — together they act as a bipolar
+        // "DJ filter" knob. At rest (bypass) the HPF sits at 20 Hz and the
+        // LPF at 20 kHz so neither shapes audible content. The channel knob
+        // drives only one side at a time depending on its sign.
+        this.hpf = ctx.createBiquadFilter();
+        this.hpf.type = 'highpass';
+        this.hpf.frequency.value = 20;
+        this.hpf.Q.value = 0.7;
+
         this.filter = ctx.createBiquadFilter();
         this.filter.type = 'lowpass';
         this.filter.frequency.value = 18000;
         this.filter.Q.value = 0.7;
+
+        // Source → hpf → lpf → rest. Source connection happens in play()
+        // so we only wire the static portion of the chain here.
+        this.hpf.connect(this.filter);
 
         this.dryGain = ctx.createGain();
         this.dryGain.gain.value = 1.0;
@@ -185,7 +198,8 @@ export class ChannelStrip {
         const fadeGain = this.ctx.createGain();
         fadeGain.gain.value = 1;
         src.connect(fadeGain);
-        fadeGain.connect(this.filter);
+        // Source enters at the head of the filter chain (hpf → lpf → …).
+        fadeGain.connect(this.hpf);
         src.onended = () => {
             if (this.source === src) {
                 this.source = null;
@@ -232,6 +246,7 @@ export class ChannelStrip {
 
     setGain(value) { this.channelGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
     setFilter(hz) { this.filter.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
+    setHighpass(hz) { this.hpf.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
     setDelayMix(value) { this.delayWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
     setReverbMix(value) { this.reverbWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }

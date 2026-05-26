@@ -20,6 +20,13 @@ import {
 import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
+import {
+    channelScope,
+    putTakeBlob,
+    getTakeBlob,
+    deleteTakeBlob,
+    clearScope as clearTakeScope,
+} from '../utils/takeStorage';
 import api from '../api';
 import ChannelTakeHistory from './ChannelTakeHistory';
 
@@ -38,13 +45,23 @@ const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
     { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT },
-    // LPF range goes from 20 Hz (full kill) to 20 kHz (bypass). We render the
-    // slider on a log axis so each octave gets equal travel — without this
-    // the bottom 5% of the knob does all the audible work.
-    { key: 'filter', label: 'LPF', min: 20, max: 20000, step: 1, default: 20000, scale: 'log' },
+    // Bipolar "DJ-filter" knob. -1..+1 with 0 = bypass. Negative side drives
+    // the LPF cutoff down from 20 kHz → 20 Hz (kills highs). Positive side
+    // drives the HPF cutoff up from 20 Hz → 20 kHz (kills lows). The two
+    // biquads sit in series in the engine; only one side ever cuts at a time.
+    { key: 'filter', label: 'FLT', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
+
+// Map a bipolar filter position (-1..+1) to the (LPF, HPF) frequencies that
+// the engine's two biquads need. 20 Hz / 20 kHz are the bypass anchors on
+// each side; log-scaled so each octave gets equal slider travel.
+function bipolarToFilterFreqs(pos) {
+    const lpf = pos <= 0 ? 20 * Math.pow(1000, 1 + pos) : 20000;
+    const hpf = pos >= 0 ? 20 * Math.pow(1000, pos) : 20;
+    return { lpf, hpf };
+}
 
 const PAN_CENTER_SNAP = 0.06;
 
@@ -72,6 +89,9 @@ export default function PerformanceChannel({
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
+    // IDB scope key for this channel's take blobs. Stable across the
+    // component's lifetime since the channel index doesn't change.
+    const scope = channelScope(index);
 
     const init = initialFormState || {};
     const initKnobs = init.knobs || {};
@@ -94,7 +114,14 @@ export default function PerformanceChannel({
     // Live progress for the Generate pill while a generation is in flight.
     // 0–100; polled from /api/generation-progress. Resets on each new run.
     const [progress, setProgress] = useState(0);
-    const [knobs, setKnobs] = useState(() => ({ ...defaultKnobs, ...initKnobs }));
+    const [knobs, setKnobs] = useState(() => {
+        const merged = { ...defaultKnobs, ...initKnobs };
+        // Migration: pre-bipolar `filter` was a raw Hz value (20..20000).
+        // Anything outside the new -1..+1 range is a legacy save — reset
+        // to bypass (0) rather than feeding nonsense into the engine.
+        if (merged.filter < -1 || merged.filter > 1) merged.filter = 0;
+        return merged;
+    });
 
     // Per-channel rolling take history. Each take:
     //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
@@ -141,16 +168,81 @@ export default function PerformanceChannel({
 
     // Mirror form state up to the panel so it can persist the session. Skip the
     // first render so we don't re-write what we just loaded from localStorage.
+    // Takes mirror as metadata only — the Blob bodies live in IndexedDB and
+    // get rehydrated on mount by the effect below.
     const initialReportSkippedRef = useRef(false);
     useEffect(() => {
         if (!initialReportSkippedRef.current) {
             initialReportSkippedRef.current = true;
             return;
         }
+        const takesMeta = takes.map(({ blob, audioUrl, ...rest }) => rest);
         onFormStateChange?.(index, {
             prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
+            takes: takesMeta,
+            committedTakeId,
         });
-    }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs, index, onFormStateChange]);
+    }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
+        takes, committedTakeId, index, onFormStateChange]);
+
+    // Hydrate takes on mount from the session metadata + IDB blobs. Runs once,
+    // tolerates missing blobs (skips the entry), and rewinds the take numbering
+    // counter so newly generated takes don't collide with the restored ones.
+    const hydrationRef = useRef(false);
+    useEffect(() => {
+        if (hydrationRef.current) return;
+        hydrationRef.current = true;
+        const meta = initialFormState?.takes || [];
+        const persistedCommittedId = initialFormState?.committedTakeId || null;
+        if (meta.length === 0) {
+            if (persistedCommittedId) setCommittedTakeId(null);
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            const hydrated = [];
+            for (const m of meta) {
+                try {
+                    const blob = await getTakeBlob(scope, m.id);
+                    if (cancelled) {
+                        hydrated.forEach(t => URL.revokeObjectURL(t.audioUrl));
+                        return;
+                    }
+                    if (!blob) continue;
+                    hydrated.push({
+                        ...m,
+                        blob,
+                        audioUrl: URL.createObjectURL(blob),
+                    });
+                } catch {
+                    /* one bad fetch — keep going */
+                }
+            }
+            if (cancelled) {
+                hydrated.forEach(t => URL.revokeObjectURL(t.audioUrl));
+                return;
+            }
+            const maxNumber = hydrated.reduce((a, t) => Math.max(a, t.number || 0), 0);
+            nextTakeNumberRef.current = maxNumber + 1;
+            setTakes(hydrated);
+            if (persistedCommittedId && hydrated.some(t => t.id === persistedCommittedId)) {
+                setCommittedTakeId(persistedCommittedId);
+                setLoaded(true);
+                onStateChange?.(index, { loaded: true });
+            }
+        })();
+
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // When the audio strip becomes available AND we have a hydrated committed
+    // take, load that take's blob into the strip so the channel comes back
+    // ready to play after reload. Declared here as a ref so the effect that
+    // actually does the work (after drawWave is defined below) can guard
+    // against multiple loads.
+    const autoLoadDoneRef = useRef(false);
 
     const secondsFromBars = useMemo(
         () => bars * (60 / Math.max(bpm, 1)) * BEATS_PER_BAR,
@@ -186,6 +278,23 @@ export default function PerformanceChannel({
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
+    // Auto-load the persisted committed take into the strip once Tone.js is
+    // ready. Runs at most once per mount; the ref guards against re-trigger
+    // when the user later commits a different take (handled by handleCommitTake).
+    useEffect(() => {
+        if (autoLoadDoneRef.current) return;
+        if (!strip || !committedTakeId) return;
+        const take = takes.find(t => t.id === committedTakeId);
+        if (!take) return;
+        autoLoadDoneRef.current = true;
+        strip.loadBlob(take.blob).then(() => {
+            requestAnimationFrame(drawWave);
+        }).catch(err => {
+            console.warn(`Channel ${index + 1} auto-load failed:`, err);
+            autoLoadDoneRef.current = false;
+        });
+    }, [strip, committedTakeId, takes, drawWave, index]);
+
     // One-shot: push restored knob/loop values into the audio strip when it
     // first becomes available, so the persisted session matches what's heard.
     // Mute/solo applies through the parent's mix handler so the panel can
@@ -196,7 +305,11 @@ export default function PerformanceChannel({
         stripStateAppliedRef.current = true;
         strip.setUserGain(gainDbToLinear(knobs.gain));
         strip.setPan(knobs.pan);
-        strip.setFilter(knobs.filter);
+        {
+            const { lpf, hpf } = bipolarToFilterFreqs(knobs.filter);
+            strip.setFilter(lpf);
+            strip.setHighpass(hpf);
+        }
         strip.setDelayMix(knobs.delay);
         strip.setReverbMix(knobs.reverb);
         strip.setLoop(looping);
@@ -227,8 +340,11 @@ export default function PerformanceChannel({
         // playing while we generate the new take.
         stopCue();
         setAuditioningTakeId(null);
+
+        const promptSnap = prompt.trim();
+
         try {
-            const result = await onGenerate({
+            await onGenerate({
                 prompt,
                 duration: effectiveDuration,
                 batchSize,
@@ -238,52 +354,67 @@ export default function PerformanceChannel({
                 // Phase 7: bars-mode + channel-looping ⇒ ask the backend
                 // to wrap-inpaint the seam so the clip loops seamlessly.
                 ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
-            });
-            const blobs = Array.isArray(result) ? result : [result];
-            const now = Date.now();
-            const startNumber = nextTakeNumberRef.current;
-            const promptSnap = prompt.trim();
-            const newTakes = blobs.map((b, i) => ({
-                id: `${now}_${i}`,
-                blob: b,
-                audioUrl: URL.createObjectURL(b),
-                prompt: promptSnap,
-                duration: effectiveDuration,
-                createdAt: now + i,
-                starred: false,
-                number: startNumber + i,
-            }));
-            nextTakeNumberRef.current = startNumber + blobs.length;
+                // Streamed handler — fires per take as the backend returns
+                // each blob. Take #0 auto-loads into the strip so the user
+                // can start auditioning while takes #1..N are still rendering.
+                onBlob: async (blob, i) => {
+                    const takeNumber = nextTakeNumberRef.current;
+                    nextTakeNumberRef.current = takeNumber + 1;
+                    const take = {
+                        id: `${Date.now()}_${i}`,
+                        blob,
+                        audioUrl: URL.createObjectURL(blob),
+                        prompt: promptSnap,
+                        duration: effectiveDuration,
+                        createdAt: Date.now(),
+                        starred: false,
+                        number: takeNumber,
+                    };
 
-            // Merge into the rolling history (newest first) with 50-cap
-            // eviction. Starred takes survive until everything is starred,
-            // then oldest unstarred entries go first regardless.
-            setTakes((prev) => {
-                const combined = [...newTakes, ...prev];
-                if (combined.length <= TAKE_CAP) return combined;
-                let trimmed = combined.slice();
-                while (trimmed.length > TAKE_CAP) {
-                    let idx = -1;
-                    for (let i = trimmed.length - 1; i >= 0; i--) {
-                        if (!trimmed[i].starred) { idx = i; break; }
-                    }
-                    if (idx < 0) idx = trimmed.length - 1;  // all starred → drop oldest
-                    // Revoke the doomed take's blob URL so we don't leak.
-                    const dying = trimmed[idx];
-                    if (dying.audioUrl?.startsWith('blob:')) {
-                        try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
-                    }
-                    trimmed.splice(idx, 1);
-                }
-                return trimmed;
-            });
+                    // Persist the blob to IndexedDB so it survives reload.
+                    // Fire-and-forget — the in-memory take is usable now;
+                    // a failed write just means the take is lost on reload.
+                    putTakeBlob(scope, take.id, blob).catch((err) => {
+                        console.warn(`Channel ${index + 1} take persist failed:`, err);
+                    });
 
-            // First take of the batch auto-loads into the channel strip.
-            await strip.loadBlob(blobs[0]);
-            setCommittedTakeId(newTakes[0].id);
-            setLoaded(true);
-            onStateChange?.(index, { loaded: true });
-            requestAnimationFrame(drawWave);
+                    // Append to history with TAKE_CAP eviction. Order is
+                    // chronological: oldest at the top, newest at the bottom.
+                    // Starred takes survive until everything is starred,
+                    // then oldest go first regardless.
+                    setTakes((prev) => {
+                        const combined = [...prev, take];
+                        if (combined.length <= TAKE_CAP) return combined;
+                        const trimmed = combined.slice();
+                        while (trimmed.length > TAKE_CAP) {
+                            let idx = -1;
+                            // Scan from the start (oldest first) for the
+                            // first unstarred take to drop.
+                            for (let j = 0; j < trimmed.length; j++) {
+                                if (!trimmed[j].starred) { idx = j; break; }
+                            }
+                            if (idx < 0) idx = 0;  // all starred → drop oldest
+                            const dying = trimmed[idx];
+                            if (dying.audioUrl?.startsWith('blob:')) {
+                                try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
+                            }
+                            // Drop the evicted blob from IDB too, otherwise
+                            // it stays around as orphaned storage.
+                            deleteTakeBlob(scope, dying.id).catch(() => { /* ignore */ });
+                            trimmed.splice(idx, 1);
+                        }
+                        return trimmed;
+                    });
+
+                    if (i === 0) {
+                        await strip.loadBlob(blob);
+                        setCommittedTakeId(take.id);
+                        setLoaded(true);
+                        onStateChange?.(index, { loaded: true });
+                        requestAnimationFrame(drawWave);
+                    }
+                },
+            });
         } catch (err) {
             console.error(`Channel ${index + 1} generate failed:`, err);
         } finally {
@@ -335,6 +466,7 @@ export default function PerformanceChannel({
         if (target?.audioUrl?.startsWith('blob:')) {
             try { URL.revokeObjectURL(target.audioUrl); } catch { /* ignore */ }
         }
+        deleteTakeBlob(scope, takeId).catch(() => { /* ignore */ });
         setTakes((prev) => prev.filter((t) => t.id !== takeId));
         if (committedTakeId === takeId) setCommittedTakeId(null);
         if (auditioningTakeId === takeId) {
@@ -353,6 +485,7 @@ export default function PerformanceChannel({
                 try { URL.revokeObjectURL(t.audioUrl); } catch { /* ignore */ }
             }
         });
+        clearTakeScope(scope).catch(() => { /* ignore */ });
         setTakes([]);
         setCommittedTakeId(null);
     };
@@ -393,7 +526,11 @@ export default function PerformanceChannel({
         setKnobs(prev => ({ ...prev, [key]: value }));
         if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
         else if (key === 'pan') strip.setPan(value);
-        else if (key === 'filter') strip.setFilter(value);
+        else if (key === 'filter') {
+            const { lpf, hpf } = bipolarToFilterFreqs(value);
+            strip.setFilter(lpf);
+            strip.setHighpass(hpf);
+        }
         else if (key === 'delay') strip.setDelayMix(value);
         else if (key === 'reverb') strip.setReverbMix(value);
     };
@@ -603,7 +740,7 @@ export default function PerformanceChannel({
                 />
                 {!loaded && (
                     <Typography sx={styles.waveformPlaceholder}>
-                        Empty
+                        Waveform
                     </Typography>
                 )}
             </Box>
@@ -669,6 +806,7 @@ export default function PerformanceChannel({
             <Box sx={styles.knobsGrid}>
                 {KNOB_DEFS.map((k) => {
                     const isLog = k.scale === 'log';
+                    const isBipolar = k.scale === 'bipolar';
                     // For log knobs, the slider drives a 0..1 position and we
                     // convert to/from the underlying value (Hz) on the audio
                     // boundary. The knob value stored in state stays in the
@@ -700,7 +838,24 @@ export default function PerformanceChannel({
                                     max={isLog ? 1 : k.max}
                                     step={isLog ? 0.001 : k.step}
                                     size="small"
-                                    sx={styles.knobSlider(color, k.key === 'gain')}
+                                    track={isBipolar ? false : undefined}
+                                    marks={isBipolar ? [{ value: 0 }] : undefined}
+                                    sx={{
+                                        ...styles.knobSlider(color, k.key === 'gain'),
+                                        ...(isBipolar && {
+                                            '& .MuiSlider-mark': {
+                                                width: 10,
+                                                height: 2,
+                                                borderRadius: 1,
+                                                backgroundColor: 'text.secondary',
+                                                opacity: 0.7,
+                                            },
+                                            '& .MuiSlider-markActive': {
+                                                backgroundColor: 'text.secondary',
+                                                opacity: 0.7,
+                                            },
+                                        }),
+                                    }}
                                 />
                             </MidiMappable>
                             <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
