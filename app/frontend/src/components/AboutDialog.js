@@ -13,6 +13,7 @@ import {
     BookOpen as BookOpenIcon,
 } from 'lucide-react';
 import { appStyles } from '../theme';
+import { APP_VERSION } from '../version';
 
 /**
  * "About Fragmenta" dialog — logo + title, short intro, three doc buttons
@@ -52,11 +53,14 @@ export default function AboutDialog({
                     <Typography variant="h5" component="span" sx={appStyles.title}>
                         Fragmenta
                     </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
+                        v{APP_VERSION}
+                    </Typography>
                 </Box>
             </DialogTitle>
             <DialogContent>
                 <Typography sx={appStyles.infoDialogIntro}>
-                    Fragmenta is an open source, local-first pipeline to fine-tune, LoRA, train, generate and perform with text-to-audio diffusion models.
+                    Fragmenta is an open source, local-first suit to prepare datasets, train, generate and perform with text-to-audio diffusion models.
                     Made by the composer and researcher Misagh Azimi.
                 </Typography>
 
@@ -92,32 +96,28 @@ export default function AboutDialog({
                 </Box>
 
                 <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider', textAlign: 'center' }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', lineHeight: 1.5, fontSize: '0.68rem' }}>
-                        <strong>Powered by Stability AI</strong> —{' '}
+                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', fontStyle: 'italic', fontSize: '0.6rem', lineHeight: 1.5 }}>
+                        Powered by{' '}
                         <Typography
                             component="a"
                             variant="caption"
-                            href="https://huggingface.co/stabilityai/stable-audio-open-1.0"
+                            href="https://github.com/Stability-AI/stable-audio-3"
                             target="_blank"
                             rel="noopener noreferrer"
-                            sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
+                            sx={{ color: 'primary.main', textDecoration: 'underline', fontStyle: 'italic', fontSize: '0.6rem' }}
                         >
-                            Stable Audio Open
-                        </Typography>{' '}
-                        models, governed by the{' '}
+                            Stable Audio 3
+                        </Typography>{' '}by Stability AI. "This Stability AI Model is licensed under the{' '}
                         <Typography
                             component="a"
                             variant="caption"
                             href="https://stability.ai/license"
                             target="_blank"
                             rel="noopener noreferrer"
-                            sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
+                            sx={{ color: 'primary.main', textDecoration: 'underline', fontStyle: 'italic', fontSize: '0.6rem' }}
                         >
                             Stability AI Community License
-                        </Typography>.
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.6rem', lineHeight: 1.4 }}>
-                        "This Stability AI Model is licensed under the Stability AI Community License,{' '}
+                        </Typography>,{' '}
                         Copyright © Stability AI Ltd. All Rights Reserved"
                     </Typography>
                 </Box>

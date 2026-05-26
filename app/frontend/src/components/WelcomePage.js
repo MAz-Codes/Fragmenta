@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel, Stack } from '@mui/material';
 import { welcomePageStyles } from '../theme';
+import { APP_VERSION } from '../version';
 
 export default function WelcomePage({ open, onClose }) {
     const [titleVisible, setTitleVisible] = useState(false);
@@ -54,7 +55,7 @@ export default function WelcomePage({ open, onClose }) {
                                 ©2025-2026 Misagh Azimi
                             </Typography>
                             <Typography variant="body3" color="text.secondary">
-                                Version 0.2.0
+                                Version {APP_VERSION}
                             </Typography>
                         </Stack>
                         <Box mt={5}>

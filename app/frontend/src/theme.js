@@ -558,13 +558,22 @@ let theme = createTheme({
             defaultProps: { disableScrollLock: true },
             styleOverrides: {
                 paper: {
-                    backgroundColor: DARK.paper,
-                    backgroundImage:
-                        `linear-gradient(180deg, ${DARK.paper} 0%, ${DARK.bgElev} 100%)`,
-                    border: `1px solid ${DARK.divider}`,
+                    // Liquid Glass — matches the global MuiPaper/MuiCard
+                    // treatment so dialogs read as glass over the body's
+                    // cyan/warm radial bleed, not as a solid card.
+                    backgroundColor: 'rgba(38, 41, 44, 0.38)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(28px) saturate(200%)',
+                    WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+                    border: 'none',
                     borderRadius: 14,
-                    boxShadow: '0 32px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(39, 159, 187, 0.04)',
-                    backdropFilter: 'blur(14px)',
+                    boxShadow:
+                        '0 32px 60px rgba(0, 0, 0, 0.7), ' +
+                        '0 4px 12px rgba(0, 0, 0, 0.35), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.22), ' +
+                        'inset 0 -1px 0 rgba(0, 0, 0, 0.35), ' +
+                        'inset 1px 0 0 rgba(255, 255, 255, 0.08), ' +
+                        'inset -1px 0 0 rgba(0, 0, 0, 0.20)',
                 },
             },
         },
@@ -1097,11 +1106,22 @@ export const lightTheme = createTheme(theme, {
             defaultProps: { disableScrollLock: true },
             styleOverrides: {
                 paper: {
-                    backgroundColor: LIGHT.paper,
-                    backgroundImage: `linear-gradient(180deg, ${LIGHT.paper} 0%, ${LIGHT.bgElev} 100%)`,
-                    border: `1px solid ${LIGHT.divider}`,
+                    // Liquid Glass on cream — same shape as the global
+                    // MuiPaper override so dialogs match the rest of the
+                    // surfaces (translucent warm + soft rim highlights).
+                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
+                    backgroundImage: 'none',
+                    backdropFilter: 'blur(22px) saturate(160%)',
+                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                    border: 'none',
                     borderRadius: 14,
-                    boxShadow: '0 24px 48px rgba(43, 31, 18, 0.18)',
+                    boxShadow:
+                        '0 24px 48px rgba(43, 31, 18, 0.18), ' +
+                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
+                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
+                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
+                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
                 },
             },
         },
@@ -1873,6 +1893,7 @@ export const appStyles = {
     },
     infoDialogIntro: {
         mt: 2.5,
+        mb: 4.5,
         color: 'text.secondary',
     },
     infoDialogSectionTitle: {
