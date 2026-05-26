@@ -54,8 +54,8 @@ import {
     Music as MusicIcon,
     Activity as HealthIcon,
 } from 'lucide-react';
-import api from '../../api';
-import { appStyles } from '../../theme';
+import api from '../api';
+import { appStyles } from '../theme';
 
 /**
  * DatasetPrep — sidecar-native dataset surface with a buffered editing model.
