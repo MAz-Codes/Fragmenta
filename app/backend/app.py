@@ -551,6 +551,44 @@ def generate_audio():
             f"Audio generation completed: {output_path.name} "
             f"({output_path.stat().st_size} bytes)"
         )
+
+        # Sidecar metadata — lets the frontend restore the "Generated
+        # Fragments" panel across page reloads. Failure to write is non-
+        # fatal (the WAV is the only mandatory artifact).
+        sidecar_path = output_path.with_suffix(output_path.suffix + ".json")
+        try:
+            edit_mode = None
+            if init_audio_path:
+                edit_mode = 'style'
+            elif inpaint_audio_path:
+                edit_mode = 'inpaint/extend'
+            sidecar = {
+                "filename": output_path.name,
+                "created_at": time.time(),
+                "prompt": prompt,
+                "model_id": model_id,
+                "duration": float(duration),
+                "seed": int(seed),
+                "negative_prompt": negative_prompt,
+                "cfg_scale": float(cfg_scale) if cfg_scale is not None else None,
+                "steps": int(steps) if steps is not None else None,
+                "batch_size": int(batch_size),
+                "align_bars": int(align_bars) if align_bars else None,
+                "align_bpm": float(align_bpm) if align_bpm else None,
+                "loop_stitch": loop_stitch,
+                "loras": loras or [],
+                "init_audio_path": init_audio_path,
+                "init_noise_level": float(init_noise_level) if init_audio_path else None,
+                "inpaint_audio_path": inpaint_audio_path,
+                "inpaint_starts": list(inpaint_starts) if inpaint_starts else None,
+                "inpaint_ends": list(inpaint_ends) if inpaint_ends else None,
+                "edit_mode": edit_mode,
+            }
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f, indent=2)
+        except Exception as exc:
+            logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
+
         return send_file(
             str(output_path),
             mimetype='audio/wav',
@@ -805,6 +843,111 @@ def upload_source_audio():
 
     rel = dest.relative_to(cfg.project_root)
     return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
+
+
+@app.route('/api/fragments', methods=['GET'])
+def list_fragments():
+    """List previously-generated audio fragments (latest first).
+
+    Returns the union of:
+      • Generations with a sidecar JSON (full metadata: prompt, seed, etc.)
+      • Orphan WAVs in output/ (no sidecar — happens for clips made by
+        older versions of Fragmenta; metadata is recovered from the
+        filename + mtime).
+
+    Query: ?limit=<int>  (default 100, capped at 500)
+    """
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    try:
+        limit = max(1, min(500, int(request.args.get('limit', 100))))
+    except (TypeError, ValueError):
+        limit = 100
+
+    if not output_dir.exists():
+        return jsonify({"fragments": []})
+
+    fragments = []
+    seen_wavs = set()
+
+    # Sidecared generations
+    for sidecar_path in output_dir.glob("*.wav.json"):
+        try:
+            with open(sidecar_path) as f:
+                meta = json.load(f)
+            wav_name = meta.get("filename") or sidecar_path.name[:-len(".json")]
+            wav_path = output_dir / wav_name
+            if not wav_path.exists():
+                continue  # sidecar without its WAV — skip silently
+            seen_wavs.add(wav_name)
+            meta["filename"] = wav_name
+            meta["size_bytes"] = wav_path.stat().st_size
+            fragments.append(meta)
+        except Exception as exc:
+            logger.warning(f"Failed to read fragment sidecar {sidecar_path}: {exc}")
+
+    # Orphan WAVs (no sidecar) — recover what we can.
+    # Filename format from _finalize: <ts>_<model_id>_<slugified_prompt>.wav
+    for wav_path in output_dir.glob("*.wav"):
+        if wav_path.name in seen_wavs:
+            continue
+        try:
+            stem = wav_path.stem
+            parts = stem.split("_")
+            # Try to parse "YYYYMMDD_HHMMSS" as the first two tokens.
+            created_at = wav_path.stat().st_mtime
+            model_id = ""
+            prompt = stem
+            if len(parts) >= 2:
+                try:
+                    created_at = time.mktime(
+                        time.strptime(f"{parts[0]}_{parts[1]}", "%Y%m%d_%H%M%S")
+                    )
+                    rest = "_".join(parts[2:])
+                    # rest = "<model_id>_<slugified_prompt>". model_id is
+                    # contiguous hyphenated; we use the longest known prefix
+                    # by matching against SA3 model ids in _MODEL_INFO.
+                    rest_low = rest.lower()
+                    for mid in sorted(_SA3_MODEL_IDS, key=len, reverse=True):
+                        if rest_low.startswith(mid):
+                            model_id = mid
+                            prompt = rest[len(mid):].lstrip("_").replace("_", " ")
+                            break
+                    else:
+                        prompt = rest.replace("_", " ")
+                except ValueError:
+                    pass
+            fragments.append({
+                "filename": wav_path.name,
+                "created_at": created_at,
+                "prompt": prompt or "(unknown)",
+                "model_id": model_id,
+                "duration": None,
+                "seed": None,
+                "cfg_scale": None,
+                "steps": None,
+                "size_bytes": wav_path.stat().st_size,
+                "_orphan": True,
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to list orphan fragment {wav_path}: {exc}")
+
+    fragments.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+    return jsonify({"fragments": fragments[:limit]})
+
+
+@app.route('/api/fragments/<path:filename>', methods=['GET'])
+def serve_fragment(filename):
+    """Serve a WAV from output/ by name. Path traversal is rejected."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+    if not filename.endswith(".wav"):
+        return jsonify(APIResponse.error("Only .wav files are served.", status_code=400)), 400
+    cfg = get_config()
+    full = cfg.get_path("output") / filename
+    if not full.exists() or not full.is_file():
+        return jsonify(APIResponse.error("File not found.", status_code=404)), 404
+    return send_file(str(full), mimetype="audio/wav")
 
 
 @app.route('/api/lora-strength', methods=['POST'])

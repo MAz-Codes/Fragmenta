@@ -275,6 +275,49 @@ function App() {
     useEffect(() => {
         if (tabValue === 1) refreshTrainingProjects();
     }, [tabValue, refreshTrainingProjects]);
+
+    // Hydrate the Generated Fragments panel from disk on mount. Each
+    // /api/generate writes a sidecar JSON next to the WAV; this restores
+    // the latest 100 across page reloads. Server returns newest-first; we
+    // reverse so the in-memory order stays oldest-first (matches the
+    // append-at-end pattern used elsewhere — GeneratedFragmentsWindow
+    // reverses for display).
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const r = await api.get('/api/fragments?limit=100');
+                if (cancelled) return;
+                const items = (r.data?.fragments || []).map((f, i) => ({
+                    id: f.created_at ? Math.round(f.created_at * 1000) + i : Date.now() - i,
+                    prompt: f.prompt || '',
+                    duration: f.duration,
+                    cfgScale: f.cfg_scale,
+                    steps: f.steps,
+                    seed: f.seed,
+                    modelId: f.model_id || '',
+                    batchIndex: 1,
+                    batchTotal: f.batch_size || 1,
+                    audioUrl: `/api/fragments/${encodeURIComponent(f.filename)}`,
+                    audioBlob: null,
+                    filename: f.filename,
+                    timestamp: f.created_at
+                        ? new Date(f.created_at * 1000).toLocaleString()
+                        : '',
+                    createdAt: f.created_at ? f.created_at * 1000 : null,
+                    editMode: f.edit_mode || null,
+                }));
+                // Server sends newest-first; reverse to keep the in-memory
+                // append-at-end convention.
+                items.reverse();
+                setGeneratedFragments(items);
+            } catch (err) {
+                // Non-fatal — empty list is fine.
+                console.warn('Failed to hydrate fragments from server:', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
     useEffect(() => {
         try {
             if (trainingProject) window.localStorage.setItem('fragmenta.training.lastProject', trainingProject);
@@ -993,7 +1036,10 @@ function App() {
                     createdAt: Date.now(),
                 };
 
-                setGeneratedFragments(prev => [...prev, newFragment]);
+                setGeneratedFragments(prev => {
+                    const next = [...prev, newFragment];
+                    return next.length > 100 ? next.slice(next.length - 100) : next;
+                });
                 completedRuns += 1;
             }
 
@@ -2585,26 +2631,27 @@ function App() {
                                                         negativePrompt={negativePrompt}
                                                         onGenerated={(blob, filename, params) => {
                                                             const audioUrl = URL.createObjectURL(blob);
-                                                            setGeneratedFragments(prev => [
-                                                                ...prev,
-                                                                {
-                                                                    id: Date.now(),
-                                                                    prompt: params.prompt,
-                                                                    duration: params.duration,
-                                                                    cfgScale: params.cfg_scale,
-                                                                    steps: params.steps,
-                                                                    seed: params.seed,
-                                                                    modelId: params.model_id,
-                                                                    batchIndex: 1,
-                                                                    batchTotal: 1,
-                                                                    audioUrl,
-                                                                    audioBlob: blob,
-                                                                    filename,
-                                                                    timestamp: new Date().toLocaleString(),
-                                                                    createdAt: Date.now(),
-                                                                    editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
-                                                                },
-                                                            ]);
+                                                            const newFrag = {
+                                                                id: Date.now(),
+                                                                prompt: params.prompt,
+                                                                duration: params.duration,
+                                                                cfgScale: params.cfg_scale,
+                                                                steps: params.steps,
+                                                                seed: params.seed,
+                                                                modelId: params.model_id,
+                                                                batchIndex: 1,
+                                                                batchTotal: 1,
+                                                                audioUrl,
+                                                                audioBlob: blob,
+                                                                filename,
+                                                                timestamp: new Date().toLocaleString(),
+                                                                createdAt: Date.now(),
+                                                                editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
+                                                            };
+                                                            setGeneratedFragments(prev => {
+                                                                const next = [...prev, newFrag];
+                                                                return next.length > 100 ? next.slice(next.length - 100) : next;
+                                                            });
                                                         }}
                                                     />
                                                 )}
