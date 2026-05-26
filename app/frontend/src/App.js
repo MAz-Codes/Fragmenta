@@ -166,6 +166,9 @@ function App() {
     const [trainingStartTime, setTrainingStartTime] = useState(null);
     const [trainingError, setTrainingError] = useState(null);
 
+    // Generation panel top-level mode: 'create' (text → audio) or
+    // 'edit' (audio → audio: style transfer, inpaint, extend).
+    const [generationMode, setGenerationMode] = useState('create');
     const [generationPrompt, setGenerationPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
@@ -2293,6 +2296,23 @@ function App() {
                                                     );
                                                 })()}
 
+                                                {/* Phase 8: top-level mode switch. Create = text→audio,
+                                                    Edit = audio→audio (style / inpaint / extend). The
+                                                    model picker and LoRA picker above stay visible in
+                                                    both modes. */}
+                                                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                                                    <ToggleButtonGroup
+                                                        value={generationMode}
+                                                        exclusive
+                                                        size="small"
+                                                        onChange={(_, v) => v && setGenerationMode(v)}
+                                                    >
+                                                        <ToggleButton value="create">Create</ToggleButton>
+                                                        <ToggleButton value="edit">Edit existing</ToggleButton>
+                                                    </ToggleButtonGroup>
+                                                </Box>
+
+                                                {generationMode === 'create' && (<>
                                                 <TextField
                                                     fullWidth
                                                     multiline
@@ -2349,46 +2369,6 @@ function App() {
                                                                     value={loraStack}
                                                                     onChange={setLoraStack}
                                                                 />
-                                                            </Grid>
-
-                                                            <Grid item xs={12}>
-                                                                <Accordion>
-                                                                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                                        <Typography variant="subtitle1">Edit existing audio</Typography>
-                                                                        <Typography variant="caption" color="textSecondary" sx={{ ml: 1, alignSelf: 'center' }}>
-                                                                            Style transfer · Inpaint · Extend
-                                                                        </Typography>
-                                                                    </AccordionSummary>
-                                                                    <AccordionDetails sx={{ p: 0 }}>
-                                                                        <EditPanel
-                                                                            model_id={selectedModel}
-                                                                            negativePrompt={negativePrompt}
-                                                                            onGenerated={(blob, filename, params) => {
-                                                                                const audioUrl = URL.createObjectURL(blob);
-                                                                                setGeneratedFragments(prev => [
-                                                                                    ...prev,
-                                                                                    {
-                                                                                        id: Date.now(),
-                                                                                        prompt: params.prompt,
-                                                                                        duration: params.duration,
-                                                                                        cfgScale: params.cfg_scale,
-                                                                                        steps: params.steps,
-                                                                                        seed: params.seed,
-                                                                                        modelId: params.model_id,
-                                                                                        batchIndex: 1,
-                                                                                        batchTotal: 1,
-                                                                                        audioUrl,
-                                                                                        audioBlob: blob,
-                                                                                        filename,
-                                                                                        timestamp: new Date().toLocaleString(),
-                                                                                        createdAt: Date.now(),
-                                                                                        editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
-                                                                                    },
-                                                                                ]);
-                                                                            }}
-                                                                        />
-                                                                    </AccordionDetails>
-                                                                </Accordion>
                                                             </Grid>
 
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
@@ -2597,6 +2577,37 @@ function App() {
                                                             Please select a checkpoint for the selected fine-tuned model before generating audio.
                                                         </Alert>
                                                     )}
+                                                </>)}
+
+                                                {generationMode === 'edit' && (
+                                                    <EditPanel
+                                                        model_id={selectedModel}
+                                                        negativePrompt={negativePrompt}
+                                                        onGenerated={(blob, filename, params) => {
+                                                            const audioUrl = URL.createObjectURL(blob);
+                                                            setGeneratedFragments(prev => [
+                                                                ...prev,
+                                                                {
+                                                                    id: Date.now(),
+                                                                    prompt: params.prompt,
+                                                                    duration: params.duration,
+                                                                    cfgScale: params.cfg_scale,
+                                                                    steps: params.steps,
+                                                                    seed: params.seed,
+                                                                    modelId: params.model_id,
+                                                                    batchIndex: 1,
+                                                                    batchTotal: 1,
+                                                                    audioUrl,
+                                                                    audioBlob: blob,
+                                                                    filename,
+                                                                    timestamp: new Date().toLocaleString(),
+                                                                    createdAt: Date.now(),
+                                                                    editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
+                                                                },
+                                                            ]);
+                                                        }}
+                                                    />
+                                                )}
                                             </Paper>
                                         </Box>
                                     </Grid>

@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import { Upload as UploadIcon, X as ClearIcon } from 'lucide-react';
 import api from '../api';
+import AudioWaveform from './AudioWaveform';
 
 /**
  * SA3 audio-to-audio + inpainting UI.
@@ -39,7 +40,9 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
     const [mode, setMode] = useState('style');   // 'style' | 'inpaint' | 'extend'
     const [sourcePath, setSourcePath] = useState('');
     const [sourceName, setSourceName] = useState('');
+    const [sourceFile, setSourceFile] = useState(null);  // kept for in-browser decode (waveform)
     const [sourceUploading, setSourceUploading] = useState(false);
+    const [dropActive, setDropActive] = useState(false);
     const [prompt, setPrompt] = useState('');
     const [duration, setDuration] = useState(8);
     const [seed, setSeed] = useState(-1);
@@ -61,9 +64,7 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
 
     // --- source upload ---------------------------------------------------
     const onPickFile = () => fileInputRef.current?.click();
-    const onFileChange = async (e) => {
-        const f = e.target.files?.[0];
-        e.target.value = '';
+    const uploadFile = async (f) => {
         if (!f) return;
         setSourceUploading(true);
         setError(null);
@@ -73,11 +74,20 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             const r = await api.post('/api/audio/upload', form);
             setSourcePath(r.data.path);
             setSourceName(r.data.name);
+            setSourceFile(f);  // keep for in-browser waveform decode
             // Probe duration via a temp object URL → <audio>.
             const url = URL.createObjectURL(f);
             const a = new Audio(url);
             a.addEventListener('loadedmetadata', () => {
-                if (Number.isFinite(a.duration)) setSourceDurationSec(a.duration);
+                if (Number.isFinite(a.duration)) {
+                    setSourceDurationSec(a.duration);
+                    // Seed inpaint region to the middle quarter so the
+                    // waveform shows something sensible without a 4 s default
+                    // landing past the end of short clips.
+                    const q = a.duration / 4;
+                    setMaskStart(Math.max(0, q));
+                    setMaskEnd(Math.min(a.duration, q * 3));
+                }
                 URL.revokeObjectURL(url);
             }, { once: true });
         } catch (err) {
@@ -86,9 +96,23 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             setSourceUploading(false);
         }
     };
+    const onFileChange = async (e) => {
+        const f = e.target.files?.[0];
+        e.target.value = '';
+        await uploadFile(f);
+    };
+    const onDrop = async (e) => {
+        e.preventDefault();
+        setDropActive(false);
+        const f = e.dataTransfer.files?.[0];
+        await uploadFile(f);
+    };
+    const onDragOver = (e) => { e.preventDefault(); setDropActive(true); };
+    const onDragLeave = (e) => { e.preventDefault(); setDropActive(false); };
     const clearSource = () => {
         setSourcePath('');
         setSourceName('');
+        setSourceFile(null);
         setSourceDurationSec(null);
     };
 
@@ -153,13 +177,29 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
     // --- render ----------------------------------------------------------
     return (
         <Box sx={{ p: 2 }}>
-            {/* Source picker */}
-            <Box sx={{ mb: 2 }}>
+            {/* Source picker (drag-and-drop or click) */}
+            <Box
+                sx={{ mb: 2 }}
+                onDragOver={onDragOver}
+                onDragLeave={onDragLeave}
+                onDrop={onDrop}
+            >
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
                     Source clip
                 </Typography>
                 {sourcePath ? (
-                    <Stack direction="row" alignItems="center" spacing={1} sx={{ p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                    <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1}
+                        sx={{
+                            p: 1,
+                            border: '1px dashed',
+                            borderColor: dropActive ? 'primary.main' : 'divider',
+                            borderRadius: 1,
+                            transition: 'border-color 120ms',
+                        }}
+                    >
                         <Typography variant="body2" sx={{ flex: 1, fontFamily: 'monospace', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {sourceName}
                             {sourceDurationSec && ` · ${sourceDurationSec.toFixed(2)}s`}
@@ -175,8 +215,14 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
                         onClick={onPickFile}
                         disabled={sourceUploading}
                         fullWidth
+                        sx={{
+                            borderStyle: 'dashed',
+                            borderColor: dropActive ? 'primary.main' : undefined,
+                            bgcolor: dropActive ? 'action.hover' : undefined,
+                            transition: 'border-color 120ms, background-color 120ms',
+                        }}
                     >
-                        {sourceUploading ? 'Uploading…' : 'Drop or pick an audio file'}
+                        {sourceUploading ? 'Uploading…' : 'Drop a clip here, or click to pick a file'}
                     </Button>
                 )}
                 <input
@@ -230,26 +276,43 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             )}
 
             {mode === 'inpaint' && (
-                <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
-                    <TextField
-                        label="Region start (s)"
-                        type="number"
-                        size="small"
-                        value={maskStart}
-                        onChange={(e) => setMaskStart(parseFloat(e.target.value) || 0)}
-                        inputProps={{ min: 0, step: 0.1 }}
-                        sx={{ flex: 1 }}
+                <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                        Drag the highlighted region to mask the segment SA3 should regenerate
+                    </Typography>
+                    <AudioWaveform
+                        file={sourceFile}
+                        duration={sourceDurationSec || 0}
+                        start={maskStart}
+                        end={maskEnd}
+                        onRegionChange={(s, e) => { setMaskStart(s); setMaskEnd(e); }}
                     />
-                    <TextField
-                        label="Region end (s)"
-                        type="number"
-                        size="small"
-                        value={maskEnd}
-                        onChange={(e) => setMaskEnd(parseFloat(e.target.value) || 0)}
-                        inputProps={{ min: 0, step: 0.1 }}
-                        sx={{ flex: 1 }}
-                    />
-                </Stack>
+                    <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+                        <TextField
+                            label="Start (s)"
+                            type="number"
+                            size="small"
+                            value={maskStart.toFixed(2)}
+                            onChange={(e) => setMaskStart(parseFloat(e.target.value) || 0)}
+                            inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
+                            sx={{ flex: 1 }}
+                        />
+                        <TextField
+                            label="End (s)"
+                            type="number"
+                            size="small"
+                            value={maskEnd.toFixed(2)}
+                            onChange={(e) => setMaskEnd(parseFloat(e.target.value) || 0)}
+                            inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
+                            sx={{ flex: 1 }}
+                        />
+                        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                            <Typography variant="caption" color="text.secondary">
+                                {(maskEnd - maskStart).toFixed(2)} s region
+                            </Typography>
+                        </Box>
+                    </Stack>
+                </Box>
             )}
 
             {mode === 'extend' && (
