@@ -2414,14 +2414,17 @@ export const performancePanelStyles = {
             borderRadius: 1.5,
         },
         '& .MuiSelect-select': {
-            // line-height matched to the parent height vertical-centers the
-            // text WITHOUT display:flex — flex breaks `text-overflow:ellipsis`
-            // and would let long values (long model / LoRA names) overflow
-            // under the chevron. Block layout + nowrap + ellipsis truncates
-            // cleanly and MUI's default right padding keeps the chevron
-            // unobscured.
-            paddingTop: 0,
-            paddingBottom: 0,
+            // Explicit padding on all four sides — top/bottom 0 keeps the
+            // text in the 26px row, RIGHT must reserve space for the
+            // chevron (MUI's chevron is absolutely positioned ~7px from
+            // right with ~24px width = needs 32px clearance). MUI ships
+            // padding-right: 32px !important by default but our partial
+            // override (paddingTop/Bottom only) wasn't preserving the
+            // shorthand correctly across all themes — explicit is safer.
+            // Line-height matched to parent height vertical-centers the
+            // text without `display: flex` (which would kill
+            // text-overflow: ellipsis).
+            padding: '0 32px 0 14px !important',
             lineHeight: `${perfTokens.height.compact}px`,
             fontSize: perfTokens.fontSize.sm,
             fontWeight: perfTokens.weight.bold,
