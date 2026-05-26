@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
     Container,
     Box,
@@ -74,11 +74,10 @@ import WelcomePage from './components/WelcomePage';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
-const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
+import PerformancePanel from './components/PerformancePanel';
 
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
-const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
 
 // Persisted across reload so the user lands back where they were.
 // Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance.
@@ -117,18 +116,6 @@ function App() {
     const [showWelcomePage, setShowWelcomePage] = useState(
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
     );
-    const [performanceEnabled, setPerformanceEnabled] = useState(
-        () => window.localStorage.getItem(PERFORMANCE_ENABLED_KEY) === 'true'
-    );
-    const togglePerformance = () => {
-        setPerformanceEnabled((prev) => {
-            const next = !prev;
-            window.localStorage.setItem(PERFORMANCE_ENABLED_KEY, next ? 'true' : 'false');
-            if (!next && tabValue === 3) setTabValue(0);
-            if (next) setTabValue(3);
-            return next;
-        });
-    };
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
@@ -516,8 +503,8 @@ function App() {
 
     // Sync displayedTab to tabValue with a fade-out delay so content
     // swap happens while the wrapper opacity is at 0. Works for any
-    // code path that updates tabValue (Tabs click, togglePerformance,
-    // model-warning auto-jump, etc).
+    // code path that updates tabValue (Tabs click, model-warning
+    // auto-jump, etc).
     useEffect(() => {
         if (tabValue === displayedTab) return;
         const t = window.setTimeout(() => setDisplayedTab(tabValue), TAB_FADE_MS);
@@ -1324,19 +1311,7 @@ function App() {
                                 <Tab
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
-                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : (
-                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                            Performance
-                                            <Switch
-                                                size="small"
-                                                checked={performanceEnabled}
-                                                onChange={() => {}}
-                                                onClick={(e) => { e.stopPropagation(); togglePerformance(); }}
-                                                sx={{ transform: 'scale(0.75)' }}
-                                            />
-                                        </Box>
-                                    )}
-                                    sx={{ opacity: performanceEnabled ? 1 : 0.5, transition: 'opacity 0.2s' }}
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
                                 />
                             </Tabs>
                         </Paper>
@@ -2474,40 +2449,25 @@ function App() {
                             </TabPanel>
 
                             <TabPanel value={displayedTab} index={3} keepMounted>
-                                {performanceEnabled ? (
-                                    <Suspense fallback={
-                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-                                            <CircularProgress size={28} />
-                                        </Box>
-                                    }>
-                                        <PerformancePanel
-                                            selectedModel={selectedModel}
-                                            availableModels={availableModels}
-                                            baseModels={baseModels}
-                                            availableLoras={availableLoras}
-                                            selectedLora={selectedLora}
-                                            loraMultiplier={loraMultiplier}
-                                            onSelectModel={setSelectedModel}
-                                            onRefreshModels={refreshAllModels}
-                                            onSelectLora={setSelectedLora}
-                                            onLoraMultiplierChange={setLoraMultiplier}
-                                            steps={steps}
-                                            onStepsChange={setSteps}
-                                            randomSeed={randomSeed}
-                                            seedValue={seedValue}
-                                            onRandomSeedChange={setRandomSeed}
-                                            onSeedValueChange={setSeedValue}
-                                            onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
-                                        />
-                                    </Suspense>
-                                ) : (
-                                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
-                                        <AlertIcon size={48} color="#FFB74D" />
-                                        <Typography variant="body1" color="textSecondary" align="center">
-                                            Performance mode is turned off. Toggle on from the {(isIconOnlySidebar || isMobileLayout) ? 'bottom-left menu' : 'sidebar'} if you wish to enter performance mode.
-                                        </Typography>
-                                    </Box>
-                                )}
+                                <PerformancePanel
+                                    selectedModel={selectedModel}
+                                    availableModels={availableModels}
+                                    baseModels={baseModels}
+                                    availableLoras={availableLoras}
+                                    selectedLora={selectedLora}
+                                    loraMultiplier={loraMultiplier}
+                                    onSelectModel={setSelectedModel}
+                                    onRefreshModels={refreshAllModels}
+                                    onSelectLora={setSelectedLora}
+                                    onLoraMultiplierChange={setLoraMultiplier}
+                                    steps={steps}
+                                    onStepsChange={setSteps}
+                                    randomSeed={randomSeed}
+                                    seedValue={seedValue}
+                                    onRandomSeedChange={setRandomSeed}
+                                    onSeedValueChange={setSeedValue}
+                                    onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
+                                />
                             </TabPanel>
                             </Box>
                         </Box>
@@ -2639,17 +2599,6 @@ function App() {
                             <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
                         </MenuItem>
                         <Divider />
-                        {(isIconOnlySidebar || isMobileLayout) && (
-                            <MenuItem
-                                onClick={() => { setDockMenuAnchor(null); togglePerformance(); }}
-                                sx={performanceEnabled
-                                    ? { color: 'warm.main', '& .MuiListItemIcon-root': { color: 'inherit' } }
-                                    : undefined}
-                            >
-                                <ListItemIcon><PerformanceIcon size={18} /></ListItemIcon>
-                                <ListItemText>{performanceEnabled ? 'Performance: On' : 'Performance: Off'}</ListItemText>
-                            </MenuItem>
-                        )}
                         <MenuItem
                             onClick={() => { setDockMenuAnchor(null); toggleColorMode(); }}
                         >
@@ -2668,23 +2617,6 @@ function App() {
                 </>
             ) : (
                 <Paper sx={appStyles.bottomDock}>
-                    {(isIconOnlySidebar || isMobileLayout) && (
-                        <Box sx={appStyles.dockItem}>
-                            <IconButton
-                                aria-label={performanceEnabled ? 'Disable performance mode' : 'Enable performance mode'}
-                                onClick={togglePerformance}
-                                sx={performanceEnabled
-                                    ? [appStyles.dockIconButton, { color: 'warm.main', '&:hover': { color: 'warm.main' } }]
-                                    : appStyles.dockIconButton}
-                            >
-                                <PerformanceIcon size={18} />
-                            </IconButton>
-                            <Typography className="dock-label" sx={appStyles.dockLabel}>
-                                {performanceEnabled ? 'Performance: On' : 'Performance: Off'}
-                            </Typography>
-                        </Box>
-                    )}
-
                     <Box sx={appStyles.dockItem}>
                         <IconButton
                             aria-label="Get models"
