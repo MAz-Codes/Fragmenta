@@ -1815,13 +1815,6 @@ export const appStyles = {
             opacity: 0.45,
         },
     },
-    dockIconButtonDanger: {
-        color: 'error.main',
-        '&:hover': {
-            color: 'error.light',
-            backgroundColor: 'rgba(226, 107, 94, 0.10)',
-        },
-    },
     dockIconButtonAccent: {
         color: 'primary.main',
         '&:hover': {

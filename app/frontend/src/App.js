@@ -74,7 +74,6 @@ import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
-import { clearPerformanceSession } from './components/usePerformanceSession';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
@@ -424,12 +423,6 @@ function App() {
         } catch (e) { /* non-fatal */ }
     }, [trainingProject, refreshTrainingPreEncode]);
 
-    const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
-    const [isStartingFresh, setIsStartingFresh] = useState(false);
-    // Bumping this key forces the performance panel to remount, which is how
-    // we flush its in-memory session state on Fresh Start (clearing localStorage
-    // alone wouldn't reset the mounted panel's useState mirrors).
-    const [performanceResetKey, setPerformanceResetKey] = useState(0);
     const [isFreeingGPU, setIsFreeingGPU] = useState(false);
     const [showFreeGPUDialog, setShowFreeGPUDialog] = useState(false);
     const [modelWarning, setModelWarning] = useState({
@@ -1116,30 +1109,6 @@ function App() {
             try { generationAbortRef.current.abort(); } catch (_) {}
         }
         setProcessingStatus('Stopping generation…');
-    };
-
-    const handleStartFresh = async () => {
-        // Frontend-only soft reset — clears generation outputs and the in-memory
-        // performance session. Dataset / training artifacts are managed per
-        // their respective per-project / per-run UIs and aren't touched here.
-        setIsStartingFresh(true);
-        setShowStartFreshDialog(false);
-        try {
-            setGeneratedAudio(null);
-            setGeneratedAudioBlob(null);
-            setGeneratedFragments([]);
-            setGenerationPrompt('');
-
-            // Wipe persisted performance session and force-remount the panel so
-            // its in-memory state resets to defaults along with localStorage.
-            // (MIDI mappings and other app preferences are intentionally kept.)
-            clearPerformanceSession();
-            setPerformanceResetKey(prev => prev + 1);
-
-            setProcessingStatus('Session reset · generation outputs cleared, performance session restarted.');
-        } finally {
-            setIsStartingFresh(false);
-        }
     };
 
     const handleFreeGPUMemory = async () => {
@@ -2712,7 +2681,6 @@ function App() {
                                         </Box>
                                     }>
                                         <PerformancePanel
-                                            key={performanceResetKey}
                                             selectedModel={selectedModel}
                                             selectedUnwrappedModel={selectedUnwrappedModel}
                                             availableModels={availableModels}
@@ -2746,40 +2714,6 @@ function App() {
                             </Box>
                         </Box>
                     </Box>
-
-                    {/* Reset session — frontend-only soft reset of generation +
-                        performance state. Datasets and trained LoRAs are
-                        managed in their own UIs and aren't affected. */}
-                    <Dialog
-                        open={showStartFreshDialog}
-                        onClose={() => setShowStartFreshDialog(false)}
-                        aria-labelledby="start-fresh-dialog-title"
-                    >
-                        <DialogTitle id="start-fresh-dialog-title">
-                            Reset session
-                        </DialogTitle>
-                        <DialogContent>
-                            <Typography sx={appStyles.dialogBodyText}>
-                                Clears the current generation outputs (audio + fragments)
-                                and restarts the Performance panel from a blank session.
-                                MIDI mappings, downloaded models, dataset projects, and
-                                trained LoRAs are <strong>not</strong> affected.
-                            </Typography>
-                        </DialogContent>
-                        <DialogActions>
-                            <Button onClick={() => setShowStartFreshDialog(false)}>
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleStartFresh}
-                                color="primary"
-                                variant="contained"
-                                disabled={isStartingFresh}
-                            >
-                                {isStartingFresh ? 'Resetting…' : 'Reset session'}
-                            </Button>
-                        </DialogActions>
-                    </Dialog>
 
                     {/* Free GPU Memory Confirmation Dialog */}
                     <Dialog
@@ -2906,16 +2840,6 @@ function App() {
                             </ListItemIcon>
                             <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
                         </MenuItem>
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setShowStartFreshDialog(true); }}
-                            disabled={isStartingFresh}
-                            sx={{ color: 'error.main', '& .MuiListItemIcon-root': { color: 'inherit' } }}
-                        >
-                            <ListItemIcon>
-                                {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
-                            </ListItemIcon>
-                            <ListItemText>{isStartingFresh ? 'Resetting…' : 'Reset session'}</ListItemText>
-                        </MenuItem>
                         <Divider />
                         {(isIconOnlySidebar || isMobileLayout) && (
                             <MenuItem
@@ -3000,20 +2924,6 @@ function App() {
                         </IconButton>
                         <Typography className="dock-label" sx={appStyles.dockLabel}>
                             {isFreeingGPU ? 'Freeing…' : 'Free GPU'}
-                        </Typography>
-                    </Box>
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Fresh start"
-                            onClick={() => setShowStartFreshDialog(true)}
-                            disabled={isStartingFresh}
-                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonDanger]}
-                        >
-                            {isStartingFresh ? <CircularProgress size={16} color="inherit" /> : <DeleteIcon size={18} />}
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {isStartingFresh ? 'Resetting…' : 'Reset session'}
                         </Typography>
                     </Box>
 
