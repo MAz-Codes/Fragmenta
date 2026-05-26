@@ -327,7 +327,7 @@ export default function PerformanceChannel({
 
             <Box sx={styles.promptBox}>
                 <TextField
-                    placeholder="prompt…"
+                    placeholder="Prompt…"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     multiline
@@ -349,7 +349,10 @@ export default function PerformanceChannel({
                             height: '100%',
                         }}
                     >
-                        {['sec', 'bars'].map((mode) => {
+                        {[
+                            { mode: 'sec',  label: 'Sec'  },
+                            { mode: 'bars', label: 'Bars' },
+                        ].map(({ mode, label }) => {
                             const value = mode === 'sec' ? 'seconds' : 'bars';
                             const active = durationMode === value;
                             return (
@@ -357,14 +360,12 @@ export default function PerformanceChannel({
                                     key={mode}
                                     onClick={() => setDurationMode(value)}
                                     sx={{
-                                        fontSize: perfTokens.fontSize.small,
-                                        letterSpacing: perfTokens.letterSpacing.wide,
-                                        textTransform: 'uppercase',
+                                        fontSize: perfTokens.fontSize.sm,
                                         px: 0.7,
-                                        minWidth: 30,
+                                        minWidth: 36,
                                         bgcolor: active ? color : 'transparent',
                                         color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
-                                        fontWeight: active ? 600 : 400,
+                                        fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
                                         transition: 'background-color 120ms, color 120ms',
                                         '&:hover': {
                                             bgcolor: active ? color : 'action.hover',
@@ -372,7 +373,7 @@ export default function PerformanceChannel({
                                         },
                                     }}
                                 >
-                                    {mode}
+                                    {label}
                                 </ButtonBase>
                             );
                         })}
@@ -398,7 +399,7 @@ export default function PerformanceChannel({
                             size="small"
                             sx={{
                                 flex: 1,
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 height: '100%',
                                 '& .MuiOutlinedInput-input': {
                                     py: 0,
@@ -413,7 +414,7 @@ export default function PerformanceChannel({
                             }}
                         >
                             {availableBars.map(b => (
-                                <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.body }}>
+                                <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
                                     {b} {b === 1 ? 'bar' : 'bars'}
                                 </MenuItem>
                             ))}
@@ -441,7 +442,7 @@ export default function PerformanceChannel({
                             size="small"
                             disabled={generating}
                             sx={{
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 height: 32,
                                 minWidth: 64,
                                 '& .MuiOutlinedInput-input': { py: 0, pl: 1.25, pr: '28px !important', minHeight: 'unset' },
@@ -449,7 +450,7 @@ export default function PerformanceChannel({
                             }}
                         >
                             {BATCH_OPTIONS.map(n => (
-                                <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.body }}>
+                                <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm }}>
                                     ×{n}
                                 </MenuItem>
                             ))}
@@ -477,7 +478,7 @@ export default function PerformanceChannel({
                 />
                 {!loaded && (
                     <Typography variant="caption" sx={styles.waveformPlaceholder}>
-                        empty
+                        Empty
                     </Typography>
                 )}
             </Box>
@@ -530,7 +531,7 @@ export default function PerformanceChannel({
                                             component="span"
                                             sx={{
                                                 ml: 0.4,
-                                                fontSize: perfTokens.fontSize.small,
+                                                fontSize: perfTokens.fontSize.sm,
                                                 fontWeight: isAuditioning ? 700 : 500,
                                             }}
                                         >
@@ -564,7 +565,7 @@ export default function PerformanceChannel({
 
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Box component="span" sx={{ fontSize: perfTokens.fontSize.knob, color: 'text.secondary', letterSpacing: perfTokens.letterSpacing.wide, minWidth: 28 }}>PAN</Box>
+                    <Box component="span" sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary', letterSpacing: perfTokens.letterSpacing.wide, minWidth: 28 }}>PAN</Box>
                     <MidiMappable
                         id={ctrlId('pan')}
                         label={ctrlLabel('Pan')}

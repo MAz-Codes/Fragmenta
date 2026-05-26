@@ -689,7 +689,7 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
                                 px: 1,
                                 minWidth: 46,
@@ -720,7 +720,7 @@ function PerformancePanelInner({
                             }}
                         >
                             {linkInstalling
-                                ? 'installing…'
+                                ? 'Installing…'
                                 : linkEnabled && linkPeers > 0
                                     ? `${linkPeers} Link`
                                     : 'Link'}
@@ -746,7 +746,7 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
                                 px: 1,
                                 minWidth: 46,
@@ -808,18 +808,18 @@ function PerformancePanelInner({
                     MenuListProps={{ sx: { py: 0 } }}
                     PaperProps={{ sx: { minWidth: 280, borderRadius: 1.5 } }}
                 >
-                    <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.small, color: 'text.disabled' }}>
+                    <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}>
                         Audio Setup
                     </MenuItem>
                     <MenuItem
                         onClick={() => handlePickAudioDevice('')}
                         selected={outputDeviceId === ''}
-                        sx={{ fontSize: perfTokens.fontSize.body }}
+                        sx={{ fontSize: perfTokens.fontSize.sm }}
                     >
                         <ListItemText primary="System device (default)" />
                     </MenuItem>
                     {audioDevices.length === 0 && (
-                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.small }}>
+                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.sm }}>
                             No additional output devices detected
                         </MenuItem>
                     )}
@@ -828,7 +828,7 @@ function PerformancePanelInner({
                             key={d.deviceId}
                             onClick={() => handlePickAudioDevice(d.deviceId)}
                             selected={outputDeviceId === d.deviceId}
-                            sx={{ fontSize: perfTokens.fontSize.body }}
+                            sx={{ fontSize: perfTokens.fontSize.sm }}
                         >
                             <ListItemText primary={d.label || `Output (${d.deviceId.slice(0, 6)}…)`} />
                         </MenuItem>
@@ -862,7 +862,7 @@ function PerformancePanelInner({
                     <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
                         <Typography
                             sx={{
-                                fontSize: perfTokens.fontSize.badge,
+                                fontSize: perfTokens.fontSize.md,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                                 fontWeight: 700,
                                 color: 'text.secondary',
@@ -888,7 +888,7 @@ function PerformancePanelInner({
                                 '& .MuiOutlinedInput-root': {
                                     borderRadius: 1.5,
                                     height: perfTokens.height.compact,
-                                    fontSize: perfTokens.fontSize.body,
+                                    fontSize: perfTokens.fontSize.sm,
                                 },
                             }}
                         />
@@ -899,7 +899,7 @@ function PerformancePanelInner({
                             disabled={!saveAsName.trim()}
                             sx={{
                                 height: perfTokens.height.compact,
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                                 borderRadius: 1.5,
@@ -915,7 +915,7 @@ function PerformancePanelInner({
                             <Typography
                                 variant="caption"
                                 color="warning.main"
-                                sx={{ fontSize: perfTokens.fontSize.small }}
+                                sx={{ fontSize: perfTokens.fontSize.sm }}
                             >
                                 Will overwrite existing preset.
                             </Typography>
@@ -928,7 +928,7 @@ function PerformancePanelInner({
                     <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
                         <Typography
                             sx={{
-                                fontSize: perfTokens.fontSize.badge,
+                                fontSize: perfTokens.fontSize.md,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                                 fontWeight: 700,
                                 color: 'text.secondary',
@@ -943,7 +943,7 @@ function PerformancePanelInner({
                             <Typography
                                 variant="caption"
                                 color="text.disabled"
-                                sx={{ fontSize: perfTokens.fontSize.small }}
+                                sx={{ fontSize: perfTokens.fontSize.sm }}
                             >
                                 No presets saved yet.
                             </Typography>
@@ -958,12 +958,12 @@ function PerformancePanelInner({
                                         display: 'flex',
                                         justifyContent: 'space-between',
                                         gap: 1,
-                                        fontSize: perfTokens.fontSize.body,
+                                        fontSize: perfTokens.fontSize.sm,
                                         fontWeight: 600,
                                         letterSpacing: perfTokens.letterSpacing.wide,
                                     }}
                                 >
-                                    <ListItemText primary={name} primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }} />
+                                    <ListItemText primary={name} primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.sm } }} />
                                     <Tooltip title="Delete preset">
                                         <IconButton
                                             size="small"
@@ -990,7 +990,7 @@ function PerformancePanelInner({
                         <MenuItem
                             onClick={handleRestoreDefaults}
                             sx={{
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                                 color: restoreArmed ? 'error.main' : 'text.secondary',
@@ -998,7 +998,7 @@ function PerformancePanelInner({
                         >
                             <ListItemText
                                 primary={restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
-                                primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }}
+                                primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.sm } }}
                             />
                         </MenuItem>
                     </Tooltip>
@@ -1012,7 +1012,7 @@ function PerformancePanelInner({
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5, height: perfTokens.height.compact },
                             '& .MuiSelect-select': {
                                 py: 0,
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                             },
@@ -1057,7 +1057,7 @@ function PerformancePanelInner({
                                 <Typography
                                     component="span"
                                     sx={{
-                                        fontSize: perfTokens.fontSize.small,
+                                        fontSize: perfTokens.fontSize.sm,
                                         letterSpacing: perfTokens.letterSpacing.wide,
                                         color: 'text.disabled',
                                         pl: 0.5,
@@ -1074,7 +1074,7 @@ function PerformancePanelInner({
                             '& input': {
                                 textAlign: 'right',
                                 fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 pr: 0,
                             },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
@@ -1176,10 +1176,16 @@ function PerformancePanelInner({
 
                     <Box sx={styles.masterReadouts}>
                         <Typography variant="caption" sx={styles.masterValue}>
-                            dBFS {formatDb(masterDb)}
+                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                DBFS
+                            </Box>
+                            {' '}{formatDb(masterDb)}
                         </Typography>
                         <Typography variant="caption" sx={styles.masterPeakValue}>
-                            pk {formatDb(peakLabelDb)}
+                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                Pk
+                            </Box>
+                            {' '}{formatDb(peakLabelDb)}
                         </Typography>
                     </Box>
 
@@ -1195,7 +1201,7 @@ function PerformancePanelInner({
                             label: `${i * 2 + 1}–${i * 2 + 2}`,
                         }));
                         const labelSx = {
-                            fontSize: perfTokens.fontSize.small,
+                            fontSize: perfTokens.fontSize.sm,
                             letterSpacing: perfTokens.letterSpacing.wide,
                             color: 'text.disabled',
                             display: 'block',
@@ -1205,7 +1211,7 @@ function PerformancePanelInner({
                             width: '100%',
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             '& .MuiSelect-select': {
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 py: 0.5,
                             },
                         };
@@ -1267,7 +1273,7 @@ function PerformancePanelInner({
                     width: 120,
                     '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                     '& .MuiSelect-select': {
-                        fontSize: perfTokens.fontSize.body,
+                        fontSize: perfTokens.fontSize.sm,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -1373,7 +1379,7 @@ function PerformancePanelInner({
                                 width: 120,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.body,
+                                    fontSize: perfTokens.fontSize.sm,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1437,7 +1443,7 @@ function PerformancePanelInner({
                                 width: 100,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.body,
+                                    fontSize: perfTokens.fontSize.sm,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1470,7 +1476,7 @@ function PerformancePanelInner({
                     <Typography
                         component="span"
                         sx={{
-                            fontSize: perfTokens.fontSize.small,
+                            fontSize: perfTokens.fontSize.sm,
                             letterSpacing: perfTokens.letterSpacing.wide,
                             color: 'text.disabled',
                         }}
@@ -1490,7 +1496,7 @@ function PerformancePanelInner({
                             sx={{
                                 width: 64,
                                 '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                '& .MuiSelect-select': { fontSize: perfTokens.fontSize.body },
+                                '& .MuiSelect-select': { fontSize: perfTokens.fontSize.sm },
                             }}
                         >
                             <Select
@@ -1518,7 +1524,7 @@ function PerformancePanelInner({
                     <Typography
                         component="span"
                         sx={{
-                            fontSize: perfTokens.fontSize.small,
+                            fontSize: perfTokens.fontSize.sm,
                             letterSpacing: perfTokens.letterSpacing.wide,
                             color: 'text.disabled',
                         }}
@@ -1535,7 +1541,7 @@ function PerformancePanelInner({
                             />
                         }
                         label={
-                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.small }}>
+                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
                                 Random
                             </Typography>
                         }
@@ -1553,7 +1559,7 @@ function PerformancePanelInner({
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                             '& input': {
                                 fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                             },
                         }}
                     />
@@ -1567,7 +1573,7 @@ function PerformancePanelInner({
                         <Typography
                             component="span"
                             sx={{
-                                fontSize: perfTokens.fontSize.small,
+                                fontSize: perfTokens.fontSize.sm,
                                 letterSpacing: perfTokens.letterSpacing.wide,
                                 color: 'text.disabled',
                             }}

@@ -2337,22 +2337,59 @@ export const lossChartStyles = {
 };
 
 // Shared visual tokens for the Performance page (panel, channels, MIDI menu).
-// One source of truth for the size/spacing/height scale so similar elements
-// match. The previous code carried 9+ distinct font sizes and 5+ letter
-// spacings across these surfaces; anything new should pick from this set.
+// One source of truth for size / spacing / height across the Performance
+// surface. Strict 3-size type ladder + case rules — every text choice has
+// to fit a known cell, no more 4 sizes × 4 case styles soup.
+//
+// CASE RULES (enforced in code review):
+//   • ALL-CAPS    only for scientific / control nomenclature: knob labels
+//                 (GAIN/LPF/DLY/REV), PAN, dB units, BPM, MIDI, DBFS.
+//                 Always paired with `caps` mixin (tracking + weight).
+//   • Sentence    every interactive button text, dropdown text, section
+//                 title, value readout. e.g. "Play all", "1 bar", "Save".
+//   • lowercase   banned. No more "prompt…" / "empty" / "installing…".
+//
+// SIZE LADDER (3 sizes, no more):
 export const perfTokens = {
     fontSize: {
-        knob: '0.58rem',   // knob labels, pan label, master peak readout
-        small: '0.66rem',  // small labels: BPM unit, mute/solo, durationLabel, footer notes
-        body: '0.72rem',   // primary text: buttons, dropdowns, prompt field, mapping rows
-        badge: '0.78rem',  // section badges (MASTER, channel numbers)
+        // 0.62rem — ALL-CAPS labels only (knob labels, PAN, unit suffixes).
+        xs: '0.62rem',
+        // 0.72rem — body: buttons, dropdowns, prompt, value readouts, take
+        // history entries, sentence-case labels, mapping rows.
+        sm: '0.72rem',
+        // 0.84rem — section badges (channel "01", "Master", tab headers).
+        md: '0.84rem',
     },
     letterSpacing: {
-        wide: '0.08em',    // uppercase labels and badges
+        // ALL-CAPS labels get extra tracking so they read as labels not text.
+        wide: '0.08em',
+        // Mild tracking on numeric readouts (dB, BPM display) for clarity.
+        snug: '0.04em',
+    },
+    weight: {
+        regular: 500,
+        bold: 600,
+        heavy: 700,    // single-letter glyph buttons (M, S, L)
     },
     height: {
-        compact: 26,       // primary compact controls (Link, MIDI, Q, BPM, transport, generate)
-        sub: 22,           // small subordinate square buttons (mute, solo, loop)
+        compact: 26,   // primary compact controls (Link, MIDI, Q, BPM, transport)
+        sub: 22,       // small subordinate square toggles (mute, solo, loop)
+        cta: 28,       // primary CTA pill (Generate)
+    },
+    // Composable mixin for any ALL-CAPS label/badge — applies size, case,
+    // weight, and tracking in one go. Use directly in sx:
+    //   sx={{ ...perfTokens.caps }}
+    caps: {
+        fontSize: '0.62rem',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        fontWeight: 600,
+    },
+    // Mixin for numeric value readouts (e.g. dB, BPM, durations).
+    num: {
+        fontSize: '0.72rem',
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.04em',
     },
     // Sharp 2px radius is the deliberate Ableton-style accent on Link/MIDI.
     // Everything else lives on the MUI scale via shape.borderRadius (= 1.5).
@@ -2398,7 +2435,7 @@ export const performancePanelStyles = {
     },
     subtitle: {
         color: 'text.secondary',
-        fontSize: perfTokens.fontSize.body,
+        fontSize: perfTokens.fontSize.sm,
     },
     headerPickers: {
         display: 'flex',
@@ -2461,7 +2498,7 @@ export const performancePanelStyles = {
         color,
     }),
     masterBadge: (color) => ({
-        fontSize: perfTokens.fontSize.badge,
+        fontSize: perfTokens.fontSize.md,
         fontWeight: 600,
         color,
         letterSpacing: perfTokens.letterSpacing.wide,
@@ -2526,13 +2563,13 @@ export const performancePanelStyles = {
     masterValue: {
         textAlign: 'center',
         color: 'primary.main',
-        fontSize: perfTokens.fontSize.small,
+        fontSize: perfTokens.fontSize.sm,
         letterSpacing: '0.04em',
     },
     masterPeakValue: {
         textAlign: 'center',
         color: 'text.disabled',
-        fontSize: perfTokens.fontSize.knob,
+        fontSize: perfTokens.fontSize.xs,
         letterSpacing: '0.04em',
     },
     masterTransport: {
@@ -2546,7 +2583,7 @@ export const performancePanelStyles = {
     masterBtn: (color, variant) => (theme) => ({
         textTransform: 'none',
         borderRadius: 1.5,
-        fontSize: perfTokens.fontSize.body,
+        fontSize: perfTokens.fontSize.sm,
         py: 0.5,
         ...(variant === 'play'
             ? {
@@ -2596,7 +2633,7 @@ export const performanceChannelStyles = {
     }),
     channelBadge: (color) => ({
         fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.badge,
+        fontSize: perfTokens.fontSize.md,
         fontWeight: 600,
         color,
         letterSpacing: perfTokens.letterSpacing.wide,
@@ -2613,7 +2650,7 @@ export const performanceChannelStyles = {
     muteBtn: (active) => ({
         width: perfTokens.height.sub,
         height: perfTokens.height.sub,
-        fontSize: perfTokens.fontSize.small,
+        fontSize: perfTokens.fontSize.sm,
         fontWeight: 700,
         borderRadius: 1,
         color: active ? '#fff' : 'text.secondary',
@@ -2627,7 +2664,7 @@ export const performanceChannelStyles = {
     soloBtn: (active) => ({
         width: perfTokens.height.sub,
         height: perfTokens.height.sub,
-        fontSize: perfTokens.fontSize.small,
+        fontSize: perfTokens.fontSize.sm,
         fontWeight: 700,
         borderRadius: 1,
         color: active ? '#0c1018' : 'text.secondary',
@@ -2645,7 +2682,7 @@ export const performanceChannelStyles = {
     },
     promptField: (theme) => ({
         '& .MuiOutlinedInput-root': {
-            fontSize: perfTokens.fontSize.body,
+            fontSize: perfTokens.fontSize.sm,
             backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.5)' : 'rgba(0, 0, 0, 0.04)',
             borderRadius: 1.5,
             '& textarea': { lineHeight: 1.3 },
@@ -2659,7 +2696,7 @@ export const performanceChannelStyles = {
     },
     durationLabel: {
         fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.small,
+        fontSize: perfTokens.fontSize.sm,
         color: 'text.secondary',
         minWidth: 22,
     },
@@ -2697,7 +2734,7 @@ export const performanceChannelStyles = {
         justifyContent: 'center',
         color: 'text.disabled',
         fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.small,
+        fontSize: perfTokens.fontSize.sm,
         letterSpacing: perfTokens.letterSpacing.wide,
         pointerEvents: 'none',
     },
@@ -2726,7 +2763,7 @@ export const performanceChannelStyles = {
     knobLabel: {
         display: 'block',
         fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.knob,
+        fontSize: perfTokens.fontSize.xs,
         color: 'text.secondary',
         letterSpacing: perfTokens.letterSpacing.wide,
         mt: 0.75,
