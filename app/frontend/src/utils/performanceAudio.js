@@ -116,7 +116,7 @@ function getImpulse(ctx, duration = 2.8, decaySeconds = 1.6, damping = 0.55) {
 }
 
 export class ChannelStrip {
-    constructor(masterBus) {
+    constructor(masterBus, masterDelayInput, masterReverbInput) {
         const ctx = getAudioContext();
         this.ctx = ctx;
         this.buffer = null;
@@ -145,19 +145,14 @@ export class ChannelStrip {
         // so we only wire the static portion of the chain here.
         this.hpf.connect(this.filter);
 
-        this.dryGain = ctx.createGain();
-        this.dryGain.gain.value = 1.0;
-        this.delayNode = ctx.createDelay(2.0);
-        this.delayNode.delayTime.value = 0.25;
-        this.delayFeedback = ctx.createGain();
-        this.delayFeedback.gain.value = 0.42;
-        this.delayWet = ctx.createGain();
-        this.delayWet.gain.value = 0.0;
-
-        this.reverbNode = ctx.createConvolver();
-        this.reverbNode.buffer = getImpulse(ctx);
-        this.reverbWet = ctx.createGain();
-        this.reverbWet.gain.value = 0.0;
+        // Channel DLY/REV knobs control send amounts (0..1) into the shared
+        // master delay and reverb — no more local FX nodes per channel. The
+        // master FX run always-on; each channel's contribution to the wet
+        // bus is determined by its send level.
+        this.delaySend = ctx.createGain();
+        this.delaySend.gain.value = 0;
+        this.reverbSend = ctx.createGain();
+        this.reverbSend.gain.value = 0;
 
         this.channelGain = ctx.createGain();
         this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
@@ -177,23 +172,24 @@ export class ChannelStrip {
         this.analyser.fftSize = 256;
         this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
 
-        this.filter.connect(this.dryGain);
-        this.dryGain.connect(this.channelGain);
-
-        this.filter.connect(this.delayNode);
-        this.delayNode.connect(this.delayFeedback);
-        this.delayFeedback.connect(this.delayNode);
-        this.delayNode.connect(this.delayWet);
-        this.delayWet.connect(this.channelGain);
-
-        this.filter.connect(this.reverbNode);
-        this.reverbNode.connect(this.reverbWet);
-        this.reverbWet.connect(this.channelGain);
-
+        // Dry path — filter chain straight through to the master bus.
+        this.filter.connect(this.channelGain);
         this.channelGain.connect(this.compressor);
         this.compressor.connect(this.pan);
         this.pan.connect(this.analyser);
         this.analyser.connect(masterBus);
+
+        // Post-fader sends — tap from `pan` so the channel fader, mute, and
+        // pan position all affect what reaches the master FX. Mute the
+        // channel and the reverb tail / echoes die too.
+        if (masterDelayInput) {
+            this.pan.connect(this.delaySend);
+            this.delaySend.connect(masterDelayInput);
+        }
+        if (masterReverbInput) {
+            this.pan.connect(this.reverbSend);
+            this.reverbSend.connect(masterReverbInput);
+        }
     }
 
     async loadBlob(blob) {
@@ -264,19 +260,12 @@ export class ChannelStrip {
     setGain(value) { this.channelGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
     setFilter(hz) { this.filter.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
     setHighpass(hz) { this.hpf.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
-    setDelayMix(value) { this.delayWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
-    setReverbMix(value) { this.reverbWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
+    // setDelayMix / setReverbMix drive the post-fader send levels into the
+    // shared master delay and reverb. Knob range stays 0..1 — same numeric
+    // contract as the old local-FX path, just routed differently.
+    setDelayMix(value) { this.delaySend.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
+    setReverbMix(value) { this.reverbSend.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
-    setImpulseResponse(buffer) {
-        if (buffer) this.reverbNode.buffer = buffer;
-    }
-    setDelayTimeForBpm(bpm) {
-        const safeBpm = Math.max(1, bpm);
-        const eighthSec = Math.min(30 / safeBpm, 2.0);
-        this.delayNode.delayTime.setTargetAtTime(
-            eighthSec, this.ctx.currentTime, 0.04
-        );
-    }
     setLoop(value) {
         this.isLooping = value;
         if (this.source) this.source.loop = value;
@@ -334,13 +323,10 @@ export class ChannelStrip {
     dispose() {
         this.stop();
         try {
+            this.hpf.disconnect();
             this.filter.disconnect();
-            this.dryGain.disconnect();
-            this.delayNode.disconnect();
-            this.delayFeedback.disconnect();
-            this.delayWet.disconnect();
-            this.reverbNode.disconnect();
-            this.reverbWet.disconnect();
+            this.delaySend.disconnect();
+            this.reverbSend.disconnect();
             this.channelGain.disconnect();
             this.compressor.disconnect();
             this.pan.disconnect();
@@ -366,40 +352,30 @@ export class PerformanceEngine {
         this.masterAnalyser.fftSize = 1024;
         this.masterAnalyserData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
 
-        // Master FX — dry / delay / reverb sends, all feeding the limiter
-        // in parallel. Wet gains default to 0 so the master is bit-exact dry
-        // until the user dials anything in. Delay time is tempo-synced via
-        // setBpm; the convolver buffer is swappable per the catalog IR.
-        this.masterDry = ctx.createGain();
-        this.masterDry.gain.value = 1.0;
-
+        // Master FX — always-on shared delay and reverb. The wet level on
+        // the bus is governed entirely by how much each ChannelStrip sends
+        // into them via its post-fader DLY/REV send (no master wet gain).
+        // masterBus carries the dry sum; the FX outputs join it at the
+        // limiter.
         this.masterDelay = ctx.createDelay(4.0);
         this.masterDelay.delayTime.value = 0.5;          // 1/4 at 120 BPM
         this.masterDelayFeedback = ctx.createGain();
         this.masterDelayFeedback.gain.value = 0.4;
-        this.masterDelayWet = ctx.createGain();
-        this.masterDelayWet.gain.value = 0;
 
         this.masterReverb = ctx.createConvolver();
         this.masterReverb.buffer = getImpulse(ctx);
-        this.masterReverbWet = ctx.createGain();
-        this.masterReverbWet.gain.value = 0;
 
         this.masterDelayDivisionId = DEFAULT_DELAY_DIVISION_ID;
         this.currentMasterImpulseId = DEFAULT_IR_ID;
 
-        this.masterBus.connect(this.masterDry);
-        this.masterDry.connect(this.masterLimiter);
+        // Dry: masterBus → limiter. Wet: channel sends → master FX → limiter.
+        this.masterBus.connect(this.masterLimiter);
 
-        this.masterBus.connect(this.masterDelay);
         this.masterDelay.connect(this.masterDelayFeedback);
         this.masterDelayFeedback.connect(this.masterDelay);
-        this.masterDelay.connect(this.masterDelayWet);
-        this.masterDelayWet.connect(this.masterLimiter);
+        this.masterDelay.connect(this.masterLimiter);
 
-        this.masterBus.connect(this.masterReverb);
-        this.masterReverb.connect(this.masterReverbWet);
-        this.masterReverbWet.connect(this.masterLimiter);
+        this.masterReverb.connect(this.masterLimiter);
 
         this.masterLimiter.connect(this.masterAnalyser);
 
@@ -414,7 +390,9 @@ export class PerformanceEngine {
         this.currentMainPair = 0;
         this._buildOutputGraph();
 
-        this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
+        this.channels = Array.from({ length: channelCount }, () =>
+            new ChannelStrip(this.masterBus, this.masterDelay, this.masterReverb)
+        );
 
 
         this.linkSnapshot = null;
@@ -430,10 +408,7 @@ export class PerformanceEngine {
             bpm: 120,
         };
 
-        this.currentImpulseId = DEFAULT_IR_ID;
         loadImpulseResponses(ctx).then(() => {
-            const buf = getImpulseResponseBuffer(this.currentImpulseId);
-            if (buf) this.channels.forEach(ch => ch.setImpulseResponse(buf));
             const masterBuf = getImpulseResponseBuffer(this.currentMasterImpulseId);
             if (masterBuf) this.masterReverb.buffer = masterBuf;
         });
@@ -461,16 +436,6 @@ export class PerformanceEngine {
         return true;
     }
 
-    setMasterDelayMix(value) {
-        const v = Math.max(0, Math.min(1, Number(value) || 0));
-        this.masterDelayWet.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
-    }
-
-    setMasterReverbMix(value) {
-        const v = Math.max(0, Math.min(1, Number(value) || 0));
-        this.masterReverbWet.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
-    }
-
     setMasterReverbIR(id) {
         if (!IMPULSE_RESPONSES.some(ir => ir.id === id)) return false;
         this.currentMasterImpulseId = id;
@@ -479,14 +444,6 @@ export class PerformanceEngine {
         // If buf is null the IR catalog hasn't finished loading yet — the
         // constructor's loadImpulseResponses().then() will apply the right
         // buffer once it's cached, reading the updated id from this.
-        return true;
-    }
-
-    setImpulseResponse(id) {
-        const buf = getImpulseResponseBuffer(id);
-        if (!buf) return false;
-        this.currentImpulseId = id;
-        this.channels.forEach(ch => ch.setImpulseResponse(buf));
         return true;
     }
 
@@ -596,13 +553,6 @@ export class PerformanceEngine {
         this._wireMainPair(pairIdx);
     }
 
-    setChannelImpulseResponse(channelIndex, id) {
-        const buf = getImpulseResponseBuffer(id);
-        if (!buf || !this.channels[channelIndex]) return false;
-        this.channels[channelIndex].setImpulseResponse(buf);
-        return true;
-    }
-
     setBpm(bpm) {
         const safe = Number(bpm);
         if (Number.isFinite(safe) && safe > 0) {
@@ -617,9 +567,8 @@ export class PerformanceEngine {
             tr.originAudioTime = now;
             tr.bpm = safe;
         }
-        this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
-        // Master delay also follows the grid — recompute its seconds based
-        // on the current division whenever BPM changes.
+        // Master delay follows the grid — recompute its seconds based on
+        // the current division whenever BPM changes.
         this._applyMasterDelayTime();
     }
 
@@ -724,12 +673,9 @@ export class PerformanceEngine {
             try { node?.disconnect(); } catch (_) { /* already disconnected */ }
         };
         tryDisconnect(this.masterBus);
-        tryDisconnect(this.masterDry);
         tryDisconnect(this.masterDelay);
         tryDisconnect(this.masterDelayFeedback);
-        tryDisconnect(this.masterDelayWet);
         tryDisconnect(this.masterReverb);
-        tryDisconnect(this.masterReverbWet);
         tryDisconnect(this.masterLimiter);
         tryDisconnect(this.masterAnalyser);
     }

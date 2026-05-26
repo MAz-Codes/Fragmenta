@@ -96,13 +96,11 @@ function defaultSession(channelCount) {
         randomSeed: true,
         seedValue: '',
         cueDeviceId: '',
-        // Master FX defaults — both wet sends at 0 (silent) so the master is
-        // bit-exact dry until the user dials in. Reverb IR and delay division
-        // come up at the engine's defaults (`hall`, `1/4`).
+        // Master FX defaults — the FX are always-on; the wet level on the
+        // master bus is determined entirely by per-channel DLY/REV send
+        // levels. We only persist the IR choice and the delay division.
         masterReverbIR: 'hall',
-        masterReverbMix: 0,
         masterDelayDivision: '1/4',
-        masterDelayMix: 0,
         channels: Array.from({ length: channelCount }, () => ({
             ...CHANNEL_DEFAULT,
             knobs: { ...CHANNEL_DEFAULT.knobs },
