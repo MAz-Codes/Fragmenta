@@ -1340,59 +1340,70 @@ function PerformancePanelInner({
                         <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
                     </Box>
 
-                    {/* Fader + meter, centered. Takes the bulk of the vertical
-                        space; readouts and FX pickers sit below it. */}
-                    <Box sx={styles.masterFaderWrap}>
-                        <Box sx={styles.masterMeterTrack}>
-                            <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
-                            <Box sx={styles.masterMeterSegments} />
-                        </Box>
-                        <MidiMappable
-                            id="master.fader"
-                            label="Master Fader"
-                            kind="continuous"
-                            min={MASTER_DB_MIN}
-                            max={MASTER_DB_MAX}
-                            value={masterDb}
-                            onChange={(v) => handleMasterChange(null, v)}
-                            sx={{
-                                alignSelf: 'stretch',
-                                // Fixed-width lane wide enough for the 16 px
-                                // thumb plus a touch of hit area. Without an
-                                // explicit width the wrapper would either
-                                // collapse to nothing (no flex parent on the
-                                // slider) or stretch to fill (with flex: 1),
-                                // which pinned the fader to the left edge.
-                                width: 20,
-                                display: 'flex',
-                                justifyContent: 'center',
-                            }}
-                        >
-                            <Slider
-                                orientation="vertical"
-                                value={masterDb}
-                                onChange={handleMasterChange}
+                    {/* Middle group — fader+meter (fixed height) plus the
+                        DBFS/Pk readouts, vertically centered in the remaining
+                        space between the header and the FX pickers below. */}
+                    <Box sx={{
+                        flex: 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 0.5,
+                        minHeight: 0,
+                    }}>
+                        <Box sx={styles.masterFaderWrap}>
+                            <Box sx={styles.masterMeterTrack}>
+                                <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
+                                <Box sx={styles.masterMeterSegments} />
+                            </Box>
+                            <MidiMappable
+                                id="master.fader"
+                                label="Master Fader"
+                                kind="continuous"
                                 min={MASTER_DB_MIN}
                                 max={MASTER_DB_MAX}
-                                step={0.1}
-                                sx={styles.masterFader(MASTER_COLOR)}
-                            />
-                        </MidiMappable>
-                    </Box>
+                                value={masterDb}
+                                onChange={(v) => handleMasterChange(null, v)}
+                                sx={{
+                                    alignSelf: 'stretch',
+                                    // Fixed-width lane wide enough for the 16 px
+                                    // thumb plus a touch of hit area. Without an
+                                    // explicit width the wrapper would either
+                                    // collapse to nothing (no flex parent on the
+                                    // slider) or stretch to fill (with flex: 1),
+                                    // which pinned the fader to the left edge.
+                                    width: 20,
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                }}
+                            >
+                                <Slider
+                                    orientation="vertical"
+                                    value={masterDb}
+                                    onChange={handleMasterChange}
+                                    min={MASTER_DB_MIN}
+                                    max={MASTER_DB_MAX}
+                                    step={0.1}
+                                    sx={styles.masterFader(MASTER_COLOR)}
+                                />
+                            </MidiMappable>
+                        </Box>
 
-                    <Box sx={styles.masterReadouts}>
-                        <Typography sx={styles.masterValue}>
-                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                DBFS
-                            </Box>
-                            {' '}{formatDb(masterDb)}
-                        </Typography>
-                        <Typography sx={styles.masterPeakValue}>
-                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                Pk
-                            </Box>
-                            {' '}{formatDb(peakLabelDb)}
-                        </Typography>
+                        <Box sx={styles.masterReadouts}>
+                            <Typography sx={styles.masterValue}>
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                    DBFS
+                                </Box>
+                                {' '}{formatDb(masterDb)}
+                            </Typography>
+                            <Typography sx={styles.masterPeakValue}>
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                    Pk
+                                </Box>
+                                {' '}{formatDb(peakLabelDb)}
+                            </Typography>
+                        </Box>
                     </Box>
 
                     {/* Master FX pickers — Reverb IR and Delay division.

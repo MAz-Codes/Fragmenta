@@ -2626,7 +2626,12 @@ export const performancePanelStyles = {
         border: `1px solid ${color}55`,
     }),
     masterFaderWrap: {
-        flex: 1,
+        // Fixed-height lane for the meter + vertical fader. Was `flex: 1`
+        // (filled all remaining vertical space) — that made the fader feel
+        // disproportionately tall. The JSX now wraps this + the readouts in
+        // a flex-column with justify-content: center, so this fixed height
+        // sits vertically centered between the header and the FX pickers.
+        height: 200,
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'stretch',
@@ -2634,6 +2639,7 @@ export const performancePanelStyles = {
         gap: 1,
         py: 1.25,
         minHeight: 0,
+        flexShrink: 0,
     },
     masterMeterTrack: {
         width: 10,
