@@ -2829,6 +2829,11 @@ export const performanceChannelStyles = {
         gap: 0.5,
         fontVariantNumeric: 'tabular-nums',
         lineHeight: 1,
+        // marginLeft: 'auto' on a flex child pushes it to the right end of
+        // the parent flex container regardless of the parent's
+        // justifyContent — bypasses any CSS specificity contest with MUI's
+        // default `.MuiButtonBase-root { justify-content: center }`.
+        marginLeft: 'auto',
     },
     waveformWrap: (theme) => ({
         position: 'relative',
