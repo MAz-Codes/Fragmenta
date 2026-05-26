@@ -2832,15 +2832,43 @@ export const performanceChannelStyles = {
         '&:hover': { backgroundColor: playing ? color : `${color}28` },
         '&.Mui-disabled': theme.palette.mode === 'dark' ? { opacity: 0.3 } : {},
     }),
+    // Channel Loop toggle — literal "L" glyph at weight heavy. State cue
+    // is two-axis so color-blind users always have a non-chromatic signal:
+    //   Off → 1px divider border, transparent bg, dim "L"
+    //   On  → 1px channel-color border + 1px inset shadow (= 2px ring
+    //         without layout shift), tinted fill, full-color bold "L",
+    //         AND a 4×4px LED dot in the bottom-right corner.
     loopBtn: (color, active) => ({
         width: perfTokens.height.sub,
         height: perfTokens.height.sub,
+        position: 'relative',
         borderRadius: 1,
-        color: active ? color : 'text.secondary',
+        fontSize: perfTokens.fontSize.sm,
+        fontWeight: perfTokens.weight.heavy,
+        lineHeight: 1,
+        color: active ? color : 'text.disabled',
         backgroundColor: active ? `${color}1F` : 'transparent',
         border: '1px solid',
-        borderColor: active ? `${color}55` : 'divider',
-        '&:hover': { backgroundColor: `${color}1F` },
+        borderColor: active ? color : 'divider',
+        boxShadow: active ? `inset 0 0 0 1px ${color}` : 'none',
+        transition:
+            'background-color 120ms, color 120ms, border-color 120ms, box-shadow 120ms',
+        '&:hover': {
+            backgroundColor: active ? `${color}28` : 'action.hover',
+            color: active ? color : 'text.secondary',
+        },
+        ...(active && {
+            '&::after': {
+                content: '""',
+                position: 'absolute',
+                right: 2,
+                bottom: 2,
+                width: 4,
+                height: 4,
+                borderRadius: '50%',
+                backgroundColor: color,
+            },
+        }),
     }),
     meterTrack: (theme) => ({
         flex: 1,

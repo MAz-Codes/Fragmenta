@@ -14,7 +14,6 @@ import {
 import {
     Play as PlayIcon,
     Square as StopIcon,
-    Repeat as LoopIcon,
     Sparkles as GenerateIcon,
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
@@ -674,8 +673,9 @@ export default function PerformanceChannel({
                             onClick={handleLoopToggle}
                             sx={styles.loopBtn(color, looping)}
                             size="small"
+                            aria-label={looping ? 'Loop on' : 'Loop off'}
                         >
-                            <LoopIcon size={14} />
+                            L
                         </IconButton>
                     </Tooltip>
                 </MidiMappable>
