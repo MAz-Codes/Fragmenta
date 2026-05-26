@@ -2497,6 +2497,7 @@ function App() {
                                             seedValue={seedValue}
                                             onRandomSeedChange={setRandomSeed}
                                             onSeedValueChange={setSeedValue}
+                                            onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
                                         />
                                     </Suspense>
                                 ) : (

@@ -30,6 +30,7 @@ import {
     Headphones as CueIcon,
     Volume2 as AudioSetupIcon,
     RotateCcw as RestoreIcon,
+    Download as DownloadIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -124,6 +125,7 @@ function PerformancePanelInner({
     onRandomSeedChange,
     onSeedValueChange,
     onPresetLoaded,
+    onOpenCheckpointManager,
 }) {
     const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
 
@@ -1493,24 +1495,84 @@ function PerformancePanelInner({
                             return value;
                         }}
                     >
-                        {baseModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Base Models ──
-                            </MenuItem>
-                        )}
-                        {baseModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                disabled={!model.downloaded}
-                                sx={{ fontSize: perfTokens.fontSize.sm }}
-                            >
-                                {model.displayName || model.name}
-                            </MenuItem>
-                        ))}
+                        {(() => {
+                            // Split baseModels by their `kind` field so distilled
+                            // (post-trained) variants aren't grouped under "Base".
+                            const distilled = baseModels.filter(m => m.kind !== 'base');
+                            const bases = baseModels.filter(m => m.kind === 'base');
+                            // Inline row used by both groups. Renders the model name
+                            // and, if the model isn't downloaded yet, a Download
+                            // button that opens the Checkpoint Manager. The button's
+                            // `pointer-events: auto` overrides the MenuItem-disabled
+                            // `pointer-events: none` so the click still fires.
+                            const modelRow = (model) => (
+                                <MenuItem
+                                    key={model.name}
+                                    value={String(model.name)}
+                                    disabled={!model.downloaded}
+                                    sx={{
+                                        fontSize: perfTokens.fontSize.sm,
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        gap: 1,
+                                        pr: 0.5,
+                                    }}
+                                >
+                                    <Box component="span" sx={{
+                                        flex: 1,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {model.displayName || model.name}
+                                    </Box>
+                                    {!model.downloaded && (
+                                        <Tooltip title="Not downloaded — open Checkpoint Manager">
+                                            <IconButton
+                                                size="small"
+                                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    e.preventDefault();
+                                                    onOpenCheckpointManager?.();
+                                                }}
+                                                sx={{
+                                                    ...styles.compactIconBtn('md'),
+                                                    // Override the MenuItem-disabled
+                                                    // pointer-events: none so this
+                                                    // button stays clickable, and
+                                                    // override the dimmed opacity so
+                                                    // it reads as actionable.
+                                                    pointerEvents: 'auto',
+                                                    opacity: 1,
+                                                }}
+                                            >
+                                                <DownloadIcon size={perfTokens.icon.md} />
+                                            </IconButton>
+                                        </Tooltip>
+                                    )}
+                                </MenuItem>
+                            );
+                            return (
+                                <>
+                                    {distilled.length > 0 && (
+                                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                            ── Distilled ──
+                                        </MenuItem>
+                                    )}
+                                    {distilled.map(modelRow)}
+                                    {bases.length > 0 && (
+                                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                            ── Base ──
+                                        </MenuItem>
+                                    )}
+                                    {bases.map(modelRow)}
+                                </>
+                            );
+                        })()}
                         {availableModels.length > 0 && (
                             <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Fine-tuned Models ──
+                                ── Fine-tuned ──
                             </MenuItem>
                         )}
                         {availableModels.map((model) => (
