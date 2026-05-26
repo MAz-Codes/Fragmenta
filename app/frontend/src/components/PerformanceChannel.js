@@ -452,7 +452,50 @@ export default function PerformanceChannel({
         onStateChange?.(index, { playing: false });
         await strip.loadBlob(take.blob);
         setCommittedTakeId(takeId);
+        // Mark loaded so the play button enables. Required for the case where
+        // the channel had hydrated takes but no committedTakeId (preset load,
+        // or any flow where the first commit is via this code path rather
+        // than the generate flow that sets loaded itself).
+        if (!loaded) {
+            setLoaded(true);
+            onStateChange?.(index, { loaded: true });
+        }
         requestAnimationFrame(drawWave);
+    };
+
+    // Drag-and-drop: a take row from this channel's history can be dropped
+    // onto the waveform monitor to load it (same effect as the row's commit
+    // ✓ button). The MIME type is channel-scoped, so a row from channel 1
+    // won't even highlight channel 2's waveform — the browser filters at
+    // dragOver level via dataTransfer.types matching.
+    const dragMime = `application/x-fragmenta-take-ch${index}`;
+    const [dropActive, setDropActive] = useState(false);
+    // Counter pattern — dragenter/leave also fire when the cursor crosses
+    // into child elements (canvas, overlay). Without the counter, dropActive
+    // would flicker false whenever the cursor moved over a child.
+    const dragCounterRef = useRef(0);
+
+    const handleWaveDragEnter = (e) => {
+        if (!e.dataTransfer.types.includes(dragMime)) return;
+        e.preventDefault();
+        dragCounterRef.current += 1;
+        if (dragCounterRef.current === 1) setDropActive(true);
+    };
+    const handleWaveDragOver = (e) => {
+        if (!e.dataTransfer.types.includes(dragMime)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    };
+    const handleWaveDragLeave = () => {
+        dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+        if (dragCounterRef.current === 0) setDropActive(false);
+    };
+    const handleWaveDrop = (e) => {
+        e.preventDefault();
+        dragCounterRef.current = 0;
+        setDropActive(false);
+        const takeId = e.dataTransfer.getData(dragMime);
+        if (takeId) handleCommitTake(takeId);
     };
 
     const handleToggleStar = (takeId) => {
@@ -731,16 +774,30 @@ export default function PerformanceChannel({
                 </Box>
             </Box>
 
-            <Box sx={styles.waveformWrap}>
+            <Box
+                onDragEnter={handleWaveDragEnter}
+                onDragOver={handleWaveDragOver}
+                onDragLeave={handleWaveDragLeave}
+                onDrop={handleWaveDrop}
+                sx={[
+                    styles.waveformWrap,
+                    dropActive && {
+                        borderColor: color,
+                        boxShadow: `inset 0 0 0 2px ${color}`,
+                        backgroundColor: `${color}1F`,
+                        transition: 'border-color 120ms, box-shadow 120ms, background-color 120ms',
+                    },
+                ]}
+            >
                 <canvas
                     ref={canvasRef}
                     width={140}
                     height={42}
-                    style={{ width: '100%', height: 42, display: 'block' }}
+                    style={{ width: '100%', height: 42, display: 'block', pointerEvents: 'none' }}
                 />
                 {!loaded && (
                     <Typography sx={styles.waveformPlaceholder}>
-                        Waveform
+                        {dropActive ? 'Drop to load' : 'Waveform'}
                     </Typography>
                 )}
             </Box>
@@ -752,6 +809,7 @@ export default function PerformanceChannel({
             <ChannelTakeHistory
                 takes={takes}
                 color={color}
+                channelIndex={index}
                 auditioningId={auditioningTakeId}
                 committedId={committedTakeId}
                 maxTakes={TAKE_CAP}

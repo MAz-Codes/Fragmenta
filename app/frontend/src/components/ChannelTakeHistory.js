@@ -51,6 +51,7 @@ import { performanceChannelStyles as styles } from '../theme';
 export default function ChannelTakeHistory({
     takes,
     color,
+    channelIndex,
     auditioningId,
     committedId,
     maxTakes = 50,
@@ -61,6 +62,10 @@ export default function ChannelTakeHistory({
     onClearAll,
 }) {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+    // Channel-scoped MIME type for drag-and-drop. The waveform drop target on
+    // this same channel listens for this exact type — cross-channel drags
+    // won't highlight or accept because the mime won't match.
+    const dragMime = `application/x-fragmenta-take-ch${channelIndex}`;
 
     return (
         <Box sx={styles.takeHistoryPanel}>
@@ -90,7 +95,19 @@ export default function ChannelTakeHistory({
                         const isAuditioning = auditioningId === take.id;
                         const isCommitted = committedId === take.id;
                         return (
-                            <Box key={take.id} sx={styles.takeRow(color, isCommitted, isAuditioning)}>
+                            <Box
+                                key={take.id}
+                                draggable
+                                onDragStart={(e) => {
+                                    e.dataTransfer.setData(dragMime, take.id);
+                                    e.dataTransfer.effectAllowed = 'copy';
+                                }}
+                                sx={{
+                                    ...styles.takeRow(color, isCommitted, isAuditioning),
+                                    cursor: 'grab',
+                                    '&:active': { cursor: 'grabbing' },
+                                }}
+                            >
                                 <Tooltip
                                     title={isAuditioning ? 'Stop cue' : 'Audition through cue output'}
                                     placement="top"
