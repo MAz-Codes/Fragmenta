@@ -19,6 +19,7 @@ import {
     Eraser as ClearAllIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles } from '../theme';
+import { MidiMappable } from './MidiContext';
 
 /**
  * Per-channel rolling take history. Always visible (empty-state included)
@@ -108,23 +109,30 @@ export default function ChannelTakeHistory({
                                     '&:active': { cursor: 'grabbing' },
                                 }}
                             >
-                                <Tooltip
-                                    title={isAuditioning ? 'Stop cue' : 'Audition through cue output'}
-                                    placement="top"
-                                    arrow
-                                    enterDelay={300}
+                                <MidiMappable
+                                    id={`channel.${channelIndex}.take.${take.id}.audition`}
+                                    label={`Ch ${channelIndex + 1} · Take ${take.number} audition`}
+                                    kind="trigger"
+                                    onChange={() => onAudition(take.id)}
                                 >
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => onAudition(take.id)}
-                                        sx={styles.takeIconBtn(color, isAuditioning)}
-                                        aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
+                                    <Tooltip
+                                        title={isAuditioning ? 'Stop cue' : 'Audition through cue output'}
+                                        placement="top"
+                                        arrow
+                                        enterDelay={300}
                                     >
-                                        {isAuditioning
-                                            ? <StopIcon size={12} />
-                                            : <PlayIcon size={12} />}
-                                    </IconButton>
-                                </Tooltip>
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => onAudition(take.id)}
+                                            sx={styles.takeIconBtn(color, isAuditioning)}
+                                            aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
+                                        >
+                                            {isAuditioning
+                                                ? <StopIcon size={12} />
+                                                : <PlayIcon size={12} />}
+                                        </IconButton>
+                                    </Tooltip>
+                                </MidiMappable>
 
                                 <Box sx={styles.takeMeta}>
                                     <Box component="span" sx={styles.takeOrdinal}>
