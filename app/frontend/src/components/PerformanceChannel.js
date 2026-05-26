@@ -577,7 +577,7 @@ export default function PerformanceChannel({
                             }
                             placement="top"
                         >
-                            <Box component="span" sx={styles.generatePillWrap}>
+                            <span style={{ display: 'inline-flex', marginLeft: 'auto' }}>
                                 <ButtonBase
                                     onClick={handleGenerate}
                                     disabled={!canGenerate || !prompt.trim() || generating}
@@ -596,7 +596,7 @@ export default function PerformanceChannel({
                                         {!generating && <GenerateArrowIcon size={14} strokeWidth={2.25} />}
                                     </Box>
                                 </ButtonBase>
-                            </Box>
+                            </span>
                         </Tooltip>
                     </MidiMappable>
                 </Box>
