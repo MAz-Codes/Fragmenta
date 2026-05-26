@@ -52,7 +52,7 @@ const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
 const BATCH_OPTIONS = [1, 2, 3, 4];
 // Per-channel rolling take history cap. Starred takes survive eviction.
-const TAKE_CAP = 50;
+const TAKE_CAP = 200;
 
 export default function PerformanceChannel({
     index,
@@ -577,7 +577,7 @@ export default function PerformanceChannel({
                             }
                             placement="top"
                         >
-                            <span style={{ display: 'flex', flex: 1, minWidth: 0 }}>
+                            <span style={{ display: 'inline-flex', marginLeft: 'auto' }}>
                                 <ButtonBase
                                     onClick={handleGenerate}
                                     disabled={!canGenerate || !prompt.trim() || generating}

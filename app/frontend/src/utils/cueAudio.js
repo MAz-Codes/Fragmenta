@@ -11,6 +11,7 @@
 
 let ctx = null;
 let currentSource = null;
+let currentSourceFade = null;  // per-source gain used by stopCue() to ramp out
 let currentEndedHandler = null;
 let currentSinkId = '';
 
@@ -132,19 +133,26 @@ export async function playBlob(blob, { onEnded } = {}) {
 
     const src = c.createBufferSource();
     src.buffer = buf;
-    // Connect into the splitter, NOT directly to destination — that's how
-    // the channel-pair routing applies.
-    src.connect(cueSplitter);
+    // Per-source fade gain so stopCue() can ramp out instead of hard-cut
+    // (a hard cut at non-zero samples is what produces the click /
+    // crackle when switching takes rapidly). The fade graph is:
+    //   source → fadeGain → cueSplitter → cueMerger → destination
+    const fadeGain = c.createGain();
+    fadeGain.gain.value = 1;
+    src.connect(fadeGain);
+    fadeGain.connect(cueSplitter);
 
     const handler = () => {
         if (currentSource === src) {
             currentSource = null;
+            currentSourceFade = null;
             currentEndedHandler = null;
         }
         onEnded?.();
     };
     src.addEventListener('ended', handler);
     currentSource = src;
+    currentSourceFade = fadeGain;
     currentEndedHandler = handler;
     src.start();
 
@@ -157,12 +165,27 @@ export async function playBlob(blob, { onEnded } = {}) {
 
 export function stopCue() {
     if (currentSource) {
+        const src = currentSource;
+        const fade = currentSourceFade;
         if (currentEndedHandler) {
-            currentSource.removeEventListener('ended', currentEndedHandler);
+            src.removeEventListener('ended', currentEndedHandler);
         }
-        try { currentSource.stop(); } catch { /* already stopped */ }
-        try { currentSource.disconnect(); } catch { /* already disconnected */ }
+        const now = ctx ? ctx.currentTime : 0;
+        const FADE = 0.012;
+        try {
+            if (fade) {
+                fade.gain.cancelScheduledValues(now);
+                fade.gain.setValueAtTime(fade.gain.value, now);
+                fade.gain.linearRampToValueAtTime(0, now + FADE);
+            }
+            src.stop(now + FADE + 0.005);
+        } catch { /* already stopped */ }
+        window.setTimeout(() => {
+            try { src.disconnect(); } catch { /* ok */ }
+            try { fade && fade.disconnect(); } catch { /* ok */ }
+        }, Math.ceil((FADE + 0.02) * 1000));
         currentSource = null;
+        currentSourceFade = null;
         currentEndedHandler = null;
     }
 }

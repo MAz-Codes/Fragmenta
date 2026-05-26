@@ -2788,8 +2788,11 @@ export const performanceChannelStyles = {
     generatePill: (color, { generating, disabled }) => ({
         position: 'relative',
         overflow: 'hidden',
-        flex: 1,
-        minWidth: 0,
+        // Compact pill anchored to the right edge of the CTA row — the
+        // outer span uses `marginLeft: auto` to push the pill against
+        // the row's right side, and this width gives a comfortable
+        // click target without dominating the row.
+        width: 130,
         height: perfTokens.height.cta,
         px: 1.5,
         borderRadius: 1.5,
@@ -2802,7 +2805,6 @@ export const performanceChannelStyles = {
         textTransform: 'none',
         opacity: disabled && !generating ? 0.45 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        justifyContent: 'flex-end',
         transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms',
         '&:hover': {
             bgcolor: disabled || generating ? undefined : `${color}28`,
@@ -2829,11 +2831,6 @@ export const performanceChannelStyles = {
         gap: 0.5,
         fontVariantNumeric: 'tabular-nums',
         lineHeight: 1,
-        // marginLeft: 'auto' on a flex child pushes it to the right end of
-        // the parent flex container regardless of the parent's
-        // justifyContent — bypasses any CSS specificity contest with MUI's
-        // default `.MuiButtonBase-root { justify-content: center }`.
-        marginLeft: 'auto',
     },
     waveformWrap: (theme) => ({
         position: 'relative',

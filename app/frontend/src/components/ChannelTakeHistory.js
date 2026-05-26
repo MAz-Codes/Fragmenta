@@ -65,7 +65,7 @@ export default function ChannelTakeHistory({
         <Box sx={styles.takeHistoryPanel}>
             <Box sx={styles.takeHistoryHeader}>
                 <Box component="span" sx={styles.takeHistoryHeaderText}>
-                    Fragments · {takes.length} / {maxTakes}
+                    Fragments
                 </Box>
                 {takes.length > 0 && (
                     <Tooltip title="Clear take history" placement="top" arrow>
@@ -111,11 +111,6 @@ export default function ChannelTakeHistory({
                                 <Box sx={styles.takeMeta}>
                                     <Box component="span" sx={styles.takeOrdinal}>
                                         T{take.number}
-                                    </Box>
-                                    <Box component="span" sx={styles.takeDuration}>
-                                        {Number.isFinite(take.duration)
-                                            ? `· ${take.duration.toFixed(1)}s`
-                                            : ''}
                                     </Box>
                                 </Box>
 

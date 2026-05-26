@@ -104,6 +104,7 @@ export class ChannelStrip {
         this.ctx = ctx;
         this.buffer = null;
         this.source = null;
+        this.sourceFade = null;  // per-source fade gain — see stop() for why
         this.isPlaying = false;
         this.isLooping = false;
         this.isMuted = false;
@@ -178,24 +179,53 @@ export class ChannelStrip {
         const src = this.ctx.createBufferSource();
         src.buffer = this.buffer;
         src.loop = loop;
-        src.connect(this.filter);
+        // Per-source gain so we can fade-out without touching the user's
+        // channelGain. Cancels the click that would otherwise happen when
+        // stop() truncates a non-zero sample.
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        fadeGain.connect(this.filter);
         src.onended = () => {
             if (this.source === src) {
                 this.source = null;
+                this.sourceFade = null;
                 this.isPlaying = false;
             }
         };
 
         src.start(Math.max(0, startTime));
         this.source = src;
+        this.sourceFade = fadeGain;
         this.isPlaying = true;
     }
 
     stop() {
         if (this.source) {
-            try { this.source.stop(0); } catch (_) { /* already stopped */ }
-            this.source.disconnect();
+            const src = this.source;
+            const fade = this.sourceFade;
+            const now = this.ctx.currentTime;
+            // 12ms gain ramp masks the click from cutting a buffer
+            // mid-cycle. The source is scheduled to actually stop just
+            // after the ramp finishes; disconnect happens on the next
+            // tick after that so we don't truncate the tail ourselves.
+            const FADE = 0.012;
+            try {
+                if (fade) {
+                    fade.gain.cancelScheduledValues(now);
+                    fade.gain.setValueAtTime(fade.gain.value, now);
+                    fade.gain.linearRampToValueAtTime(0, now + FADE);
+                }
+                src.stop(now + FADE + 0.005);
+            } catch (_) { /* already stopped */ }
+            // Detach the nodes after the tail finishes — otherwise we'd
+            // cut the fade short and reintroduce the click.
+            window.setTimeout(() => {
+                try { src.disconnect(); } catch (_) { /* ok */ }
+                try { fade && fade.disconnect(); } catch (_) { /* ok */ }
+            }, Math.ceil((FADE + 0.02) * 1000));
             this.source = null;
+            this.sourceFade = null;
         }
         this.isPlaying = false;
     }
