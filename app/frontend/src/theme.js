@@ -2403,6 +2403,33 @@ export const performancePanelStyles = {
         width: '100%',
         minHeight: 0,
     },
+    // Single source of truth for every "pill" control in the master + bottom
+    // bar (Q select, BPM input, Steps select, Seed input, Model picker, LoRA
+    // picker, etc.). Spread this into the control's `sx` to lock height,
+    // radius, font size, and inner padding — no more per-instance overrides.
+    pillControl: {
+        '& .MuiOutlinedInput-root': {
+            height: perfTokens.height.compact,
+            borderRadius: 1.5,
+        },
+        '& .MuiSelect-select': {
+            paddingTop: 0,
+            paddingBottom: 0,
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: perfTokens.weight.bold,
+            display: 'flex',
+            alignItems: 'center',
+            lineHeight: 1,
+        },
+        // The TextField input needs the same font on the rendered <input>; we
+        // put it on the wrapper here, but anywhere a TextField is used, also
+        // set `inputProps={{ style: { fontSize: perfTokens.fontSize.sm } }}`
+        // to win against MUI's .MuiInputBase-inputSizeSmall 14px default.
+        '& .MuiOutlinedInput-input': {
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: perfTokens.weight.bold,
+        },
+    },
     headerCard: (theme) => ({
         display: 'flex',
         alignItems: 'center',
@@ -2584,7 +2611,14 @@ export const performancePanelStyles = {
         textTransform: 'none',
         borderRadius: 1.5,
         fontSize: perfTokens.fontSize.sm,
-        py: 0.5,
+        fontWeight: perfTokens.weight.bold,
+        height: perfTokens.height.compact,
+        // Override MUI's vertical padding so the button lands at the
+        // shared 26px row height (matches Q select + BPM input).
+        py: 0,
+        px: 1.25,
+        minWidth: 0,
+        lineHeight: 1,
         ...(variant === 'play'
             ? {
                 color,

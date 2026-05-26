@@ -1005,19 +1005,7 @@ function PerformancePanelInner({
                 </Menu>
 
                 <Tooltip placement="right" title="Launch quantization — match Live's">
-                    <FormControl
-                        size="small"
-                        sx={{
-                            minWidth: 92,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, height: perfTokens.height.compact },
-                            '& .MuiSelect-select': {
-                                py: 0,
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                            },
-                        }}
-                    >
+                    <FormControl size="small" sx={{ ...styles.pillControl, minWidth: 92 }}>
                         <Select
                             value={launchQuantum}
                             onChange={(e) => setLaunchQuantum(Number(e.target.value))}
@@ -1051,9 +1039,10 @@ function PerformancePanelInner({
                         onChange={handleBpmChange}
                         onFocus={handleBpmFocus}
                         onBlur={handleBpmBlur}
-                        // inline `style` on inputProps wins against MUI's
-                        // .MuiInputBase-inputSizeSmall 14px default (which
-                        // beats `'& input': { fontSize }` on CSS specificity).
+                        // inputProps.style wins against MUI's
+                        // .MuiInputBase-inputSizeSmall 14px default — needed
+                        // because the pillControl theme can't reach the
+                        // rendered <input> at the same CSS specificity.
                         inputProps={{
                             step: 1,
                             inputMode: 'numeric',
@@ -1062,27 +1051,24 @@ function PerformancePanelInner({
                                 textAlign: 'right',
                                 fontVariantNumeric: 'tabular-nums',
                                 fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
                                 paddingRight: 0,
                             },
                         }}
                         InputProps={{
                             endAdornment: (
-                                <Box
-                                    component="span"
-                                    sx={{
-                                        ...perfTokens.caps,
-                                        color: 'text.disabled',
-                                        pl: 0.5,
-                                        userSelect: 'none',
-                                    }}
-                                >
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'text.disabled', pl: 0.5, userSelect: 'none' }}>
                                     BPM
                                 </Box>
                             ),
                         }}
                         sx={{
-                            width: 84,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
+                            ...styles.pillControl,
+                            width: 92,
+                            '& .MuiOutlinedInput-root': {
+                                ...styles.pillControl['& .MuiOutlinedInput-root'],
+                                pr: 1,
+                            },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                 WebkitAppearance: 'none',
                                 margin: 0,
@@ -1276,10 +1262,10 @@ function PerformancePanelInner({
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
                 <FormControl size="small" sx={{
+                    ...styles.pillControl,
                     width: 120,
-                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                     '& .MuiSelect-select': {
-                        fontSize: perfTokens.fontSize.sm,
+                        ...styles.pillControl['& .MuiSelect-select'],
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
@@ -1382,10 +1368,10 @@ function PerformancePanelInner({
                     return (
                         <>
                             <FormControl size="small" disabled={loraDisabled} sx={{
+                                ...styles.pillControl,
                                 width: 120,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.sm,
+                                    ...styles.pillControl['& .MuiSelect-select'],
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1446,10 +1432,10 @@ function PerformancePanelInner({
                             </FormControl>
 
                             <FormControl size="small" disabled={ckptDisabled} sx={{
+                                ...styles.pillControl,
                                 width: 100,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                                 '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.sm,
+                                    ...styles.pillControl['& .MuiSelect-select'],
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
@@ -1481,7 +1467,7 @@ function PerformancePanelInner({
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                     <Box
                         component="span"
-                        sx={{ ...perfTokens.caps, color: 'text.disabled' }}
+                        sx={{ fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}
                     >
                         Steps
                     </Box>
@@ -1493,14 +1479,8 @@ function PerformancePanelInner({
                                 : 'Diffusion steps per generation (more = higher quality, slower)'
                         }
                     >
-                        <FormControl
-                            size="small"
-                            sx={{
-                                width: 64,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                '& .MuiSelect-select': { fontSize: perfTokens.fontSize.sm },
-                            }}
-                        >
+                        <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
+
                             <Select
                                 value={isSmallModel ? 8 : steps}
                                 onChange={(e) => onStepsChange?.(Number(e.target.value))}
@@ -1525,7 +1505,7 @@ function PerformancePanelInner({
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     <Box
                         component="span"
-                        sx={{ ...perfTokens.caps, color: 'text.disabled' }}
+                        sx={{ fontSize: perfTokens.fontSize.sm, color: 'text.disabled' }}
                     >
                         Seed
                     </Box>
@@ -1559,12 +1539,10 @@ function PerformancePanelInner({
                             style: {
                                 fontVariantNumeric: 'tabular-nums',
                                 fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
                             },
                         }}
-                        sx={{
-                            width: 78,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                        }}
+                        sx={{ ...styles.pillControl, width: 78 }}
                     />
                 </Box>
 
