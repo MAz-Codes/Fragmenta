@@ -2751,40 +2751,25 @@ export const performanceChannelStyles = {
         '& .MuiSlider-thumb': { width: 10, height: 10 },
         '& .MuiSlider-rail': { opacity: 0.3 },
     }),
-    // Takes segmented control — 4 cells [1][2][3][4] replacing the old
-    // `×N` Select. Sits next to the Generate pill on the channel CTA row.
-    takesSegmented: {
-        display: 'inline-flex',
-        height: perfTokens.height.cta,
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 1.25,
-        overflow: 'hidden',
-        flexShrink: 0,
+    // Channel CTA-row variant of pillControl — same as the bar pills but
+    // taller (matches `cta` height so it sits flush with the Generate
+    // pill next to it). Use for the Takes select.
+    channelPillControl: {
+        '& .MuiOutlinedInput-root': {
+            height: perfTokens.height.cta,
+            borderRadius: 1.5,
+        },
+        '& .MuiSelect-select': {
+            padding: '0 28px 0 10px !important',
+            lineHeight: `${perfTokens.height.cta}px`,
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: perfTokens.weight.bold,
+            fontVariantNumeric: 'tabular-nums',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+        },
     },
-    takesCell: (color, active) => ({
-        minWidth: 26,
-        px: 0.75,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
-        fontVariantNumeric: 'tabular-nums',
-        color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
-        bgcolor: active ? color : 'transparent',
-        cursor: 'pointer',
-        transition: 'background-color 120ms, color 120ms',
-        '&:hover': {
-            bgcolor: active ? color : 'action.hover',
-            color: active ? 'rgba(0,0,0,0.88)' : 'text.secondary',
-        },
-        '&:not(:last-child)': {
-            borderRight: '1px solid',
-            borderColor: 'divider',
-        },
-        '&.Mui-disabled, &[aria-disabled="true"]': {
-            opacity: 0.45,
-            pointerEvents: 'none',
-        },
-    }),
     // Wide Generate pill — primary CTA on the channel. While generating,
     // a sibling Box fills left-to-right based on /api/generation-progress
     // (rendered by the parent component so this style stays static).
@@ -2875,15 +2860,24 @@ export const performanceChannelStyles = {
             bgcolor: 'action.hover',
         },
     },
+    // Each take row is 28px tall (minHeight 24 + 2+2 padding); 4 rows +
+    // 3 interior 1px borders = ~115px. Fix the panel body to that height
+    // so the channel strip never resizes as takes accumulate — past 4
+    // takes the strip scrolls internally instead of growing.
     takeHistoryList: {
-        maxHeight: 140,
+        height: 4 * 28 + 3,
         overflowY: 'auto',
     },
     takeHistoryEmpty: {
         ...perfTokens.caps,
         textAlign: 'center',
         color: 'text.disabled',
-        py: 0.75,
+        // Match the 4-row list height so the panel doesn't resize when
+        // takes appear / disappear.
+        height: 4 * 28 + 3,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     takeRow: (color, isCommitted, isAuditioning) => ({
         display: 'flex',

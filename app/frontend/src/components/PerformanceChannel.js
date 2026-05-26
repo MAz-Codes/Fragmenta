@@ -533,28 +533,33 @@ export default function PerformanceChannel({
                     mt: 0.5,
                     width: '100%',
                 }}>
-                    {/* Takes segmented control — pick how many candidates the
-                        next Generate should produce. Replaces the old `×N` Select. */}
+                    {/* Takes selector — how many candidates the next Generate
+                        will produce. Compact dropdown matching the bar pill
+                        language; the Generate pill next to it takes the rest
+                        of the row. */}
                     <Tooltip
-                        title="Number of candidates to generate. Auditions show up under the channel; commit one to the strip."
+                        title="Number of candidates to generate. Each take lands in the channel's take history."
                         placement="top"
                         enterDelay={500}
                     >
-                        <Box sx={styles.takesSegmented} role="group" aria-label="Takes">
-                            {BATCH_OPTIONS.map((n) => {
-                                const active = batchSize === n;
-                                return (
-                                    <ButtonBase
-                                        key={n}
-                                        onClick={() => !generating && setBatchSize(n)}
-                                        aria-disabled={generating}
-                                        sx={styles.takesCell(color, active)}
-                                    >
-                                        {n}
-                                    </ButtonBase>
-                                );
-                            })}
-                        </Box>
+                        <Select
+                            value={batchSize}
+                            onChange={(e) => setBatchSize(Number(e.target.value))}
+                            disabled={generating}
+                            size="small"
+                            sx={{ ...styles.channelPillControl, width: 56, flexShrink: 0 }}
+                            renderValue={(v) => v}
+                        >
+                            {BATCH_OPTIONS.map((n) => (
+                                <MenuItem
+                                    key={n}
+                                    value={n}
+                                    sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}
+                                >
+                                    {n}
+                                </MenuItem>
+                            ))}
+                        </Select>
                     </Tooltip>
 
                     {/* Generate pill — wide CTA. Fills left-to-right with live
