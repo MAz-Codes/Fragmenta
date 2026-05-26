@@ -2841,6 +2841,108 @@ export const performanceChannelStyles = {
         borderColor: theme.palette.divider,
         overflow: 'hidden',
     }),
+    // Channel take history strip — persistent per-channel rolling list of
+    // the last N takes (default 50). Always visible (empty-state included)
+    // so the user knows it's there. Newest at top; scrolls vertically when
+    // the list grows past ~5 visible rows.
+    takeHistoryPanel: {
+        border: '1px solid',
+        borderColor: 'divider',
+        borderRadius: 1.25,
+        overflow: 'hidden',
+        bgcolor: 'background.paper',
+    },
+    takeHistoryHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        px: 0.75,
+        py: 0.25,
+        minHeight: 22,
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+    },
+    takeHistoryHeaderText: {
+        ...perfTokens.caps,
+        color: 'text.secondary',
+    },
+    takeHistoryHeaderBtn: {
+        width: 18,
+        height: 18,
+        color: 'text.disabled',
+        '&:hover': {
+            color: 'error.main',
+            bgcolor: 'action.hover',
+        },
+    },
+    takeHistoryList: {
+        maxHeight: 140,
+        overflowY: 'auto',
+    },
+    takeHistoryEmpty: {
+        ...perfTokens.caps,
+        textAlign: 'center',
+        color: 'text.disabled',
+        py: 0.75,
+    },
+    takeRow: (color, isCommitted, isAuditioning) => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.25,
+        px: 0.5,
+        py: 0.25,
+        minHeight: 24,
+        bgcolor: isCommitted ? `${color}14` : 'transparent',
+        borderLeft: isCommitted ? `2px solid ${color}` : '2px solid transparent',
+        '&:not(:last-child)': {
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+        },
+        '&:hover': {
+            bgcolor: isAuditioning
+                ? `${color}26`
+                : isCommitted
+                    ? `${color}1F`
+                    : 'action.hover',
+        },
+        transition: 'background-color 120ms',
+    }),
+    takeIconBtn: (color, active) => ({
+        width: 20,
+        height: 20,
+        borderRadius: 0.75,
+        color: active ? color : 'text.disabled',
+        '&:hover': { color, bgcolor: 'action.hover' },
+        '&.Mui-disabled': { color, opacity: 0.85 },
+    }),
+    takeDeleteBtn: {
+        width: 20,
+        height: 20,
+        borderRadius: 0.75,
+        color: 'text.disabled',
+        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+    },
+    takeMeta: {
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 0.5,
+        overflow: 'hidden',
+    },
+    takeOrdinal: {
+        ...perfTokens.num,
+        fontWeight: perfTokens.weight.bold,
+        color: 'text.primary',
+        flexShrink: 0,
+    },
+    takeDuration: {
+        ...perfTokens.num,
+        color: 'text.disabled',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+    },
     waveformPlaceholder: {
         position: 'absolute',
         inset: 0,

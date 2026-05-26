@@ -16,13 +16,12 @@ import {
     ArrowRight as GenerateArrowIcon,
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
-    Headphones as CueIcon,
-    Check as CommitIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import api from '../api';
+import ChannelTakeHistory from './ChannelTakeHistory';
 
 const CHANNEL_COLORS = [
     '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
@@ -52,6 +51,8 @@ const PAN_CENTER_SNAP = 0.06;
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
 const BATCH_OPTIONS = [1, 2, 3, 4];
+// Per-channel rolling take history cap. Starred takes survive eviction.
+const TAKE_CAP = 50;
 
 export default function PerformanceChannel({
     index,
@@ -95,12 +96,16 @@ export default function PerformanceChannel({
     const [progress, setProgress] = useState(0);
     const [knobs, setKnobs] = useState(() => ({ ...defaultKnobs, ...initKnobs }));
 
-    // Candidates from the latest batch generation. Held in component state
-    // because they don't survive a page reload — the blob URLs would be dead.
-    // `committedIndex` tracks which one is currently loaded into the strip.
-    const [candidates, setCandidates] = useState([]);
-    const [auditioningIndex, setAuditioningIndex] = useState(null);
-    const [committedIndex, setCommittedIndex] = useState(null);
+    // Per-channel rolling take history. Each take:
+    //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
+    // Newest first. Capped at TAKE_CAP via FIFO eviction with star priority
+    // (starred takes survive until everything is starred, then oldest go
+    // first regardless). `nextTakeNumberRef` provides a stable T# even
+    // after deletes — so T1 stays T1.
+    const [takes, setTakes] = useState([]);
+    const [auditioningTakeId, setAuditioningTakeId] = useState(null);
+    const [committedTakeId, setCommittedTakeId] = useState(null);
+    const nextTakeNumberRef = useRef(1);
     const cueSupported = useMemo(() => isCueSupported(), []);
 
     // Stop any active cue audition when the channel unmounts.
@@ -218,10 +223,10 @@ export default function PerformanceChannel({
         const inBarsMode = durationMode === 'bars';
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
-        // Stop any in-flight cue audition and clear stale candidate state so
-        // the audition strip doesn't keep playing the old generation.
+        // Stop any in-flight cue audition so the old preview doesn't keep
+        // playing while we generate the new take.
         stopCue();
-        setAuditioningIndex(null);
+        setAuditioningTakeId(null);
         try {
             const result = await onGenerate({
                 prompt,
@@ -235,12 +240,47 @@ export default function PerformanceChannel({
                 ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
             });
             const blobs = Array.isArray(result) ? result : [result];
-            const next = blobs.map((b, i) => ({ index: i, blob: b }));
-            setCandidates(next);
-            // First candidate auto-loads into the channel strip; the rest sit
-            // in the audition row until the user commits a different one.
+            const now = Date.now();
+            const startNumber = nextTakeNumberRef.current;
+            const promptSnap = prompt.trim();
+            const newTakes = blobs.map((b, i) => ({
+                id: `${now}_${i}`,
+                blob: b,
+                audioUrl: URL.createObjectURL(b),
+                prompt: promptSnap,
+                duration: effectiveDuration,
+                createdAt: now + i,
+                starred: false,
+                number: startNumber + i,
+            }));
+            nextTakeNumberRef.current = startNumber + blobs.length;
+
+            // Merge into the rolling history (newest first) with 50-cap
+            // eviction. Starred takes survive until everything is starred,
+            // then oldest unstarred entries go first regardless.
+            setTakes((prev) => {
+                const combined = [...newTakes, ...prev];
+                if (combined.length <= TAKE_CAP) return combined;
+                let trimmed = combined.slice();
+                while (trimmed.length > TAKE_CAP) {
+                    let idx = -1;
+                    for (let i = trimmed.length - 1; i >= 0; i--) {
+                        if (!trimmed[i].starred) { idx = i; break; }
+                    }
+                    if (idx < 0) idx = trimmed.length - 1;  // all starred → drop oldest
+                    // Revoke the doomed take's blob URL so we don't leak.
+                    const dying = trimmed[idx];
+                    if (dying.audioUrl?.startsWith('blob:')) {
+                        try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
+                    }
+                    trimmed.splice(idx, 1);
+                }
+                return trimmed;
+            });
+
+            // First take of the batch auto-loads into the channel strip.
             await strip.loadBlob(blobs[0]);
-            setCommittedIndex(0);
+            setCommittedTakeId(newTakes[0].id);
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
             requestAnimationFrame(drawWave);
@@ -251,35 +291,70 @@ export default function PerformanceChannel({
         }
     };
 
-    const handleAudition = async (i) => {
-        const candidate = candidates[i];
-        if (!candidate) return;
-        if (auditioningIndex === i) {
+    // Take history actions — toggle audition through cue, commit a take to
+    // the channel buffer, star/unstar, delete one, or clear the whole list.
+    const handleAuditionTake = async (takeId) => {
+        const take = takes.find((t) => t.id === takeId);
+        if (!take) return;
+        if (auditioningTakeId === takeId) {
             stopCue();
-            setAuditioningIndex(null);
+            setAuditioningTakeId(null);
             return;
         }
-        setAuditioningIndex(i);
+        setAuditioningTakeId(takeId);
         try {
-            await playCueBlob(candidate.blob, {
-                onEnded: () => setAuditioningIndex(prev => (prev === i ? null : prev)),
+            await playCueBlob(take.blob, {
+                onEnded: () => setAuditioningTakeId((prev) => (prev === takeId ? null : prev)),
             });
         } catch (err) {
             console.warn(`Channel ${index + 1} audition failed:`, err);
-            setAuditioningIndex(null);
+            setAuditioningTakeId(null);
         }
     };
 
-    const handleCommit = async (i) => {
-        const candidate = candidates[i];
-        if (!candidate || committedIndex === i) return;
+    const handleCommitTake = async (takeId) => {
+        const take = takes.find((t) => t.id === takeId);
+        if (!take || committedTakeId === takeId) return;
         // Stop the live channel before swapping the buffer so we don't get a
         // glitch in the middle of a loop iteration.
         try { strip.stop(); } catch { /* not playing */ }
         onStateChange?.(index, { playing: false });
-        await strip.loadBlob(candidate.blob);
-        setCommittedIndex(i);
+        await strip.loadBlob(take.blob);
+        setCommittedTakeId(takeId);
         requestAnimationFrame(drawWave);
+    };
+
+    const handleToggleStar = (takeId) => {
+        setTakes((prev) => prev.map((t) =>
+            t.id === takeId ? { ...t, starred: !t.starred } : t,
+        ));
+    };
+
+    const handleDeleteTake = (takeId) => {
+        const target = takes.find((t) => t.id === takeId);
+        if (target?.audioUrl?.startsWith('blob:')) {
+            try { URL.revokeObjectURL(target.audioUrl); } catch { /* ignore */ }
+        }
+        setTakes((prev) => prev.filter((t) => t.id !== takeId));
+        if (committedTakeId === takeId) setCommittedTakeId(null);
+        if (auditioningTakeId === takeId) {
+            stopCue();
+            setAuditioningTakeId(null);
+        }
+    };
+
+    const handleClearTakes = () => {
+        // Stop any in-flight audition and revoke every blob URL before
+        // dropping references — otherwise the URLs leak until reload.
+        stopCue();
+        setAuditioningTakeId(null);
+        takes.forEach((t) => {
+            if (t.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(t.audioUrl); } catch { /* ignore */ }
+            }
+        });
+        setTakes([]);
+        setCommittedTakeId(null);
     };
 
     const handlePlay = () => {
@@ -536,85 +611,22 @@ export default function PerformanceChannel({
                 )}
             </Box>
 
-            {candidates.length > 1 && (
-                <Box
-                    sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                        px: 1,
-                        py: 0.5,
-                        flexWrap: 'wrap',
-                    }}
-                >
-                    {candidates.map((c, i) => {
-                        const isAuditioning = auditioningIndex === i;
-                        const isCommitted = committedIndex === i;
-                        return (
-                            <Box
-                                key={c.index}
-                                sx={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    border: '1px solid',
-                                    borderColor: isCommitted ? color : 'divider',
-                                    borderRadius: 0.75,
-                                    overflow: 'hidden',
-                                    bgcolor: isCommitted ? `${color}1a` : 'transparent',
-                                }}
-                            >
-                                <Tooltip
-                                    title={
-                                        cueSupported
-                                            ? (isAuditioning ? 'Stop cue audition' : 'Audition this take through cue output')
-                                            : 'Cue audition requires Chrome/Edge. Plays through main output.'
-                                    }
-                                >
-                                    <IconButton
-                                        onClick={() => handleAudition(i)}
-                                        size="small"
-                                        sx={{
-                                            color: isAuditioning ? color : 'text.secondary',
-                                            px: 0.5,
-                                            borderRadius: 0,
-                                        }}
-                                    >
-                                        <CueIcon size={12} />
-                                        <Box
-                                            component="span"
-                                            sx={{
-                                                ml: 0.4,
-                                                fontSize: perfTokens.fontSize.sm,
-                                                fontWeight: isAuditioning ? 700 : 500,
-                                            }}
-                                        >
-                                            {i + 1}
-                                        </Box>
-                                    </IconButton>
-                                </Tooltip>
-                                <Tooltip title={isCommitted ? 'Currently in channel' : 'Use this take in the channel'}>
-                                    <span>
-                                        <IconButton
-                                            onClick={() => handleCommit(i)}
-                                            size="small"
-                                            disabled={isCommitted}
-                                            sx={{
-                                                color: isCommitted ? color : 'text.disabled',
-                                                px: 0.4,
-                                                borderRadius: 0,
-                                                borderLeft: '1px solid',
-                                                borderColor: 'divider',
-                                            }}
-                                        >
-                                            <CommitIcon size={12} />
-                                        </IconButton>
-                                    </span>
-                                </Tooltip>
-                            </Box>
-                        );
-                    })}
-                </Box>
-            )}
+            {/* Per-channel rolling take history. Always rendered (empty
+                state included). Star/keep, delete, audition, load — all
+                inline per row. Capped at TAKE_CAP via FIFO with star
+                priority. */}
+            <ChannelTakeHistory
+                takes={takes}
+                color={color}
+                auditioningId={auditioningTakeId}
+                committedId={committedTakeId}
+                maxTakes={TAKE_CAP}
+                onAudition={handleAuditionTake}
+                onCommit={handleCommitTake}
+                onToggleStar={handleToggleStar}
+                onDelete={handleDeleteTake}
+                onClearAll={handleClearTakes}
+            />
 
             <Box sx={{ px: 1, py: 1 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
