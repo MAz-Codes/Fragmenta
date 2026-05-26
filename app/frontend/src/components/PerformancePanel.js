@@ -18,6 +18,7 @@ import {
     ButtonBase,
     Menu,
     ListItemText,
+    ListSubheader,
 } from '@mui/material';
 import {
     Play as PlayAllIcon,
@@ -1540,19 +1541,20 @@ function PerformancePanelInner({
                     </Select>
                 </FormControl>
 
-                {/* LoRA + its checkpoint sub-picker — always rendered (disabled
-                    when irrelevant) so the bar layout doesn't shift as the user
-                    picks. */}
+                {/* Combined LoRA + checkpoint picker — every option is a
+                    specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
+                    show a ListSubheader with the LoRA name + delete, then one
+                    MenuItem per checkpoint indented below. Single-checkpoint
+                    LoRAs collapse to one MenuItem with the LoRA name and
+                    inline delete. Saves the separate Ckpt dropdown's slot. */}
                 {(() => {
                     const isBaseModel = baseModels.some(m => m.name === selectedModel);
                     const compatibleLoras = isBaseModel
                         ? filterLorasForModel(availableLoras, selectedModel)
                         : [];
-                    const currentLora = compatibleLoras.find(
-                        l => l.path === selectedLora ||
-                             (l.all_checkpoints || []).includes(selectedLora)
+                    const findLoraForPath = (path) => compatibleLoras.find(
+                        l => l.path === path || (l.all_checkpoints || []).includes(path)
                     );
-                    const currentLoraName = currentLora?.name || '';
                     const parseCheckpointLabel = (filepath) => {
                         const name = (filepath || '').split('/').pop() || filepath || '';
                         const m = name.match(/epoch=(\d+)-step=(\d+)/);
@@ -1560,81 +1562,117 @@ function PerformancePanelInner({
                         return name.replace(/\.ckpt$/i, '');
                     };
                     const loraDisabled = compatibleLoras.length === 0;
-                    const ckptCount = currentLora?.all_checkpoints?.length ?? 0;
-                    const ckptDisabled = !currentLora || ckptCount <= 1;
-                    return (
-                        <>
-                            <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 140 }}>
-                                <Select
-                                    value={currentLoraName}
-                                    onChange={(e) => {
-                                        const name = e.target.value;
-                                        if (!name) { onSelectLora?.(''); return; }
-                                        const lora = compatibleLoras.find(l => l.name === name);
-                                        onSelectLora?.(lora?.path || '');
-                                    }}
-                                    displayEmpty
-                                    renderValue={(value) => {
-                                        if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
-                                        return value;
-                                    }}
-                                >
-                                    <MenuItem value="">
-                                        <em>No LoRA</em>
-                                    </MenuItem>
-                                    {compatibleLoras.map((lora) => (
-                                        <MenuItem
-                                            key={lora.name}
-                                            value={lora.name}
-                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                                        >
-                                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                <Box sx={{ fontSize: perfTokens.fontSize.sm }}>{lora.name}</Box>
-                                                <Box sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                                    rank={lora.rank}
-                                                    {lora.all_checkpoints?.length > 1
-                                                        ? ` · ${lora.all_checkpoints.length} ckpts`
-                                                        : ''}
-                                                </Box>
-                                            </Box>
-                                            <Tooltip title="Delete LoRA">
-                                                <IconButton
-                                                    size="small"
-                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        e.preventDefault();
-                                                        handleDeleteLora(lora.name);
-                                                    }}
-                                                    sx={styles.compactIconBtn('md', 'danger')}
-                                                >
-                                                    <DeleteIcon size={perfTokens.icon.md} />
-                                                </IconButton>
-                                            </Tooltip>
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
 
-                            <FormControl size="small" disabled={ckptDisabled} sx={{ ...styles.pillControl, width: 110 }}>
-                                <Select
-                                    value={ckptDisabled ? '' : (selectedLora || currentLora?.path || '')}
-                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
-                                    displayEmpty
-                                    renderValue={(value) => {
-                                        if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
-                                        return parseCheckpointLabel(value);
-                                    }}
-                                >
-                                    {(currentLora?.all_checkpoints || []).map((ckpt, i, arr) => (
-                                        <MenuItem key={ckpt} value={ckpt} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                            {parseCheckpointLabel(ckpt)}
-                                            {i === arr.length - 1 ? ' (latest)' : ''}
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </>
+                    const deleteBtn = (loraName, size = 'md') => (
+                        <Tooltip title="Delete LoRA">
+                            <IconButton
+                                size="small"
+                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleDeleteLora(loraName);
+                                }}
+                                sx={styles.compactIconBtn(size, 'danger')}
+                            >
+                                <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
+                            </IconButton>
+                        </Tooltip>
+                    );
+
+                    return (
+                        <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 180 }}>
+                            <Select
+                                value={selectedLora || ''}
+                                onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                displayEmpty
+                                renderValue={(value) => {
+                                    if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
+                                    const lora = findLoraForPath(value);
+                                    if (!lora) return value;
+                                    const ckpts = lora.all_checkpoints || [lora.path];
+                                    return ckpts.length === 1
+                                        ? lora.name
+                                        : `${lora.name} · ${parseCheckpointLabel(value)}`;
+                                }}
+                                MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
+                            >
+                                <MenuItem value="">
+                                    <em>No LoRA</em>
+                                </MenuItem>
+                                {compatibleLoras.flatMap((lora) => {
+                                    const ckpts = lora.all_checkpoints || [lora.path];
+                                    if (ckpts.length <= 1) {
+                                        // Single-checkpoint LoRA collapses to one row
+                                        // with the LoRA name and inline delete.
+                                        return [
+                                            <MenuItem
+                                                key={`${lora.name}::${ckpts[0]}`}
+                                                value={ckpts[0]}
+                                                sx={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    gap: 1,
+                                                    pr: 0.5,
+                                                    fontSize: perfTokens.fontSize.sm,
+                                                }}
+                                            >
+                                                <Box component="span" sx={{
+                                                    flex: 1,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {lora.name}
+                                                </Box>
+                                                {deleteBtn(lora.name)}
+                                            </MenuItem>,
+                                        ];
+                                    }
+                                    // Multi-checkpoint LoRA — subheader with name +
+                                    // delete, then one MenuItem per checkpoint.
+                                    return [
+                                        <ListSubheader
+                                            key={`${lora.name}::header`}
+                                            disableSticky
+                                            sx={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: 1,
+                                                pr: 0.5,
+                                                lineHeight: 1.6,
+                                                fontSize: perfTokens.fontSize.xs,
+                                                color: 'text.secondary',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: perfTokens.letterSpacing.wide,
+                                                bgcolor: 'background.paper',
+                                            }}
+                                        >
+                                            <Box component="span" sx={{
+                                                flex: 1,
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}>
+                                                {lora.name}
+                                            </Box>
+                                            {deleteBtn(lora.name, 'sm')}
+                                        </ListSubheader>,
+                                        ...ckpts.map((ckpt, i) => (
+                                            <MenuItem
+                                                key={`${lora.name}::${ckpt}`}
+                                                value={ckpt}
+                                                sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
+                                            >
+                                                {parseCheckpointLabel(ckpt)}
+                                                {i === ckpts.length - 1 ? ' (latest)' : ''}
+                                            </MenuItem>
+                                        )),
+                                    ];
+                                })}
+                            </Select>
+                        </FormControl>
                     );
                 })()}
 
@@ -1719,7 +1757,7 @@ function PerformancePanelInner({
                     fields are skipped. Replaces the old Auto BPM toggle. */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     <Box component="span" sx={perfTokens.labelMuted}>
-                        Prompt
+                        Inject
                     </Box>
                     <Tooltip title="Musical key to auto-inject (e.g. C minor). Leave empty to skip." placement="top" arrow enterDelay={500}>
                         <TextField
