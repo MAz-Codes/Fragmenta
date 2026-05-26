@@ -437,7 +437,7 @@ export default function PerformanceChannel({
                     onChange={(e) => setPrompt(e.target.value)}
                     multiline
                     minRows={2}
-                    maxRows={3}
+                    maxRows={2}
                     size="small"
                     fullWidth
                     sx={styles.promptField}
@@ -547,8 +547,8 @@ export default function PerformanceChannel({
                             onChange={(e) => setBatchSize(Number(e.target.value))}
                             disabled={generating}
                             size="small"
-                            sx={{ ...styles.channelPillControl, width: 56, flexShrink: 0 }}
-                            renderValue={(v) => v}
+                            sx={{ ...styles.channelPillControl, width: 62, flexShrink: 0 }}
+                            renderValue={(v) => `×${v}`}
                         >
                             {BATCH_OPTIONS.map((n) => (
                                 <MenuItem
@@ -556,7 +556,7 @@ export default function PerformanceChannel({
                                     value={n}
                                     sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}
                                 >
-                                    {n}
+                                    ×{n}
                                 </MenuItem>
                             ))}
                         </Select>

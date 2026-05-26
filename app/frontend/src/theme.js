@@ -2727,10 +2727,19 @@ export const performanceChannelStyles = {
     },
     promptField: (theme) => ({
         '& .MuiOutlinedInput-root': {
-            fontSize: perfTokens.fontSize.sm,
+            // xs — smaller than the bar pills so the prompt doesn't visually
+            // dominate the channel strip when the user types a long line.
+            fontSize: perfTokens.fontSize.xs,
             backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.5)' : 'rgba(0, 0, 0, 0.04)',
             borderRadius: 1.5,
-            '& textarea': { lineHeight: 1.3 },
+            // Capped at 2 visible lines (set via maxRows on the TextField);
+            // !important wins against MUI's textarea inline `overflow: hidden`
+            // so additional lines scroll inside the field instead of getting
+            // clipped silently.
+            '& textarea': {
+                lineHeight: 1.4,
+                overflowY: 'auto !important',
+            },
         },
         '& fieldset': { borderColor: theme.palette.divider },
     }),
@@ -2772,7 +2781,10 @@ export const performanceChannelStyles = {
     },
     // Wide Generate pill — primary CTA on the channel. While generating,
     // a sibling Box fills left-to-right based on /api/generation-progress
-    // (rendered by the parent component so this style stays static).
+    // (rendered by the parent component so this style stays static). The
+    // label (`Generate ➝` / `Generating · 47%`) sits flush against the
+    // right edge of the pill via `justifyContent: 'flex-end'` so the arrow
+    // visually punctuates the action's destination.
     generatePill: (color, { generating, disabled }) => ({
         position: 'relative',
         overflow: 'hidden',
@@ -2790,6 +2802,7 @@ export const performanceChannelStyles = {
         textTransform: 'none',
         opacity: disabled && !generating ? 0.45 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
+        justifyContent: 'flex-end',
         transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms',
         '&:hover': {
             bgcolor: disabled || generating ? undefined : `${color}28`,
