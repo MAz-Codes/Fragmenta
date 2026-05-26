@@ -2406,20 +2406,28 @@ export const performancePanelStyles = {
     // Single source of truth for every "pill" control in the master + bottom
     // bar (Q select, BPM input, Steps select, Seed input, Model picker, LoRA
     // picker, etc.). Spread this into the control's `sx` to lock height,
-    // radius, font size, and inner padding — no more per-instance overrides.
+    // radius, font size, padding, and ellipsis behavior — no per-instance
+    // overrides needed.
     pillControl: {
         '& .MuiOutlinedInput-root': {
             height: perfTokens.height.compact,
             borderRadius: 1.5,
         },
         '& .MuiSelect-select': {
+            // line-height matched to the parent height vertical-centers the
+            // text WITHOUT display:flex — flex breaks `text-overflow:ellipsis`
+            // and would let long values (long model / LoRA names) overflow
+            // under the chevron. Block layout + nowrap + ellipsis truncates
+            // cleanly and MUI's default right padding keeps the chevron
+            // unobscured.
             paddingTop: 0,
             paddingBottom: 0,
+            lineHeight: `${perfTokens.height.compact}px`,
             fontSize: perfTokens.fontSize.sm,
             fontWeight: perfTokens.weight.bold,
-            display: 'flex',
-            alignItems: 'center',
-            lineHeight: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
         },
         // The TextField input needs the same font on the rendered <input>; we
         // put it on the wrapper here, but anywhere a TextField is used, also

@@ -1261,16 +1261,7 @@ function PerformancePanelInner({
                 {/* Model + artifact pickers — moved here from the top row so the
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
-                <FormControl size="small" sx={{
-                    ...styles.pillControl,
-                    width: 120,
-                    '& .MuiSelect-select': {
-                        ...styles.pillControl['& .MuiSelect-select'],
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                    },
-                }}>
+                <FormControl size="small" sx={{ ...styles.pillControl, width: 140 }}>
                     <Select
                         value={selectedModel || ''}
                         onChange={handleModelChange}
@@ -1367,16 +1358,7 @@ function PerformancePanelInner({
                     const ckptDisabled = !currentLora || ckptCount <= 1;
                     return (
                         <>
-                            <FormControl size="small" disabled={loraDisabled} sx={{
-                                ...styles.pillControl,
-                                width: 120,
-                                '& .MuiSelect-select': {
-                                    ...styles.pillControl['& .MuiSelect-select'],
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                },
-                            }}>
+                            <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 140 }}>
                                 <Select
                                     value={currentLoraName}
                                     onChange={(e) => {
@@ -1431,16 +1413,7 @@ function PerformancePanelInner({
                                 </Select>
                             </FormControl>
 
-                            <FormControl size="small" disabled={ckptDisabled} sx={{
-                                ...styles.pillControl,
-                                width: 100,
-                                '& .MuiSelect-select': {
-                                    ...styles.pillControl['& .MuiSelect-select'],
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                },
-                            }}>
+                            <FormControl size="small" disabled={ckptDisabled} sx={{ ...styles.pillControl, width: 110 }}>
                                 <Select
                                     value={ckptDisabled ? '' : (selectedLora || currentLora?.path || '')}
                                     onChange={(e) => onSelectLora?.(String(e.target.value))}
