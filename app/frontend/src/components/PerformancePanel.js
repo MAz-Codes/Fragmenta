@@ -1355,7 +1355,18 @@ function PerformancePanelInner({
                             max={MASTER_DB_MAX}
                             value={masterDb}
                             onChange={(v) => handleMasterChange(null, v)}
-                            sx={{ flex: 1, alignSelf: 'stretch' }}
+                            sx={{
+                                alignSelf: 'stretch',
+                                // Fixed-width lane wide enough for the 16 px
+                                // thumb plus a touch of hit area. Without an
+                                // explicit width the wrapper would either
+                                // collapse to nothing (no flex parent on the
+                                // slider) or stretch to fill (with flex: 1),
+                                // which pinned the fader to the left edge.
+                                width: 20,
+                                display: 'flex',
+                                justifyContent: 'center',
+                            }}
                         >
                             <Slider
                                 orientation="vertical"
