@@ -133,7 +133,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             chromium_path,
             f"--app={BACKEND_URL}",
             f"--class={APP_WM_CLASS}",
-            "--window-size=1280,820",
+            "--window-size=1300,830",
             "--no-first-run",
             "--no-default-browser-check",
         ]
