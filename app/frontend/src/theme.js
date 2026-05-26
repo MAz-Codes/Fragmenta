@@ -2667,7 +2667,14 @@ export const performancePanelStyles = {
         color,
         '& .MuiSlider-thumb': { width: 16, height: 16 },
         '& .MuiSlider-rail': { opacity: 0.3, width: 4 },
-        '& .MuiSlider-track': { display: 'none' },
+        // Filled track from the bottom (min dB) up to the thumb — gives a
+        // quick visual read of how much gain you've dialed in. Width matches
+        // the rail so the fill sits flush inside it.
+        '& .MuiSlider-track': {
+            width: 4,
+            border: 'none',
+            opacity: 0.9,
+        },
         '& .MuiSlider-mark': {
             width: 6,
             height: 1,
