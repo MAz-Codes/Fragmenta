@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
-import { PerformanceEngine } from '../utils/performanceAudio';
+import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
@@ -148,6 +148,10 @@ function PerformancePanelInner({
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
     const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
+    const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
+    const [masterReverbMix, setMasterReverbMix] = useState(session.masterReverbMix ?? 0);
+    const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
+    const [masterDelayMix, setMasterDelayMix] = useState(session.masterDelayMix ?? 0);
 
     // Audio output device. setSinkId requires Chromium ≥ 110 (cueSupported
     // is the runtime check). One device drives BOTH main and cue. Per-pair
@@ -237,6 +241,22 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('launchQuantum', launchQuantum); }, [launchQuantum, updateGlobal]);
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
     useEffect(() => { updateGlobal('injectBpm', injectBpm); }, [injectBpm, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterReverbIR', masterReverbIR);
+        engineRef.current?.setMasterReverbIR?.(masterReverbIR);
+    }, [masterReverbIR, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterReverbMix', masterReverbMix);
+        engineRef.current?.setMasterReverbMix?.(masterReverbMix);
+    }, [masterReverbMix, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterDelayDivision', masterDelayDivision);
+        engineRef.current?.setMasterDelayDivision?.(masterDelayDivision);
+    }, [masterDelayDivision, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterDelayMix', masterDelayMix);
+        engineRef.current?.setMasterDelayMix?.(masterDelayMix);
+    }, [masterDelayMix, updateGlobal]);
     useEffect(() => { updateGlobal('linkEnabled', linkEnabled); }, [linkEnabled, updateGlobal]);
     useEffect(() => { updateGlobal('selectedModel', selectedModel || ''); }, [selectedModel, updateGlobal]);
     useEffect(() => { updateGlobal('steps', steps); }, [steps, updateGlobal]);
@@ -1330,48 +1350,171 @@ function PerformancePanelInner({
                         <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
                     </Box>
 
-                    <Box sx={styles.masterFaderWrap}>
-                        <Box sx={styles.masterMeterTrack}>
-                            <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
-                            <Box sx={styles.masterMeterSegments} />
+                    {/* Two-column body: master FX on the left, fader + meter
+                        + readouts on the right. Effects sections are minimal —
+                        small caps label, division/IR picker, wet-amount slider. */}
+                    <Box sx={{ display: 'flex', gap: 1.25, flex: 1, minHeight: 0 }}>
+                        {/* Left column — Reverb + Delay sends. */}
+                        <Box sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 1.5,
+                            flex: 1,
+                            minWidth: 0,
+                            justifyContent: 'flex-start',
+                            pt: 0.75,
+                        }}>
+                            {/* REVERB */}
+                            <Box>
+                                <Typography sx={{
+                                    ...perfTokens.caps,
+                                    color: 'text.secondary',
+                                    display: 'block',
+                                    mb: 0.5,
+                                }}>
+                                    Rev
+                                </Typography>
+                                <FormControl size="small" sx={{ ...styles.pillControl, width: '100%', mb: 0.75 }}>
+                                    <Select
+                                        value={masterReverbIR}
+                                        onChange={(e) => setMasterReverbIR(e.target.value)}
+                                    >
+                                        {IMPULSE_RESPONSES.map((ir) => (
+                                            <MenuItem key={ir.id} value={ir.id} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                                {ir.name}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                <MidiMappable
+                                    id="master.reverbMix"
+                                    label="Master Reverb"
+                                    kind="continuous"
+                                    min={0}
+                                    max={1}
+                                    value={masterReverbMix}
+                                    onChange={(v) => setMasterReverbMix(v)}
+                                    sx={{ width: '100%' }}
+                                >
+                                    <Slider
+                                        size="small"
+                                        value={masterReverbMix}
+                                        onChange={(_, v) => setMasterReverbMix(v)}
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        sx={{
+                                            color: MASTER_COLOR,
+                                            py: 0.5,
+                                            '& .MuiSlider-thumb': { width: 10, height: 10 },
+                                            '& .MuiSlider-rail': { opacity: 0.3 },
+                                        }}
+                                    />
+                                </MidiMappable>
+                            </Box>
+
+                            {/* DELAY */}
+                            <Box>
+                                <Typography sx={{
+                                    ...perfTokens.caps,
+                                    color: 'text.secondary',
+                                    display: 'block',
+                                    mb: 0.5,
+                                }}>
+                                    Dly
+                                </Typography>
+                                <FormControl size="small" sx={{ ...styles.pillControl, width: '100%', mb: 0.75 }}>
+                                    <Select
+                                        value={masterDelayDivision}
+                                        onChange={(e) => setMasterDelayDivision(e.target.value)}
+                                    >
+                                        {MASTER_DELAY_DIVISIONS.map((d) => (
+                                            <MenuItem key={d.id} value={d.id} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                                {d.label}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                <MidiMappable
+                                    id="master.delayMix"
+                                    label="Master Delay"
+                                    kind="continuous"
+                                    min={0}
+                                    max={1}
+                                    value={masterDelayMix}
+                                    onChange={(v) => setMasterDelayMix(v)}
+                                    sx={{ width: '100%' }}
+                                >
+                                    <Slider
+                                        size="small"
+                                        value={masterDelayMix}
+                                        onChange={(_, v) => setMasterDelayMix(v)}
+                                        min={0}
+                                        max={1}
+                                        step={0.01}
+                                        sx={{
+                                            color: MASTER_COLOR,
+                                            py: 0.5,
+                                            '& .MuiSlider-thumb': { width: 10, height: 10 },
+                                            '& .MuiSlider-rail': { opacity: 0.3 },
+                                        }}
+                                    />
+                                </MidiMappable>
+                            </Box>
                         </Box>
-                        <MidiMappable
-                            id="master.fader"
-                            label="Master Fader"
-                            kind="continuous"
-                            min={MASTER_DB_MIN}
-                            max={MASTER_DB_MAX}
-                            value={masterDb}
-                            onChange={(v) => handleMasterChange(null, v)}
-                            sx={{ flex: 1, alignSelf: 'stretch' }}
-                        >
-                            <Slider
-                                orientation="vertical"
-                                value={masterDb}
-                                onChange={handleMasterChange}
-                                min={MASTER_DB_MIN}
-                                max={MASTER_DB_MAX}
-                                step={0.1}
-                                sx={styles.masterFader(MASTER_COLOR)}
-                            />
-                        </MidiMappable>
-                    </Box>
 
-                    <Box sx={styles.masterReadouts}>
-                        <Typography sx={styles.masterValue}>
-                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                DBFS
+                        {/* Right column — fader + meter + DBFS/Pk readouts. */}
+                        <Box sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 0.75,
+                            flexShrink: 0,
+                            width: 72,
+                        }}>
+                            <Box sx={styles.masterFaderWrap}>
+                                <Box sx={styles.masterMeterTrack}>
+                                    <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
+                                    <Box sx={styles.masterMeterSegments} />
+                                </Box>
+                                <MidiMappable
+                                    id="master.fader"
+                                    label="Master Fader"
+                                    kind="continuous"
+                                    min={MASTER_DB_MIN}
+                                    max={MASTER_DB_MAX}
+                                    value={masterDb}
+                                    onChange={(v) => handleMasterChange(null, v)}
+                                    sx={{ flex: 1, alignSelf: 'stretch' }}
+                                >
+                                    <Slider
+                                        orientation="vertical"
+                                        value={masterDb}
+                                        onChange={handleMasterChange}
+                                        min={MASTER_DB_MIN}
+                                        max={MASTER_DB_MAX}
+                                        step={0.1}
+                                        sx={styles.masterFader(MASTER_COLOR)}
+                                    />
+                                </MidiMappable>
                             </Box>
-                            {' '}{formatDb(masterDb)}
-                        </Typography>
-                        <Typography sx={styles.masterPeakValue}>
-                            <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                Pk
-                            </Box>
-                            {' '}{formatDb(peakLabelDb)}
-                        </Typography>
-                    </Box>
 
+                            <Box sx={styles.masterReadouts}>
+                                <Typography sx={styles.masterValue}>
+                                    <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                        DBFS
+                                    </Box>
+                                    {' '}{formatDb(masterDb)}
+                                </Typography>
+                                <Typography sx={styles.masterPeakValue}>
+                                    <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                        Pk
+                                    </Box>
+                                    {' '}{formatDb(peakLabelDb)}
+                                </Typography>
+                            </Box>
+                        </Box>
+                    </Box>
                 </Box>
             </Box>
 

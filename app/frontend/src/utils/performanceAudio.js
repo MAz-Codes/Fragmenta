@@ -19,6 +19,23 @@ export const IMPULSE_RESPONSES = [
 ];
 const DEFAULT_IR_ID = 'hall';
 
+// Master delay divisions, in fractions of a beat (quarter note = 1 beat).
+// Tempo-synced via PerformanceEngine.setBpm — the actual delay-time seconds
+// are recomputed whenever BPM changes so the echo always lands on the grid.
+// Dotted = 1.5×, Triplet = 2/3×.
+export const MASTER_DELAY_DIVISIONS = [
+    { id: '1/4',   label: '1/4',   beats: 1 },
+    { id: '1/8',   label: '1/8',   beats: 0.5 },
+    { id: '1/16',  label: '1/16',  beats: 0.25 },
+    { id: '1/4D',  label: '1/4 ·', beats: 1.5 },
+    { id: '1/8D',  label: '1/8 ·', beats: 0.75 },
+    { id: '1/16D', label: '1/16 ·', beats: 0.375 },
+    { id: '1/4T',  label: '1/4 T', beats: 2 / 3 },
+    { id: '1/8T',  label: '1/8 T', beats: 1 / 3 },
+    { id: '1/16T', label: '1/16 T', beats: 1 / 6 },
+];
+const DEFAULT_DELAY_DIVISION_ID = '1/4';
+
 const irBufferCache = new Map();
 let irLoadPromise = null;
 
@@ -348,7 +365,42 @@ export class PerformanceEngine {
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 1024;
         this.masterAnalyserData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
-        this.masterBus.connect(this.masterLimiter);
+
+        // Master FX — dry / delay / reverb sends, all feeding the limiter
+        // in parallel. Wet gains default to 0 so the master is bit-exact dry
+        // until the user dials anything in. Delay time is tempo-synced via
+        // setBpm; the convolver buffer is swappable per the catalog IR.
+        this.masterDry = ctx.createGain();
+        this.masterDry.gain.value = 1.0;
+
+        this.masterDelay = ctx.createDelay(4.0);
+        this.masterDelay.delayTime.value = 0.5;          // 1/4 at 120 BPM
+        this.masterDelayFeedback = ctx.createGain();
+        this.masterDelayFeedback.gain.value = 0.4;
+        this.masterDelayWet = ctx.createGain();
+        this.masterDelayWet.gain.value = 0;
+
+        this.masterReverb = ctx.createConvolver();
+        this.masterReverb.buffer = getImpulse(ctx);
+        this.masterReverbWet = ctx.createGain();
+        this.masterReverbWet.gain.value = 0;
+
+        this.masterDelayDivisionId = DEFAULT_DELAY_DIVISION_ID;
+        this.currentMasterImpulseId = DEFAULT_IR_ID;
+
+        this.masterBus.connect(this.masterDry);
+        this.masterDry.connect(this.masterLimiter);
+
+        this.masterBus.connect(this.masterDelay);
+        this.masterDelay.connect(this.masterDelayFeedback);
+        this.masterDelayFeedback.connect(this.masterDelay);
+        this.masterDelay.connect(this.masterDelayWet);
+        this.masterDelayWet.connect(this.masterLimiter);
+
+        this.masterBus.connect(this.masterReverb);
+        this.masterReverb.connect(this.masterReverbWet);
+        this.masterReverbWet.connect(this.masterLimiter);
+
         this.masterLimiter.connect(this.masterAnalyser);
 
         // Stage 2 multichannel routing. The stereo master bus is split into
@@ -382,7 +434,52 @@ export class PerformanceEngine {
         loadImpulseResponses(ctx).then(() => {
             const buf = getImpulseResponseBuffer(this.currentImpulseId);
             if (buf) this.channels.forEach(ch => ch.setImpulseResponse(buf));
+            const masterBuf = getImpulseResponseBuffer(this.currentMasterImpulseId);
+            if (masterBuf) this.masterReverb.buffer = masterBuf;
         });
+
+        // Apply the default master delay division once the transport has its
+        // bpm — keeps the initial 0.5s default in sync with the real BPM
+        // (could be != 120 if the session restored a different tempo).
+        this._applyMasterDelayTime();
+    }
+
+    _applyMasterDelayTime() {
+        const div = MASTER_DELAY_DIVISIONS.find(d => d.id === this.masterDelayDivisionId);
+        if (!div) return;
+        const bpm = this.internalTransport?.bpm || 120;
+        const seconds = (60 / Math.max(bpm, 1)) * div.beats;
+        // The Delay node was created with maxDelayTime=4.0, so cap at that.
+        const clamped = Math.min(seconds, 4.0);
+        this.masterDelay.delayTime.setTargetAtTime(clamped, this.ctx.currentTime, 0.02);
+    }
+
+    setMasterDelayDivision(id) {
+        if (!MASTER_DELAY_DIVISIONS.some(d => d.id === id)) return false;
+        this.masterDelayDivisionId = id;
+        this._applyMasterDelayTime();
+        return true;
+    }
+
+    setMasterDelayMix(value) {
+        const v = Math.max(0, Math.min(1, Number(value) || 0));
+        this.masterDelayWet.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+    }
+
+    setMasterReverbMix(value) {
+        const v = Math.max(0, Math.min(1, Number(value) || 0));
+        this.masterReverbWet.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
+    }
+
+    setMasterReverbIR(id) {
+        if (!IMPULSE_RESPONSES.some(ir => ir.id === id)) return false;
+        this.currentMasterImpulseId = id;
+        const buf = getImpulseResponseBuffer(id);
+        if (buf) this.masterReverb.buffer = buf;
+        // If buf is null the IR catalog hasn't finished loading yet — the
+        // constructor's loadImpulseResponses().then() will apply the right
+        // buffer once it's cached, reading the updated id from this.
+        return true;
     }
 
     setImpulseResponse(id) {
@@ -521,6 +618,9 @@ export class PerformanceEngine {
             tr.bpm = safe;
         }
         this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
+        // Master delay also follows the grid — recompute its seconds based
+        // on the current division whenever BPM changes.
+        this._applyMasterDelayTime();
     }
 
     setLinkSnapshot(snapshot) {
@@ -620,8 +720,17 @@ export class PerformanceEngine {
 
     dispose() {
         this.channels.forEach(ch => ch.dispose());
-        try { this.masterBus.disconnect(); } catch (_) { /* already disconnected */ }
-        try { this.masterLimiter.disconnect(); } catch (_) { /* already disconnected */ }
-        try { this.masterAnalyser.disconnect(); } catch (_) { /* already disconnected */ }
+        const tryDisconnect = (node) => {
+            try { node?.disconnect(); } catch (_) { /* already disconnected */ }
+        };
+        tryDisconnect(this.masterBus);
+        tryDisconnect(this.masterDry);
+        tryDisconnect(this.masterDelay);
+        tryDisconnect(this.masterDelayFeedback);
+        tryDisconnect(this.masterDelayWet);
+        tryDisconnect(this.masterReverb);
+        tryDisconnect(this.masterReverbWet);
+        tryDisconnect(this.masterLimiter);
+        tryDisconnect(this.masterAnalyser);
     }
 }

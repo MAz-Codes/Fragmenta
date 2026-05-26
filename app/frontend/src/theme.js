@@ -2599,8 +2599,8 @@ export const performancePanelStyles = {
         boxShadow: theme.palette.mode === 'dark'
             ? `0 8px 22px rgba(0, 0, 0, 0.55), inset 0 0 0 1px ${color}22`
             : `0 6px 14px rgba(43, 31, 18, 0.10), inset 0 0 0 1px ${color}22`,
-        width: { xs: '100%', md: 160 },
-        flex: { xs: '1 1 100%', md: '0 0 160px' },
+        width: { xs: '100%', md: 220 },
+        flex: { xs: '1 1 100%', md: '0 0 220px' },
         minHeight: 0,
         overflow: 'hidden',
         boxSizing: 'border-box',
