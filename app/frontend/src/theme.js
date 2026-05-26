@@ -2631,7 +2631,8 @@ export const performancePanelStyles = {
         // disproportionately tall. The JSX now wraps this + the readouts in
         // a flex-column with justify-content: center, so this fixed height
         // sits vertically centered between the header and the FX pickers.
-        height: 200,
+        // 320 px ≈ 80% of the previously-stretched height.
+        height: 320,
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'stretch',
