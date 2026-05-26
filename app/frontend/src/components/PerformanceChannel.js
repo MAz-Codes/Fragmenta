@@ -5,7 +5,6 @@ import {
     TextField,
     IconButton,
     Slider,
-    CircularProgress,
     Tooltip,
     Select,
     MenuItem,
@@ -14,7 +13,7 @@ import {
 import {
     Play as PlayIcon,
     Square as StopIcon,
-    Sparkles as GenerateIcon,
+    ArrowRight as GenerateArrowIcon,
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
     Headphones as CueIcon,
@@ -23,6 +22,7 @@ import {
 import { performanceChannelStyles as styles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
+import api from '../api';
 
 const CHANNEL_COLORS = [
     '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
@@ -90,6 +90,9 @@ export default function PerformanceChannel({
     const [muted, setMuted] = useState(init.muted ?? false);
     const [soloed, setSoloed] = useState(init.soloed ?? false);
     const [batchSize, setBatchSize] = useState(init.batchSize ?? 1);
+    // Live progress for the Generate pill while a generation is in flight.
+    // 0–100; polled from /api/generation-progress. Resets on each new run.
+    const [progress, setProgress] = useState(0);
     const [knobs, setKnobs] = useState(() => ({ ...defaultKnobs, ...initKnobs }));
 
     // Candidates from the latest batch generation. Held in component state
@@ -102,6 +105,34 @@ export default function PerformanceChannel({
 
     // Stop any active cue audition when the channel unmounts.
     useEffect(() => () => stopCue(), []);
+
+    // Poll /api/generation-progress while a generation is in flight so the
+    // Generate pill renders a real fill bar instead of a vague spinner. The
+    // backend exposes a single in-flight state; performance generations are
+    // sequential (the backend serves one at a time), so this naturally
+    // reflects whichever channel is currently busy.
+    useEffect(() => {
+        if (!generating) {
+            setProgress(0);
+            return;
+        }
+        let cancelled = false;
+        const tick = async () => {
+            if (cancelled) return;
+            try {
+                const r = await api.get('/api/generation-progress');
+                const pct = Number(r.data?.progress) || 0;
+                if (!cancelled) {
+                    // Cap at 95 until handleGenerate resolves so the bar
+                    // doesn't sit at 100 while waiting for the WAV blob.
+                    setProgress((prev) => Math.max(prev, Math.min(95, pct)));
+                }
+            } catch { /* non-fatal — bar just freezes briefly */ }
+        };
+        tick();
+        const id = window.setInterval(tick, 250);
+        return () => { cancelled = true; window.clearInterval(id); };
+    }, [generating]);
 
     // Mirror form state up to the panel so it can persist the session. Skip the
     // first render so we don't re-write what we just loaded from localStorage.
@@ -423,47 +454,70 @@ export default function PerformanceChannel({
                 <Box sx={{
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 1.5,
+                    gap: 1,
                     mt: 0.5,
                     width: '100%',
                 }}>
+                    {/* Takes segmented control — pick how many candidates the
+                        next Generate should produce. Replaces the old `×N` Select. */}
                     <Tooltip
-                        title="Batch generation: produce N candidates and audition them through the cue output before committing one to this channel."
+                        title="Number of candidates to generate. Auditions show up under the channel; commit one to the strip."
                         placement="top"
-                        disableFocusListener
-                        disableTouchListener
                         enterDelay={500}
                     >
-                        <Select
-                            value={batchSize}
-                            onChange={(e) => setBatchSize(Number(e.target.value))}
-                            size="small"
-                            disabled={generating}
-                            sx={{
-                                fontSize: perfTokens.fontSize.sm,
-                                height: 32,
-                                minWidth: 64,
-                                '& .MuiOutlinedInput-input': { py: 0, pl: 1.25, pr: '28px !important', minHeight: 'unset' },
-                                '& .MuiSelect-select': { py: 0, pl: 1.25, pr: '28px !important', minHeight: 'unset' },
-                            }}
-                        >
-                            {BATCH_OPTIONS.map(n => (
-                                <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                    ×{n}
-                                </MenuItem>
-                            ))}
-                        </Select>
+                        <Box sx={styles.takesSegmented} role="group" aria-label="Takes">
+                            {BATCH_OPTIONS.map((n) => {
+                                const active = batchSize === n;
+                                return (
+                                    <ButtonBase
+                                        key={n}
+                                        onClick={() => !generating && setBatchSize(n)}
+                                        aria-disabled={generating}
+                                        sx={styles.takesCell(color, active)}
+                                    >
+                                        {n}
+                                    </ButtonBase>
+                                );
+                            })}
+                        </Box>
                     </Tooltip>
+
+                    {/* Generate pill — wide CTA. Fills left-to-right with live
+                        progress while generating; resets when complete. */}
                     <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
-                        <IconButton
-                            onClick={handleGenerate}
-                            disabled={!canGenerate || !prompt.trim() || generating}
-                            sx={styles.generateBtn(color)}
-                            size="small"
+                        <Tooltip
+                            title={
+                                generating
+                                    ? ''
+                                    : !canGenerate
+                                        ? 'Pick a model in the Generation tab first'
+                                        : !prompt.trim()
+                                            ? 'Enter a prompt to generate'
+                                            : ''
+                            }
+                            placement="top"
                         >
-                            {generating ? <CircularProgress size={16} sx={{ color }} /> : <GenerateIcon size={16} />}
-                        </IconButton>
+                            <span style={{ display: 'flex', flex: 1, minWidth: 0 }}>
+                                <ButtonBase
+                                    onClick={handleGenerate}
+                                    disabled={!canGenerate || !prompt.trim() || generating}
+                                    sx={styles.generatePill(color, {
+                                        generating,
+                                        disabled: !canGenerate || !prompt.trim(),
+                                    })}
+                                >
+                                    {generating && (
+                                        <Box sx={styles.generatePillFill(color, progress)} />
+                                    )}
+                                    <Box component="span" sx={styles.generatePillLabel}>
+                                        {generating
+                                            ? `Generating · ${Math.round(progress)}%`
+                                            : 'Generate'}
+                                        {!generating && <GenerateArrowIcon size={14} strokeWidth={2.25} />}
+                                    </Box>
+                                </ButtonBase>
+                            </span>
+                        </Tooltip>
                     </MidiMappable>
                 </Box>
             </Box>
