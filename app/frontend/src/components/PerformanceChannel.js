@@ -595,7 +595,43 @@ export default function PerformanceChannel({
     return (
         <Box sx={styles.strip(color, playing)}>
             <Box sx={styles.stripHeader(color)}>
-                <Box sx={styles.channelBadge(color)}>{String(index + 1).padStart(2, '0')}</Box>
+                {/* Transport (Play / Loop) on the left, Mute / Solo on the
+                    right — replaces the old "01" channel badge so the channel
+                    number isn't using up that slot. */}
+                <Box sx={styles.muteSoloRow}>
+                    <MidiMappable id={ctrlId('transport')} label={ctrlLabel('Play/Stop')} kind="trigger" onChange={handleTransportToggle}>
+                        <IconButton
+                            onClick={playing ? handleStop : handlePlay}
+                            disabled={!loaded}
+                            sx={styles.transportBtn(color, playing)}
+                            size="small"
+                        >
+                            {playing ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                        </IconButton>
+                    </MidiMappable>
+                    <MidiMappable id={ctrlId('loop')} label={ctrlLabel('Loop')} kind="trigger" onChange={handleLoopToggle}>
+                        <Tooltip
+                            title={
+                                looping
+                                    ? (durationMode === 'bars'
+                                        ? 'Seamless loop — next generation will be inpaint-stitched at the bar boundary'
+                                        : 'Playback loop on')
+                                    : 'Loop off'
+                            }
+                            placement="top"
+                            enterDelay={400}
+                        >
+                            <IconButton
+                                onClick={handleLoopToggle}
+                                sx={styles.loopBtn(color, looping)}
+                                size="small"
+                                aria-label={looping ? 'Loop on' : 'Loop off'}
+                            >
+                                L
+                            </IconButton>
+                        </Tooltip>
+                    </MidiMappable>
+                </Box>
                 <Box sx={styles.muteSoloRow}>
                     <MidiMappable id={ctrlId('mute')} label={ctrlLabel('Mute')} kind="trigger" onChange={handleMuteToggle}>
                         <Tooltip title="Mute">
@@ -922,39 +958,10 @@ export default function PerformanceChannel({
                 })}
             </Box>
 
+            {/* Bottom row is now just the channel level meter — Play and Loop
+                moved to the top header so the channel reads "controls on top,
+                signal flow below". */}
             <Box sx={styles.transportRow}>
-                <MidiMappable id={ctrlId('transport')} label={ctrlLabel('Play/Stop')} kind="trigger" onChange={handleTransportToggle}>
-                    <IconButton
-                        onClick={playing ? handleStop : handlePlay}
-                        disabled={!loaded}
-                        sx={styles.transportBtn(color, playing)}
-                        size="small"
-                    >
-                        {playing ? <StopIcon size={16} /> : <PlayIcon size={16} />}
-                    </IconButton>
-                </MidiMappable>
-                <MidiMappable id={ctrlId('loop')} label={ctrlLabel('Loop')} kind="trigger" onChange={handleLoopToggle}>
-                    <Tooltip
-                        title={
-                            looping
-                                ? (durationMode === 'bars'
-                                    ? 'Seamless loop — next generation will be inpaint-stitched at the bar boundary'
-                                    : 'Playback loop on')
-                                : 'Loop off'
-                        }
-                        placement="top"
-                        enterDelay={400}
-                    >
-                        <IconButton
-                            onClick={handleLoopToggle}
-                            sx={styles.loopBtn(color, looping)}
-                            size="small"
-                            aria-label={looping ? 'Loop on' : 'Loop off'}
-                        >
-                            L
-                        </IconButton>
-                    </Tooltip>
-                </MidiMappable>
                 <Box sx={styles.meterTrack}>
                     <Box ref={meterRef} sx={styles.meterFill(color)} />
                 </Box>
