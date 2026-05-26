@@ -2275,111 +2275,6 @@ export const welcomePageStyles = {
     },
 };
 
-export const checkpointManagerStyles = {
-    root: {
-        mt: 2,
-        pt: 2,
-        borderTop: '1px solid',
-        borderColor: 'divider',
-    },
-    panelPaper: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            p: 2,
-            mb: 2,
-            boxShadow: isDark
-                ? '0 16px 30px rgba(4, 8, 14, 0.48)'
-                : '0 16px 30px rgba(15, 23, 42, 0.1)',
-            borderRadius: 2.5,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.16)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(160deg, rgba(17, 24, 37, 0.96) 0%, rgba(13, 20, 31, 0.92) 100%)'
-                : 'linear-gradient(160deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 22px 38px rgba(4, 8, 14, 0.58)'
-                    : '0 22px 38px rgba(15, 23, 42, 0.14)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.3s ease',
-            },
-            transition: 'all 0.3s ease',
-        };
-    },
-    checkpointsList: {
-        mt: 1,
-        display: 'grid',
-        gap: 1,
-    },
-    checkpointCard: (muiTheme) => {
-        const isDark = muiTheme.palette.mode === 'dark';
-        return {
-            mb: 1,
-            p: 1.25,
-            boxShadow: isDark
-                ? '0 10px 20px rgba(4, 8, 14, 0.34)'
-                : '0 10px 18px rgba(15, 23, 42, 0.08)',
-            borderRadius: 1.75,
-            border: isDark
-                ? '1px solid rgba(194, 207, 228, 0.16)'
-                : '1px solid rgba(15, 23, 42, 0.12)',
-            background: isDark
-                ? 'linear-gradient(180deg, rgba(18, 25, 38, 0.98) 0%, rgba(15, 22, 34, 0.96) 100%)'
-                : 'linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(248, 251, 255, 0.99) 100%)',
-            '&:hover': {
-                boxShadow: isDark
-                    ? '0 14px 26px rgba(4, 8, 14, 0.44)'
-                    : '0 16px 28px rgba(15, 23, 42, 0.12)',
-                transform: 'translateY(-1px)',
-                transition: 'all 0.2s ease',
-            },
-            transition: 'all 0.2s ease',
-        };
-    },
-    checkpointRow: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 1,
-    },
-    checkpointInfo: {
-        flex: 1,
-    },
-    checkpointName: {
-        fontWeight: 600,
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 0.75,
-    },
-    unwrappedChip: {
-        fontSize: '0.7rem',
-    },
-    emptyText: {
-        display: 'block',
-        mt: 0.5,
-    },
-    metaNext: {
-        ml: 1,
-    },
-    actions: {
-        display: 'flex',
-        gap: 1,
-        flexWrap: 'wrap',
-        justifyContent: 'flex-end',
-    },
-    errorAlert: {
-        mt: 2,
-    },
-    deleteDialogText: {
-        mt: 1.5,
-    },
-    snackbarAlert: {
-        width: '100%',
-    },
-};
-
 export const hfAuthDialogStyles = {
     checkingBox: {
         display: 'flex',
@@ -2413,19 +2308,6 @@ export const hfAuthDialogStyles = {
         mb: 2,
     },
     loginSpinnerSize: 24,
-};
-
-export const modelUnwrapButtonStyles = {
-    root: {
-        mt: 1,
-    },
-    result: {
-        mt: 0.5,
-    },
-    error: {
-        color: '#DB5044',
-        mt: 0.5,
-    },
 };
 
 export const lossChartStyles = {

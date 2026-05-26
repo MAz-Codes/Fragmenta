@@ -1159,20 +1159,6 @@ def get_models():
                 latest_config = max(
                     config_files, key=lambda x: x.stat().st_mtime) if config_files else None
 
-                unwrapped_dir = model_dir / "unwrapped"
-                unwrapped_models = []
-                if unwrapped_dir.exists():
-                    for unwrapped_file in unwrapped_dir.glob("*.safetensors"):
-                        unwrapped_models.append({
-                            'name': unwrapped_file.stem,
-                            'path': str(unwrapped_file.relative_to(config.project_root)),
-                            'size_mb': round(unwrapped_file.stat().st_size / (1024 * 1024), 1),
-                            'created': unwrapped_file.stat().st_mtime
-                        })
-
-                    unwrapped_models.sort(
-                        key=lambda x: x['created'], reverse=True)
-
                 # Resolve the architecture config + base-model identity for
                 # this fine-tuned model. Order: per-run copy in the model
                 # folder, then training_metadata breadcrumb, then legacy
@@ -1188,7 +1174,6 @@ def get_models():
                     'config_path': resolved['config_path'],
                     'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,
-                    'unwrapped_models': unwrapped_models,
                     'created': model_dir.stat().st_mtime if model_dir.exists() else None
                 })
 
@@ -1522,85 +1507,6 @@ def get_model_storage():
     try:
         storage_info = model_manager.get_storage_info()
         return jsonify(storage_info)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/unwrap-model', methods=['POST'])
-def unwrap_model():
-    try:
-        data = request.json
-        model_config = data.get('model_config')
-        ckpt_path = data.get('ckpt_path')
-        name = data.get('name', 'model_unwrap')
-
-        if not model_config or not ckpt_path:
-            return jsonify({'error': 'model_config and ckpt_path are required'}), 400
-
-        import subprocess
-        from pathlib import Path
-
-        config = get_config()
-        repo_root = config.project_root
-
-        model_config_path = repo_root / \
-            model_config if not Path(
-                model_config).is_absolute() else Path(model_config)
-        ckpt_path_resolved = repo_root / \
-            ckpt_path if not Path(ckpt_path).is_absolute() else Path(ckpt_path)
-
-        if not model_config_path.exists():
-            return jsonify({'error': f'Model config not found: {model_config_path}'}), 400
-        if not ckpt_path_resolved.exists():
-            return jsonify({'error': f'Checkpoint not found: {ckpt_path_resolved}'}), 400
-
-        model_dir = ckpt_path_resolved.parent
-        unwrapped_dir = model_dir / "unwrapped"
-        unwrapped_dir.mkdir(exist_ok=True)
-
-        cmd = [
-            sys.executable, 'unwrap_model.py',
-            '--model-config', str(model_config_path),
-            '--ckpt-path', str(ckpt_path_resolved),
-            '--name', name,
-            '--use-safetensors'
-        ]
-
-        # unwrap_model.py writes next to its CWD, so run from vendor/stable-audio-tools/.
-        stable_audio_dir = repo_root / "vendor" / "stable-audio-tools"
-
-        proc = subprocess.run(cmd, cwd=stable_audio_dir,
-                              capture_output=True, text=True)
-
-        if proc.returncode == 0:
-
-            import glob
-            pattern = str(stable_audio_dir / f"{name}*.safetensors")
-            created_files = glob.glob(pattern)
-
-            moved_files = []
-            for created_file in created_files:
-                created_path = Path(created_file)
-                target_path = unwrapped_dir / created_path.name
-
-                try:
-                    created_path.rename(target_path)
-                    moved_files.append(str(target_path))
-                    print(f"Moved {created_path.name} to {target_path}")
-                except Exception as e:
-                    print(f"Error moving {created_path}: {e}")
-
-            unwrapped_files = list(unwrapped_dir.glob("*.safetensors"))
-
-            return jsonify({
-                'status': 'success',
-                'output': proc.stdout,
-                'unwrapped_path': moved_files[0] if moved_files else None,
-                'unwrapped_files': [str(f) for f in unwrapped_files],
-                'moved_files': moved_files
-            })
-        else:
-            return jsonify({'status': 'error', 'error': proc.stderr, 'output': proc.stdout}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

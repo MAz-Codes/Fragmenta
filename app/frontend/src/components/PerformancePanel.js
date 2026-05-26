@@ -88,14 +88,12 @@ export default function PerformancePanel(props) {
 
 function PerformancePanelInner({
     selectedModel,
-    selectedUnwrappedModel,
     availableModels = [],
     baseModels = [],
     availableLoras = [],
     selectedLora = '',
     loraMultiplier = 1.0,
     onSelectModel,
-    onSelectUnwrappedModel,
     onRefreshModels,
     onSelectLora,
     onLoraMultiplierChange,
@@ -105,7 +103,6 @@ function PerformancePanelInner({
     seedValue = '',
     onRandomSeedChange,
     onSeedValueChange,
-    onPresetLoaded,
 }) {
     const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
 
@@ -202,9 +199,6 @@ function PerformancePanelInner({
         if (session.selectedModel && session.selectedModel !== selectedModel) {
             onSelectModel?.(session.selectedModel);
         }
-        if (session.selectedUnwrappedModel && session.selectedUnwrappedModel !== selectedUnwrappedModel) {
-            onSelectUnwrappedModel?.(session.selectedUnwrappedModel);
-        }
         if (typeof session.steps === 'number' && session.steps !== steps) {
             onStepsChange?.(session.steps);
         }
@@ -225,7 +219,6 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('injectBpm', injectBpm); }, [injectBpm, updateGlobal]);
     useEffect(() => { updateGlobal('linkEnabled', linkEnabled); }, [linkEnabled, updateGlobal]);
     useEffect(() => { updateGlobal('selectedModel', selectedModel || ''); }, [selectedModel, updateGlobal]);
-    useEffect(() => { updateGlobal('selectedUnwrappedModel', selectedUnwrappedModel || ''); }, [selectedUnwrappedModel, updateGlobal]);
     useEffect(() => { updateGlobal('steps', steps); }, [steps, updateGlobal]);
     useEffect(() => { updateGlobal('randomSeed', randomSeed); }, [randomSeed, updateGlobal]);
     useEffect(() => { updateGlobal('seedValue', seedValue); }, [seedValue, updateGlobal]);
@@ -623,11 +616,6 @@ function PerformancePanelInner({
     const handleModelChange = (event) => {
         const value = event.target.value;
         if (onSelectModel) onSelectModel(value);
-        if (onSelectUnwrappedModel) onSelectUnwrappedModel('');
-    };
-
-    const handleCheckpointChange = (event) => {
-        if (onSelectUnwrappedModel) onSelectUnwrappedModel(String(event.target.value));
     };
 
     const handleDeleteFineTuned = async (modelName) => {
@@ -639,7 +627,6 @@ function PerformancePanelInner({
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(modelName)}`);
             if (selectedModel === modelName) {
                 onSelectModel?.('');
-                onSelectUnwrappedModel?.('');
             }
             onRefreshModels?.();
         } catch (err) {
@@ -667,16 +654,6 @@ function PerformancePanelInner({
             setError(`Failed to delete LoRA "${loraName}": ${msg}`);
         }
     };
-
-    const selectedFineTuned = selectedModel
-        ? availableModels.find((m) => m.name === selectedModel)
-        : null;
-    const unwrappedModels = selectedFineTuned?.unwrapped_models || [];
-    const checkpointValue = unwrappedModels
-        .map((u) => String(u.path))
-        .includes(selectedUnwrappedModel)
-        ? selectedUnwrappedModel
-        : '';
 
     return (
         <Box sx={styles.root}>
@@ -1367,43 +1344,6 @@ function PerformancePanelInner({
                         ))}
                     </Select>
                 </FormControl>
-
-                {unwrappedModels.length > 0 && (
-                    <FormControl size="small" sx={{
-                        width: 120,
-                        '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                        '& .MuiSelect-select': {
-                            fontSize: perfTokens.fontSize.body,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                        },
-                    }}>
-                        <Select
-                            value={checkpointValue}
-                            onChange={handleCheckpointChange}
-                            displayEmpty
-                            renderValue={(value) => {
-                                if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
-                                const found = unwrappedModels.find((u) => String(u.path) === value);
-                                return found ? found.name : value;
-                            }}
-                        >
-                            {unwrappedModels.map((unwrapped, index) => (
-                                <MenuItem key={index} value={String(unwrapped.path)}>
-                                    <Box>
-                                        <Typography variant="body2">{unwrapped.name}</Typography>
-                                        {unwrapped.size_mb && (
-                                            <Typography variant="caption" color="textSecondary">
-                                                {unwrapped.size_mb} MB
-                                            </Typography>
-                                        )}
-                                    </Box>
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                )}
 
                 {/* LoRA + its checkpoint sub-picker — always rendered (disabled
                     when irrelevant) so the bar layout doesn't shift as the user

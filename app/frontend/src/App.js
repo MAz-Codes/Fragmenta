@@ -61,14 +61,11 @@ import {
     CheckCircle2 as CheckCircleIcon,
 } from 'lucide-react';
 import api from './api';
-import { filterLorasForModel } from './utils/loraMatch';
 import HfAuthDialog from './components/HfAuthDialog';
 import AboutDialog from './components/AboutDialog';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
-import ModelUnwrapButton from './components/ModelUnwrapButton';
-import LoraCheckpointManager from './components/LoraCheckpointManager';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
@@ -177,7 +174,6 @@ function App() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
     const [selectedModel, setSelectedModel] = useState('');
-    const [selectedUnwrappedModel, setSelectedUnwrappedModel] = useState('');
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
@@ -450,10 +446,6 @@ function App() {
     const [dockMenuAnchor, setDockMenuAnchor] = useState(null);
 
     useEffect(() => {
-        setSelectedUnwrappedModel('');
-    }, [selectedModel]);
-
-    useEffect(() => {
         console.log('Model changed:', selectedModel);
         // Clear the selected LoRA on any model change — a LoRA is bound to a
         // specific base, and the dropdown re-filters by resolvedBaseModel.
@@ -496,7 +488,7 @@ function App() {
         } else if (!isDistilledBase && steps < 50) {
             setSteps(50);
         }
-    }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
+    }, [selectedModel, isDistilledBase]);
 
     const handleTabChange = (event, newValue) => {
         if (newValue === tabValue) return;
@@ -603,7 +595,6 @@ function App() {
             } else {
                 if (selectedModel === name) {
                     setSelectedModel('');
-                    setSelectedUnwrappedModel('');
                 }
             }
             refreshAllModels();
@@ -902,16 +893,10 @@ function App() {
             baseRequestData.negative_prompt = negTrim;
         }
 
-        // LoRA stack — only attach slots that have a path picked.
-        // Two pickers feed this:
-        //   1. LoraStack widget (multi-slot, with per-slot strength) — power user.
-        //   2. Single-LoRA dropdown at the top of the generation panel — simple.
-        // LoraStack wins if both are populated; otherwise the simple dropdown
-        // is treated as a one-slot stack at strength 1.0.
-        const stackEntries = (loraStack || []).filter(s => s.path);
-        const activeLoras = stackEntries.length
-            ? stackEntries
-            : (selectedLora ? [{ path: selectedLora, strength: 1.0 }] : []);
+        // LoRA stack — LoraStack is the single source of truth for the
+        // Generation panel. Empty slots (path === '') are filtered out
+        // so an unused slot doesn't break the request.
+        const activeLoras = (loraStack || []).filter(s => s.path);
         if (activeLoras.length) {
             baseRequestData.loras = activeLoras.map(s => ({
                 path: s.path,
@@ -1171,32 +1156,9 @@ function App() {
     };
 
     const getSelectedModelDisplayName = () => {
-        console.log('=== GETTING DISPLAY NAME ===');
-        console.log('selectedModel:', selectedModel);
-        console.log('selectedUnwrappedModel:', selectedUnwrappedModel);
-
-        if (!selectedModel) {
-            console.log('No selectedModel, returning empty string');
-            return '';
-        }
-
+        if (!selectedModel) return '';
         const baseModel = baseModels.find(m => m.name === selectedModel);
-        if (baseModel) {
-            console.log('Found base model:', baseModel.displayName);
-            return baseModel.displayName;
-        }
-
-        const model = availableModels.find(m => m.name === selectedModel);
-        if (model && selectedUnwrappedModel) {
-            const selectedUnwrapped = model.unwrapped_models?.find(u => u.path === selectedUnwrappedModel);
-            if (selectedUnwrapped) {
-                const displayName = `${model.name} (${selectedUnwrapped.name})`;
-                console.log('Generated fine-tuned display name:', displayName);
-                return displayName;
-            }
-        }
-
-        console.log('Using fallback name:', selectedModel);
+        if (baseModel) return baseModel.displayName;
         return selectedModel;
     };
 
@@ -1208,8 +1170,6 @@ function App() {
     const handleModelChange = (event) => {
         const newSelectedModel = event.target.value;
         setSelectedModel(newSelectedModel);
-
-        setSelectedUnwrappedModel('');
 
         const selectedBaseModel = baseModels.find(m => m.name === newSelectedModel);
         if (selectedBaseModel && !selectedBaseModel.downloaded) {
@@ -2161,10 +2121,7 @@ function App() {
                                                                     <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                         <Typography variant="body1">{model.name}</Typography>
                                                                         <Typography variant="caption" color="textSecondary">
-                                                                            {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'} |
-                                                                            {model.unwrapped_models && model.unwrapped_models.length > 0
-                                                                                ? ` ${model.unwrapped_models.length} unwrapped models`
-                                                                                : ' No unwrapped models'}
+                                                                            {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'}
                                                                         </Typography>
                                                                     </Box>
                                                                     <Tooltip title="Delete fine-tuned model">
@@ -2197,149 +2154,18 @@ function App() {
                                                     </IconButton>
                                                 </Box>
 
-                                            {/* Unwrapped Model Selection for Fine-tuned Models */}
-                                                {selectedModel && availableModels.find(m => m.name === selectedModel)?.unwrapped_models?.length > 0 && (
-                                                    (() => {
-                                                        const unwrappedModels = availableModels.find(m => m.name === selectedModel)?.unwrapped_models || [];
-                                                        const validPaths = unwrappedModels.map(u => String(u.path));
-                                                        // Only allow the value if it's in the list, otherwise set to ''
-                                                        const safeSelected = validPaths.includes(selectedUnwrappedModel) ? selectedUnwrappedModel : '';
-                                                        return (
-                                                            <>
-                                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                    <Select
-                                                                        key={selectedModel}
-                                                                        labelId="unwrapped-model-select-label"
-                                                                        id="unwrapped-model-select"
-                                                                        value={safeSelected}
-                                                                        label="Select Checkpoint"
-                                                                        onChange={(e) => {
-                                                                            console.log('Selected checkpoint:', e.target.value, typeof e.target.value);
-                                                                            setSelectedUnwrappedModel(String(e.target.value));
-                                                                        }}
-                                                                        displayEmpty
-                                                                    >
-                                                                        <MenuItem value="" disabled>
-                                                                            <em>Select a checkpoint</em>
-                                                                        </MenuItem>
-                                                                        {unwrappedModels.map((unwrapped, index) => (
-                                                                            <MenuItem key={index} value={String(unwrapped.path)}>
-                                                                                <Box>
-                                                                                    <Typography variant="body1">{unwrapped.name}</Typography>
-                                                                                    <Typography variant="caption" color="textSecondary">
-                                                                                        Size: {unwrapped.size_mb} MB
-                                                                                    </Typography>
-                                                                                    <Typography variant="body2" color="success.main" display="block">
-                                                                                        Ready for inference
-                                                                                    </Typography>
-                                                                                </Box>
-                                                                            </MenuItem>
-                                                                        ))}
-                                                                    </Select>
-                                                                </FormControl>
-                                                            </>
-                                                        );
-                                                    })()
-                                                )}
 
-                                                {/* LoRA picker — only meaningful on a base model. Filters to
-                                                    LoRAs trained against the currently-selected base.
-                                                    Two-step: pick LoRA name, then pick which saved checkpoint
-                                                    of that LoRA to load (defaults to latest). */}
-                                                {baseModels.find(m => m.name === selectedModel) && (() => {
-                                                    const compatibleLoras = filterLorasForModel(
-                                                        availableLoras, selectedModel,
-                                                    );
-                                                    if (compatibleLoras.length === 0) return null;
-                                                    // Derive which LoRA the current checkpoint path belongs to,
-                                                    // so the dropdown's `value` stays in sync after the second
-                                                    // picker mutates `selectedLora`.
-                                                    const currentLora = compatibleLoras.find(
-                                                        l => l.path === selectedLora ||
-                                                             (l.all_checkpoints || []).includes(selectedLora)
-                                                    );
-                                                    const currentLoraName = currentLora?.name || '';
-                                                    return (
-                                                        <>
-                                                            <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                <Select
-                                                                    labelId="lora-select-label"
-                                                                    id="lora-select"
-                                                                    value={currentLoraName}
-                                                                    label="Select LoRA (optional)"
-                                                                    onChange={(e) => {
-                                                                        const name = e.target.value;
-                                                                        if (!name) { setSelectedLora(''); return; }
-                                                                        const lora = compatibleLoras.find(l => l.name === name);
-                                                                        // Default to latest checkpoint when picking a LoRA.
-                                                                        setSelectedLora(lora?.path || '');
-                                                                    }}
-                                                                    displayEmpty
-                                                                >
-                                                                    <MenuItem value="">
-                                                                        <em>No LoRA (base model only)</em>
-                                                                    </MenuItem>
-                                                                    {compatibleLoras.map((lora) => (
-                                                                        <MenuItem
-                                                                            key={lora.name}
-                                                                            value={lora.name}
-                                                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                                                                        >
-                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                                                <Typography variant="body1">{lora.name}</Typography>
-                                                                                <Typography variant="caption" color="textSecondary">
-                                                                                    rank={lora.rank}, alpha={lora.alpha}
-                                                                                    {lora.all_checkpoints?.length > 1
-                                                                                        ? ` · ${lora.all_checkpoints.length} checkpoints`
-                                                                                        : ''}
-                                                                                </Typography>
-                                                                            </Box>
-                                                                            <Tooltip title="Delete LoRA">
-                                                                                <IconButton
-                                                                                    size="small"
-                                                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        e.preventDefault();
-                                                                                        handleDeleteFineTunedOrLora(lora.name, { isLora: true });
-                                                                                    }}
-                                                                                    sx={{
-                                                                                        color: 'text.disabled',
-                                                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                                                                    }}
-                                                                                >
-                                                                                    <DeleteIcon size={14} />
-                                                                                </IconButton>
-                                                                            </Tooltip>
-                                                                        </MenuItem>
-                                                                    ))}
-                                                                </Select>
-                                                            </FormControl>
-
-                                                            {/* Second picker: which checkpoint of the chosen LoRA */}
-                                                            {currentLora && currentLora.all_checkpoints?.length > 1 && (
-                                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                    <Select
-                                                                        labelId="lora-checkpoint-select-label"
-                                                                        id="lora-checkpoint-select"
-                                                                        value={selectedLora || currentLora.path}
-                                                                        label="Checkpoint"
-                                                                        onChange={(e) => setSelectedLora(String(e.target.value))}
-                                                                    >
-                                                                        {currentLora.all_checkpoints.map((ckpt, i, arr) => (
-                                                                            <MenuItem key={ckpt} value={ckpt}>
-                                                                                <Typography variant="body2">
-                                                                                    {parseCheckpointLabel(ckpt)}
-                                                                                    {i === arr.length - 1 ? ' (latest)' : ''}
-                                                                                </Typography>
-                                                                            </MenuItem>
-                                                                        ))}
-                                                                    </Select>
-                                                                </FormControl>
-                                                            )}
-                                                        </>
-                                                    );
-                                                })()}
+                                                {/* Phase 4: LoraStack is the single LoRA picker for the
+                                                    Generation panel. Always rendered between model picker
+                                                    and mode toggle so it's visible in both Create + Edit
+                                                    modes without expanding Advanced Settings. */}
+                                                <Box sx={{ mb: 2 }}>
+                                                    <LoraStack
+                                                        selectedModel={selectedModel}
+                                                        value={loraStack}
+                                                        onChange={setLoraStack}
+                                                    />
+                                                </Box>
 
                                                 {/* Phase 8: top-level mode switch. Create = text→audio,
                                                     Edit = audio→audio (style / inpaint / extend). The
@@ -2408,14 +2234,6 @@ function App() {
                                                                 />
                                                             </Grid>
 
-                                                            <Grid item xs={12}>
-                                                                <LoraStack
-                                                                    selectedModel={selectedModel}
-                                                                    value={loraStack}
-                                                                    onChange={setLoraStack}
-                                                                />
-                                                            </Grid>
-
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
                                                                 Distilled post-trained models bake cfg=1.0 / steps=8 and
                                                                 ignore overrides, so we hide the controls entirely. */}
@@ -2471,35 +2289,6 @@ function App() {
                                                                         </Box>
                                                                     </Grid>
                                                                 </>
-                                                            )}
-
-                                                            {selectedLora && (
-                                                                <Grid item xs={12}>
-                                                                    <Typography gutterBottom>LoRA Multiplier</Typography>
-                                                                    <Box sx={appStyles.sliderRow}>
-                                                                        <Slider
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e, v) => setLoraMultiplier(v)}
-                                                                            min={0}
-                                                                            max={2}
-                                                                            step={0.05}
-                                                                            valueLabelDisplay="auto"
-                                                                            sx={appStyles.sliderFlexGrow}
-                                                                        />
-                                                                        <TextField
-                                                                            type="number"
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e) => {
-                                                                                const val = parseFloat(e.target.value);
-                                                                                if (Number.isNaN(val)) return;
-                                                                                setLoraMultiplier(Math.max(0, Math.min(2, val)));
-                                                                            }}
-                                                                            inputProps={{ min: 0, max: 2, step: 0.05 }}
-                                                                            sx={appStyles.sliderInputSmall}
-                                                                            size="small"
-                                                                        />
-                                                                    </Box>
-                                                                </Grid>
                                                             )}
 
                                                             <Grid item xs={12}>
@@ -2614,14 +2403,6 @@ function App() {
                                                 )}
 
                                             {/* Warnings for model issues */}
-                                                {selectedModel &&
-                                                    availableModels.find(m => m.name === selectedModel) &&
-                                                    availableModels.find(m => m.name === selectedModel)?.unwrapped_models?.length > 0 &&
-                                                    !selectedUnwrappedModel && (
-                                                        <Alert severity="warning" sx={appStyles.warningAlertTop}>
-                                                            Please select a checkpoint for the selected fine-tuned model before generating audio.
-                                                        </Alert>
-                                                    )}
                                                 </>)}
 
                                                 {generationMode === 'edit' && (
@@ -2682,14 +2463,12 @@ function App() {
                                     }>
                                         <PerformancePanel
                                             selectedModel={selectedModel}
-                                            selectedUnwrappedModel={selectedUnwrappedModel}
                                             availableModels={availableModels}
                                             baseModels={baseModels}
                                             availableLoras={availableLoras}
                                             selectedLora={selectedLora}
                                             loraMultiplier={loraMultiplier}
                                             onSelectModel={setSelectedModel}
-                                            onSelectUnwrappedModel={setSelectedUnwrappedModel}
                                             onRefreshModels={refreshAllModels}
                                             onSelectLora={setSelectedLora}
                                             onLoraMultiplierChange={setLoraMultiplier}
@@ -2699,7 +2478,6 @@ function App() {
                                             seedValue={seedValue}
                                             onRandomSeedChange={setRandomSeed}
                                             onSeedValueChange={setSeedValue}
-                                            onPresetLoaded={() => setPerformanceResetKey(prev => prev + 1)}
                                         />
                                     </Suspense>
                                 ) : (

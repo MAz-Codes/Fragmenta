@@ -50,18 +50,27 @@ export default function LoraStack({ selectedModel, value, onChange }) {
         selectedModel && l.base_model === selectedModel
     );
 
+    // The single-LoRA case stays one click: when no slots are populated AND
+    // there's a compatible LoRA, surface one empty slot so the user sees a
+    // "Pick a LoRA" dropdown immediately. They never need to hit "Add LoRA"
+    // unless they want a second slot. Empty path slots are filtered out in
+    // the caller's request body, so this has no effect on the wire.
+    const slots = (value && value.length > 0)
+        ? value
+        : (compatible.length ? [{ path: '', strength: 1.0 }] : []);
+
     const addSlot = () => {
-        if ((value || []).length >= MAX_SLOTS) return;
-        onChange([...(value || []), { path: '', strength: 1.0 }]);
+        if (slots.length >= MAX_SLOTS) return;
+        onChange([...slots, { path: '', strength: 1.0 }]);
     };
 
     const removeSlot = (idx) => {
-        const next = (value || []).filter((_, i) => i !== idx);
+        const next = slots.filter((_, i) => i !== idx);
         onChange(next);
     };
 
     const setSlot = (idx, patch) => {
-        const next = (value || []).map((s, i) => i === idx ? { ...s, ...patch } : s);
+        const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
         onChange(next);
     };
 
@@ -89,7 +98,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                     size="small"
                     variant="outlined"
                     startIcon={<AddIcon size={14} />}
-                    disabled={(value || []).length >= MAX_SLOTS || !compatible.length}
+                    disabled={slots.length >= MAX_SLOTS || !compatible.length}
                     onClick={addSlot}
                 >
                     Add LoRA
@@ -103,9 +112,9 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                 </Typography>
             )}
 
-            {(value || []).length > 0 && (
+            {slots.length > 0 && (
                 <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                    {(value || []).map((slot, idx) => {
+                    {slots.map((slot, idx) => {
                         const choice = available.find(l => l.path === slot.path);
                         return (
                             <Box
