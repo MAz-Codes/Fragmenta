@@ -950,6 +950,63 @@ def serve_fragment(filename):
     return send_file(str(full), mimetype="audio/wav")
 
 
+@app.route('/api/fragments/<path:filename>', methods=['DELETE'])
+def delete_fragment(filename):
+    """Delete a single fragment (WAV + its sidecar JSON) from output/."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+    if not filename.endswith(".wav"):
+        return jsonify(APIResponse.error("Only .wav files are deletable.", status_code=400)), 400
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    wav_path = output_dir / filename
+    sidecar_path = output_dir / f"{filename}.json"
+    if not wav_path.exists():
+        return jsonify(APIResponse.error("File not found.", status_code=404)), 404
+    removed = []
+    try:
+        wav_path.unlink()
+        removed.append(wav_path.name)
+        if sidecar_path.exists():
+            sidecar_path.unlink()
+            removed.append(sidecar_path.name)
+    except Exception as exc:
+        logger.error(f"Failed to delete fragment {filename}: {exc}")
+        return jsonify(APIResponse.error(f"Delete failed: {exc}", status_code=500)), 500
+    logger.info(f"Deleted fragment: {', '.join(removed)}")
+    return jsonify({"deleted": removed})
+
+
+@app.route('/api/fragments', methods=['DELETE'])
+def clear_fragments():
+    """Delete EVERY .wav + .wav.json directly under output/.
+
+    Does NOT recurse — uploaded source clips live under output/uploads/
+    and are intentionally left alone (they may still be referenced by
+    in-flight Edit-mode work, and the user uploaded them deliberately).
+    """
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    if not output_dir.exists():
+        return jsonify({"deleted": 0})
+    removed = 0
+    errors = []
+    for pattern in ("*.wav", "*.wav.json"):
+        for p in output_dir.glob(pattern):
+            if not p.is_file():
+                continue
+            try:
+                p.unlink()
+                removed += 1
+            except Exception as exc:
+                errors.append(f"{p.name}: {exc}")
+    if errors:
+        logger.warning(f"clear_fragments: removed {removed}, errors: {errors}")
+    else:
+        logger.info(f"clear_fragments: removed {removed} file(s)")
+    return jsonify({"deleted": removed, "errors": errors})
+
+
 @app.route('/api/lora-strength', methods=['POST'])
 def update_lora_strength():
     """Live-update a loaded LoRA's strength without regenerating.

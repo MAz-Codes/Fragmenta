@@ -1,11 +1,16 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Paper, Box, Typography, List, ListItem, IconButton, Tooltip } from '@mui/material';
+import {
+    Paper, Box, Typography, List, ListItem, IconButton, Tooltip,
+    Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button,
+} from '@mui/material';
 import {
     Square as StopIcon,
     Play as PlayIcon,
     CloudDownload as DownloadIcon,
     AudioLines as TitleIcon,
     Info as InfoIcon,
+    Trash2 as DeleteIcon,
+    Eraser as ClearAllIcon,
 } from 'lucide-react';
 import { generatedFragmentsWindowStyles } from '../theme';
 
@@ -25,8 +30,9 @@ function relativeTime(createdAt) {
     return new Date(createdAt).toLocaleDateString();
 }
 
-export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
+export default function GeneratedFragmentsWindow({ fragments, onDownload, onDelete, onClearAll }) {
     const [playingFragment, setPlayingFragment] = useState(null);
+    const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const audioRefs = useRef({});
 
     const handlePlayPause = (fragment) => {
@@ -62,10 +68,43 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
                         Generated Fragments
                     </Typography>
                 </Box>
-                <Typography variant="caption" color="textSecondary" sx={generatedFragmentsWindowStyles.countText}>
-                    {fragments.length}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Typography variant="caption" color="textSecondary" sx={generatedFragmentsWindowStyles.countText}>
+                        {fragments.length}
+                    </Typography>
+                    {fragments.length > 0 && onClearAll && (
+                        <Tooltip title="Clear all (delete every fragment from disk)" placement="top" arrow>
+                            <IconButton
+                                size="small"
+                                onClick={() => setClearConfirmOpen(true)}
+                                sx={{ color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                            >
+                                <ClearAllIcon size={14} />
+                            </IconButton>
+                        </Tooltip>
+                    )}
+                </Box>
             </Box>
+
+            <Dialog open={clearConfirmOpen} onClose={() => setClearConfirmOpen(false)}>
+                <DialogTitle>Clear all generated fragments?</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        Permanently delete all {fragments.length} fragment{fragments.length === 1 ? '' : 's'} from disk.
+                        Uploaded source clips (used by Edit mode) are not affected.
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setClearConfirmOpen(false)}>Cancel</Button>
+                    <Button
+                        onClick={() => { setClearConfirmOpen(false); onClearAll?.(); }}
+                        color="error"
+                        variant="contained"
+                    >
+                        Delete all
+                    </Button>
+                </DialogActions>
+            </Dialog>
 
             {fragments.length === 0 ? (
                 <Box sx={generatedFragmentsWindowStyles.emptyState}>
@@ -157,6 +196,18 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload }) {
                                         <DownloadIcon size={16} />
                                     </IconButton>
                                 </Tooltip>
+
+                                {onDelete && (
+                                    <Tooltip title="Delete from disk" placement="top" arrow>
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => onDelete(fragment)}
+                                            sx={{ color: 'text.disabled', '&:hover': { color: 'error.main', bgcolor: 'action.hover' } }}
+                                        >
+                                            <DeleteIcon size={16} />
+                                        </IconButton>
+                                    </Tooltip>
+                                )}
 
                                 <audio
                                     ref={el => setAudioRef(fragment.id, el)}

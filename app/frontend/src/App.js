@@ -237,6 +237,36 @@ function App() {
         document.body.removeChild(link);
     };
 
+    const deleteFragment = async (fragment) => {
+        if (!fragment?.filename) return;
+        try {
+            await api.delete(`/api/fragments/${encodeURIComponent(fragment.filename)}`);
+            setGeneratedFragments(prev => prev.filter(f => f.id !== fragment.id));
+            // Best-effort revoke of blob URLs created during this session so
+            // we don't leak object URLs after delete.
+            if (fragment.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(fragment.audioUrl); } catch { /* ignore */ }
+            }
+        } catch (err) {
+            console.error('Delete fragment failed:', err);
+        }
+    };
+
+    const clearAllFragments = async () => {
+        try {
+            await api.delete('/api/fragments');
+            // Revoke any in-session blob URLs before clearing state.
+            generatedFragments.forEach(f => {
+                if (f.audioUrl?.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
+                }
+            });
+            setGeneratedFragments([]);
+        } catch (err) {
+            console.error('Clear all fragments failed:', err);
+        }
+    };
+
     const [availableModels, setAvailableModels] = useState([]);
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
@@ -2665,6 +2695,8 @@ function App() {
                                                 <GeneratedFragmentsWindow
                                                     fragments={generatedFragments}
                                                     onDownload={downloadFragment}
+                                                    onDelete={deleteFragment}
+                                                    onClearAll={clearAllFragments}
                                                 />
                                             </Box>
                                         </Box>
