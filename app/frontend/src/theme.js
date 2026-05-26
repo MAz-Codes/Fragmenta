@@ -2788,11 +2788,13 @@ export const performanceChannelStyles = {
     generatePill: (color, { generating, disabled }) => ({
         position: 'relative',
         overflow: 'hidden',
-        // Compact pill anchored to the right edge of the CTA row — the
-        // outer span uses `marginLeft: auto` to push the pill against
-        // the row's right side, and this width gives a comfortable
-        // click target without dominating the row.
-        width: 130,
+        // Compact pill anchored right via the wrapper span's `marginLeft:
+        // auto`. `width: 100%` lets the pill fill (and shrink with) the
+        // wrapper span; the actual size cap lives on the span itself —
+        // see `generatePillWrap` below. This guarantees the pill cannot
+        // overflow its row when the channel column gets narrow.
+        boxSizing: 'border-box',
+        width: '100%',
         height: perfTokens.height.cta,
         px: 1.5,
         borderRadius: 1.5,
@@ -2810,6 +2812,20 @@ export const performanceChannelStyles = {
             bgcolor: disabled || generating ? undefined : `${color}28`,
         },
     }),
+    // Wrapper around the Generate pill — owns the size cap and the
+    // marginLeft:auto that pushes the pill against the row's right edge.
+    // Kept as a span (not a Box) because MUI Tooltip on a disabled
+    // ButtonBase needs an enabled wrapping element to hold pointer events.
+    generatePillWrap: {
+        display: 'inline-flex',
+        boxSizing: 'border-box',
+        marginLeft: 'auto',
+        // 0–120px: collapses on narrow columns instead of overflowing the
+        // strip's content area; max-content is whichever is smaller.
+        flex: '0 1 120px',
+        minWidth: 0,
+        maxWidth: '100%',
+    },
     // The animated fill that lives INSIDE generatePill while generating.
     // Width is the only dynamic field — parent passes a 0-100 number.
     generatePillFill: (color, progressPct) => ({
