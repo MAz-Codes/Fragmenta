@@ -103,7 +103,7 @@ export default function PerformanceChannel({
 
     const [prompt, setPrompt] = useState(init.prompt ?? '');
     const [duration, setDuration] = useState(init.duration ?? 8);
-    const [durationMode, setDurationMode] = useState(init.durationMode ?? 'seconds');
+    const [durationMode, setDurationMode] = useState(init.durationMode ?? 'bars');
     const [bars, setBars] = useState(init.bars ?? 4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);

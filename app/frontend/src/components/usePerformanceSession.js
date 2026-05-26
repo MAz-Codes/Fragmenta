@@ -66,7 +66,7 @@ export function loadPresetIntoSession(name) {
 const CHANNEL_DEFAULT = {
     prompt: '',
     duration: 8,
-    durationMode: 'seconds',
+    durationMode: 'bars',
     bars: 4,
     looping: true,
     muted: false,
