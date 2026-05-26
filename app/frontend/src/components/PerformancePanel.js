@@ -151,7 +151,7 @@ function PerformancePanelInner({
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
     const [promptKey, setPromptKey] = useState(session.promptKey ?? '');
-    const [promptTempo, setPromptTempo] = useState(session.promptTempo ?? '');
+    const [promptInjectBpm, setPromptInjectBpm] = useState(session.promptInjectBpm ?? false);
     const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
     const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
     const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
@@ -244,7 +244,7 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('launchQuantum', launchQuantum); }, [launchQuantum, updateGlobal]);
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
     useEffect(() => { updateGlobal('promptKey', promptKey); }, [promptKey, updateGlobal]);
-    useEffect(() => { updateGlobal('promptTempo', promptTempo); }, [promptTempo, updateGlobal]);
+    useEffect(() => { updateGlobal('promptInjectBpm', promptInjectBpm); }, [promptInjectBpm, updateGlobal]);
     useEffect(() => { updateGlobal('promptTimeSig', promptTimeSig); }, [promptTimeSig, updateGlobal]);
     useEffect(() => {
         updateGlobal('masterReverbIR', masterReverbIR);
@@ -661,19 +661,18 @@ function PerformancePanelInner({
             throw new Error(msg);
         }
 
-        // Auto-inject the prompt fields (Key / Tempo / Time sig) when set.
-        // Skip a field if its value already appears in the user's prompt so
-        // we don't double-up. Tempo gets a " BPM" suffix unless the user
-        // already typed it.
+        // Auto-inject Key / BPM / Time sig when populated. Skip a field if
+        // its value already appears in the user's prompt so we don't double
+        // up. BPM is a toggle — when on we grab the live master BPM from
+        // the top bar (so it tracks tempo changes).
         const trimmed = (prompt || '').trim();
         const lower = trimmed.toLowerCase();
         const additions = [];
         if (promptKey.trim() && !lower.includes(promptKey.trim().toLowerCase())) {
             additions.push(promptKey.trim());
         }
-        if (promptTempo.trim() && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
-            const t = promptTempo.trim();
-            additions.push(/bpm/i.test(t) ? t : `${t} BPM`);
+        if (promptInjectBpm && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
+            additions.push(`${Math.round(bpm)} BPM`);
         }
         if (promptTimeSig.trim() && !lower.includes(promptTimeSig.trim().toLowerCase())) {
             additions.push(promptTimeSig.trim());
@@ -1838,22 +1837,39 @@ function PerformancePanelInner({
                             sx={{ ...styles.pillControl, width: 78 }}
                         />
                     </Tooltip>
-                    <Tooltip title="Tempo to auto-inject (e.g. 120). BPM is appended automatically." placement="top" arrow enterDelay={500}>
-                        <TextField
-                            size="small"
-                            placeholder="BPM"
-                            value={promptTempo}
-                            onChange={(e) => setPromptTempo(e.target.value)}
-                            inputProps={{
-                                'aria-label': 'Tempo to inject into prompt',
-                                style: {
-                                    fontVariantNumeric: 'tabular-nums',
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: perfTokens.weight.bold,
+                    <Tooltip
+                        title={promptInjectBpm
+                            ? `Injecting master BPM (${Math.round(bpm)}) into prompts — click to disable`
+                            : 'Click to auto-inject the master BPM (top bar) into every prompt'}
+                        placement="top"
+                        arrow
+                        enterDelay={500}
+                    >
+                        <ButtonBase
+                            onClick={() => setPromptInjectBpm((p) => !p)}
+                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
+                            aria-pressed={promptInjectBpm}
+                            sx={(theme) => ({
+                                height: perfTokens.height.compact,
+                                minWidth: 62,
+                                px: 1,
+                                borderRadius: 1.5,
+                                border: '1px solid',
+                                borderColor: promptInjectBpm ? MASTER_COLOR : theme.palette.divider,
+                                backgroundColor: promptInjectBpm ? MASTER_COLOR : 'transparent',
+                                color: promptInjectBpm ? '#0c1018' : 'text.disabled',
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
+                                fontVariantNumeric: 'tabular-nums',
+                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
+                                '&:hover': {
+                                    backgroundColor: promptInjectBpm ? MASTER_COLOR : 'action.hover',
+                                    color: promptInjectBpm ? '#0c1018' : 'text.secondary',
                                 },
-                            }}
-                            sx={{ ...styles.pillControl, width: 62 }}
-                        />
+                            })}
+                        >
+                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
+                        </ButtonBase>
                     </Tooltip>
                     <Tooltip title="Time signature to auto-inject (e.g. 4/4). Leave empty to skip." placement="top" arrow enterDelay={500}>
                         <TextField

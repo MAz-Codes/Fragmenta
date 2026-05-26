@@ -102,11 +102,11 @@ function defaultSession(channelCount) {
         masterReverbIR: 'hall',
         masterDelayDivision: '1/4',
         // Prompt auto-inject fields. Each is appended (comma-separated) to
-        // every generated prompt when non-empty. Empty = no injection.
-        // Replaces the old `injectBpm` switch — the master BPM no longer
-        // auto-injects; the user opts in by typing a tempo here.
+        // every generated prompt when set. Key and Time accept any text;
+        // empty = no injection. BPM is a toggle that, when on, grabs the
+        // live master BPM (top-bar value) at generation time.
         promptKey: '',
-        promptTempo: '',
+        promptInjectBpm: false,
         promptTimeSig: '',
         channels: Array.from({ length: channelCount }, () => ({
             ...CHANNEL_DEFAULT,
