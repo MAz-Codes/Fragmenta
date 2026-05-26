@@ -2593,12 +2593,14 @@ export const performancePanelStyles = {
         gap: 1.5,
         p: 1.25,
         borderRadius: 2.5,
-        border: `1px solid ${color}55`,
+        // Matches the channel-strip at-rest treatment so master sits in the
+        // same visual family — plain paper bg, divider border, soft shadow.
+        // Was a colored border + gradient overlay + inset color ring, which
+        // made master read as a higher-elevation surface than its neighbours.
+        border: '1px solid',
+        borderColor: 'divider',
         bgcolor: 'background.paper',
-        backgroundImage: `linear-gradient(160deg, ${color}14 0%, ${theme.palette.background.paper} 70%)`,
-        boxShadow: theme.palette.mode === 'dark'
-            ? `0 8px 22px rgba(0, 0, 0, 0.55), inset 0 0 0 1px ${color}22`
-            : `0 6px 14px rgba(43, 31, 18, 0.10), inset 0 0 0 1px ${color}22`,
+        boxShadow: `0 2px 8px ${theme.palette.mode === 'dark' ? 'rgba(4, 8, 14, 0.36)' : 'rgba(0,0,0,0.08)'}`,
         width: { xs: '100%', md: 170 },
         flex: { xs: '1 1 100%', md: '0 0 170px' },
         minHeight: 0,
@@ -2614,16 +2616,12 @@ export const performancePanelStyles = {
         pb: 0.75,
         color,
     }),
-    masterBadge: (color) => ({
-        fontSize: perfTokens.fontSize.md,
-        fontWeight: 600,
-        color,
-        letterSpacing: perfTokens.letterSpacing.wide,
-        px: 0.75,
-        py: 0.25,
-        borderRadius: 1,
-        backgroundColor: `${color}1F`,
-        border: `1px solid ${color}55`,
+    masterBadge: () => ({
+        // Plain caps label — same family as TAKES, MIDI SETTINGS, etc.
+        // Dropped the chip (tinted bg + colored ring) so master reads as a
+        // section label rather than a special UI element.
+        ...perfTokens.caps,
+        color: 'text.secondary',
     }),
     masterFaderWrap: {
         // Fixed-height lane for the meter + vertical fader. Was `flex: 1`
@@ -3129,37 +3127,26 @@ export const performanceChannelStyles = {
     //   On  → 1px channel-color border + 1px inset shadow (= 2px ring
     //         without layout shift), tinted fill, full-color bold "L",
     //         AND a 4×4px LED dot in the bottom-right corner.
+    // Filled chip when active, gray ghost when off — same pattern as the
+    // committed-take ✓ button in the take history list. The filled bg now
+    // carries the active signal on its own, so the old inset ring + LED dot
+    // are gone (was visually noisy on top of the filled state).
     loopBtn: (color, active) => ({
         width: perfTokens.height.sub,
         height: perfTokens.height.sub,
-        position: 'relative',
         borderRadius: 1,
         fontSize: perfTokens.fontSize.sm,
         fontWeight: perfTokens.weight.heavy,
         lineHeight: 1,
-        color: active ? color : 'text.disabled',
-        backgroundColor: active ? `${color}1F` : 'transparent',
+        color: active ? '#0c1018' : 'text.disabled',
+        backgroundColor: active ? color : 'transparent',
         border: '1px solid',
         borderColor: active ? color : 'divider',
-        boxShadow: active ? `inset 0 0 0 1px ${color}` : 'none',
-        transition:
-            'background-color 120ms, color 120ms, border-color 120ms, box-shadow 120ms',
+        transition: 'background-color 120ms, color 120ms, border-color 120ms',
         '&:hover': {
-            backgroundColor: active ? `${color}28` : 'action.hover',
-            color: active ? color : 'text.secondary',
+            backgroundColor: active ? color : 'action.hover',
+            color: active ? '#0c1018' : 'text.secondary',
         },
-        ...(active && {
-            '&::after': {
-                content: '""',
-                position: 'absolute',
-                right: 2,
-                bottom: 2,
-                width: 4,
-                height: 4,
-                borderRadius: '50%',
-                backgroundColor: color,
-            },
-        }),
     }),
     meterTrack: (theme) => ({
         flex: 1,
