@@ -1051,32 +1051,38 @@ function PerformancePanelInner({
                         onChange={handleBpmChange}
                         onFocus={handleBpmFocus}
                         onBlur={handleBpmBlur}
-                        inputProps={{ step: 1, inputMode: 'numeric', 'aria-label': 'Tempo in BPM' }}
+                        // inline `style` on inputProps wins against MUI's
+                        // .MuiInputBase-inputSizeSmall 14px default (which
+                        // beats `'& input': { fontSize }` on CSS specificity).
+                        inputProps={{
+                            step: 1,
+                            inputMode: 'numeric',
+                            'aria-label': 'Tempo in BPM',
+                            style: {
+                                textAlign: 'right',
+                                fontVariantNumeric: 'tabular-nums',
+                                fontSize: perfTokens.fontSize.sm,
+                                paddingRight: 0,
+                            },
+                        }}
                         InputProps={{
                             endAdornment: (
-                                <Typography
+                                <Box
                                     component="span"
                                     sx={{
-                                        fontSize: perfTokens.fontSize.sm,
-                                        letterSpacing: perfTokens.letterSpacing.wide,
+                                        ...perfTokens.caps,
                                         color: 'text.disabled',
                                         pl: 0.5,
                                         userSelect: 'none',
                                     }}
                                 >
                                     BPM
-                                </Typography>
+                                </Box>
                             ),
                         }}
                         sx={{
                             width: 84,
                             '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
-                            '& input': {
-                                textAlign: 'right',
-                                fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.sm,
-                                pr: 0,
-                            },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                 WebkitAppearance: 'none',
                                 margin: 0,
@@ -1473,16 +1479,12 @@ function PerformancePanelInner({
                 })()}
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
+                    <Box
                         component="span"
-                        sx={{
-                            fontSize: perfTokens.fontSize.sm,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                        }}
+                        sx={{ ...perfTokens.caps, color: 'text.disabled' }}
                     >
                         Steps
-                    </Typography>
+                    </Box>
                     <Tooltip
                         placement="right"
                         title={
@@ -1521,16 +1523,12 @@ function PerformancePanelInner({
                 </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography
+                    <Box
                         component="span"
-                        sx={{
-                            fontSize: perfTokens.fontSize.sm,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                        }}
+                        sx={{ ...perfTokens.caps, color: 'text.disabled' }}
                     >
                         Seed
-                    </Typography>
+                    </Box>
                     <FormControlLabel
                         sx={{ mr: 0, ml: 0.25 }}
                         control={
@@ -1553,14 +1551,19 @@ function PerformancePanelInner({
                         value={seedValue}
                         onChange={(e) => onSeedValueChange?.(e.target.value)}
                         disabled={randomSeed}
-                        inputProps={{ min: 0, max: 4294967295, step: 1 }}
-                        sx={{
-                            width: 78,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                            '& input': {
+                        // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
+                        inputProps={{
+                            min: 0,
+                            max: 4294967295,
+                            step: 1,
+                            style: {
                                 fontVariantNumeric: 'tabular-nums',
                                 fontSize: perfTokens.fontSize.sm,
                             },
+                        }}
+                        sx={{
+                            width: 78,
+                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
                         }}
                     />
                 </Box>
