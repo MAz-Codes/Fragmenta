@@ -36,11 +36,19 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const audioRefs = useRef({});
 
-    // Strict single-play. The old version paused the previous audio by id
-    // looked up from `playingFragment`, which lost the race when two play
-    // clicks landed before state had a chance to update — both audios ended
-    // up playing because the second click saw the first click's stale
-    // "nothing playing" view. Iterating audioRefs is bulletproof.
+    // Strict single-play with first-click readiness gate.
+    //
+    // Two problems the old version had:
+    //   1. Paused the previous audio by id looked up from React state —
+    //      lost the race when two play clicks landed before state settled
+    //      and left both audios playing. Fix: iterate audioRefs.current
+    //      and pause everything that isn't the new target.
+    //   2. First click after page load was "struggling" — Chrome's HTML
+    //      audio element with a blob URL needs a moment to reach a
+    //      playable readyState even with preload="auto". play() called
+    //      before readyState >= HAVE_CURRENT_DATA (2) returns a Promise
+    //      that either rejects or stalls. Fix: if readyState is too low,
+    //      wait for `canplay` (or a 1500 ms timeout) before play().
     const handlePlayPause = (fragment) => {
         const audio = audioRefs.current[fragment.id];
         if (!audio) return;
@@ -60,23 +68,38 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
             }
         });
 
-        audio.currentTime = 0;
-        // play() returns a Promise that rejects on autoplay-policy blocks
-        // or when the source isn't loaded yet. Catching and reverting state
-        // means a swallowed failure no longer leaves the button stuck in
-        // the "playing" visual.
         const startedFor = fragment.id;
-        Promise.resolve(audio.play()).then(() => {
-            // Source took an extra moment to load — kick it back to 0 once
-            // playback actually started so the playhead and audio agree.
-            if (audio.currentTime > 0.1) audio.currentTime = 0;
-        }).catch((err) => {
-            console.warn(`Fragment play failed (${fragment.filename || fragment.id}):`, err);
-            setPlayingFragment((prev) => (prev === startedFor ? null : prev));
-            setPlayingTime(0);
-        });
         setPlayingFragment(startedFor);
         setPlayingTime(0);
+
+        const startPlayback = () => {
+            audio.currentTime = 0;
+            Promise.resolve(audio.play()).catch((err) => {
+                console.warn(`Fragment play failed (${fragment.filename || fragment.id}):`, err);
+                setPlayingFragment((prev) => (prev === startedFor ? null : prev));
+                setPlayingTime(0);
+            });
+        };
+
+        if (audio.readyState >= 2) {
+            startPlayback();
+        } else {
+            // Encourage the browser to actually pull bytes (preload="auto"
+            // is a hint, not a guarantee) and wait for the first
+            // playable-ish state. Timeout safety net so a never-firing
+            // event can't leave the button visually stuck.
+            try { audio.load(); } catch { /* ignore */ }
+            let done = false;
+            const finish = () => {
+                if (done) return;
+                done = true;
+                audio.removeEventListener('canplay', finish);
+                clearTimeout(timer);
+                startPlayback();
+            };
+            audio.addEventListener('canplay', finish, { once: true });
+            const timer = setTimeout(finish, 1500);
+        }
     };
 
     const setAudioRef = useCallback((fragmentId, audioElement) => {

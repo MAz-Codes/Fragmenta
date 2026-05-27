@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { Box } from '@mui/material';
 
 const DEFAULT_COLOR = '#279FBB';
@@ -36,14 +36,22 @@ export default function GenerationWaveform({
 }) {
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
-    const [width, setWidth] = useState(0);
+    // Start at a sensible non-zero width so the decode useEffect (gated on
+    // width > 0) runs on first mount instead of waiting for the async
+    // ResizeObserver callback — which is what was leaving the canvas blank.
+    const [width, setWidth] = useState(200);
     const [peaks, setPeaks] = useState(null);
 
-    // Responsive width via ResizeObserver — the row width changes when the
-    // sidebar collapses or the window is resized.
-    useEffect(() => {
+    // Measure synchronously on mount via useLayoutEffect so we never paint
+    // at the placeholder width; ResizeObserver then keeps it in sync with
+    // sidebar collapses / window resizes.
+    useLayoutEffect(() => {
         const el = containerRef.current;
         if (!el) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0) {
+            setWidth(Math.max(1, Math.floor(rect.width)));
+        }
         const ro = new ResizeObserver((entries) => {
             const w = Math.max(1, Math.floor(entries[0].contentRect.width));
             setWidth(w);
