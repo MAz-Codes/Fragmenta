@@ -1,7 +1,8 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     Paper, Box, Typography, List, ListItem, IconButton, Tooltip,
     Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button,
+    CircularProgress,
 } from '@mui/material';
 import {
     Square as StopIcon,
@@ -41,6 +42,64 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     // fragment) — re-entering load() would abort the first play() and
     // both attempts would fail with AbortError.
     const playInFlightRef = useRef(null);
+
+    // Background-preload of disk-hydrated fragments. On app reload the parent
+    // gives us fragment metadata + the backend URL (/api/fragments/...) but
+    // no in-memory Blob. The first Play click on those would HTTP-fetch the
+    // file synchronously through the <audio> element and freeze briefly. We
+    // pre-fetch them in parallel on mount and gate the UI behind a single
+    // loading screen — once everything is ready, plays + waveform decodes
+    // are instant because they work off blob: URLs.
+    const fetchingIdsRef = useRef(new Set());
+    const loadedRef = useRef({});           // { [id]: { blob, blobUrl } }
+    const [loadedTick, setLoadedTick] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+        fragments.forEach((frag) => {
+            if (frag.audioBlob) return;             // already in memory
+            if (loadedRef.current[frag.id]) return; // already preloaded
+            if (fetchingIdsRef.current.has(frag.id)) return;
+            if (!frag.audioUrl) return;
+            fetchingIdsRef.current.add(frag.id);
+            fetch(frag.audioUrl)
+                .then((r) => {
+                    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                    return r.blob();
+                })
+                .then((blob) => {
+                    if (cancelled) return;
+                    const blobUrl = URL.createObjectURL(blob);
+                    loadedRef.current[frag.id] = { blob, blobUrl };
+                    setLoadedTick((t) => t + 1);
+                })
+                .catch((err) => {
+                    console.warn(`Fragment preload failed (${frag.filename || frag.id}):`, err);
+                })
+                .finally(() => {
+                    fetchingIdsRef.current.delete(frag.id);
+                });
+        });
+        return () => { cancelled = true; };
+    }, [fragments]);
+
+    // Revoke all preload blob URLs on unmount so we don't leak.
+    useEffect(() => () => {
+        Object.values(loadedRef.current).forEach(({ blobUrl }) => {
+            try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
+        });
+    }, []);
+
+    // Per-fragment helpers that prefer the in-memory blob (immediate) over
+    // the HTTP URL. Defined after loadedTick is read so React knows to
+    // re-render when a new fragment finishes preloading.
+    void loadedTick;
+    const effectiveBlob = (frag) => frag.audioBlob || loadedRef.current[frag.id]?.blob || null;
+    const effectiveUrl = (frag) => loadedRef.current[frag.id]?.blobUrl || frag.audioUrl;
+    const isFragmentReady = (frag) => !!frag.audioBlob || !!loadedRef.current[frag.id];
+
+    const readyCount = fragments.filter(isFragmentReady).length;
+    const allReady = fragments.length === 0 || readyCount === fragments.length;
 
     // Strict single-play with first-click readiness gate.
     //
@@ -209,6 +268,19 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 <Box sx={generatedFragmentsWindowStyles.emptyState}>
                     <Typography variant="body2">No fragments generated yet</Typography>
                 </Box>
+            ) : !allReady ? (
+                <Box sx={{
+                    ...generatedFragmentsWindowStyles.emptyState,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 1.5,
+                }}>
+                    <CircularProgress size={28} />
+                    <Typography variant="body2">
+                        Loading fragments… {readyCount} / {fragments.length}
+                    </Typography>
+                </Box>
             ) : (
                 <List sx={generatedFragmentsWindowStyles.listRoot}>
                     {fragments.slice().reverse().map((fragment) => {
@@ -257,8 +329,8 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 </Box>
 
                                 <GenerationWaveform
-                                    blob={fragment.audioBlob}
-                                    audioUrl={fragment.audioUrl}
+                                    blob={effectiveBlob(fragment)}
+                                    audioUrl={effectiveUrl(fragment)}
                                     filename={fragment.filename || 'fragment.wav'}
                                     currentTime={isPlaying ? playingTime : 0}
                                     duration={fragment.duration || 0}
@@ -295,7 +367,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
 
                                 <audio
                                     ref={el => setAudioRef(fragment.id, el)}
-                                    src={fragment.audioUrl}
+                                    src={effectiveUrl(fragment)}
                                     preload="auto"
                                     onTimeUpdate={(e) => {
                                         if (playingFragment === fragment.id) {
