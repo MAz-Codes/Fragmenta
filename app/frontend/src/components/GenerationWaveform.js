@@ -60,18 +60,35 @@ export default function GenerationWaveform({
         return () => ro.disconnect();
     }, []);
 
-    // Decode the blob into mono peaks bucketed to one pair per output pixel.
-    // Runs once per (blob, width) pair — re-renders during playback don't
-    // touch this effect because currentTime isn't in the deps.
+    // Decode into mono peaks bucketed to one pair per output pixel.
+    //
+    // Audio source can be either a Blob (in-memory, fresh generations) or
+    // an HTTP audioUrl (fragments hydrated from disk on app load have
+    // audioBlob=null and audioUrl=/api/fragments/...). The blob path is
+    // preferred when available; otherwise fetch the URL.
+    //
+    // Runs once per (blob, audioUrl, width) — re-renders during playback
+    // don't touch this effect because currentTime isn't in the deps.
     useEffect(() => {
-        if (!blob || !width) return;
+        if (!width) return;
+        if (!blob && !audioUrl) return;
         let cancelled = false;
         (async () => {
             try {
-                const buf = await blob.arrayBuffer();
+                let buf;
+                if (blob) {
+                    buf = await blob.arrayBuffer();
+                } else {
+                    const r = await fetch(audioUrl);
+                    if (!r.ok) {
+                        console.warn(`GenerationWaveform fetch failed (${r.status}): ${audioUrl}`);
+                        return;
+                    }
+                    buf = await r.arrayBuffer();
+                }
                 if (cancelled) return;
                 if (!buf || buf.byteLength === 0) {
-                    console.warn('GenerationWaveform: empty blob');
+                    console.warn('GenerationWaveform: empty audio source');
                     return;
                 }
                 const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -99,12 +116,11 @@ export default function GenerationWaveform({
                 }
                 if (!cancelled) setPeaks(out);
             } catch (err) {
-                // Surface decode failures so they're not silently invisible.
                 console.warn('GenerationWaveform decode failed:', err);
             }
         })();
         return () => { cancelled = true; };
-    }, [blob, width]);
+    }, [blob, audioUrl, width]);
 
     // Draw — re-runs on every currentTime tick so the playhead moves.
     const draw = useCallback(() => {
@@ -159,24 +175,28 @@ export default function GenerationWaveform({
     useEffect(() => { draw(); }, [draw]);
 
     // Native drag-to-OS as a file. The DownloadURL mime type is a Chromium
-    // extension that the OS interprets as "this drag is a file the browser
-    // can serve from URL X with mime/name Y". The blob: URL works as the
-    // source because the page that holds the blob is still alive while the
-    // drop is being processed. Drag from the waveform → drop on desktop or
-    // a DAW track → file appears.
+    // extension the OS interprets as "this drag is a file the browser can
+    // serve from URL X with mime/name Y". Source is whichever URL we have:
+    // a blob: URL for in-memory fragments, or the backend /api/fragments/
+    // path for disk-hydrated ones. The OS needs an ABSOLUTE URL, so we
+    // resolve relative paths against window.location.origin.
+    const canDrag = !!(audioUrl || blob);
     const handleDragStart = (e) => {
-        if (!blob) return;
-        const url = audioUrl || URL.createObjectURL(blob);
-        e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${url}`);
+        if (!canDrag) return;
+        const raw = audioUrl || URL.createObjectURL(blob);
+        const absolute = (raw.startsWith('http') || raw.startsWith('blob:'))
+            ? raw
+            : `${window.location.origin}${raw.startsWith('/') ? '' : '/'}${raw}`;
+        e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${absolute}`);
         e.dataTransfer.effectAllowed = 'copy';
     };
 
     return (
         <Box
             ref={containerRef}
-            draggable={!!blob}
+            draggable={canDrag}
             onDragStart={handleDragStart}
-            title="Drag to save or drop into a DAW"
+            title={canDrag ? 'Drag to save or drop into a DAW' : undefined}
             sx={{
                 // Floor the width so the container is never zero — without
                 // this, a tight flex row could collapse it before
@@ -184,8 +204,8 @@ export default function GenerationWaveform({
                 flex: 1,
                 minWidth: 120,
                 height,
-                cursor: blob ? 'grab' : 'default',
-                '&:active': { cursor: blob ? 'grabbing' : 'default' },
+                cursor: canDrag ? 'grab' : 'default',
+                '&:active': { cursor: canDrag ? 'grabbing' : 'default' },
             }}
         >
             <canvas

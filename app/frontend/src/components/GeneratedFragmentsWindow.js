@@ -133,10 +133,13 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
             startPlayback();
         };
         audio.addEventListener('canplay', onReady, { once: true });
+        // 5 s — disk-hydrated fragments fetch from /api/fragments/...
+        // over HTTP, which can take a couple of seconds on first request.
+        // Blob-URL fragments (in-memory) hit canplay almost instantly.
         const timer = setTimeout(() => {
             audio.removeEventListener('canplay', onReady);
             if (!cancelled) startPlayback();
-        }, 1500);
+        }, 5000);
         playInFlightRef.current = {
             fragmentId: startedFor,
             cleanup: () => {
