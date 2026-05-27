@@ -148,19 +148,14 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 key={fragment.id}
                                 sx={generatedFragmentsWindowStyles.listItem}
                             >
-                                <Tooltip
-                                    title={isPlaying ? 'Stop' : 'Play'}
-                                    placement="top"
-                                    arrow
+                                <IconButton
+                                    size="small"
+                                    onClick={() => handlePlayPause(fragment)}
+                                    aria-label={isPlaying ? 'Stop' : 'Play'}
+                                    sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
                                 >
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => handlePlayPause(fragment)}
-                                        sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
-                                    >
-                                        {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
-                                    </IconButton>
-                                </Tooltip>
+                                    {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                                </IconButton>
 
                                 <Box sx={generatedFragmentsWindowStyles.fragmentMeta}>
                                     <Typography
