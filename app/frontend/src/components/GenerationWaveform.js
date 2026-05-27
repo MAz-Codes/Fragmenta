@@ -62,6 +62,10 @@ export default function GenerationWaveform({
             try {
                 const buf = await blob.arrayBuffer();
                 if (cancelled) return;
+                if (!buf || buf.byteLength === 0) {
+                    console.warn('GenerationWaveform: empty blob');
+                    return;
+                }
                 const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
                 const tmpCtx = Ctx
                     ? new Ctx(1, 44100, 44100)
@@ -86,7 +90,10 @@ export default function GenerationWaveform({
                     out[i * 2 + 1] = mx;
                 }
                 if (!cancelled) setPeaks(out);
-            } catch { /* swallow decode errors — just render empty */ }
+            } catch (err) {
+                // Surface decode failures so they're not silently invisible.
+                console.warn('GenerationWaveform decode failed:', err);
+            }
         })();
         return () => { cancelled = true; };
     }, [blob, width]);
@@ -101,6 +108,11 @@ export default function GenerationWaveform({
         const ctx = canvas.getContext('2d');
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, width, height);
+
+        // Always draw a faint center line so the row has a visible "this is
+        // a waveform area" cue even while decode is in flight or has failed.
+        ctx.fillStyle = `${color}33`;
+        ctx.fillRect(0, height / 2 - 0.5, width, 1);
 
         if (!peaks) return;
 
@@ -158,8 +170,11 @@ export default function GenerationWaveform({
             onDragStart={handleDragStart}
             title="Drag to save or drop into a DAW"
             sx={{
+                // Floor the width so the container is never zero — without
+                // this, a tight flex row could collapse it before
+                // ResizeObserver fires, leaving the canvas un-sized.
                 flex: 1,
-                minWidth: 0,
+                minWidth: 120,
                 height,
                 cursor: blob ? 'grab' : 'default',
                 '&:active': { cursor: blob ? 'grabbing' : 'default' },

@@ -61,8 +61,21 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
         });
 
         audio.currentTime = 0;
-        audio.play();
-        setPlayingFragment(fragment.id);
+        // play() returns a Promise that rejects on autoplay-policy blocks
+        // or when the source isn't loaded yet. Catching and reverting state
+        // means a swallowed failure no longer leaves the button stuck in
+        // the "playing" visual.
+        const startedFor = fragment.id;
+        Promise.resolve(audio.play()).then(() => {
+            // Source took an extra moment to load — kick it back to 0 once
+            // playback actually started so the playhead and audio agree.
+            if (audio.currentTime > 0.1) audio.currentTime = 0;
+        }).catch((err) => {
+            console.warn(`Fragment play failed (${fragment.filename || fragment.id}):`, err);
+            setPlayingFragment((prev) => (prev === startedFor ? null : prev));
+            setPlayingTime(0);
+        });
+        setPlayingFragment(startedFor);
         setPlayingTime(0);
     };
 
@@ -212,6 +225,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 <audio
                                     ref={el => setAudioRef(fragment.id, el)}
                                     src={fragment.audioUrl}
+                                    preload="auto"
                                     onTimeUpdate={(e) => {
                                         if (playingFragment === fragment.id) {
                                             setPlayingTime(e.target.currentTime);
