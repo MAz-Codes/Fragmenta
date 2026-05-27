@@ -2443,7 +2443,7 @@ export const performancePanelStyles = {
     // with one of two intents: 'menu' (resting color text.secondary, hover
     // text.primary — used for buttons that open menus) or 'danger' (resting
     // text.disabled, hover error.main — used for deletes). Stateful color-bound
-    // toggles (takeIconBtn, transportBtn, loopBtn, mute/solo) stay parameterized
+    // toggles (fragmentIconBtn, transportBtn, loopBtn, mute/solo) stay parameterized
     // — they're not just icon buttons.
     compactIconBtn: (size = 'md', variant = 'menu') => {
         const sz = { xs: 18, sm: 20, md: 22, lg: 26 }[size];
@@ -2942,18 +2942,18 @@ export const performanceChannelStyles = {
         borderColor: theme.palette.divider,
         overflow: 'hidden',
     }),
-    // Channel take history strip — persistent per-channel rolling list of
-    // the last N takes (default 50). Always visible (empty-state included)
-    // so the user knows it's there. Newest at top; scrolls vertically when
-    // the list grows past ~5 visible rows.
-    takeHistoryPanel: {
+    // Channel fragment history strip — persistent per-channel rolling list
+    // of the last N fragments (default 50). Always visible (empty-state
+    // included) so the user knows it's there. Oldest at top, newest at the
+    // bottom; scrolls vertically when the list grows past ~4 visible rows.
+    fragmentHistoryPanel: {
         border: '1px solid',
         borderColor: 'divider',
         borderRadius: 1.25,
         overflow: 'hidden',
         bgcolor: 'background.paper',
     },
-    takeHistoryHeader: {
+    fragmentHistoryHeader: {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -2963,11 +2963,11 @@ export const performanceChannelStyles = {
         borderBottom: '1px solid',
         borderColor: 'divider',
     },
-    takeHistoryHeaderText: {
+    fragmentHistoryHeaderText: {
         ...perfTokens.caps,
         color: 'text.secondary',
     },
-    takeHistoryHeaderBtn: {
+    fragmentHistoryHeaderBtn: {
         width: 18,
         height: 18,
         color: 'text.disabled',
@@ -2976,26 +2976,26 @@ export const performanceChannelStyles = {
             bgcolor: 'action.hover',
         },
     },
-    // Each take row is 28px tall (minHeight 24 + 2+2 padding); 4 rows +
+    // Each fragment row is 28px tall (minHeight 24 + 2+2 padding); 4 rows +
     // 3 interior 1px borders = ~115px. Fix the panel body to that height
-    // so the channel strip never resizes as takes accumulate — past 4
-    // takes the strip scrolls internally instead of growing.
-    takeHistoryList: {
+    // so the channel strip never resizes as fragments accumulate — past 4
+    // fragments the strip scrolls internally instead of growing.
+    fragmentHistoryList: {
         height: 4 * 28 + 3,
         overflowY: 'auto',
     },
-    takeHistoryEmpty: {
+    fragmentHistoryEmpty: {
         ...perfTokens.caps,
         textAlign: 'center',
         color: 'text.disabled',
         // Match the 4-row list height so the panel doesn't resize when
-        // takes appear / disappear.
+        // fragments appear / disappear.
         height: 4 * 28 + 3,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    takeRow: (color, isCommitted, isAuditioning) => ({
+    fragmentRow: (color, isCommitted, isAuditioning) => ({
         display: 'flex',
         alignItems: 'center',
         gap: 0.25,
@@ -3017,12 +3017,13 @@ export const performanceChannelStyles = {
         },
         transition: 'background-color 120ms',
     }),
-    // takeIconBtn — used by audition, star, and commit buttons in the take
-    // history rows. The optional `filled` flag flips the active state from a
-    // ghost (color + transparent bg) to a chip (white glyph on channel-color
-    // bg + 1px ring). The commit button uses `filled` so the "loaded" take
-    // reads as a definitively selected pill, not just a tinted icon.
-    takeIconBtn: (color, active, filled = false) => ({
+    // fragmentIconBtn — used by audition, star, and commit buttons in the
+    // fragment history rows. The optional `filled` flag flips the active
+    // state from a ghost (color + transparent bg) to a chip (white glyph on
+    // channel-color bg + 1px ring). The commit button uses `filled` so the
+    // "loaded" fragment reads as a definitively selected pill, not just a
+    // tinted icon.
+    fragmentIconBtn: (color, active, filled = false) => ({
         width: 20,
         height: 20,
         borderRadius: 0.75,
@@ -3036,14 +3037,14 @@ export const performanceChannelStyles = {
             ? { color: '#0c1018', backgroundColor: color, opacity: 1 }
             : { color, opacity: 0.85 },
     }),
-    takeDeleteBtn: {
+    fragmentDeleteBtn: {
         width: 20,
         height: 20,
         borderRadius: 0.75,
         color: 'text.disabled',
         '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
     },
-    takeMeta: {
+    fragmentMeta: {
         flex: 1,
         minWidth: 0,
         display: 'flex',
@@ -3051,13 +3052,13 @@ export const performanceChannelStyles = {
         gap: 0.5,
         overflow: 'hidden',
     },
-    takeOrdinal: {
+    fragmentOrdinal: {
         ...perfTokens.num,
         fontWeight: perfTokens.weight.bold,
         color: 'text.primary',
         flexShrink: 0,
     },
-    takeDuration: {
+    fragmentDuration: {
         ...perfTokens.num,
         color: 'text.disabled',
         whiteSpace: 'nowrap',

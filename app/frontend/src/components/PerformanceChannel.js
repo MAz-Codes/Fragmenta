@@ -22,13 +22,13 @@ import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import {
     channelScope,
-    putTakeBlob,
-    getTakeBlob,
-    deleteTakeBlob,
-    clearScope as clearTakeScope,
-} from '../utils/takeStorage';
+    putFragmentBlob,
+    getFragmentBlob,
+    deleteFragmentBlob,
+    clearScope as clearFragmentScope,
+} from '../utils/fragmentStorage';
 import api from '../api';
-import ChannelTakeHistory from './ChannelTakeHistory';
+import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
     '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
@@ -68,8 +68,8 @@ const PAN_CENTER_SNAP = 0.06;
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
 const BATCH_OPTIONS = [1, 2, 3, 4];
-// Per-channel rolling take history cap. Starred takes survive eviction.
-const TAKE_CAP = 200;
+// Per-channel rolling fragment history cap. Starred fragments survive eviction.
+const FRAGMENT_CAP = 200;
 
 export default function PerformanceChannel({
     index,
@@ -89,7 +89,7 @@ export default function PerformanceChannel({
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
-    // IDB scope key for this channel's take blobs. Stable across the
+    // IDB scope key for this channel's fragment blobs. Stable across the
     // component's lifetime since the channel index doesn't change.
     const scope = channelScope(index);
 
@@ -123,16 +123,16 @@ export default function PerformanceChannel({
         return merged;
     });
 
-    // Per-channel rolling take history. Each take:
+    // Per-channel rolling fragment history. Each fragment:
     //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
-    // Newest first. Capped at TAKE_CAP via FIFO eviction with star priority
-    // (starred takes survive until everything is starred, then oldest go
-    // first regardless). `nextTakeNumberRef` provides a stable T# even
-    // after deletes — so T1 stays T1.
-    const [takes, setTakes] = useState([]);
-    const [auditioningTakeId, setAuditioningTakeId] = useState(null);
-    const [committedTakeId, setCommittedTakeId] = useState(null);
-    const nextTakeNumberRef = useRef(1);
+    // Oldest-first. Capped at FRAGMENT_CAP via FIFO eviction with star
+    // priority (starred fragments survive until everything is starred, then
+    // oldest go first regardless). `nextFragmentNumberRef` provides a stable
+    // F# even after deletes — so F1 stays F1.
+    const [fragments, setFragments] = useState([]);
+    const [auditioningFragmentId, setAuditioningFragmentId] = useState(null);
+    const [committedFragmentId, setCommittedFragmentId] = useState(null);
+    const nextFragmentNumberRef = useRef(1);
     const cueSupported = useMemo(() => isCueSupported(), []);
 
     // Stop any active cue audition when the channel unmounts.
@@ -168,34 +168,43 @@ export default function PerformanceChannel({
 
     // Mirror form state up to the panel so it can persist the session. Skip the
     // first render so we don't re-write what we just loaded from localStorage.
-    // Takes mirror as metadata only — the Blob bodies live in IndexedDB and
-    // get rehydrated on mount by the effect below.
+    // Fragments mirror as metadata only — the Blob bodies live in IndexedDB
+    // and get rehydrated on mount by the effect below.
     const initialReportSkippedRef = useRef(false);
     useEffect(() => {
         if (!initialReportSkippedRef.current) {
             initialReportSkippedRef.current = true;
             return;
         }
-        const takesMeta = takes.map(({ blob, audioUrl, ...rest }) => rest);
+        const fragmentsMeta = fragments.map(({ blob, audioUrl, ...rest }) => rest);
         onFormStateChange?.(index, {
             prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
-            takes: takesMeta,
-            committedTakeId,
+            fragments: fragmentsMeta,
+            committedFragmentId,
         });
     }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
-        takes, committedTakeId, index, onFormStateChange]);
+        fragments, committedFragmentId, index, onFormStateChange]);
 
-    // Hydrate takes on mount from the session metadata + IDB blobs. Runs once,
-    // tolerates missing blobs (skips the entry), and rewinds the take numbering
-    // counter so newly generated takes don't collide with the restored ones.
+    // Hydrate fragments on mount from the session metadata + IDB blobs. Runs
+    // once, tolerates missing blobs (skips the entry), and rewinds the
+    // fragment numbering counter so newly generated fragments don't collide
+    // with the restored ones.
     const hydrationRef = useRef(false);
     useEffect(() => {
         if (hydrationRef.current) return;
         hydrationRef.current = true;
-        const meta = initialFormState?.takes || [];
-        const persistedCommittedId = initialFormState?.committedTakeId || null;
+        // Backward compat: pre-rename saves used `takes`/`committedTakeId`.
+        // The session loader migrates them into `fragments`/`committedFragmentId`,
+        // but we also fall back here defensively in case `initialFormState`
+        // came from somewhere unmigrated.
+        const meta = initialFormState?.fragments
+            ?? initialFormState?.takes
+            ?? [];
+        const persistedCommittedId = initialFormState?.committedFragmentId
+            ?? initialFormState?.committedTakeId
+            ?? null;
         if (meta.length === 0) {
-            if (persistedCommittedId) setCommittedTakeId(null);
+            if (persistedCommittedId) setCommittedFragmentId(null);
             return;
         }
 
@@ -204,7 +213,7 @@ export default function PerformanceChannel({
             const hydrated = [];
             for (const m of meta) {
                 try {
-                    const blob = await getTakeBlob(scope, m.id);
+                    const blob = await getFragmentBlob(scope, m.id);
                     if (cancelled) {
                         hydrated.forEach(t => URL.revokeObjectURL(t.audioUrl));
                         return;
@@ -224,10 +233,10 @@ export default function PerformanceChannel({
                 return;
             }
             const maxNumber = hydrated.reduce((a, t) => Math.max(a, t.number || 0), 0);
-            nextTakeNumberRef.current = maxNumber + 1;
-            setTakes(hydrated);
+            nextFragmentNumberRef.current = maxNumber + 1;
+            setFragments(hydrated);
             if (persistedCommittedId && hydrated.some(t => t.id === persistedCommittedId)) {
-                setCommittedTakeId(persistedCommittedId);
+                setCommittedFragmentId(persistedCommittedId);
                 setLoaded(true);
                 onStateChange?.(index, { loaded: true });
             }
@@ -238,7 +247,7 @@ export default function PerformanceChannel({
     }, []);
 
     // When the audio strip becomes available AND we have a hydrated committed
-    // take, load that take's blob into the strip so the channel comes back
+    // fragment, load that fragment's blob into the strip so the channel comes back
     // ready to play after reload. Declared here as a ref so the effect that
     // actually does the work (after drawWave is defined below) can guard
     // against multiple loads.
@@ -278,22 +287,23 @@ export default function PerformanceChannel({
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
-    // Auto-load the persisted committed take into the strip once Tone.js is
-    // ready. Runs at most once per mount; the ref guards against re-trigger
-    // when the user later commits a different take (handled by handleCommitTake).
+    // Auto-load the persisted committed fragment into the strip once Tone.js
+    // is ready. Runs at most once per mount; the ref guards against re-trigger
+    // when the user later commits a different fragment (handled by
+    // handleCommitFragment).
     useEffect(() => {
         if (autoLoadDoneRef.current) return;
-        if (!strip || !committedTakeId) return;
-        const take = takes.find(t => t.id === committedTakeId);
-        if (!take) return;
+        if (!strip || !committedFragmentId) return;
+        const fragment = fragments.find(f => f.id === committedFragmentId);
+        if (!fragment) return;
         autoLoadDoneRef.current = true;
-        strip.loadBlob(take.blob).then(() => {
+        strip.loadBlob(fragment.blob).then(() => {
             requestAnimationFrame(drawWave);
         }).catch(err => {
             console.warn(`Channel ${index + 1} auto-load failed:`, err);
             autoLoadDoneRef.current = false;
         });
-    }, [strip, committedTakeId, takes, drawWave, index]);
+    }, [strip, committedFragmentId, fragments, drawWave, index]);
 
     // One-shot: push restored knob/loop values into the audio strip when it
     // first becomes available, so the persisted session matches what's heard.
@@ -337,9 +347,9 @@ export default function PerformanceChannel({
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
         // Stop any in-flight cue audition so the old preview doesn't keep
-        // playing while we generate the new take.
+        // playing while we generate the new fragment.
         stopCue();
-        setAuditioningTakeId(null);
+        setAuditioningFragmentId(null);
 
         const promptSnap = prompt.trim();
 
@@ -354,13 +364,14 @@ export default function PerformanceChannel({
                 // Phase 7: bars-mode + channel-looping ⇒ ask the backend
                 // to wrap-inpaint the seam so the clip loops seamlessly.
                 ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
-                // Streamed handler — fires per take as the backend returns
-                // each blob. Take #0 auto-loads into the strip so the user
-                // can start auditioning while takes #1..N are still rendering.
+                // Streamed handler — fires per fragment as the backend
+                // returns each blob. Fragment #0 auto-loads into the strip
+                // so the user can start auditioning while fragments #1..N
+                // are still rendering.
                 onBlob: async (blob, i) => {
-                    const takeNumber = nextTakeNumberRef.current;
-                    nextTakeNumberRef.current = takeNumber + 1;
-                    const take = {
+                    const fragmentNumber = nextFragmentNumberRef.current;
+                    nextFragmentNumberRef.current = fragmentNumber + 1;
+                    const fragment = {
                         id: `${Date.now()}_${i}`,
                         blob,
                         audioUrl: URL.createObjectURL(blob),
@@ -368,28 +379,28 @@ export default function PerformanceChannel({
                         duration: effectiveDuration,
                         createdAt: Date.now(),
                         starred: false,
-                        number: takeNumber,
+                        number: fragmentNumber,
                     };
 
                     // Persist the blob to IndexedDB so it survives reload.
-                    // Fire-and-forget — the in-memory take is usable now;
-                    // a failed write just means the take is lost on reload.
-                    putTakeBlob(scope, take.id, blob).catch((err) => {
-                        console.warn(`Channel ${index + 1} take persist failed:`, err);
+                    // Fire-and-forget — the in-memory fragment is usable now;
+                    // a failed write just means the fragment is lost on reload.
+                    putFragmentBlob(scope, fragment.id, blob).catch((err) => {
+                        console.warn(`Channel ${index + 1} fragment persist failed:`, err);
                     });
 
-                    // Append to history with TAKE_CAP eviction. Order is
-                    // chronological: oldest at the top, newest at the bottom.
-                    // Starred takes survive until everything is starred,
-                    // then oldest go first regardless.
-                    setTakes((prev) => {
-                        const combined = [...prev, take];
-                        if (combined.length <= TAKE_CAP) return combined;
+                    // Append to history with FRAGMENT_CAP eviction. Order
+                    // is chronological: oldest at the top, newest at the
+                    // bottom. Starred fragments survive until everything
+                    // is starred, then oldest go first regardless.
+                    setFragments((prev) => {
+                        const combined = [...prev, fragment];
+                        if (combined.length <= FRAGMENT_CAP) return combined;
                         const trimmed = combined.slice();
-                        while (trimmed.length > TAKE_CAP) {
+                        while (trimmed.length > FRAGMENT_CAP) {
                             let idx = -1;
                             // Scan from the start (oldest first) for the
-                            // first unstarred take to drop.
+                            // first unstarred fragment to drop.
                             for (let j = 0; j < trimmed.length; j++) {
                                 if (!trimmed[j].starred) { idx = j; break; }
                             }
@@ -400,7 +411,7 @@ export default function PerformanceChannel({
                             }
                             // Drop the evicted blob from IDB too, otherwise
                             // it stays around as orphaned storage.
-                            deleteTakeBlob(scope, dying.id).catch(() => { /* ignore */ });
+                            deleteFragmentBlob(scope, dying.id).catch(() => { /* ignore */ });
                             trimmed.splice(idx, 1);
                         }
                         return trimmed;
@@ -408,7 +419,7 @@ export default function PerformanceChannel({
 
                     if (i === 0) {
                         await strip.loadBlob(blob);
-                        setCommittedTakeId(take.id);
+                        setCommittedFragmentId(fragment.id);
                         setLoaded(true);
                         onStateChange?.(index, { loaded: true });
                         requestAnimationFrame(drawWave);
@@ -422,40 +433,41 @@ export default function PerformanceChannel({
         }
     };
 
-    // Take history actions — toggle audition through cue, commit a take to
-    // the channel buffer, star/unstar, delete one, or clear the whole list.
-    const handleAuditionTake = async (takeId) => {
-        const take = takes.find((t) => t.id === takeId);
-        if (!take) return;
-        if (auditioningTakeId === takeId) {
+    // Fragment history actions — toggle audition through cue, commit a
+    // fragment to the channel buffer, star/unstar, delete one, or clear
+    // the whole list.
+    const handleAuditionFragment = async (fragmentId) => {
+        const fragment = fragments.find((f) => f.id === fragmentId);
+        if (!fragment) return;
+        if (auditioningFragmentId === fragmentId) {
             stopCue();
-            setAuditioningTakeId(null);
+            setAuditioningFragmentId(null);
             return;
         }
-        setAuditioningTakeId(takeId);
+        setAuditioningFragmentId(fragmentId);
         try {
-            await playCueBlob(take.blob, {
-                onEnded: () => setAuditioningTakeId((prev) => (prev === takeId ? null : prev)),
+            await playCueBlob(fragment.blob, {
+                onEnded: () => setAuditioningFragmentId((prev) => (prev === fragmentId ? null : prev)),
             });
         } catch (err) {
             console.warn(`Channel ${index + 1} audition failed:`, err);
-            setAuditioningTakeId(null);
+            setAuditioningFragmentId(null);
         }
     };
 
-    const handleCommitTake = async (takeId) => {
-        const take = takes.find((t) => t.id === takeId);
-        if (!take || committedTakeId === takeId) return;
+    const handleCommitFragment = async (fragmentId) => {
+        const fragment = fragments.find((f) => f.id === fragmentId);
+        if (!fragment || committedFragmentId === fragmentId) return;
         // Stop the live channel before swapping the buffer so we don't get a
         // glitch in the middle of a loop iteration.
         try { strip.stop(); } catch { /* not playing */ }
         onStateChange?.(index, { playing: false });
-        await strip.loadBlob(take.blob);
-        setCommittedTakeId(takeId);
+        await strip.loadBlob(fragment.blob);
+        setCommittedFragmentId(fragmentId);
         // Mark loaded so the play button enables. Required for the case where
-        // the channel had hydrated takes but no committedTakeId (preset load,
-        // or any flow where the first commit is via this code path rather
-        // than the generate flow that sets loaded itself).
+        // the channel had hydrated fragments but no committedFragmentId
+        // (preset load, or any flow where the first commit is via this code
+        // path rather than the generate flow that sets loaded itself).
         if (!loaded) {
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
@@ -463,12 +475,12 @@ export default function PerformanceChannel({
         requestAnimationFrame(drawWave);
     };
 
-    // Drag-and-drop: a take row from this channel's history can be dropped
-    // onto the waveform monitor to load it (same effect as the row's commit
-    // ✓ button). The MIME type is channel-scoped, so a row from channel 1
-    // won't even highlight channel 2's waveform — the browser filters at
-    // dragOver level via dataTransfer.types matching.
-    const dragMime = `application/x-fragmenta-take-ch${index}`;
+    // Drag-and-drop: a fragment row from this channel's history can be
+    // dropped onto the waveform monitor to load it (same effect as the row's
+    // commit ✓ button). The MIME type is channel-scoped, so a row from
+    // channel 1 won't even highlight channel 2's waveform — the browser
+    // filters at dragOver level via dataTransfer.types matching.
+    const dragMime = `application/x-fragmenta-fragment-ch${index}`;
     const [dropActive, setDropActive] = useState(false);
     // Counter pattern — dragenter/leave also fire when the cursor crosses
     // into child elements (canvas, overlay). Without the counter, dropActive
@@ -494,43 +506,43 @@ export default function PerformanceChannel({
         e.preventDefault();
         dragCounterRef.current = 0;
         setDropActive(false);
-        const takeId = e.dataTransfer.getData(dragMime);
-        if (takeId) handleCommitTake(takeId);
+        const fragmentId = e.dataTransfer.getData(dragMime);
+        if (fragmentId) handleCommitFragment(fragmentId);
     };
 
-    const handleToggleStar = (takeId) => {
-        setTakes((prev) => prev.map((t) =>
-            t.id === takeId ? { ...t, starred: !t.starred } : t,
+    const handleToggleStar = (fragmentId) => {
+        setFragments((prev) => prev.map((f) =>
+            f.id === fragmentId ? { ...f, starred: !f.starred } : f,
         ));
     };
 
-    const handleDeleteTake = (takeId) => {
-        const target = takes.find((t) => t.id === takeId);
+    const handleDeleteFragment = (fragmentId) => {
+        const target = fragments.find((f) => f.id === fragmentId);
         if (target?.audioUrl?.startsWith('blob:')) {
             try { URL.revokeObjectURL(target.audioUrl); } catch { /* ignore */ }
         }
-        deleteTakeBlob(scope, takeId).catch(() => { /* ignore */ });
-        setTakes((prev) => prev.filter((t) => t.id !== takeId));
-        if (committedTakeId === takeId) setCommittedTakeId(null);
-        if (auditioningTakeId === takeId) {
+        deleteFragmentBlob(scope, fragmentId).catch(() => { /* ignore */ });
+        setFragments((prev) => prev.filter((f) => f.id !== fragmentId));
+        if (committedFragmentId === fragmentId) setCommittedFragmentId(null);
+        if (auditioningFragmentId === fragmentId) {
             stopCue();
-            setAuditioningTakeId(null);
+            setAuditioningFragmentId(null);
         }
     };
 
-    const handleClearTakes = () => {
+    const handleClearFragments = () => {
         // Stop any in-flight audition and revoke every blob URL before
         // dropping references — otherwise the URLs leak until reload.
         stopCue();
-        setAuditioningTakeId(null);
-        takes.forEach((t) => {
-            if (t.audioUrl?.startsWith('blob:')) {
-                try { URL.revokeObjectURL(t.audioUrl); } catch { /* ignore */ }
+        setAuditioningFragmentId(null);
+        fragments.forEach((f) => {
+            if (f.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
             }
         });
-        clearTakeScope(scope).catch(() => { /* ignore */ });
-        setTakes([]);
-        setCommittedTakeId(null);
+        clearFragmentScope(scope).catch(() => { /* ignore */ });
+        setFragments([]);
+        setCommittedFragmentId(null);
     };
 
     const handlePlay = () => {
@@ -779,12 +791,12 @@ export default function PerformanceChannel({
                         </Tooltip>
                     </MidiMappable>
 
-                    {/* Takes selector — sits right of Generate so the row
+                    {/* Batch selector — sits right of Generate so the row
                         reads "Generate × 4" (action then modifier). Width
                         matches the Sec/Bars toggle above so the right column
                         reads as a uniform stack of modifiers. */}
                     <Tooltip
-                        title="Number of candidates to generate. Each take lands in the channel's take history."
+                        title="Number of candidates to generate. Each fragment lands in the channel's fragment history."
                         placement="top"
                         enterDelay={500}
                     >
@@ -838,22 +850,22 @@ export default function PerformanceChannel({
                 )}
             </Box>
 
-            {/* Per-channel rolling take history. Always rendered (empty
+            {/* Per-channel rolling fragment history. Always rendered (empty
                 state included). Star/keep, delete, audition, load — all
-                inline per row. Capped at TAKE_CAP via FIFO with star
+                inline per row. Capped at FRAGMENT_CAP via FIFO with star
                 priority. */}
-            <ChannelTakeHistory
-                takes={takes}
+            <ChannelFragmentHistory
+                fragments={fragments}
                 color={color}
                 channelIndex={index}
-                auditioningId={auditioningTakeId}
-                committedId={committedTakeId}
-                maxTakes={TAKE_CAP}
-                onAudition={handleAuditionTake}
-                onCommit={handleCommitTake}
+                auditioningId={auditioningFragmentId}
+                committedId={committedFragmentId}
+                maxFragments={FRAGMENT_CAP}
+                onAudition={handleAuditionFragment}
+                onCommit={handleCommitFragment}
                 onToggleStar={handleToggleStar}
-                onDelete={handleDeleteTake}
-                onClearAll={handleClearTakes}
+                onDelete={handleDeleteFragment}
+                onClearAll={handleClearFragments}
             />
 
             <Box sx={{ px: 1, py: 1 }}>

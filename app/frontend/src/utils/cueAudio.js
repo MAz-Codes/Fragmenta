@@ -135,7 +135,7 @@ export async function playBlob(blob, { onEnded } = {}) {
     src.buffer = buf;
     // Per-source fade gain so stopCue() can ramp out instead of hard-cut
     // (a hard cut at non-zero samples is what produces the click /
-    // crackle when switching takes rapidly). The fade graph is:
+    // crackle when switching fragments rapidly). The fade graph is:
     //   source → fadeGain → cueSplitter → cueMerger → destination
     const fadeGain = c.createGain();
     fadeGain.gain.value = 1;

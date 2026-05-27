@@ -52,8 +52,8 @@ import {
     channelScope,
     presetChannelScope,
     copyScope,
-    clearScope as clearTakeScope,
-} from '../utils/takeStorage';
+    clearScope as clearFragmentScope,
+} from '../utils/fragmentStorage';
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
@@ -302,11 +302,11 @@ function PerformancePanelInner({
         }
         clearPerformanceSession();
         clearMidiConfig();
-        // Drop every channel's take blobs from IDB so a fresh start is
+        // Drop every channel's fragment blobs from IDB so a fresh start is
         // actually fresh. Presets keep their own scopes and survive.
         await Promise.all(
             Array.from({ length: CHANNEL_COUNT }, (_, i) =>
-                clearTakeScope(channelScope(i)).catch(() => { /* ignore */ })
+                clearFragmentScope(channelScope(i)).catch(() => { /* ignore */ })
             )
         );
         closePresetMenu();
@@ -318,7 +318,7 @@ function PerformancePanelInner({
         if (!name) return;
         savePreset(name, session);
         // Copy each channel's session-scope blobs into the preset-scope so
-        // the preset's takes survive overwrites of the live session. Done
+        // the preset's fragments survive overwrites of the live session. Done
         // after the metadata save so a quota failure here still leaves a
         // recoverable (if blob-less) preset entry.
         await Promise.all(
@@ -326,7 +326,7 @@ function PerformancePanelInner({
                 const dst = presetChannelScope(name, i);
                 // Replace, don't merge — a re-save of the same preset name
                 // should reflect the current session exactly.
-                await clearTakeScope(dst).catch(() => { /* ignore */ });
+                await clearFragmentScope(dst).catch(() => { /* ignore */ });
                 await copyScope(channelScope(i), dst).catch(() => { /* ignore */ });
             })
         );
@@ -342,7 +342,7 @@ function PerformancePanelInner({
         await Promise.all(
             Array.from({ length: CHANNEL_COUNT }, async (_, i) => {
                 const dst = channelScope(i);
-                await clearTakeScope(dst).catch(() => { /* ignore */ });
+                await clearFragmentScope(dst).catch(() => { /* ignore */ });
                 await copyScope(presetChannelScope(name, i), dst).catch(() => { /* ignore */ });
             })
         );
@@ -357,7 +357,7 @@ function PerformancePanelInner({
         deletePreset(name);
         await Promise.all(
             Array.from({ length: CHANNEL_COUNT }, (_, i) =>
-                clearTakeScope(presetChannelScope(name, i)).catch(() => { /* ignore */ })
+                clearFragmentScope(presetChannelScope(name, i)).catch(() => { /* ignore */ })
             )
         );
         refreshPresetNames();
@@ -698,7 +698,7 @@ function PerformancePanelInner({
         for (let i = 0; i < count; i++) {
             // Sequential rather than parallel — the backend serves one
             // generation at a time anyway, and parallelizing would just
-            // queue them server-side with no time saved. Each take gets a
+            // queue them server-side with no time saved. Each fragment gets a
             // distinct seed so the batch produces actual variations rather
             // than the same audio repeated.
             const seed = (baseSeed + i * 0x9e3779b1) >>> 0;
@@ -725,7 +725,7 @@ function PerformancePanelInner({
                 ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
-            // Stream: hand each blob to the caller as it arrives so the take
+            // Stream: hand each blob to the caller as it arrives so the fragment
             // can land in the channel's history (and the first one can
             // auto-load) without waiting for the rest of the batch. Awaited
             // so the callback's async work (blob load, setState) finishes
@@ -1207,13 +1207,13 @@ function PerformancePanelInner({
 
                     <Divider />
 
-                    {/* Danger zone — armed-to-confirm wipes session config, takes,
+                    {/* Danger zone — armed-to-confirm wipes session config, fragments,
                         and MIDI mappings. Auto-disarms after 3 s. */}
                     <Box sx={{ px: 0.75, py: 0.75 }}>
                         <Tooltip
                             title={restoreArmed
-                                ? 'Click again within 3s to confirm — clears session, takes, and MIDI mappings'
-                                : 'Reset all panel settings, clear takes, and clear MIDI mappings'}
+                                ? 'Click again within 3s to confirm — clears session, fragments, and MIDI mappings'
+                                : 'Reset all panel settings, clear fragments, and clear MIDI mappings'}
                             placement="left"
                             arrow
                         >

@@ -73,14 +73,14 @@ const CHANNEL_DEFAULT = {
     soloed: false,
     batchSize: 1,
     knobs: { gain: -6, pan: 0, filter: 0, delay: 0, reverb: 0 },
-    // Take history metadata (id, prompt, duration, createdAt, starred,
+    // Fragment history metadata (id, prompt, duration, createdAt, starred,
     // number). The Blob audio bodies live in IndexedDB under the
-    // `session-ch{N}` scope — see utils/takeStorage.js. Cleared on Fresh
-    // Start and overwritten on preset load.
-    takes: [],
-    // Which take was loaded into the channel strip last; restored on reload
-    // so the channel comes back ready to play instead of empty.
-    committedTakeId: null,
+    // `session-ch{N}` scope — see utils/fragmentStorage.js. Cleared on
+    // Fresh Start and overwritten on preset load.
+    fragments: [],
+    // Which fragment was loaded into the channel strip last; restored on
+    // reload so the channel comes back ready to play instead of empty.
+    committedFragmentId: null,
 };
 
 function defaultSession(channelCount) {
@@ -124,11 +124,21 @@ function loadSession(channelCount) {
         // Merge against defaults so older saves don't crash on missing fields.
         // Length shifts (channel count change between releases) are absorbed
         // by always producing exactly `channelCount` channels.
-        const channels = Array.from({ length: channelCount }, (_, i) => ({
-            ...CHANNEL_DEFAULT,
-            ...(parsed.channels?.[i] || {}),
-            knobs: { ...CHANNEL_DEFAULT.knobs, ...(parsed.channels?.[i]?.knobs || {}) },
-        }));
+        //
+        // Migration: pre-rename saves used `takes` / `committedTakeId`. Copy
+        // those into the new `fragments` / `committedFragmentId` slots when
+        // present, so users' existing generations carry over after the
+        // "Takes → Fragments" rename. Old fields are left in place but unused.
+        const channels = Array.from({ length: channelCount }, (_, i) => {
+            const ch = parsed.channels?.[i] || {};
+            return {
+                ...CHANNEL_DEFAULT,
+                ...ch,
+                fragments: ch.fragments ?? ch.takes ?? [],
+                committedFragmentId: ch.committedFragmentId ?? ch.committedTakeId ?? null,
+                knobs: { ...CHANNEL_DEFAULT.knobs, ...(ch.knobs || {}) },
+            };
+        });
         return { ...fallback, ...parsed, channels };
     } catch {
         return fallback;

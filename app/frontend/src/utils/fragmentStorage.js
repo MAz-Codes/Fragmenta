@@ -1,12 +1,17 @@
-// IndexedDB store for per-channel take audio blobs. Takes are too large for
-// localStorage (1–3 MB each, up to 200 per channel) so we keep the small
-// metadata in the localStorage session and only the raw Blob here.
+// IndexedDB store for per-channel fragment audio blobs. Fragments are too
+// large for localStorage (1–3 MB each, up to 200 per channel) so we keep
+// the small metadata in the localStorage session and only the raw Blob here.
 //
 // Records are stored under a `scope` + `id` pair. Two scope families exist:
 //   • `session-ch{N}`        — live session blobs for channel N (0..3).
 //   • `preset-{name}-ch{N}`  — frozen snapshot owned by a named preset.
 // Save/load/delete preset operations copy or clear by scope; reload reads
 // the `session-ch{N}` scope to rehydrate channels.
+//
+// NOTE: The IndexedDB database name stays `fragmenta-takes` for backwards
+// compatibility — renaming would orphan everything users have generated.
+// The on-disk key/scope strings don't contain "take" anywhere; only this
+// module's exported function names and the database name carry the legacy.
 
 const DB_NAME = 'fragmenta-takes';
 const DB_VERSION = 1;
@@ -49,7 +54,7 @@ function withStore(mode, fn) {
     }));
 }
 
-export async function putTakeBlob(scope, id, blob) {
+export async function putFragmentBlob(scope, id, blob) {
     return withStore('readwrite', (store) => new Promise((resolve, reject) => {
         const req = store.put({ key: compoundKey(scope, id), scope, id, blob });
         req.onsuccess = () => resolve();
@@ -57,7 +62,7 @@ export async function putTakeBlob(scope, id, blob) {
     }));
 }
 
-export async function getTakeBlob(scope, id) {
+export async function getFragmentBlob(scope, id) {
     return withStore('readonly', (store) => new Promise((resolve, reject) => {
         const req = store.get(compoundKey(scope, id));
         req.onsuccess = () => resolve(req.result?.blob || null);
@@ -65,7 +70,7 @@ export async function getTakeBlob(scope, id) {
     }));
 }
 
-export async function deleteTakeBlob(scope, id) {
+export async function deleteFragmentBlob(scope, id) {
     return withStore('readwrite', (store) => new Promise((resolve, reject) => {
         const req = store.delete(compoundKey(scope, id));
         req.onsuccess = () => resolve();
@@ -92,7 +97,7 @@ export async function clearScope(scope) {
     });
 }
 
-// Copy every blob from one scope to another, preserving the per-take id.
+// Copy every blob from one scope to another, preserving the per-fragment id.
 // Existing records at the destination scope are not cleared first — call
 // clearScope(toScope) beforehand if a replace is desired.
 export async function copyScope(fromScope, toScope) {

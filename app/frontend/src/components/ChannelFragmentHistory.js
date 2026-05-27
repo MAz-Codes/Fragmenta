@@ -22,7 +22,7 @@ import { performanceChannelStyles as styles } from '../theme';
 import { MidiMappable } from './MidiContext';
 
 /**
- * Per-channel rolling take history. Always visible (empty-state included)
+ * Per-channel rolling fragment history. Always visible (empty-state included)
  * so the user knows the strip exists. Chronological order — oldest at
  * the top, newest at the bottom; scrolls vertically when the list grows
  * past ~4 visible rows.
@@ -30,32 +30,32 @@ import { MidiMappable } from './MidiContext';
  * Each row exposes four actions, all visible by default (no hover-reveal —
  * Performance use is fast, can't afford the discoverability tax):
  *   • Cue ▶/■   — audition through the cue output (separate from main mix)
- *   • Star ★/☆ — mark as a keeper. Starred takes survive the 50-cap
+ *   • Star ★/☆ — mark as a keeper. Starred fragments survive the cap
  *                  eviction; unstarred get dropped FIFO when over cap.
- *   • Delete ⌫  — remove this take from history (cancellable confirm not
+ *   • Delete ⌫  — remove this fragment from history (cancellable confirm not
  *                  shown for single deletes — the entry can be regenerated
  *                  or audition can be retriggered after a quick re-tap).
- *   • Load ✓   — commit this take to the channel strip (becomes the
+ *   • Load ✓   — commit this fragment to the channel strip (becomes the
  *                  audio the channel plays). Disabled while already loaded.
  *
  * Props:
- *   takes:          [{ id, audioUrl, blob, prompt, duration, createdAt,
+ *   fragments:      [{ id, audioUrl, blob, prompt, duration, createdAt,
  *                     starred, number }]
  *   color:          channel accent color
  *   auditioningId:  the id currently playing through cue, or null
  *   committedId:    the id currently loaded into the channel strip, or null
- *   maxTakes:       cap, default 50 (informational; eviction lives in parent)
- *   on{Audition,Commit,ToggleStar,Delete}:  (takeId) => void
+ *   maxFragments:   cap, default 50 (informational; eviction lives in parent)
+ *   on{Audition,Commit,ToggleStar,Delete}:  (fragmentId) => void
  *   onClearAll:     () => void  (parent confirms separately — we still show
  *                   a confirm dialog here for the trash-everything action)
  */
-export default function ChannelTakeHistory({
-    takes,
+export default function ChannelFragmentHistory({
+    fragments,
     color,
     channelIndex,
     auditioningId,
     committedId,
-    maxTakes = 50,
+    maxFragments = 50,
     onAudition,
     onCommit,
     onToggleStar,
@@ -66,21 +66,21 @@ export default function ChannelTakeHistory({
     // Channel-scoped MIME type for drag-and-drop. The waveform drop target on
     // this same channel listens for this exact type — cross-channel drags
     // won't highlight or accept because the mime won't match.
-    const dragMime = `application/x-fragmenta-take-ch${channelIndex}`;
+    const dragMime = `application/x-fragmenta-fragment-ch${channelIndex}`;
 
     return (
-        <Box sx={styles.takeHistoryPanel}>
-            <Box sx={styles.takeHistoryHeader}>
-                <Box component="span" sx={styles.takeHistoryHeaderText}>
-                    Takes
+        <Box sx={styles.fragmentHistoryPanel}>
+            <Box sx={styles.fragmentHistoryHeader}>
+                <Box component="span" sx={styles.fragmentHistoryHeaderText}>
+                    Fragments
                 </Box>
-                {takes.length > 0 && (
-                    <Tooltip title="Clear take history" placement="top" arrow>
+                {fragments.length > 0 && (
+                    <Tooltip title="Clear fragment history" placement="top" arrow>
                         <IconButton
                             size="small"
                             onClick={() => setClearConfirmOpen(true)}
-                            sx={styles.takeHistoryHeaderBtn}
-                            aria-label="Clear all takes"
+                            sx={styles.fragmentHistoryHeaderBtn}
+                            aria-label="Clear all fragments"
                         >
                             <ClearAllIcon size={12} />
                         </IconButton>
@@ -88,32 +88,32 @@ export default function ChannelTakeHistory({
                 )}
             </Box>
 
-            {takes.length === 0 ? (
-                <Box sx={styles.takeHistoryEmpty}>Empty</Box>
+            {fragments.length === 0 ? (
+                <Box sx={styles.fragmentHistoryEmpty}>Empty</Box>
             ) : (
-                <Box sx={styles.takeHistoryList}>
-                    {takes.map((take) => {
-                        const isAuditioning = auditioningId === take.id;
-                        const isCommitted = committedId === take.id;
+                <Box sx={styles.fragmentHistoryList}>
+                    {fragments.map((fragment) => {
+                        const isAuditioning = auditioningId === fragment.id;
+                        const isCommitted = committedId === fragment.id;
                         return (
                             <Box
-                                key={take.id}
+                                key={fragment.id}
                                 draggable
                                 onDragStart={(e) => {
-                                    e.dataTransfer.setData(dragMime, take.id);
+                                    e.dataTransfer.setData(dragMime, fragment.id);
                                     e.dataTransfer.effectAllowed = 'copy';
                                 }}
                                 sx={{
-                                    ...styles.takeRow(color, isCommitted, isAuditioning),
+                                    ...styles.fragmentRow(color, isCommitted, isAuditioning),
                                     cursor: 'grab',
                                     '&:active': { cursor: 'grabbing' },
                                 }}
                             >
                                 <MidiMappable
-                                    id={`channel.${channelIndex}.take.${take.id}.audition`}
-                                    label={`Ch ${channelIndex + 1} · Take ${take.number} audition`}
+                                    id={`channel.${channelIndex}.fragment.${fragment.id}.audition`}
+                                    label={`Ch ${channelIndex + 1} · Fragment ${fragment.number} audition`}
                                     kind="trigger"
-                                    onChange={() => onAudition(take.id)}
+                                    onChange={() => onAudition(fragment.id)}
                                 >
                                     <Tooltip
                                         title={isAuditioning ? 'Stop cue' : 'Audition through cue output'}
@@ -123,8 +123,8 @@ export default function ChannelTakeHistory({
                                     >
                                         <IconButton
                                             size="small"
-                                            onClick={() => onAudition(take.id)}
-                                            sx={styles.takeIconBtn(color, isAuditioning)}
+                                            onClick={() => onAudition(fragment.id)}
+                                            sx={styles.fragmentIconBtn(color, isAuditioning)}
                                             aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
                                         >
                                             {isAuditioning
@@ -134,38 +134,38 @@ export default function ChannelTakeHistory({
                                     </Tooltip>
                                 </MidiMappable>
 
-                                <Box sx={styles.takeMeta}>
-                                    <Box component="span" sx={styles.takeOrdinal}>
-                                        T{take.number}
+                                <Box sx={styles.fragmentMeta}>
+                                    <Box component="span" sx={styles.fragmentOrdinal}>
+                                        F{fragment.number}
                                     </Box>
                                 </Box>
 
                                 <Tooltip
-                                    title={take.starred ? 'Unstar' : 'Star (keep through eviction)'}
+                                    title={fragment.starred ? 'Unstar' : 'Star (keep through eviction)'}
                                     placement="top"
                                     arrow
                                     enterDelay={300}
                                 >
                                     <IconButton
                                         size="small"
-                                        onClick={() => onToggleStar(take.id)}
-                                        sx={styles.takeIconBtn(color, take.starred)}
-                                        aria-label={take.starred ? 'Unstar take' : 'Star take'}
+                                        onClick={() => onToggleStar(fragment.id)}
+                                        sx={styles.fragmentIconBtn(color, fragment.starred)}
+                                        aria-label={fragment.starred ? 'Unstar fragment' : 'Star fragment'}
                                     >
                                         <StarIcon
                                             size={12}
-                                            fill={take.starred ? color : 'none'}
+                                            fill={fragment.starred ? color : 'none'}
                                             strokeWidth={2}
                                         />
                                     </IconButton>
                                 </Tooltip>
 
-                                <Tooltip title="Delete take" placement="top" arrow enterDelay={300}>
+                                <Tooltip title="Delete fragment" placement="top" arrow enterDelay={300}>
                                     <IconButton
                                         size="small"
-                                        onClick={() => onDelete(take.id)}
-                                        sx={styles.takeDeleteBtn}
-                                        aria-label="Delete take"
+                                        onClick={() => onDelete(fragment.id)}
+                                        sx={styles.fragmentDeleteBtn}
+                                        aria-label="Delete fragment"
                                     >
                                         <DeleteIcon size={12} />
                                     </IconButton>
@@ -180,10 +180,10 @@ export default function ChannelTakeHistory({
                                     <span>
                                         <IconButton
                                             size="small"
-                                            onClick={() => onCommit(take.id)}
+                                            onClick={() => onCommit(fragment.id)}
                                             disabled={isCommitted}
-                                            sx={styles.takeIconBtn(color, isCommitted, true)}
-                                            aria-label="Load take into channel"
+                                            sx={styles.fragmentIconBtn(color, isCommitted, true)}
+                                            aria-label="Load fragment into channel"
                                         >
                                             <CommitIcon size={12} strokeWidth={isCommitted ? 3 : 2} />
                                         </IconButton>
@@ -196,10 +196,10 @@ export default function ChannelTakeHistory({
             )}
 
             <Dialog open={clearConfirmOpen} onClose={() => setClearConfirmOpen(false)}>
-                <DialogTitle>Clear take history?</DialogTitle>
+                <DialogTitle>Clear fragment history?</DialogTitle>
                 <DialogContent>
                     <DialogContentText>
-                        Removes all {takes.length} takes from this channel's history,
+                        Removes all {fragments.length} fragments from this channel's history,
                         including starred ones. The currently loaded clip stays loaded
                         — only the history entries are dropped.
                     </DialogContentText>
