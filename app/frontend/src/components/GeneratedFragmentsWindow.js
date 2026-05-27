@@ -6,13 +6,13 @@ import {
 import {
     Square as StopIcon,
     Play as PlayIcon,
-    CloudDownload as DownloadIcon,
     AudioLines as TitleIcon,
     Info as InfoIcon,
     Trash2 as DeleteIcon,
     Eraser as ClearAllIcon,
 } from 'lucide-react';
 import { generatedFragmentsWindowStyles } from '../theme';
+import GenerationWaveform from './GenerationWaveform';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
 function relativeTime(createdAt) {
@@ -30,25 +30,40 @@ function relativeTime(createdAt) {
     return new Date(createdAt).toLocaleDateString();
 }
 
-export default function GeneratedFragmentsWindow({ fragments, onDownload, onDelete, onClearAll }) {
+export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearAll }) {
     const [playingFragment, setPlayingFragment] = useState(null);
+    const [playingTime, setPlayingTime] = useState(0);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const audioRefs = useRef({});
 
+    // Strict single-play. The old version paused the previous audio by id
+    // looked up from `playingFragment`, which lost the race when two play
+    // clicks landed before state had a chance to update — both audios ended
+    // up playing because the second click saw the first click's stale
+    // "nothing playing" view. Iterating audioRefs is bulletproof.
     const handlePlayPause = (fragment) => {
         const audio = audioRefs.current[fragment.id];
         if (!audio) return;
 
-        if (playingFragment === fragment.id) {
+        if (!audio.paused) {
             audio.pause();
+            audio.currentTime = 0;
             setPlayingFragment(null);
-        } else {
-            if (playingFragment && audioRefs.current[playingFragment]) {
-                audioRefs.current[playingFragment].pause();
-            }
-            audio.play();
-            setPlayingFragment(fragment.id);
+            setPlayingTime(0);
+            return;
         }
+
+        Object.values(audioRefs.current).forEach((el) => {
+            if (el && el !== audio) {
+                el.pause();
+                el.currentTime = 0;
+            }
+        });
+
+        audio.currentTime = 0;
+        audio.play();
+        setPlayingFragment(fragment.id);
+        setPlayingTime(0);
     };
 
     const setAudioRef = useCallback((fragmentId, audioElement) => {
@@ -115,7 +130,6 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload, onDele
                     {fragments.slice().reverse().map((fragment) => {
                         const isPlaying = playingFragment === fragment.id;
                         const ago = relativeTime(fragment.createdAt);
-                        // The compact line keeps duration + relative time inline.
                         // CFG, seed, full timestamp, and model go in the info
                         // tooltip — accessible but not pushing the row out.
                         const tooltipLines = [
@@ -124,7 +138,9 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload, onDele
                             fragment.steps != null ? `Steps: ${fragment.steps}` : null,
                             fragment.modelId ? `Model: ${fragment.modelId}` : null,
                             fragment.editMode ? `Mode: ${fragment.editMode}` : null,
-                            fragment.timestamp ? `Generated: ${fragment.timestamp}` : null,
+                            `Duration: ${fragment.duration}s`,
+                            ago ? `Generated: ${ago}` : null,
+                            fragment.timestamp ? fragment.timestamp : null,
                         ].filter(Boolean).join('\n');
 
                         return (
@@ -161,14 +177,13 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload, onDele
                                     </Typography>
                                 </Box>
 
-                                <Typography
-                                    variant="caption"
-                                    color="textSecondary"
-                                    sx={generatedFragmentsWindowStyles.fragmentMetaInline}
-                                >
-                                    {fragment.duration}s
-                                    {ago && ` · ${ago}`}
-                                </Typography>
+                                <GenerationWaveform
+                                    blob={fragment.audioBlob}
+                                    audioUrl={fragment.audioUrl}
+                                    filename={fragment.filename || 'fragment.wav'}
+                                    currentTime={isPlaying ? playingTime : 0}
+                                    duration={fragment.duration || 0}
+                                />
 
                                 <Tooltip
                                     title={
@@ -187,16 +202,6 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload, onDele
                                     </Box>
                                 </Tooltip>
 
-                                <Tooltip title="Download" placement="top" arrow>
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => onDownload(fragment)}
-                                        sx={generatedFragmentsWindowStyles.downloadButton}
-                                    >
-                                        <DownloadIcon size={16} />
-                                    </IconButton>
-                                </Tooltip>
-
                                 {onDelete && (
                                     <Tooltip title="Delete from disk" placement="top" arrow>
                                         <IconButton
@@ -212,8 +217,22 @@ export default function GeneratedFragmentsWindow({ fragments, onDownload, onDele
                                 <audio
                                     ref={el => setAudioRef(fragment.id, el)}
                                     src={fragment.audioUrl}
-                                    onEnded={() => setPlayingFragment(null)}
-                                    onPause={() => setPlayingFragment(null)}
+                                    onTimeUpdate={(e) => {
+                                        if (playingFragment === fragment.id) {
+                                            setPlayingTime(e.target.currentTime);
+                                        }
+                                    }}
+                                    onEnded={() => {
+                                        if (playingFragment === fragment.id) {
+                                            setPlayingFragment(null);
+                                            setPlayingTime(0);
+                                        }
+                                    }}
+                                    onPause={() => {
+                                        if (playingFragment === fragment.id) {
+                                            setPlayingFragment(null);
+                                        }
+                                    }}
                                     style={generatedFragmentsWindowStyles.hiddenAudio}
                                 />
                             </ListItem>

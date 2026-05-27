@@ -1733,8 +1733,17 @@ export const appStyles = {
         mr: 1,
     },
     generatingProgress: {
+        // Explicit width + relative positioning containment. Without these,
+        // some browsers / window configurations allowed the bar's inner
+        // fill (a CSS-transformed pseudo-element) to be measured against a
+        // transformed ancestor's frame and visually escape to the page's
+        // left edge before snapping back. Belt-and-suspenders containment.
         height: 8,
         borderRadius: 4,
+        width: '100%',
+        display: 'block',
+        position: 'relative',
+        overflow: 'hidden',
     },
     generatingHint: {
         mt: 1,

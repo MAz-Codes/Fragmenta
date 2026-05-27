@@ -229,15 +229,6 @@ function App() {
         }
     };
 
-    const downloadFragment = (fragment) => {
-        const link = document.createElement('a');
-        link.href = fragment.audioUrl;
-        link.download = fragment.filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    };
-
     const deleteFragment = async (fragment) => {
         if (!fragment?.filename) return;
         try {
@@ -2355,11 +2346,13 @@ function App() {
                                                                 Generating audio... {Math.round(generationProgress)}%
                                                             </Typography>
                                                         </Box>
-                                                        <LinearProgress
-                                                            variant="determinate"
-                                                            value={generationProgress}
-                                                            sx={appStyles.generatingProgress}
-                                                        />
+                                                        <Box sx={{ width: '100%', position: 'relative' }}>
+                                                            <LinearProgress
+                                                                variant="determinate"
+                                                                value={Math.max(0, Math.min(100, Number(generationProgress) || 0))}
+                                                                sx={appStyles.generatingProgress}
+                                                            />
+                                                        </Box>
                                                         <Typography variant="caption" color="textSecondary" sx={appStyles.generatingHint}>
                                                             Generation time may vary considerably depending on your hardware.
                                                         </Typography>
@@ -2438,7 +2431,6 @@ function App() {
                                             <Box sx={appStyles.datasetStatusSticky(navTopPx)}>
                                                 <GeneratedFragmentsWindow
                                                     fragments={generatedFragments}
-                                                    onDownload={downloadFragment}
                                                     onDelete={deleteFragment}
                                                     onClearAll={clearAllFragments}
                                                 />
