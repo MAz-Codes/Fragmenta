@@ -35,30 +35,51 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     const [playingTime, setPlayingTime] = useState(0);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const audioRefs = useRef({});
+    // Tracks a play request that's between "user clicked Play" and "audio
+    // actually started". If the user clicks again during this window we
+    // need to either no-op (same fragment) or cleanly cancel (different
+    // fragment) — re-entering load() would abort the first play() and
+    // both attempts would fail with AbortError.
+    const playInFlightRef = useRef(null);
 
     // Strict single-play with first-click readiness gate.
     //
-    // Two problems the old version had:
-    //   1. Paused the previous audio by id looked up from React state —
-    //      lost the race when two play clicks landed before state settled
-    //      and left both audios playing. Fix: iterate audioRefs.current
-    //      and pause everything that isn't the new target.
-    //   2. First click after page load was "struggling" — Chrome's HTML
-    //      audio element with a blob URL needs a moment to reach a
-    //      playable readyState even with preload="auto". play() called
-    //      before readyState >= HAVE_CURRENT_DATA (2) returns a Promise
-    //      that either rejects or stalls. Fix: if readyState is too low,
-    //      wait for `canplay` (or a 1500 ms timeout) before play().
+    // Race-fixes the old version had:
+    //   1. Iterate audioRefs.current and pause everything that isn't the
+    //      new target — avoids losing the race when two play clicks land
+    //      before React state settles.
+    //   2. For blob URLs, Chromium often doesn't actually pull bytes until
+    //      the first play() call, and play() rejects/hangs if readyState
+    //      is too low. If we're not ready, call load() and wait for
+    //      `canplay` (with a 1500 ms safety timeout) before play().
+    //   3. Guard against the user clicking Play twice during loading. A
+    //      second load() while the first play() is still pending aborts
+    //      the first with AbortError. playInFlightRef tracks the active
+    //      request: same-fragment second click is a no-op; different
+    //      fragment cleanly cancels the prior load timer/listener.
     const handlePlayPause = (fragment) => {
         const audio = audioRefs.current[fragment.id];
         if (!audio) return;
 
+        // Stop case: this fragment is currently playing → pause it.
         if (!audio.paused) {
+            playInFlightRef.current?.cleanup?.();
+            playInFlightRef.current = null;
             audio.pause();
             audio.currentTime = 0;
             setPlayingFragment(null);
             setPlayingTime(0);
             return;
+        }
+
+        // Click during loading of the SAME fragment → ignore.
+        if (playInFlightRef.current?.fragmentId === fragment.id) {
+            return;
+        }
+        // Click during loading of a DIFFERENT fragment → cancel that.
+        if (playInFlightRef.current) {
+            playInFlightRef.current.cleanup?.();
+            playInFlightRef.current = null;
         }
 
         Object.values(audioRefs.current).forEach((el) => {
@@ -74,32 +95,56 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
 
         const startPlayback = () => {
             audio.currentTime = 0;
-            Promise.resolve(audio.play()).catch((err) => {
-                console.warn(`Fragment play failed (${fragment.filename || fragment.id}):`, err);
-                setPlayingFragment((prev) => (prev === startedFor ? null : prev));
-                setPlayingTime(0);
-            });
+            Promise.resolve(audio.play())
+                .then(() => {
+                    // Successfully playing — clear the in-flight marker so
+                    // the next Play click can fire a fresh request.
+                    if (playInFlightRef.current?.fragmentId === startedFor) {
+                        playInFlightRef.current = null;
+                    }
+                })
+                .catch((err) => {
+                    // AbortError is expected when the user cancels (clicks
+                    // Stop or switches fragments) — don't noise the log.
+                    if (err && err.name !== 'AbortError') {
+                        console.warn(`Fragment play failed (${fragment.filename || fragment.id}):`, err);
+                    }
+                    setPlayingFragment((prev) => (prev === startedFor ? null : prev));
+                    setPlayingTime(0);
+                    if (playInFlightRef.current?.fragmentId === startedFor) {
+                        playInFlightRef.current = null;
+                    }
+                });
         };
 
         if (audio.readyState >= 2) {
+            playInFlightRef.current = { fragmentId: startedFor, cleanup: null };
             startPlayback();
-        } else {
-            // Encourage the browser to actually pull bytes (preload="auto"
-            // is a hint, not a guarantee) and wait for the first
-            // playable-ish state. Timeout safety net so a never-firing
-            // event can't leave the button visually stuck.
-            try { audio.load(); } catch { /* ignore */ }
-            let done = false;
-            const finish = () => {
-                if (done) return;
-                done = true;
-                audio.removeEventListener('canplay', finish);
-                clearTimeout(timer);
-                startPlayback();
-            };
-            audio.addEventListener('canplay', finish, { once: true });
-            const timer = setTimeout(finish, 1500);
+            return;
         }
+
+        // Not ready yet — load and wait for canplay (or 1.5 s timeout).
+        try { audio.load(); } catch { /* ignore */ }
+        let cancelled = false;
+        const onReady = () => {
+            audio.removeEventListener('canplay', onReady);
+            clearTimeout(timer);
+            if (cancelled) return;
+            startPlayback();
+        };
+        audio.addEventListener('canplay', onReady, { once: true });
+        const timer = setTimeout(() => {
+            audio.removeEventListener('canplay', onReady);
+            if (!cancelled) startPlayback();
+        }, 1500);
+        playInFlightRef.current = {
+            fragmentId: startedFor,
+            cleanup: () => {
+                cancelled = true;
+                audio.removeEventListener('canplay', onReady);
+                clearTimeout(timer);
+            },
+        };
     };
 
     const setAudioRef = useCallback((fragmentId, audioElement) => {
