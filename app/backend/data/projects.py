@@ -517,62 +517,6 @@ def ingest_folder(name: str, source_folder: Path, mode: str) -> Dict[str, Any]:
     }
 
 
-# ---------- Legacy data/ migration (one-shot, Phase 5.7) --------------------
-
-def _legacy_data_dir() -> Path:
-    # The pre-0.2.0 dataset folder. It's no longer a first-class config path
-    # (datasets are projects now); resolve it directly here so the one-shot
-    # migration can still find legacy content. Honours FRAGMENTA_DATA_DIR for
-    # parity with how the old folder could be relocated.
-    from app.core.config import get_config
-    override = os.environ.get("FRAGMENTA_DATA_DIR")
-    return Path(override) if override else get_config().user_data_dir / "data"
-
-
-def legacy_data_status() -> Dict[str, Any]:
-    """Report whether a non-empty legacy `data/` directory exists.
-
-    `data/` is the pre-0.2.0 dataset location (audio + `.txt` sidecars). The
-    Dataset tab offers a one-shot "Import as a project" action when this is
-    present so users don't lose pre-SA3 content.
-    """
-    d = _legacy_data_dir()
-    files = _iter_audio_files(d) if d.exists() and d.is_dir() else []
-    return {"present": len(files) > 0, "file_count": len(files), "path": str(d)}
-
-
-def import_legacy_data(name: str) -> Dict[str, Any]:
-    """Copy the legacy `data/` audio into a new project, carrying each clip's
-    `.txt` prompt across, and commit it. `data/` is left on disk for the user
-    to delete manually. Raises FileExistsError if the project name is taken,
-    ValueError if `data/` has no audio.
-    """
-    src = _legacy_data_dir()
-    files = _iter_audio_files(src) if src.exists() and src.is_dir() else []
-    if not files:
-        raise ValueError("No audio found in the legacy data/ directory.")
-
-    create_project(name)            # FileExistsError propagates to the caller
-    ingest_folder(name, src, mode="copy")
-
-    # Carry prompts from each source clip's matching `<basename>.txt` sidecar.
-    for audio in files:
-        txt = audio.with_suffix(".txt")
-        prompt = ""
-        if txt.exists():
-            try:
-                prompt = txt.read_text(encoding="utf-8").strip()
-            except Exception:
-                prompt = ""
-        if prompt:
-            try:
-                update_clip_prompt(name, audio.name, prompt)
-            except FileNotFoundError:
-                pass
-
-    return commit_project(name)
-
-
 def update_clip_prompt(name: str, file_name: str, prompt: str) -> Dict[str, Any]:
     """In-memory only. Disk is not touched until Save or Commit."""
     session = _get_or_load_session(name)

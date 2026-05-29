@@ -75,9 +75,6 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     const [createOpen, setCreateOpen] = useState(false);
     const [loadOpen, setLoadOpen] = useState(false);
     const [ingestOpen, setIngestOpen] = useState(false);
-    // One-shot legacy data/ migration (Phase 5.7).
-    const [legacyData, setLegacyData] = useState(null);
-    const [importingLegacy, setImportingLegacy] = useState(false);
     const [sliceTarget, setSliceTarget] = useState(null);  // file_name or null
     // Single confirm-dialog state powering destructive actions. Mirrors the
     // Free GPU / Start Fresh confirm style from App.js — replaces the
@@ -201,33 +198,6 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
     }, [refreshProjects, refreshHealth]);
 
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
-
-    // Detect a pre-0.2.0 data/ folder so we can offer a one-shot import.
-    useEffect(() => {
-        let cancelled = false;
-        api.get('/api/legacy-data/status')
-            .then(({ data }) => { if (!cancelled) setLegacyData(data); })
-            .catch(() => { /* non-fatal */ });
-        return () => { cancelled = true; };
-    }, []);
-
-    const handleImportLegacy = useCallback(async () => {
-        const name = window.prompt(
-            'Import the legacy data/ folder as a new project named:', 'imported-data');
-        if (!name) return;
-        setImportingLegacy(true);
-        setError('');
-        try {
-            const { data } = await api.post('/api/projects/import-legacy-data', { name: name.trim() });
-            await refreshProjects();
-            setSelectedName(data.name);
-            setLegacyData((prev) => (prev ? { ...prev, present: false } : prev));
-        } catch (e) {
-            setError(extractError(e, 'Failed to import legacy data'));
-        } finally {
-            setImportingLegacy(false);
-        }
-    }, [refreshProjects]);
 
     const pollAnnotateStatus = useCallback(async function poll(name) {
         try {
@@ -537,27 +507,6 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                 <Typography variant="body2" color="text.secondary">
                     Create a new dataset or load and edit one. 
                 </Typography>
-                {legacyData?.present && (
-                    <Alert
-                        severity="info"
-                        sx={{ mt: 1, mb: 1 }}
-                        action={
-                            <Button
-                                color="inherit"
-                                size="small"
-                                onClick={handleImportLegacy}
-                                disabled={importingLegacy}
-                            >
-                                {importingLegacy ? 'Importing…' : 'Import'}
-                            </Button>
-                        }
-                    >
-                        Found {legacyData.file_count} clip{legacyData.file_count === 1 ? '' : 's'} in
-                        the legacy <code>data/</code> folder from a previous version. Import them as a
-                        project? Your <code>data/</code> folder stays on disk — delete it manually
-                        afterwards.
-                    </Alert>
-                )}
                 <Typography variant="body2" color="text.secondary" paddingBottom={2}>
                      You can auto-annotate using Librosa and CLAP or annotate everything manually.
                 </Typography>

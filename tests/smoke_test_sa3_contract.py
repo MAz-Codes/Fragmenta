@@ -12,7 +12,6 @@ Covers:
   * /api/health, /api/environment capability flags
   * /api/checkpoints catalog shape
   * /api/loras list shape
-  * /api/legacy-data/status shape
   * /api/start-training validation (missing project_name, unknown project)
   * /api/generate LoRA path validation (bogus path → 400, no model load)
 
@@ -64,11 +63,6 @@ def main():
     check("GET /api/loras -> {loras: [...]}",
           r.status_code == 200 and isinstance((r.get_json() or {}).get("loras"), list),
           f"got {r.status_code}")
-
-    r = client.get("/api/legacy-data/status")
-    js = r.get_json() or {}
-    check("GET /api/legacy-data/status has 'present'",
-          r.status_code == 200 and "present" in js, f"got {js}")
 
     # --- start-training validation -----------------------------------------
     r = client.post("/api/start-training", json={"modelName": "x", "baseModel": "sa3-medium-base"})

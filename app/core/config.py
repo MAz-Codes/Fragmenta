@@ -47,9 +47,7 @@ class ProjectConfig:
 
         # Scratch area for browser folder uploads (/api/upload-folder). The
         # SA2-era "data" dataset directory is gone in 0.2.0 — datasets are now
-        # Dataset Workbench projects under projects/. The only remaining legacy
-        # reference is the one-shot "Import data/ as a project" migration, which
-        # resolves the old data/ folder directly (see projects._legacy_data_dir).
+        # Dataset Workbench projects under projects/.
         uploads_override = os.environ.get("FRAGMENTA_UPLOADS_DIR")
         uploads_dir = Path(uploads_override) if uploads_override else self.user_data_dir / "uploads"
 

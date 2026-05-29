@@ -2197,38 +2197,6 @@ def create_project_route():
     return jsonify(project), 201
 
 
-@app.route('/api/legacy-data/status', methods=['GET'])
-def legacy_data_status_route():
-    """Whether a non-empty pre-0.2.0 data/ directory exists (migration nudge)."""
-    from app.backend.data.projects import legacy_data_status
-    try:
-        return jsonify(legacy_data_status())
-    except Exception as exc:
-        logger.exception("Failed to read legacy data status")
-        return jsonify({'error': str(exc)}), 500
-
-
-@app.route('/api/projects/import-legacy-data', methods=['POST'])
-def import_legacy_data_route():
-    """One-shot: copy legacy data/ audio + prompts into a new committed project."""
-    from app.backend.data.projects import import_legacy_data, sanitize_project_name
-    payload = request.json or {}
-    try:
-        name = sanitize_project_name(payload.get('name', ''))
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    try:
-        project = import_legacy_data(name)
-    except FileExistsError as exc:
-        return jsonify({'error': str(exc)}), 409
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except Exception as exc:
-        logger.exception("Failed to import legacy data into %s", name)
-        return jsonify({'error': str(exc)}), 500
-    return jsonify(project), 201
-
-
 @app.route('/api/projects/<name>', methods=['GET'])
 def get_project_route(name):
     from app.backend.data.projects import get_project
