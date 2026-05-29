@@ -2007,8 +2007,28 @@ def _clap_ckpt_path():
 
 @app.route('/api/environment', methods=['GET'])
 def environment():
+    # Host capability flags so the Checkpoint Manager can grey out models this
+    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2; no Windows
+    # wheels). Mirrors the gate in audio_generator._ensure_model.
+    import platform as _platform
+    cuda = mps = flash = False
+    try:
+        import torch
+        cuda = bool(torch.cuda.is_available())
+        mps = bool(getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available())
+    except Exception:
+        pass
+    try:
+        import flash_attn  # noqa: F401
+        flash = True
+    except Exception:
+        flash = False
     return jsonify({
         'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
+        'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
+        'cuda_available': cuda,
+        'mps_available': mps,
+        'flash_attn_available': flash,
     })
 
 

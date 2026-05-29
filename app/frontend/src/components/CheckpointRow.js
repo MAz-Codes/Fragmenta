@@ -31,7 +31,28 @@ const hardwareLabel = (hw) => ({
     'cuda+flash-attn': 'CUDA + Flash-Attn',
 }[hw] || hw);
 
-export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged }) {
+// Why this host can't run a given model, or null if it can. Mirrors the gate
+// in audio_generator._ensure_model. `env` comes from GET /api/environment.
+const hostIncompatReason = (hw, env) => {
+    if (!env) return null;  // capabilities unknown — don't block
+    if (hw === 'cuda+flash-attn') {
+        if (env.platform === 'Windows') {
+            return 'Requires Flash Attention 2, which has no Windows wheels. Use a Small model, or run via Docker on WSL2.';
+        }
+        if (!env.cuda_available) {
+            return 'Requires an NVIDIA CUDA GPU. Use a Small model — those run on CPU, Apple Silicon, or any GPU.';
+        }
+        if (!env.flash_attn_available) {
+            return 'Requires Flash Attention 2 (flash-attn) — not installed. Install it, or use a Small model.';
+        }
+    }
+    if (hw === 'cuda' && !env.cuda_available) {
+        return 'Recommended on an NVIDIA CUDA GPU; this host has none.';
+    }
+    return null;
+};
+
+export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChanged }) {
     const [jobId, setJobId] = useState(checkpoint.active_job?.job_id || null);
     const [job, setJob] = useState(checkpoint.active_job || null);
     const [error, setError] = useState(null);
@@ -113,6 +134,7 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
     const downloading = !!jobId && job?.status === 'running';
     const queued = !!jobId && job?.status === 'queued';
     const pct = job?.total_bytes ? (job.downloaded_bytes / job.total_bytes) * 100 : 0;
+    const incompatReason = hostIncompatReason(checkpoint.hardware, env);
 
     const renderAction = () => {
         if (downloading || queued) {
@@ -128,6 +150,23 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
                     <IconButton size="small" onClick={deleteCheckpoint} disabled={busy}>
                         <DeleteIcon size={16} />
                     </IconButton>
+                </Tooltip>
+            );
+        }
+        if (incompatReason) {
+            return (
+                <Tooltip title={incompatReason}>
+                    {/* span wrapper so the tooltip works on a disabled button */}
+                    <span>
+                        <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<DownloadIcon size={14} />}
+                            disabled
+                        >
+                            Get
+                        </Button>
+                    </span>
                 </Tooltip>
             );
         }
@@ -155,7 +194,7 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
             }}
         >
             <Stack direction="row" alignItems="center" spacing={2}>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ flex: 1, minWidth: 0, opacity: (incompatReason && !checkpoint.downloaded) ? 0.55 : 1 }}>
                     <Stack direction="row" alignItems="center" spacing={1}>
                         <Tooltip title="Open on HuggingFace to accept the model's gated-access terms">
                             <Typography
@@ -200,6 +239,11 @@ export default function CheckpointRow({ checkpoint, onAuthRequired, onChanged })
                         {fmtBytes(checkpoint.size_bytes)}
                         {checkpoint.max_duration_sec && ` · up to ${checkpoint.max_duration_sec}s`}
                     </Typography>
+                    {incompatReason && !checkpoint.downloaded && (
+                        <Typography variant="caption" color="warning.main" sx={{ display: 'block' }}>
+                            Not supported on this machine
+                        </Typography>
+                    )}
                 </Box>
                 <Box>{renderAction()}</Box>
             </Stack>
