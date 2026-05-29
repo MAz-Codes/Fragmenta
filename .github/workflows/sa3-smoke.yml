@@ -28,10 +28,19 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip "setuptools<70" wheel
-          # CPU-only torch index keeps the runner light; flash-attn is gated to
-          # Linux+CUDA in requirements.txt and is harmless to skip on CI.
-          pip install -r requirements.txt --prefer-binary \
-            --extra-index-url https://download.pytorch.org/whl/cpu
+          # CPU torch first (matches docker/Dockerfile.cpu) so we don't pull the
+          # multi-GB CUDA wheel onto the runner.
+          pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+            --index-url https://download.pytorch.org/whl/cpu
+          # Strip from requirements.txt, same as the CPU Docker image:
+          #   - the CUDA (cu128) extra-index-url (torch already installed above)
+          #   - flash-attn (Linux+CUDA only; the smoke tests don't need it)
+          #   - pycairo / pygobject / pywebview (desktop GUI deps — they build
+          #     from source and need libcairo/GI; the backend import chain and
+          #     the smoke tests never touch them, only start.py's window does)
+          grep -ivE 'flash-attn|extra-index-url|pycairo|pygobject|pywebview' \
+            requirements.txt > requirements-ci.txt
+          pip install -r requirements-ci.txt --prefer-binary
 
       - name: Contract smoke (offline)
         env:
