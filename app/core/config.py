@@ -65,9 +65,9 @@ class ProjectConfig:
         }
 
         self._ensure_directories()
-        # Back-compat shim for the legacy get_model_config() / get_base_model_configs()
-        # accessors. The SA3 catalog now lives in app/core/model_manager.py; this
-        # dict stays empty.
+        # The SA3 catalog lives in app/core/model_manager.py. This dict stays
+        # empty; it's retained only because to_dict()/print_paths() and the
+        # config validator still reference it.
         self.model_configs: Dict[str, Dict[str, str]] = {}
 
     def _ensure_directories(self) -> None:
@@ -80,11 +80,6 @@ class ProjectConfig:
         if path_name not in self.paths:
             raise ValueError(f"Unknown path name: {path_name}")
         return self.paths[path_name]
-
-    def get_model_config(self, model_name: str) -> Dict[str, str]:
-        if model_name not in self.model_configs:
-            raise ValueError(f"Unknown model: {model_name}")
-        return self.model_configs[model_name]
 
     def to_dict(self) -> Dict[str, Any]:
         return {

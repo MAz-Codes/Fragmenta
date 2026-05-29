@@ -5,7 +5,6 @@ Public surface (matches what app/backend/app.py imports):
     get_training_status()         -> dict
     stop_training()               -> dict
     preview_training_plan(config) -> dict
-    get_base_model_configs()      -> dict   # back-compat, returns {}
     class SA3Trainer
 
 Training is dispatched as a subprocess running
@@ -73,11 +72,6 @@ DEFAULT_DURATION = 30.0
 DEFAULT_RANK = 16
 DEFAULT_ADAPTER = "dora-rows"
 DEFAULT_PRECISION = "bf16"
-
-
-def get_base_model_configs() -> Dict[str, Dict[str, str]]:
-    """Back-compat shim — Phase 2 moved catalogues into ModelManager."""
-    return get_config().model_configs
 
 
 # --- SA3Trainer singleton --------------------------------------------------

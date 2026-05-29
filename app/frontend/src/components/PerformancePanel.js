@@ -1542,11 +1542,6 @@ function PerformancePanelInner({
                         displayEmpty
                         renderValue={(value) => {
                             if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
-                            const SHORT = {
-                                'stable-audio-open-1.0': 'SAO Full',
-                                'stable-audio-open-small': 'SAO Small',
-                            };
-                            if (SHORT[value]) return SHORT[value];
                             const base = baseModels.find((m) => m.name === value);
                             if (base) return base.displayName || base.name;
                             return value;

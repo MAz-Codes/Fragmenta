@@ -61,7 +61,6 @@ import {
     CheckCircle2 as CheckCircleIcon,
 } from 'lucide-react';
 import api from './api';
-import HfAuthDialog from './components/HfAuthDialog';
 import AboutDialog from './components/AboutDialog';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
@@ -116,7 +115,6 @@ function App() {
     const [showWelcomePage, setShowWelcomePage] = useState(
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
     );
-    const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
@@ -2827,16 +2825,6 @@ function App() {
                     </Button>
                 </DialogActions>
             </Dialog>
-
-            <HfAuthDialog
-                open={authDialogOpen}
-                onClose={(success) => {
-                    setAuthDialogOpen(false);
-                    if (success) {
-                        refreshAllModels();
-                    }
-                }}
-            />
 
             <CheckpointManagerWindow
                 open={checkpointMgrOpen}

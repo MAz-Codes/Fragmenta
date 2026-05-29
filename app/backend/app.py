@@ -349,9 +349,15 @@ def generate_audio():
         seed = Validator.number(
             data.get('seed', -1), 'seed',
             min_value=-1, max_value=2**32 - 1, integer_only=True)
+        # `/api/generate` returns exactly one WAV (single-file response), and
+        # the engine's _finalize writes one clip. Batching is done client-side
+        # — the UI loops this endpoint with distinct seeds (see App.js
+        # batchCount / PerformancePanel generateForChannel). So a server-side
+        # batch_size>1 would silently drop all but the first member; reject it
+        # with a clear message instead of failing quietly.
         batch_size = Validator.number(
             data.get('batch_size', 1), 'batch_size',
-            min_value=1, max_value=4, integer_only=True)
+            min_value=1, max_value=1, integer_only=True)
 
         steps_raw = data.get('steps')
         # 250 matches the frontend slider max. Past ~80–100 the marginal
@@ -470,6 +476,31 @@ def generate_audio():
             if not lora_abs.exists():
                 return jsonify(APIResponse.error(
                     f"LoRA not found: {lora_path}", status_code=400)), 400
+            # Compatibility gate (Phase 4 contract #5): a LoRA's embedded
+            # base_model must share a backbone with the active model. A
+            # `*-base` LoRA also runs on its distilled sibling (same
+            # architecture, differ only in CFG state), so compare with a
+            # trailing `-base` stripped from both sides. Unknown/missing
+            # base metadata is allowed through (legacy LoRAs) rather than
+            # blocking generation on a metadata gap.
+            try:
+                from safetensors import safe_open
+                with safe_open(str(lora_abs), framework="pt") as _f:
+                    _lora_meta = _f.metadata() or {}
+            except Exception:
+                _lora_meta = {}
+            _lora_base = _lora_meta.get('base_model') or _lora_meta.get('base_model_id')
+            if _lora_base and str(_lora_base).startswith('sa3-'):
+                _strip = lambda m: m[:-5] if m.endswith('-base') else m
+                if _strip(str(_lora_base)) != _strip(model_id):
+                    return jsonify(APIResponse.error(
+                        f"LoRA base mismatch: '{Path(lora_path).name}' was trained "
+                        f"against {_lora_base}, which is incompatible with {model_id}.",
+                        status_code=400,
+                        details={'error_code': 'lora_base_mismatch',
+                                 'lora_id': lora_path,
+                                 'expected': model_id,
+                                 'actual': _lora_base})), 400
             loras.append({'path': str(lora_abs), 'strength': strength})
 
     except ValidationError as e:
@@ -1182,25 +1213,6 @@ def get_models():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/hf-login', methods=['POST'])
-def hf_login():
-    try:
-        data = request.json
-        token = data.get('token')
-        if not token:
-            return jsonify({'error': 'Token is required'}), 400
-            
-        import huggingface_hub
-        try:
-            huggingface_hub.login(token=token, add_to_git_credential=False)
-            user_info = huggingface_hub.whoami(token=token)
-            return jsonify({'success': True, 'user': user_info.get('name', 'User')})
-        except Exception as e:
-            return jsonify({'error': f'Invalid token or connection error: {str(e)}'}), 401
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 # ============================================================================
 # Checkpoint Manager — SA3 catalog endpoints (Phase 2a of SA3_INTEGRATION_PLAN)
 # ============================================================================
@@ -1324,63 +1336,6 @@ def hf_auth_logout():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/base-models/status', methods=['GET'])
-def get_base_models_status():
-    try:
-        import os
-        from pathlib import Path
-
-        base_models = {
-            'stable-audio-open-1.0': {
-                'name': 'Stable Audio Open 1.0',
-                'path': 'models/pretrained',
-                'file': 'stable-audio-open-model.safetensors',
-                'downloaded': False
-            },
-            'stable-audio-open-small': {
-                'name': 'Stable Audio Open Small',
-                'path': 'models/pretrained',
-                'file': 'stable-audio-open-small-model.safetensors',
-                'downloaded': False
-            }
-        }
-
-        for model_id, info in base_models.items():
-            model_dir = Path(info['path'])
-            model_file = model_dir / info['file']
-
-            if model_file.exists() and model_file.is_file():
-                info['downloaded'] = True
-            else:
-                # Legacy layout: model stored in a subdirectory.
-                old_path = model_dir / model_id
-                if old_path.exists() and old_path.is_dir():
-                    has_files = any([
-                        (old_path / 'model.safetensors').exists(),
-                        (old_path / 'pytorch_model.bin').exists(),
-                        (old_path / 'model.ckpt').exists(),
-                        len(list(old_path.glob('*.safetensors'))) > 0,
-                        len(list(old_path.glob('*.bin'))) > 0
-                    ])
-                    info['downloaded'] = has_files
-        
-        return jsonify({'base_models': base_models})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/<model_id>/delete', methods=['DELETE'])
-def delete_model(model_id):
-    try:
-        success = model_manager.delete_model(model_id)
-        if success:
-            return jsonify({'success': True, 'message': f'Model {model_id} deleted'})
-        else:
-            return jsonify({'error': f'Failed to delete {model_id}'}), 400
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 @app.route('/api/link/state', methods=['GET'])
 def link_state():
     from app.core.audio.link_sync import get_link_bridge
@@ -1499,88 +1454,6 @@ def delete_fine_tuned_model(model_name):
         return jsonify({'success': True, 'message': f'Deleted {model_name}'})
     except Exception as e:
         logger.error(f"Failed to delete fine-tuned model {model_name}: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/storage', methods=['GET'])
-def get_model_storage():
-    try:
-        storage_info = model_manager.get_storage_info()
-        return jsonify(storage_info)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/delete-checkpoint', methods=['POST'])
-def delete_checkpoint():
-    try:
-        data = request.json
-        checkpoint_path = data.get('checkpoint_path')
-
-        if not checkpoint_path:
-            return jsonify({'error': 'checkpoint_path is required'}), 400
-
-        config = get_config()
-        repo_root = config.project_root
-
-        ckpt_path_resolved = repo_root / \
-            checkpoint_path if not Path(
-                checkpoint_path).is_absolute() else Path(checkpoint_path)
-
-        if not ckpt_path_resolved.exists():
-            return jsonify({'error': f'Checkpoint file not found: {ckpt_path_resolved}'}), 404
-
-        # Restrict deletion to .ckpt to avoid accidental loss of unwrapped models.
-        if not ckpt_path_resolved.suffix == '.ckpt':
-            return jsonify({'error': f'Only .ckpt files can be deleted: {ckpt_path_resolved}'}), 400
-
-        try:
-            ckpt_path_resolved.unlink()
-            return jsonify({
-                'status': 'success',
-                'message': f'Checkpoint deleted successfully',
-                'deleted_file': str(ckpt_path_resolved.name)
-            })
-        except Exception as e:
-            return jsonify({'error': f'Failed to delete checkpoint: {str(e)}'}), 500
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/delete-wrapped-checkpoint', methods=['POST'])
-def delete_wrapped_checkpoint():
-    try:
-        data = request.json
-        model_name = data.get('model_name')
-
-        if not model_name:
-            return jsonify({'error': 'model_name is required'}), 400
-
-        config = get_config()
-        models_dir = config.get_path("models_fine_tuned")
-        model_dir = models_dir / model_name
-
-        if not model_dir.exists():
-            return jsonify({'error': f'Model directory not found: {model_dir}'}), 404
-
-        deleted_files = []
-        for ckpt_file in model_dir.glob("*.ckpt"):
-            try:
-                ckpt_file.unlink()
-                deleted_files.append(str(ckpt_file.name))
-            except Exception as e:
-                return jsonify({'error': f'Failed to delete {ckpt_file.name}: {str(e)}'}), 500
-
-        if not deleted_files:
-            return jsonify({'message': 'No wrapped checkpoint files found to delete'})
-
-        return jsonify({
-            'status': 'success',
-            'message': f'Deleted {len(deleted_files)} wrapped checkpoint file(s)',
-            'deleted_files': deleted_files
-        })
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
@@ -1955,50 +1828,6 @@ def get_license_info():
             "license": "GNU Affero General Public License v3.0",
             "copyright": "Copyright 2025-2026 Misagh Azimi",
             "error": str(e)
-        }), 500
-
-@app.route('/api/models-status', methods=['GET'])
-def get_models_status():
-    try:
-        required_models = ['stable-audio-open-small', 'stable-audio-open-1.0']
-        downloaded_models = [
-            model_id for model_id in required_models if model_manager.is_model_downloaded(model_id)
-        ]
-        models_exist = len(downloaded_models) > 0
-        models_message = (
-            "Required base models are available."
-            if models_exist
-            else "No required base model is downloaded yet."
-        )
-
-        hf_authenticated = False
-        try:
-            from huggingface_hub import HfApi
-            HfApi().whoami()
-            hf_authenticated = True
-        except Exception:
-            hf_authenticated = False
-
-        should_show = (not models_exist) and (not hf_authenticated)
-        auth_reason = (
-            "Hugging Face authentication is required to download gated models."
-            if should_show
-            else "Authentication already available or models already downloaded."
-        )
-        
-        return jsonify({
-            "models_exist": models_exist,
-            "models_message": models_message,
-            "should_show_auth_dialog": should_show,
-            "auth_reason": auth_reason
-        })
-    except Exception as e:
-        logger.error(f"Error checking models status: {e}")
-        return jsonify({
-            "error": str(e),
-            "models_exist": False,
-            "should_show_auth_dialog": True,
-            "auth_reason": f"Error checking models: {str(e)}"
         }), 500
 
 @app.route('/api/gpu-memory-status', methods=['GET'])
