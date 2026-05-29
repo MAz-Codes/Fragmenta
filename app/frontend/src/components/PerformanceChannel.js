@@ -819,9 +819,9 @@ export default function PerformanceChannel({
                     </MidiMappable>
 
                     {/* Batch selector — sits right of Generate so the row
-                        reads "Generate × 4" (action then modifier). Width
-                        matches the Sec/Bars toggle above so the right column
-                        reads as a uniform stack of modifiers. */}
+                        reads "Generate × 4" (action then modifier). Sized to
+                        its content (×1…×8 + dropdown arrow); no need to match
+                        the wider Sec/Bars toggle above. */}
                     <Tooltip
                         title="Number of candidates to generate. Each fragment lands in the channel's fragment history."
                         placement="top"
@@ -832,7 +832,7 @@ export default function PerformanceChannel({
                             onChange={(e) => setBatchSize(Number(e.target.value))}
                             disabled={generating}
                             size="small"
-                            sx={{ ...styles.channelPillControl, width: 74, flexShrink: 0 }}
+                            sx={{ ...styles.channelPillControl, width: 54, flexShrink: 0 }}
                             renderValue={(v) => `×${v}`}
                         >
                             {BATCH_OPTIONS.map((n) => (

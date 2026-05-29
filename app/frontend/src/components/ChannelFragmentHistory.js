@@ -124,7 +124,7 @@ export default function ChannelFragmentHistory({
                                         <IconButton
                                             size="small"
                                             onClick={() => onAudition(fragment.id)}
-                                            sx={styles.fragmentIconBtn(color, isAuditioning)}
+                                            sx={styles.fragmentIconBtn(color, isAuditioning, true)}
                                             aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
                                         >
                                             {isAuditioning

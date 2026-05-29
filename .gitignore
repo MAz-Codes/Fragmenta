@@ -121,6 +121,7 @@ config/annotator_labels.user.json
 debug_binaries.py
 
 distribution
+distribution.md
 scripts
 tests/
 !vendor/stable-audio-3/scripts/

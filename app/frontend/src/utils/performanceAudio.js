@@ -335,6 +335,87 @@ export class ChannelStrip {
     }
 }
 
+// AudioWorklet processor source for master capture. Loaded as an inline
+// blob module (no separate served file). It accumulates the input's L/R
+// Float32 blocks and flushes them to the main thread on a 'stop' message.
+// Chosen over the deprecated ScriptProcessorNode, whose onaudioprocess does
+// not fire reliably in the WebKitGTK / Chromium-app webviews.
+const REC_WORKLET_SRC = `
+class FragmentaRecorder extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        this._l = [];
+        this._r = [];
+        this._on = true;
+        this.port.onmessage = (e) => {
+            if (e.data === 'stop') {
+                this._on = false;
+                this.port.postMessage({ type: 'data', left: this._l, right: this._r });
+                this._l = [];
+                this._r = [];
+            }
+        };
+    }
+    process(inputs) {
+        const input = inputs[0];
+        if (this._on && input && input.length > 0) {
+            const l = input[0];
+            const r = input.length > 1 ? input[1] : input[0];
+            if (l && l.length) this._l.push(new Float32Array(l));
+            if (r && r.length) this._r.push(new Float32Array(r));
+        }
+        return true;
+    }
+}
+registerProcessor('fragmenta-recorder', FragmentaRecorder);
+`;
+
+// Concatenate an array of Float32 chunks into one contiguous buffer.
+function flattenFloat32(chunks) {
+    let total = 0;
+    for (const c of chunks) total += c.length;
+    const out = new Float32Array(total);
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.length; }
+    return out;
+}
+
+// Encode interleaved 16-bit PCM stereo into a RIFF/WAVE Blob. Mirrors the
+// backend's PCM_16 WAV convention so performance captures match generated
+// fragments.
+function encodeWavStereo(left, right, sampleRate) {
+    const numFrames = left.length;
+    const numChannels = 2;
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataSize = numFrames * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    const writeStr = (off, s) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);                 // PCM fmt chunk size
+    view.setUint16(20, 1, true);                  // audio format = PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 8 * bytesPerSample, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+    let off = 44;
+    const clamp = (x) => (x < -1 ? -1 : x > 1 ? 1 : x);
+    for (let i = 0; i < numFrames; i++) {
+        view.setInt16(off, clamp(left[i]) * 0x7fff, true); off += 2;
+        view.setInt16(off, clamp(right[i]) * 0x7fff, true); off += 2;
+    }
+    return new Blob([view], { type: 'audio/wav' });
+}
+
 export class PerformanceEngine {
     constructor(channelCount = 8) {
         const ctx = getAudioContext();
@@ -643,6 +724,96 @@ export class PerformanceEngine {
         return peak;
     }
 
+    isRecording() {
+        return Boolean(this._recNode);
+    }
+
+    // Lazily register the inline recorder worklet module (once per context).
+    async _ensureRecorderWorklet() {
+        if (this._recWorkletLoaded) return;
+        if (!this.ctx.audioWorklet) {
+            throw new Error('AudioWorklet is not supported in this environment.');
+        }
+        const blob = new Blob([REC_WORKLET_SRC], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        try {
+            await this.ctx.audioWorklet.addModule(url);
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+        this._recWorkletLoaded = true;
+    }
+
+    /**
+     * Begin capturing the post-limiter master output to memory. Taps
+     * masterAnalyser (the final master sum, after FX + limiter) into an
+     * AudioWorkletNode routed through a muted sink, so the capture path
+     * never re-monitors audio. Async because the worklet module loads on
+     * first use. Returns false if a recording is already in progress.
+     */
+    async startRecording() {
+        if (this._recNode) return false;
+        const ctx = this.ctx;
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => { /* ok */ });
+        await this._ensureRecorderWorklet();
+
+        const node = new AudioWorkletNode(ctx, 'fragmenta-recorder', {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [2],
+        });
+        const sink = ctx.createGain();
+        sink.gain.value = 0;
+        this._recSampleRate = ctx.sampleRate;
+
+        this.masterAnalyser.connect(node);
+        node.connect(sink);
+        sink.connect(ctx.destination);
+
+        this._recNode = node;
+        this._recSink = sink;
+        return true;
+    }
+
+    /**
+     * Stop capturing and encode the buffered PCM to a stereo WAV Blob.
+     * Resolves to { blob, durationSec } or null if nothing was captured /
+     * no recording was active.
+     */
+    stopRecording() {
+        if (!this._recNode) return Promise.resolve(null);
+        const node = this._recNode;
+        const sink = this._recSink;
+        const sampleRate = this._recSampleRate;
+        this._recNode = null;
+        this._recSink = null;
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (chunksL, chunksR) => {
+                if (settled) return;
+                settled = true;
+                try { this.masterAnalyser.disconnect(node); } catch (_) { /* ok */ }
+                try { node.disconnect(); } catch (_) { /* ok */ }
+                try { sink.disconnect(); } catch (_) { /* ok */ }
+                const left = flattenFloat32(chunksL || []);
+                const right = flattenFloat32(chunksR || []);
+                if (left.length === 0) { resolve(null); return; }
+                resolve({
+                    blob: encodeWavStereo(left, right, sampleRate),
+                    durationSec: left.length / sampleRate,
+                });
+            };
+            node.port.onmessage = (e) => {
+                if (e.data && e.data.type === 'data') finish(e.data.left, e.data.right);
+            };
+            // Safety net: if the worklet never replies, resolve empty rather
+            // than hang the stop action.
+            setTimeout(() => finish([], []), 1500);
+            node.port.postMessage('stop');
+        });
+    }
+
     refreshMuteSolo() {
         const anySoloed = this.channels.some(ch => ch.isSoloed);
         this.channels.forEach(ch => ch.applyMuteSolo(anySoloed));
@@ -672,6 +843,11 @@ export class PerformanceEngine {
         const tryDisconnect = (node) => {
             try { node?.disconnect(); } catch (_) { /* already disconnected */ }
         };
+        // Drop any in-flight capture without trying to encode it.
+        tryDisconnect(this._recNode);
+        tryDisconnect(this._recSink);
+        this._recNode = null;
+        this._recSink = null;
         tryDisconnect(this.masterBus);
         tryDisconnect(this.masterDelay);
         tryDisconnect(this.masterDelayFeedback);

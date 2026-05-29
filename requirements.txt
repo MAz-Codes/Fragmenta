@@ -27,13 +27,6 @@ numpy>=2.2.6,<3
 matplotlib>=3.8
 pandas>=2.2,<3
 
-# laion-clap (audio embedding model used by the auto-annotator) declares
-# `numpy<2.0.0` in its packaged METADATA, which conflicts with SA3's
-# `numpy>=2.2.6`. The pin is over-cautious — laion-clap 1.1.7 works fine
-# with numpy 2.x at runtime — so we install it separately via --no-deps
-# in the launcher AFTER this file resolves cleanly. The packages below
-# are laion-clap's actual runtime imports (verified by tracing its
-# eager-import chain) that we need to provide ourselves.
 torchlibrosa>=0.1.0
 ftfy>=6.0
 h5py>=3.0

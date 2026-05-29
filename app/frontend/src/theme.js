@@ -2556,7 +2556,7 @@ export const performancePanelStyles = {
     },
     channelsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, minmax(150px, 1fr))',
+        gridTemplateColumns: 'repeat(4, minmax(200px, 300px))',
         gap: 1.25,
         flex: 1,
         minWidth: 0,
@@ -2575,8 +2575,8 @@ export const performancePanelStyles = {
         borderColor: 'divider',
         bgcolor: 'background.paper',
         boxShadow: `0 2px 8px ${theme.palette.mode === 'dark' ? 'rgba(4, 8, 14, 0.36)' : 'rgba(0,0,0,0.08)'}`,
-        width: { xs: '100%', md: 170 },
-        flex: { xs: '1 1 100%', md: '0 0 170px' },
+        width: { xs: '100%', md: 150 },
+        flex: { xs: '1 1 100%', md: '0 0 150px' },
         minHeight: 0,
         overflow: 'hidden',
         boxSizing: 'border-box',
@@ -2586,6 +2586,10 @@ export const performancePanelStyles = {
         alignItems: 'center',
         justifyContent: 'center',
         gap: 0.5,
+        // Match the channel header's content height (driven there by the
+        // badge chip) so the divider lands at the same vertical position —
+        // the plain caps label is shorter and otherwise pulls it higher.
+        minHeight: perfTokens.height.compact,
         borderBottom: `1px solid ${color}33`,
         pb: 0.75,
         color,
@@ -2739,6 +2743,9 @@ export const performanceChannelStyles = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
+        // Pinned to the same height the master header uses, so both dividers
+        // align. ≈ the badge's natural height, so channels don't shift.
+        minHeight: perfTokens.height.compact,
         borderBottom: `1px solid ${color}33`,
         pb: 0.75,
     }),

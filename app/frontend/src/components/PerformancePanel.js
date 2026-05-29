@@ -19,6 +19,11 @@ import {
     Menu,
     ListItemText,
     ListSubheader,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    InputAdornment,
 } from '@mui/material';
 import {
     Play as PlayAllIcon,
@@ -31,6 +36,7 @@ import {
     Volume2 as AudioSetupIcon,
     RotateCcw as RestoreIcon,
     Download as DownloadIcon,
+    Circle as RecordIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
@@ -57,6 +63,7 @@ import {
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
+const RECORD_COLOR = '#E5484D';
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
 const MASTER_DB_DEFAULT = -6;
@@ -155,6 +162,14 @@ function PerformancePanelInner({
     const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
     const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
     const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
+
+    // Master recording. `recording` reflects an active capture; once stopped,
+    // `pendingRecording` holds the encoded WAV { blob, durationSec } until the
+    // user names + saves it (or discards) via the name dialog.
+    const [recording, setRecording] = useState(false);
+    const [pendingRecording, setPendingRecording] = useState(null);
+    const [recordingName, setRecordingName] = useState('');
+    const [savingRecording, setSavingRecording] = useState(false);
 
     // Audio output device. setSinkId requires Chromium ≥ 110 (cueSupported
     // is the runtime check). One device drives BOTH main and cue. Per-pair
@@ -477,6 +492,62 @@ function PerformancePanelInner({
         setMasterDb(value);
         engineRef.current?.setMasterGain(dbToGain(value));
     };
+
+    // Toggle master capture. Stopping opens the name dialog with the encoded
+    // WAV held in pendingRecording.
+    const handleToggleRecord = useCallback(async () => {
+        const engine = engineRef.current;
+        if (!engine) return;
+        if (engine.isRecording()) {
+            const result = await engine.stopRecording();
+            setRecording(false);
+            if (result?.blob) {
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                setRecordingName(`performance_${stamp}`);
+                setPendingRecording(result);
+            } else {
+                setError('Nothing was captured — the recording was empty.');
+            }
+        } else {
+            try {
+                if (await engine.startRecording()) setRecording(true);
+            } catch (e) {
+                setError(e?.message || 'Recording is not supported in this environment.');
+            }
+        }
+    }, []);
+
+    const handleSaveRecording = useCallback(async () => {
+        const name = (recordingName || '').trim();
+        if (!pendingRecording?.blob || !name) return;
+        setSavingRecording(true);
+        try {
+            const fd = new FormData();
+            fd.append('file', pendingRecording.blob, 'recording.wav');
+            fd.append('name', name);
+            if (pendingRecording.durationSec != null) {
+                fd.append('duration', String(pendingRecording.durationSec));
+            }
+            await api.post('/api/performance/recording', fd);
+            setPendingRecording(null);
+            setRecordingName('');
+        } catch (e) {
+            setError(
+                e?.response?.data?.error
+                || e?.response?.data?.message
+                || 'Failed to save the recording.'
+            );
+        } finally {
+            setSavingRecording(false);
+        }
+    }, [pendingRecording, recordingName]);
+
+    const handleDiscardRecording = useCallback(() => {
+        setPendingRecording(null);
+        setRecordingName('');
+    }, []);
 
     useEffect(() => {
         engineRef.current?.setBpm(bpm);
@@ -1347,6 +1418,39 @@ function PerformancePanelInner({
                     </Button>
                 </MidiMappable>
 
+                {/* Record the master output. Stopping opens a dialog to name
+                    the capture, saved as a WAV in the output folder. */}
+                <MidiMappable id="master.record" label="Record Performance" kind="trigger" onChange={handleToggleRecord}>
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        disableElevation
+                        disableRipple
+                        startIcon={recording
+                            ? <StopAllIcon size={14} />
+                            : <RecordIcon size={14} fill={RECORD_COLOR} color={RECORD_COLOR} />}
+                        onClick={handleToggleRecord}
+                        sx={(theme) => ({
+                            // Base: the shared master-button treatment in red, so
+                            // at rest it matches Play All / Stop All exactly.
+                            ...styles.masterBtn(RECORD_COLOR, 'play')(theme),
+                            // Active: steady solid red fill so an in-progress
+                            // capture is unmistakable. Variant stays `outlined`
+                            // (never `contained`) so MUI doesn't inject its blue
+                            // primary palette / focus-elevation states.
+                            ...(recording && {
+                                color: '#0c1018',
+                                backgroundColor: RECORD_COLOR,
+                                borderColor: RECORD_COLOR,
+                                '&:hover': { backgroundColor: RECORD_COLOR, borderColor: RECORD_COLOR },
+                                '&:focus': { backgroundColor: RECORD_COLOR },
+                            }),
+                        })}
+                    >
+                        {recording ? 'Stop Rec' : 'Record'}
+                    </Button>
+                </MidiMappable>
+
                 {/* Main / Cue output channel-pair selectors. Pushed to the right
                     edge of the bar via ml: 'auto' so the transport controls keep
                     their cluster on the left. Pairs are derived from the current
@@ -1887,6 +1991,59 @@ function PerformancePanelInner({
                     </Tooltip>
                 </Box>
             </Paper>
+
+            {/* Name + save dialog for a finished master recording. */}
+            <Dialog
+                open={Boolean(pendingRecording)}
+                onClose={savingRecording ? undefined : handleDiscardRecording}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle>Save performance recording</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 1.5, color: 'text.secondary' }}>
+                        {(() => {
+                            const s = Math.round(pendingRecording?.durationSec ?? 0);
+                            const mm = Math.floor(s / 60);
+                            const ss = String(s % 60).padStart(2, '0');
+                            return `Captured ${mm}:${ss}. Name the file — it will be saved to your output folder.`;
+                        })()}
+                    </Typography>
+                    <TextField
+                        autoFocus
+                        fullWidth
+                        size="small"
+                        label="Recording name"
+                        value={recordingName}
+                        onChange={(e) => setRecordingName(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && recordingName.trim() && !savingRecording) {
+                                handleSaveRecording();
+                            }
+                        }}
+                        disabled={savingRecording}
+                        InputProps={{
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <Typography component="span" sx={{ color: 'text.disabled' }}>.wav</Typography>
+                                </InputAdornment>
+                            ),
+                        }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleDiscardRecording} disabled={savingRecording} color="inherit">
+                        Discard
+                    </Button>
+                    <Button
+                        onClick={handleSaveRecording}
+                        variant="contained"
+                        disabled={savingRecording || !recordingName.trim()}
+                    >
+                        {savingRecording ? 'Saving…' : 'Save'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }

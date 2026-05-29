@@ -876,6 +876,68 @@ def upload_source_audio():
     return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
 
 
+@app.route('/api/performance/recording', methods=['POST'])
+def save_performance_recording():
+    """Persist a master-bus performance capture (WAV) to the output folder.
+
+    Accepts multipart: `file` (audio/wav) + `name` (user-supplied label) and
+    an optional `duration` (seconds). Sanitizes the name, ensures a unique
+    `.wav` filename, and writes a sidecar so the capture lists cleanly in the
+    Fragments window alongside generated audio.
+    """
+    if 'file' not in request.files:
+        return jsonify(APIResponse.error("No recording file provided.", status_code=400)), 400
+    fileobj = request.files['file']
+    if not fileobj.filename:
+        return jsonify(APIResponse.error("Empty recording.", status_code=400)), 400
+
+    raw_name = (request.form.get('name') or '').strip()
+    safe = re.sub(r"[^a-zA-Z0-9._ -]", "_", raw_name).strip().replace(" ", "_")[:80]
+    if not safe:
+        safe = time.strftime("performance_%Y%m%d_%H%M%S")
+
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = output_dir / f"{safe}.wav"
+    # Don't clobber an existing capture — bump a numeric suffix until free.
+    counter = 2
+    while dest.exists():
+        dest = output_dir / f"{safe}_{counter}.wav"
+        counter += 1
+    fileobj.save(str(dest))
+
+    try:
+        duration = float(request.form["duration"]) if request.form.get("duration") else None
+    except (TypeError, ValueError):
+        duration = None
+
+    # Sidecar so /api/fragments shows a friendly label instead of parsing the
+    # bare filename. Mirrors the generation sidecar schema.
+    sidecar = {
+        "filename": dest.name,
+        "created_at": time.time(),
+        "prompt": raw_name or dest.stem,
+        "model_id": "",
+        "duration": duration,
+        "seed": None,
+        "cfg_scale": None,
+        "steps": None,
+        "source": "performance",
+    }
+    try:
+        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2))
+    except Exception as exc:
+        logger.warning(f"Failed to write recording sidecar for {dest.name}: {exc}")
+
+    return jsonify({
+        "filename": dest.name,
+        "size_bytes": dest.stat().st_size,
+        "duration": duration,
+    })
+
+
 @app.route('/api/fragments', methods=['GET'])
 def list_fragments():
     """List previously-generated audio fragments (latest first).

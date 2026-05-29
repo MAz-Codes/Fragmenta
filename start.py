@@ -133,7 +133,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             chromium_path,
             f"--app={BACKEND_URL}",
             f"--class={APP_WM_CLASS}",
-            "--window-size=1300,830",
+            "--window-size=1400,850",
             "--no-first-run",
             "--no-default-browser-check",
         ]
@@ -370,8 +370,8 @@ def run_pywebview_mode() -> int:
             window = webview.create_window(
                 title=WINDOWS_WINDOW_TITLE,
                 url=BACKEND_URL,
-                width=1280,
-                height=820,
+                width=1400,
+                height=850,
                 min_size=(1000, 700),
                 background_color="#0D1117",
             )
