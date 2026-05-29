@@ -3,7 +3,7 @@
 # Fragmenta (beta)
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Version](https://img.shields.io/badge/version-0.1.2-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
@@ -11,11 +11,13 @@
 
 ![Header Image](app/frontend/public/fragmenta_background.png)
 
-**Open-source text-to-audio LoRA,fine-tuning, generation and performance for musicians.**
+**Open-source text-to-audio LoRA training, generation, editing and performance for musicians.**
 
 </div>
 
-Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA, full fine-tuning, generation and performance capabilities.
+Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA training, generation, audio editing, and live performance capabilities — powered by **Stable Audio 3**.
+
+> **Version 0.2.0 runs Stable Audio 3 only.** The previous Stable Audio Open (SA2) engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. SA3 LoRAs and fine-tunes are not compatible with SA2.
 
 This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Phd Research](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
 
@@ -26,9 +28,12 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 - **Desktop app** with a lightweight `pywebview` window and a pre-built React frontend — no Node.js or npm required
 - **Docker images** for GPU and CPU — run as a web app on any machine
 - **Bulk auto-annotation** — generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
-- **Fine-tuning** with configurable epochs, learning rate, batch size, checkpoint frequency, and precision
-- **LoRA adapters** — train a small (~60 MB) adapter on top of the frozen base for consumer GPUs (~12 GB VRAM); swap "flavors" at inference time with a multiplier control
-- **Text-to-audio generation** with CFG scale, inference steps, seed control, and batch generation
+- **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision — trains directly on a Dataset Workbench project
+- **LoRA adapters** — train DoRA/BoRA/-XS adapters on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
+- **Text-to-audio generation** — variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
+- **Audio editing (Edit tab)** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation
+- **Seamless loops** — bars-mode clips are tempo-locked and the loop seam is smoothed by inpainting, not a crossfade
+- **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
 - **Performance Mode** — a 4-channel sampler designed for live performance:
   - Independent channel processing (gain, pan, low-pass filter, delay, reverb)
   - Master output with peak metering (dBFS)
@@ -49,7 +54,7 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 |---|---|
 | **NVIDIA GPU** | Inference is fast (~3 s for 10 s of audio) |
 | **Apple Silicon** | Works, but slow (~9 min for 10 s of audio on M1) |
-| **Models** | The app guides you through downloading. The Small model is for inference only — training (full or LoRA) runs on Stable Audio Open 1.0. |
+| **Models** | The Checkpoint Manager guides you through downloading. Small Music/SFX run on CPU, Apple Silicon, or any GPU; Medium needs an NVIDIA GPU with Flash Attention 2 (not available on Windows). LoRA training runs against the matching `*-base` checkpoint. |
 | **Offline** | After initial setup, everything runs locally — your data stays on your device |
 | **Installation** | Fully isolated. Deleting the folder removes everything (except Python 3.11 if auto-installed) |
 | **Python** | **Python 3.11 required** for local installs (Options 3) — [download here](https://www.python.org/downloads/release/python-3119/). Newer versions (3.12, 3.13) will fail to install dependencies. Not needed for the Docker option. |
@@ -137,7 +142,7 @@ The installer verifies Python 3.11 is available, sets up a virtual environment, 
 
 The app guides you through downloading models and authenticating with HuggingFace on first launch.
 
-> **HuggingFace Token Requirement:** the Stable Audio Open models are gated. You must:
+> **HuggingFace Token Requirement:** the Stable Audio 3 models are gated. You must:
 > 1. Accept the license on the model page (while logged into your HF account)
 > 2. Use a token with **Read access to public gated repositories** enabled
 >
@@ -170,16 +175,14 @@ Once annotation finishes, results appear in an editable table — review and twe
 
 ### 2. Train Model
 
-Training runs on **Stable Audio Open 1.0** (the Small model is distilled and not a viable fine-tune target — it stays inference-only). Pick a **training mode**:
+Training produces a **LoRA adapter** against a `*-base` checkpoint (`sa3-small-music-base`, `sa3-small-sfx-base`, or `sa3-medium-base`). The distilled post-trained models are inference-only and can't be trained against — the Training tab filters the base-model picker accordingly.
 
-| Mode | What it produces | VRAM (1.0 model) | When to pick it |
-|---|---|---|---|
-| **Full fine-tune** | A new full model (.safetensors) | ≥ 24 GB | You have the GPU and want the strongest possible imprint |
-| **LoRA adapter** | A small (~60 MB) delta layered on top of the base | ~12 GB | Consumer GPU; want to swap multiple "flavors" without duplicating the base |
+| Base | VRAM (LoRA) | When to pick it |
+|---|---|---|
+| `sa3-small-*-base` | ~2.5 GB (≈2 GB with `-xs`) | Laptop / consumer GPU; fast iteration |
+| `sa3-medium-base` | ~6.5 GB (≈5.5 GB with `bf16`) | Best fidelity; needs an NVIDIA GPU |
 
-Configure epochs, batch size, learning rate, checkpoint frequency, and precision (auto, fp32, fp16). Training runs in the background and progress is shown live.
-
-> **Important:** Full fine-tune checkpoints must be unwrapped before use (do this from the Generation page). LoRA checkpoints don't need unwrapping — they appear in the LoRA picker automatically.
+Pick a project from the Dataset Workbench, choose an **adapter type** (`dora-rows` is the recommended default; `bora` and the compact `-xs` variants are also available), set rank/steps/learning rate, and Start. Optionally **pre-encode latents** first for a 5–10× per-step speedup. Training runs in the background with a live loss chart; each `step_<n>.safetensors` checkpoint appears in the LoRA picker as it's written.
 
 ### 3. Generate Audio
 
@@ -237,9 +240,7 @@ fragmenta/
 │   │   └── src/            # React source (only needed for development)
 │   └── core/               # Core logic (generation, training, model management)
 ├── vendor/                 # Bundled third-party code
-│   ├── stable-audio-tools/ # Stable Audio library (with minor mods)
-│   ├── loraw_vendor/       # LoRAW (LoRA training for stable-audio-tools)
-│   └── STABLE_AUDIO.md     # Stability AI Community License
+│   └── stable-audio-3/     # Stable Audio 3 (pinned snapshot; see UPSTREAM.md)
 ├── models/                 # Model configs and checkpoints
 ├── utils/                  # Utility modules
 ├── config/                 # Configuration files
@@ -278,13 +279,12 @@ If you want to use Fragmenta under different terms (e.g. embedded in a closed-so
 
 ### Third-Party Software
 
-Fragmenta is **Powered by Stability AI**, using [Stable Audio Open](https://huggingface.co/stabilityai/stable-audio-open-1.0) models.
+Fragmenta is **Powered by Stability AI**, using [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3) models.
 
 > "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
 
 Fragmenta includes and depends on various third-party open-source software. See [NOTICE.md](NOTICE.md) for complete attribution and license information.
 
 - **pywebview** — BSD License
-- **Stable Audio Models** — governed by the [Stability AI Community License](vendor/STABLE_AUDIO.md)
-- **stable-audio-tools** — MIT License (vendored under `vendor/stable-audio-tools/`, with minor modifications)
-- **LoRAW** — MIT License (vendored under `vendor/loraw_vendor/`)
+- **Stable Audio 3 Models** — governed by the [Stability AI Community License](vendor/stable-audio-3/LICENSE)
+- **stable-audio-3** — vendored under `vendor/stable-audio-3/` (pinned snapshot; see `vendor/stable-audio-3/UPSTREAM.md`)
