@@ -313,7 +313,21 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
                                 </IconButton>
 
-                                <Box sx={generatedFragmentsWindowStyles.fragmentMeta}>
+                                <Box
+                                    sx={{ ...generatedFragmentsWindowStyles.fragmentMeta, cursor: 'grab' }}
+                                    draggable
+                                    onDragStart={(e) => {
+                                        // In-app payload consumed by EditPanel's drop zone
+                                        // ("drag a clip into the Edit tab"). Keeps the
+                                        // waveform's separate OS drag-out untouched.
+                                        e.dataTransfer.setData(
+                                            'application/x-fragmenta-fragment',
+                                            fragment.filename || '',
+                                        );
+                                        e.dataTransfer.effectAllowed = 'copy';
+                                    }}
+                                    title="Drag into the Edit tab to use as a source clip"
+                                >
                                     <Typography
                                         variant="body2"
                                         sx={generatedFragmentsWindowStyles.fragmentPrompt}

@@ -101,9 +101,31 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
         e.target.value = '';
         await uploadFile(f);
     };
+    // Pull a fragment already on disk (dragged in from the Generated
+    // Fragments window) and run it through the same upload path so it gets a
+    // server path + waveform + duration probe, exactly like a picked file.
+    const loadFragmentByName = async (filename) => {
+        if (!filename) return;
+        setSourceUploading(true);
+        setError(null);
+        try {
+            const r = await api.get(`/api/fragments/${encodeURIComponent(filename)}`, { responseType: 'blob' });
+            const file = new File([r.data], filename, { type: r.data.type || 'audio/wav' });
+            await uploadFile(file);
+        } catch (err) {
+            setError(err.response?.data?.error?.message || err.message || 'Could not load fragment');
+            setSourceUploading(false);
+        }
+    };
+
     const onDrop = async (e) => {
         e.preventDefault();
         setDropActive(false);
+        // In-app drag from the Generated Fragments window carries the
+        // fragment filename; OS file drags carry dataTransfer.files. Read the
+        // custom payload synchronously before any await.
+        const fragName = e.dataTransfer.getData('application/x-fragmenta-fragment');
+        if (fragName) { await loadFragmentByName(fragName); return; }
         const f = e.dataTransfer.files?.[0];
         await uploadFile(f);
     };

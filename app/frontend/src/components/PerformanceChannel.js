@@ -16,6 +16,7 @@ import {
     ArrowRight as GenerateArrowIcon,
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
+    Shuffle as VariationIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens } from '../theme';
 import { MidiMappable } from './MidiContext';
@@ -341,6 +342,58 @@ export default function PerformanceChannel({
         }
     }, [availableBars, bars]);
 
+    // Per-fragment handler factory — fires as each blob returns. Fragment #0
+    // auto-loads into the strip so the user can audition while #1..N render.
+    // Shared by Generate and Variation so both feed channel history identically.
+    const makeOnBlob = (promptSnap, effectiveDuration) => async (blob, i) => {
+        const fragmentNumber = nextFragmentNumberRef.current;
+        nextFragmentNumberRef.current = fragmentNumber + 1;
+        const fragment = {
+            id: `${Date.now()}_${i}`,
+            blob,
+            audioUrl: URL.createObjectURL(blob),
+            prompt: promptSnap,
+            duration: effectiveDuration,
+            createdAt: Date.now(),
+            starred: false,
+            number: fragmentNumber,
+        };
+
+        // Persist the blob to IndexedDB so it survives reload. Fire-and-forget.
+        putFragmentBlob(scope, fragment.id, blob).catch((err) => {
+            console.warn(`Channel ${index + 1} fragment persist failed:`, err);
+        });
+
+        // Append to history with FRAGMENT_CAP eviction (oldest unstarred first).
+        setFragments((prev) => {
+            const combined = [...prev, fragment];
+            if (combined.length <= FRAGMENT_CAP) return combined;
+            const trimmed = combined.slice();
+            while (trimmed.length > FRAGMENT_CAP) {
+                let idx = -1;
+                for (let j = 0; j < trimmed.length; j++) {
+                    if (!trimmed[j].starred) { idx = j; break; }
+                }
+                if (idx < 0) idx = 0;  // all starred → drop oldest
+                const dying = trimmed[idx];
+                if (dying.audioUrl?.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
+                }
+                deleteFragmentBlob(scope, dying.id).catch(() => { /* ignore */ });
+                trimmed.splice(idx, 1);
+            }
+            return trimmed;
+        });
+
+        if (i === 0) {
+            await strip.loadBlob(blob);
+            setCommittedFragmentId(fragment.id);
+            setLoaded(true);
+            onStateChange?.(index, { loaded: true });
+            requestAnimationFrame(drawWave);
+        }
+    };
+
     const handleGenerate = async () => {
         if (!prompt.trim() || generating) return;
         const inBarsMode = durationMode === 'bars';
@@ -364,70 +417,44 @@ export default function PerformanceChannel({
                 // Phase 7: bars-mode + channel-looping ⇒ ask the backend
                 // to wrap-inpaint the seam so the clip loops seamlessly.
                 ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
-                // Streamed handler — fires per fragment as the backend
-                // returns each blob. Fragment #0 auto-loads into the strip
-                // so the user can start auditioning while fragments #1..N
-                // are still rendering.
-                onBlob: async (blob, i) => {
-                    const fragmentNumber = nextFragmentNumberRef.current;
-                    nextFragmentNumberRef.current = fragmentNumber + 1;
-                    const fragment = {
-                        id: `${Date.now()}_${i}`,
-                        blob,
-                        audioUrl: URL.createObjectURL(blob),
-                        prompt: promptSnap,
-                        duration: effectiveDuration,
-                        createdAt: Date.now(),
-                        starred: false,
-                        number: fragmentNumber,
-                    };
-
-                    // Persist the blob to IndexedDB so it survives reload.
-                    // Fire-and-forget — the in-memory fragment is usable now;
-                    // a failed write just means the fragment is lost on reload.
-                    putFragmentBlob(scope, fragment.id, blob).catch((err) => {
-                        console.warn(`Channel ${index + 1} fragment persist failed:`, err);
-                    });
-
-                    // Append to history with FRAGMENT_CAP eviction. Order
-                    // is chronological: oldest at the top, newest at the
-                    // bottom. Starred fragments survive until everything
-                    // is starred, then oldest go first regardless.
-                    setFragments((prev) => {
-                        const combined = [...prev, fragment];
-                        if (combined.length <= FRAGMENT_CAP) return combined;
-                        const trimmed = combined.slice();
-                        while (trimmed.length > FRAGMENT_CAP) {
-                            let idx = -1;
-                            // Scan from the start (oldest first) for the
-                            // first unstarred fragment to drop.
-                            for (let j = 0; j < trimmed.length; j++) {
-                                if (!trimmed[j].starred) { idx = j; break; }
-                            }
-                            if (idx < 0) idx = 0;  // all starred → drop oldest
-                            const dying = trimmed[idx];
-                            if (dying.audioUrl?.startsWith('blob:')) {
-                                try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
-                            }
-                            // Drop the evicted blob from IDB too, otherwise
-                            // it stays around as orphaned storage.
-                            deleteFragmentBlob(scope, dying.id).catch(() => { /* ignore */ });
-                            trimmed.splice(idx, 1);
-                        }
-                        return trimmed;
-                    });
-
-                    if (i === 0) {
-                        await strip.loadBlob(blob);
-                        setCommittedFragmentId(fragment.id);
-                        setLoaded(true);
-                        onStateChange?.(index, { loaded: true });
-                        requestAnimationFrame(drawWave);
-                    }
-                },
+                onBlob: makeOnBlob(promptSnap, effectiveDuration),
             });
         } catch (err) {
             console.error(`Channel ${index + 1} generate failed:`, err);
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    // Phase 8 "Variation": re-roll the channel using its current fragment as
+    // init_audio at a high noise level — gives a related-but-different take
+    // (A/B/A/C/A live sets). Uploads the source blob to get a server path,
+    // then routes through the same generate flow.
+    const handleVariation = async () => {
+        if (generating) return;
+        const src = fragments.find((f) => f.id === committedFragmentId)
+            || fragments[fragments.length - 1];
+        if (!src?.blob) return;
+        const inBarsMode = durationMode === 'bars';
+        const effectiveDuration = inBarsMode ? secondsFromBars : duration;
+        const promptSnap = (prompt || '').trim() || src.prompt || 'variation';
+        setGenerating(true);
+        stopCue();
+        setAuditioningFragmentId(null);
+        try {
+            const form = new FormData();
+            form.append('file', new File([src.blob], `${scope}_variation_src.wav`, { type: 'audio/wav' }));
+            const up = await api.post('/api/audio/upload', form);
+            await onGenerate({
+                prompt: promptSnap,
+                duration: effectiveDuration,
+                batchSize: 1,
+                initAudioPath: up.data.path,
+                initNoiseLevel: 0.9,
+                onBlob: makeOnBlob(promptSnap, effectiveDuration),
+            });
+        } catch (err) {
+            console.error(`Channel ${index + 1} variation failed:`, err);
         } finally {
             setGenerating(false);
         }
@@ -819,6 +846,30 @@ export default function PerformanceChannel({
                             ))}
                         </Select>
                     </Tooltip>
+
+                    {/* Variation — re-roll from the current fragment as
+                        init_audio (Phase 8). Disabled until a fragment exists. */}
+                    <MidiMappable id={ctrlId('variation')} label={ctrlLabel('Variation')} kind="trigger" onChange={handleVariation}>
+                        <Tooltip
+                            title={
+                                !loaded
+                                    ? 'Generate a fragment first, then create variations of it'
+                                    : 'Variation — a related-but-different take from the current clip'
+                            }
+                            placement="top"
+                        >
+                            <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+                                <ButtonBase
+                                    onClick={handleVariation}
+                                    disabled={!loaded || generating}
+                                    sx={{ ...styles.channelPillControl, width: 40, justifyContent: 'center' }}
+                                    aria-label="Variation"
+                                >
+                                    <VariationIcon size={15} strokeWidth={2.25} />
+                                </ButtonBase>
+                            </span>
+                        </Tooltip>
+                    </MidiMappable>
                 </Box>
             </Box>
 

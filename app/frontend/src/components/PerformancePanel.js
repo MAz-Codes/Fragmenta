@@ -653,7 +653,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, onBlob }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, initAudioPath, initNoiseLevel, onBlob }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -723,6 +723,8 @@ function PerformancePanelInner({
                 // Phase 7: seamless looping. Bars-mode + channel-looping
                 // signals "I want a loop"; backend wrap-inpaints the seam.
                 ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
+                // Phase 8 Variation: re-roll from a prior clip as init_audio.
+                ...(initAudioPath ? { init_audio_path: initAudioPath, init_noise_level: initNoiseLevel ?? 0.9 } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
             // Stream: hand each blob to the caller as it arrives so the fragment
