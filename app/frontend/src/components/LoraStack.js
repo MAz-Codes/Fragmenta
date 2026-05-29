@@ -12,27 +12,46 @@ import {
     Chip,
     Alert,
 } from '@mui/material';
-import { Plus as AddIcon, Trash2 as RemoveIcon } from 'lucide-react';
+import {
+    Plus as AddIcon,
+    Trash2 as RemoveIcon,
+    GripVertical as DragIcon,
+    Power as BypassIcon,
+    Save as SaveIcon,
+} from 'lucide-react';
 import api from '../api';
+import { isLoraCompatible } from '../utils/loraMatch';
 
 const MAX_SLOTS = 4;
+const PRESETS_KEY = 'fragmenta.lora.presets';
+
+const loadPresets = () => {
+    try { return JSON.parse(window.localStorage.getItem(PRESETS_KEY) || '{}'); }
+    catch { return {}; }
+};
+const savePresets = (obj) => {
+    try { window.localStorage.setItem(PRESETS_KEY, JSON.stringify(obj)); } catch { /* ignore */ }
+};
 
 /**
  * Multi-LoRA stack for the Generation panel.
  *
  * Props:
  *   selectedModel: the currently-selected base model id (e.g. "sa3-medium-base")
- *   value:         array of { path, strength } slots
+ *   value:         array of { path, strength, bypassed } slots
  *   onChange:      (newSlots) => void
  *
- * The picker filters available LoRAs by base_model match. SA3 LoRAs trained
- * against `sa3-medium-base` can only be stacked on `sa3-medium-base` — we
- * surface that as a compat note rather than letting the backend 400.
+ * The picker filters available LoRAs by base-model compatibility (a `*-base`
+ * LoRA also runs on its distilled sibling — see utils/loraMatch). Slot order
+ * is the load order (slot 0 first); drag the handle to reorder. Bypass keeps
+ * a slot in the stack but sends strength 0. Presets persist to localStorage.
  */
 export default function LoraStack({ selectedModel, value, onChange }) {
     const [available, setAvailable] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
+    const [dragIndex, setDragIndex] = useState(null);
+    const [presets, setPresets] = useState(loadPresets);
 
     useEffect(() => {
         let cancelled = false;
@@ -44,35 +63,63 @@ export default function LoraStack({ selectedModel, value, onChange }) {
         return () => { cancelled = true; };
     }, []);
 
-    // LoRAs compatible with the current generation model. Strict id match —
-    // the LoRA's base_model must equal selectedModel (typically a *-base).
+    // LoRAs compatible with the current generation model. A LoRA trained
+    // against `*-base` is compatible with both that base and its distilled
+    // sibling (same backbone, differ only in CFG state) — loraMatch strips
+    // the trailing `-base` before comparing.
     const compatible = available.filter(l =>
-        selectedModel && l.base_model === selectedModel
+        isLoraCompatible(l.base_model, selectedModel)
     );
 
     // The single-LoRA case stays one click: when no slots are populated AND
     // there's a compatible LoRA, surface one empty slot so the user sees a
-    // "Pick a LoRA" dropdown immediately. They never need to hit "Add LoRA"
-    // unless they want a second slot. Empty path slots are filtered out in
-    // the caller's request body, so this has no effect on the wire.
+    // "Pick a LoRA" dropdown immediately.
     const slots = (value && value.length > 0)
         ? value
-        : (compatible.length ? [{ path: '', strength: 1.0 }] : []);
+        : (compatible.length ? [{ path: '', strength: 1.0, bypassed: false }] : []);
 
     const addSlot = () => {
         if (slots.length >= MAX_SLOTS) return;
-        onChange([...slots, { path: '', strength: 1.0 }]);
+        onChange([...slots, { path: '', strength: 1.0, bypassed: false }]);
     };
 
-    const removeSlot = (idx) => {
-        const next = slots.filter((_, i) => i !== idx);
-        onChange(next);
-    };
+    const removeSlot = (idx) => onChange(slots.filter((_, i) => i !== idx));
 
     const setSlot = (idx, patch) => {
-        const next = slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+        onChange(slots.map((s, i) => i === idx ? { ...s, ...patch } : s));
+    };
+
+    // --- drag-to-reorder (slot 0 is loaded first) ---------------------------
+    const onDrop = (target) => {
+        if (dragIndex === null || dragIndex === target) { setDragIndex(null); return; }
+        const next = [...slots];
+        const [moved] = next.splice(dragIndex, 1);
+        next.splice(target, 0, moved);
+        setDragIndex(null);
         onChange(next);
     };
+
+    // --- presets ------------------------------------------------------------
+    const saveCurrentPreset = () => {
+        const active = slots.filter(s => s.path);
+        if (!active.length) return;
+        const name = window.prompt('Save LoRA stack preset as:');
+        if (!name) return;
+        const next = { ...presets, [name]: active };
+        setPresets(next);
+        savePresets(next);
+    };
+    const loadPreset = (name) => {
+        const p = presets[name];
+        if (p) onChange(p.map(s => ({ bypassed: false, ...s })));
+    };
+    const deletePreset = (name) => {
+        const next = { ...presets };
+        delete next[name];
+        setPresets(next);
+        savePresets(next);
+    };
+    const presetNames = Object.keys(presets);
 
     const hint = (() => {
         if (!selectedModel) return 'Pick a model first.';
@@ -94,6 +141,41 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                     Blend up to {MAX_SLOTS} LoRAs at any strength
                 </Typography>
                 <Box sx={{ flex: 1 }} />
+                {presetNames.length > 0 && (
+                    <Select
+                        size="small"
+                        displayEmpty
+                        value=""
+                        onChange={(e) => loadPreset(e.target.value)}
+                        sx={{ height: 30, fontSize: 12, minWidth: 110 }}
+                        renderValue={() => 'Presets'}
+                    >
+                        {presetNames.map(n => (
+                            <MenuItem key={n} value={n} sx={{ fontSize: 12 }}>
+                                <Box sx={{ flex: 1 }}>{n}</Box>
+                                <Tooltip title="Delete preset">
+                                    <IconButton
+                                        size="small"
+                                        onClick={(e) => { e.stopPropagation(); deletePreset(n); }}
+                                    >
+                                        <RemoveIcon size={12} />
+                                    </IconButton>
+                                </Tooltip>
+                            </MenuItem>
+                        ))}
+                    </Select>
+                )}
+                <Tooltip title="Save current stack as a preset">
+                    <span>
+                        <IconButton
+                            size="small"
+                            onClick={saveCurrentPreset}
+                            disabled={!slots.some(s => s.path)}
+                        >
+                            <SaveIcon size={15} />
+                        </IconButton>
+                    </span>
+                </Tooltip>
                 <Button
                     size="small"
                     variant="outlined"
@@ -116,17 +198,39 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                 <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                     {slots.map((slot, idx) => {
                         const choice = available.find(l => l.path === slot.path);
+                        const bypassed = !!slot.bypassed;
                         return (
                             <Box
                                 key={idx}
+                                onDragOver={(e) => { if (dragIndex !== null) e.preventDefault(); }}
+                                onDrop={() => onDrop(idx)}
                                 sx={{
                                     p: 1.5,
                                     borderBottom: '1px solid',
                                     borderColor: 'divider',
                                     '&:last-child': { borderBottom: 'none' },
+                                    bgcolor: dragIndex === idx ? 'action.hover' : 'transparent',
+                                    opacity: bypassed ? 0.5 : 1,
                                 }}
                             >
-                                <Stack direction="row" alignItems="center" spacing={1.5}>
+                                <Stack direction="row" alignItems="center" spacing={1}>
+                                    <Tooltip title="Drag to reorder (slot 0 loads first)">
+                                        <Box
+                                            draggable={slots.length > 1}
+                                            onDragStart={() => setDragIndex(idx)}
+                                            onDragEnd={() => setDragIndex(null)}
+                                            sx={{
+                                                display: 'flex',
+                                                cursor: slots.length > 1 ? 'grab' : 'default',
+                                                color: 'text.disabled',
+                                            }}
+                                        >
+                                            <DragIcon size={16} />
+                                        </Box>
+                                    </Tooltip>
+                                    <Typography variant="caption" color="text.disabled" sx={{ width: 14 }}>
+                                        {idx}
+                                    </Typography>
                                     <Select
                                         size="small"
                                         value={slot.path}
@@ -151,6 +255,15 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                             </MenuItem>
                                         ))}
                                     </Select>
+                                    <Tooltip title={bypassed ? 'Bypassed (strength 0) — click to enable' : 'Bypass this slot'}>
+                                        <IconButton
+                                            size="small"
+                                            color={bypassed ? 'default' : 'primary'}
+                                            onClick={() => setSlot(idx, { bypassed: !bypassed })}
+                                        >
+                                            <BypassIcon size={14} />
+                                        </IconButton>
+                                    </Tooltip>
                                     <Tooltip title="Remove slot">
                                         <IconButton size="small" onClick={() => removeSlot(idx)}>
                                             <RemoveIcon size={14} />
@@ -165,6 +278,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                     <Slider
                                         size="small"
                                         value={slot.strength}
+                                        disabled={bypassed}
                                         onChange={(e, v) => setSlot(idx, { strength: v })}
                                         min={-2}
                                         max={2}
@@ -177,7 +291,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                         sx={{ flex: 1 }}
                                     />
                                     <Typography variant="body2" sx={{ width: 40, textAlign: 'right' }}>
-                                        {slot.strength.toFixed(2)}
+                                        {bypassed ? '—' : slot.strength.toFixed(2)}
                                     </Typography>
                                 </Stack>
 

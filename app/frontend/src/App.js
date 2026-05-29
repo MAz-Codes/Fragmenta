@@ -893,9 +893,11 @@ function App() {
         // so an unused slot doesn't break the request.
         const activeLoras = (loraStack || []).filter(s => s.path);
         if (activeLoras.length) {
+            // Bypassed slots stay in the stack (load order preserved) but
+            // contribute nothing — send strength 0.
             baseRequestData.loras = activeLoras.map(s => ({
                 path: s.path,
-                strength: s.strength,
+                strength: s.bypassed ? 0 : s.strength,
             }));
         }
         // SA3 post-trained models bake CFG at 1.0 — only the *-base variants
