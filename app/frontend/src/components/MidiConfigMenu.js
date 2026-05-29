@@ -8,7 +8,6 @@ import {
     MenuItem,
     Button,
     IconButton,
-    Tooltip,
     Divider,
     ToggleButton,
     ToggleButtonGroup,
@@ -265,15 +264,14 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                                         {formatMidi(m.midi)}
                                     </Typography>
                                 </Box>
-                                <Tooltip title="Remove mapping" placement="left" arrow>
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => clearMapping(m.controlId)}
-                                        sx={panelStyles.compactIconBtn('sm', 'danger')}
-                                    >
-                                        <DeleteIcon size={perfTokens.icon.sm} />
-                                    </IconButton>
-                                </Tooltip>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => clearMapping(m.controlId)}
+                                    sx={panelStyles.compactIconBtn('sm', 'danger')}
+                                    aria-label="Remove mapping"
+                                >
+                                    <DeleteIcon size={perfTokens.icon.sm} />
+                                </IconButton>
                             </Box>
                         ))
                     )}

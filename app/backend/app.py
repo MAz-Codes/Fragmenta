@@ -9,6 +9,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import os
 import re
+import random
 from pathlib import Path
 import sys
 import threading
@@ -349,6 +350,10 @@ def generate_audio():
         seed = Validator.number(
             data.get('seed', -1), 'seed',
             min_value=-1, max_value=2**32 - 1, integer_only=True)
+        # Resolve a random request (-1) to a concrete seed up front, so the
+        # actual seed used is reproducible AND recorded in the sidecar — an
+        # unresolved -1 would leave the fragment with no usable seed info.
+        seed = random.randint(0, 2**32 - 1) if (seed is None or int(seed) < 0) else int(seed)
         # `/api/generate` returns exactly one WAV (single-file response), and
         # the engine's _finalize writes one clip. Batching is done client-side
         # — the UI loops this endpoint with distinct seeds (see App.js

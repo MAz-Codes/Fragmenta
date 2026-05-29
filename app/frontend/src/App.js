@@ -36,8 +36,9 @@ import {
     useMediaQuery,
     ToggleButton,
     ToggleButtonGroup,
-    Tooltip,
 } from '@mui/material';
+import { TIPS } from './tooltips';
+import Tooltip from './components/Tooltip';
 import {
     Plus as AddIcon,
     Database as UploadIcon,
@@ -308,7 +309,13 @@ function App() {
             try {
                 const r = await api.get('/api/fragments?limit=100');
                 if (cancelled) return;
-                const items = (r.data?.fragments || []).map((f, i) => ({
+                const items = (r.data?.fragments || [])
+                    // Performance-tab master recordings live in the same output
+                    // folder but aren't generations — keep them out of here.
+                    .filter((f) => f.source !== 'performance')
+                    // Cap the browser at the 50 most recent generations.
+                    .slice(0, 50)
+                    .map((f, i) => ({
                     id: f.created_at ? Math.round(f.created_at * 1000) + i : Date.now() - i,
                     prompt: f.prompt || '',
                     duration: f.duration,
@@ -1492,7 +1499,7 @@ function App() {
                                                                         </Typography>
                                                                     </Box>
                                                                     {!m.downloaded && (
-                                                                        <Tooltip title="Download this model">
+                                                                        <Tooltip title={TIPS.training.downloadModel}>
                                                                             <IconButton
                                                                                 size="small"
                                                                                 onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -1522,7 +1529,7 @@ function App() {
                                                             <Grid item xs={12}>
                                                                 <Box sx={appStyles.fieldLabelRow}>
                                                                     <Typography>Training Steps</Typography>
-                                                                    <Tooltip arrow placement="top" title="SA3's documented quick-start is 1 000 steps. LoRAs typically overfit well before that; watch the loss curve.">
+                                                                    <Tooltip arrow placement="top" title={TIPS.training.steps}>
                                                                         <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                     </Tooltip>
                                                                 </Box>
@@ -1565,7 +1572,7 @@ function App() {
                                                             <Grid item xs={12}>
                                                                 <Box sx={appStyles.fieldLabelRow}>
                                                                     <Typography>Adapter Type</Typography>
-                                                                    <Tooltip arrow placement="top" title="DoRA-rows is SA3's upstream default and works best for most stylistic LoRAs. The -xs variants freeze SVD bases and only train a tiny core matrix — far fewer parameters, useful when VRAM is tight. BoRA scales both rows and columns independently (more expressive, more parameters).">
+                                                                    <Tooltip arrow placement="top" title={TIPS.training.adapter}>
                                                                         <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                     </Tooltip>
                                                                 </Box>
@@ -1593,7 +1600,7 @@ function App() {
                                                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                                                         <Typography>Checkpoint Interval (steps)</Typography>
-                                                                        <Tooltip arrow placement="top" title="How often a LoRA .safetensors snapshot gets written. Auto picks ~10 checkpoints per run (capped 250–1 000 steps). Lower = more granular but more disk; higher = fewer files to compare.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.checkpointEvery}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1698,7 +1705,7 @@ function App() {
                                                             <Grid item xs={12}>
                                                                 <Box sx={appStyles.fieldLabelRow}>
                                                                     <Typography>Batch Size</Typography>
-                                                                    <Tooltip arrow placement="top" title="SA3 examples use 1. Each extra sample adds ~1–2 GB of activations. Raise only on roomy GPUs (≥24 GB); medium-base activations are heavy. Lower if you hit CUDA OOM.">
+                                                                    <Tooltip arrow placement="top" title={TIPS.training.batchSize}>
                                                                         <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                     </Tooltip>
                                                                 </Box>
@@ -1736,7 +1743,7 @@ function App() {
                                                             <Grid item xs={12}>
                                                                 <Box sx={appStyles.fieldLabelRow}>
                                                                     <Typography>Base-model Precision</Typography>
-                                                                    <Tooltip arrow placement="top" title="Cast applied to the frozen base weights only; LoRA parameters stay in fp32 for the optimizer. bf16 halves the VRAM used by the base with negligible quality cost on Ampere and newer cards.">
+                                                                    <Tooltip arrow placement="top" title={TIPS.training.precision}>
                                                                         <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                     </Tooltip>
                                                                 </Box>
@@ -1761,7 +1768,7 @@ function App() {
 
                                                                     <Box sx={appStyles.fieldLabelRow}>
                                                                         <Typography>Rank</Typography>
-                                                                        <Tooltip arrow placement="top" title="Capacity of the LoRA update — rank-k matrices A (k×in) and B (out×k) are trained. Higher rank = more expressive but larger file and more VRAM. r=16 fits comfortably on 16 GB and is SA3's default.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.rank}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1796,7 +1803,7 @@ function App() {
                                                                     </Box>
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Alpha</Typography>
-                                                                        <Tooltip arrow placement="top" title="Scaling factor for the LoRA update. Effective scaling is alpha / rank — setting alpha = rank gives a scaling of 1.0. Conventional choice: alpha = rank.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.alpha}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1827,7 +1834,7 @@ function App() {
                                                                     </Box>
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Dropout</Typography>
-                                                                        <Tooltip arrow placement="top" title="Regularization probability applied to LoRA inputs during training. 0 is fine for most cases — raise to ~0.05 if you see overfitting on small datasets.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.dropout}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1859,7 +1866,7 @@ function App() {
 
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Seed</Typography>
-                                                                        <Tooltip arrow placement="top" title="Random seed for reproducibility — same dataset + same hyperparameters + same seed produces the same LoRA. Change it to re-roll with different sampling behaviour.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.seed}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1880,7 +1887,7 @@ function App() {
 
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Training Window (seconds)</Typography>
-                                                                        <Tooltip arrow placement="top" title="Audio fed to the model per training step. Long clips get random-cropped to this length each step; short clips get silence-padded. Raise beyond 30s only after pre-encoded latents land (Phase 6).">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.sampleLength}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1912,7 +1919,7 @@ function App() {
 
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Include layers</Typography>
-                                                                        <Tooltip arrow placement="top" title="Space-separated substrings — only layers whose fully-qualified name contains one of these get LoRA. Empty = all matching Linear/Conv1d layers. Example: transformer.layers.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.includeLayers}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -1925,7 +1932,7 @@ function App() {
 
                                                                     <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
                                                                         <Typography>Exclude layers</Typography>
-                                                                        <Tooltip arrow placement="top" title="Space-separated substrings — matching layers are skipped, even if they also match Include. SA3-docs default (seconds_total to_local_embed) prevents conditioner-hijacking on small datasets.">
+                                                                        <Tooltip arrow placement="top" title={TIPS.training.excludeLayers}>
                                                                             <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
                                                                         </Tooltip>
                                                                     </Box>
@@ -2068,7 +2075,7 @@ function App() {
                                                                                 </Typography>
                                                                             </Box>
                                                                             {!model.downloaded && (
-                                                                                <Tooltip title="Download this model">
+                                                                                <Tooltip title={TIPS.training.downloadModel}>
                                                                                     <IconButton
                                                                                         size="small"
                                                                                         onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -2109,7 +2116,7 @@ function App() {
                                                                             {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'}
                                                                         </Typography>
                                                                     </Box>
-                                                                    <Tooltip title="Delete fine-tuned model">
+                                                                    <Tooltip title={TIPS.training.deleteFineTuned}>
                                                                         <IconButton
                                                                             size="small"
                                                                             onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -2163,7 +2170,7 @@ function App() {
                                                         size="small"
                                                         onChange={(_, v) => v && setGenerationMode(v)}
                                                     >
-                                                        <ToggleButton value="create">Create</ToggleButton>
+                                                        <ToggleButton value="create">Generate new</ToggleButton>
                                                         <ToggleButton value="edit">Edit existing</ToggleButton>
                                                     </ToggleButtonGroup>
                                                 </Box>

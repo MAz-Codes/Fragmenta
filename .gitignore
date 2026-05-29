@@ -19,14 +19,10 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+
 # ===== Virtual environments =====
 .venv
-.venv-sa3
 venv/
-env/
-ENV/
-env.bak/
-venv.bak/
 
 # ===== Node / frontend =====
 node_modules/
@@ -138,7 +134,9 @@ DATASET_PREP_REDESIGN.md
 SIMPLIFICATION_PLAN.md
 SA3_COMPLETION_PLAN.md
 SA3_INTEGRATION_PLAN.md
+MIDI_AND_LAUNCH_PLAN.md
 DOCKERHUB.md
 TRAINING.md
 main.py
 debug_binaries.py
+MIDI_AND_LAUNCH_PLAN.md

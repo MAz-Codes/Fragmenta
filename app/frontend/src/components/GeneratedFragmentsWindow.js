@@ -1,9 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
-    Paper, Box, Typography, List, ListItem, IconButton, Tooltip,
+    Paper, Box, Typography, List, ListItem, IconButton,
     Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button,
     CircularProgress,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Square as StopIcon,
     Play as PlayIcon,
@@ -100,6 +102,20 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
 
     const readyCount = fragments.filter(isFragmentReady).length;
     const allReady = fragments.length === 0 || readyCount === fragments.length;
+
+    // Safety buffer: once everything reports ready, keep the loading overlay
+    // up for an extra 5s before revealing the list. Audio decodes that are
+    // still settling in the background can't be poked (and can't crash the
+    // list) while the user is gated behind the spinner.
+    const GRACE_MS = 5000;
+    const [graceDone, setGraceDone] = useState(false);
+    useEffect(() => {
+        if (fragments.length === 0) { setGraceDone(true); return undefined; }
+        if (!allReady) { setGraceDone(false); return undefined; }
+        const t = setTimeout(() => setGraceDone(true), GRACE_MS);
+        return () => clearTimeout(t);
+    }, [allReady, fragments.length]);
+    const showLoading = fragments.length > 0 && (!allReady || !graceDone);
 
     // Strict single-play with first-click readiness gate.
     //
@@ -231,7 +247,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                         {fragments.length}
                     </Typography>
                     {fragments.length > 0 && onClearAll && (
-                        <Tooltip title="Clear all (delete every fragment from disk)" placement="top" arrow>
+                        <Tooltip title={TIPS.fragments.clearAll} placement="top" arrow>
                             <IconButton
                                 size="small"
                                 onClick={() => setClearConfirmOpen(true)}
@@ -268,7 +284,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 <Box sx={generatedFragmentsWindowStyles.emptyState}>
                     <Typography variant="body2">No fragments generated yet</Typography>
                 </Box>
-            ) : !allReady ? (
+            ) : showLoading ? (
                 <Box sx={{
                     ...generatedFragmentsWindowStyles.emptyState,
                     display: 'flex',
@@ -278,7 +294,9 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 }}>
                     <CircularProgress size={28} />
                     <Typography variant="body2">
-                        Loading fragments… {readyCount} / {fragments.length}
+                        {allReady
+                            ? 'Finishing up…'
+                            : `Loading fragments… ${readyCount} / ${fragments.length}`}
                     </Typography>
                 </Box>
             ) : (
@@ -289,8 +307,12 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                         // CFG, seed, full timestamp, and model go in the info
                         // tooltip — accessible but not pushing the row out.
                         const tooltipLines = [
-                            `Seed: ${fragment.seed ?? '—'}`,
-                            `CFG: ${fragment.cfgScale ?? '—'}`,
+                            // Pre-fix fragments stored -1 for a random seed;
+                            // show that as "random" rather than a bare -1.
+                            `Seed: ${(fragment.seed != null && fragment.seed >= 0) ? fragment.seed : 'random'}`,
+                            // Distilled SA3 models have CFG distilled away — it's
+                            // genuinely not applicable, not missing.
+                            `CFG: ${fragment.cfgScale ?? 'n/a'}`,
                             fragment.steps != null ? `Steps: ${fragment.steps}` : null,
                             fragment.modelId ? `Model: ${fragment.modelId}` : null,
                             fragment.editMode ? `Mode: ${fragment.editMode}` : null,
@@ -368,7 +390,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 </Tooltip>
 
                                 {onDelete && (
-                                    <Tooltip title="Delete from disk" placement="top" arrow>
+                                    <Tooltip title={TIPS.fragments.deleteFromDisk} placement="top" arrow>
                                         <IconButton
                                             size="small"
                                             onClick={() => onDelete(fragment)}

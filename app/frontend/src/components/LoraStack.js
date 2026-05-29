@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import {
     Box,
+    Accordion,
+    AccordionSummary,
+    AccordionDetails,
     Button,
     Typography,
     Stack,
@@ -8,30 +11,24 @@ import {
     Select,
     Slider,
     IconButton,
-    Tooltip,
     Chip,
     Alert,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Plus as AddIcon,
     Trash2 as RemoveIcon,
     GripVertical as DragIcon,
     Power as BypassIcon,
-    Save as SaveIcon,
+    ChevronDown as ChevronDownIcon,
+    Info as InfoIcon,
 } from 'lucide-react';
 import api from '../api';
+import { appStyles } from '../theme';
 import { isLoraCompatible } from '../utils/loraMatch';
 
 const MAX_SLOTS = 4;
-const PRESETS_KEY = 'fragmenta.lora.presets';
-
-const loadPresets = () => {
-    try { return JSON.parse(window.localStorage.getItem(PRESETS_KEY) || '{}'); }
-    catch { return {}; }
-};
-const savePresets = (obj) => {
-    try { window.localStorage.setItem(PRESETS_KEY, JSON.stringify(obj)); } catch { /* ignore */ }
-};
 
 /**
  * Multi-LoRA stack for the Generation panel.
@@ -44,14 +41,13 @@ const savePresets = (obj) => {
  * The picker filters available LoRAs by base-model compatibility (a `*-base`
  * LoRA also runs on its distilled sibling — see utils/loraMatch). Slot order
  * is the load order (slot 0 first); drag the handle to reorder. Bypass keeps
- * a slot in the stack but sends strength 0. Presets persist to localStorage.
+ * a slot in the stack but sends strength 0.
  */
 export default function LoraStack({ selectedModel, value, onChange }) {
     const [available, setAvailable] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [dragIndex, setDragIndex] = useState(null);
-    const [presets, setPresets] = useState(loadPresets);
 
     useEffect(() => {
         let cancelled = false;
@@ -99,28 +95,6 @@ export default function LoraStack({ selectedModel, value, onChange }) {
         onChange(next);
     };
 
-    // --- presets ------------------------------------------------------------
-    const saveCurrentPreset = () => {
-        const active = slots.filter(s => s.path);
-        if (!active.length) return;
-        const name = window.prompt('Save LoRA stack preset as:');
-        if (!name) return;
-        const next = { ...presets, [name]: active };
-        setPresets(next);
-        savePresets(next);
-    };
-    const loadPreset = (name) => {
-        const p = presets[name];
-        if (p) onChange(p.map(s => ({ bypassed: false, ...s })));
-    };
-    const deletePreset = (name) => {
-        const next = { ...presets };
-        delete next[name];
-        setPresets(next);
-        savePresets(next);
-    };
-    const presetNames = Object.keys(presets);
-
     const hint = (() => {
         if (!selectedModel) return 'Pick a model first.';
         if (!selectedModel.endsWith('-base')) {
@@ -134,59 +108,19 @@ export default function LoraStack({ selectedModel, value, onChange }) {
     })();
 
     return (
-        <Box>
-            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                <Typography variant="subtitle2">LoRA Stack</Typography>
-                <Typography variant="caption" color="text.secondary">
-                    Blend up to {MAX_SLOTS} LoRAs at any strength
-                </Typography>
-                <Box sx={{ flex: 1 }} />
-                {presetNames.length > 0 && (
-                    <Select
-                        size="small"
-                        displayEmpty
-                        value=""
-                        onChange={(e) => loadPreset(e.target.value)}
-                        sx={{ height: 30, fontSize: 12, minWidth: 110 }}
-                        renderValue={() => 'Presets'}
-                    >
-                        {presetNames.map(n => (
-                            <MenuItem key={n} value={n} sx={{ fontSize: 12 }}>
-                                <Box sx={{ flex: 1 }}>{n}</Box>
-                                <Tooltip title="Delete preset">
-                                    <IconButton
-                                        size="small"
-                                        onClick={(e) => { e.stopPropagation(); deletePreset(n); }}
-                                    >
-                                        <RemoveIcon size={12} />
-                                    </IconButton>
-                                </Tooltip>
-                            </MenuItem>
-                        ))}
-                    </Select>
-                )}
-                <Tooltip title="Save current stack as a preset">
-                    <span>
-                        <IconButton
-                            size="small"
-                            onClick={saveCurrentPreset}
-                            disabled={!slots.some(s => s.path)}
-                        >
-                            <SaveIcon size={15} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<AddIcon size={14} />}
-                    disabled={slots.length >= MAX_SLOTS || !compatible.length}
-                    onClick={addSlot}
-                >
-                    Add LoRA
-                </Button>
-            </Stack>
-
+        <Accordion
+            disableGutters
+            defaultExpanded={Boolean(value && value.some((s) => s.path))}
+        >
+            <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography variant="subtitle1">LoRA Stack</Typography>
+                    <Tooltip arrow placement="top" title={TIPS.lora.stackInfo(MAX_SLOTS)}>
+                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                    </Tooltip>
+                </Box>
+            </AccordionSummary>
+            <AccordionDetails>
             {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
             {hint && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -214,7 +148,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                 }}
                             >
                                 <Stack direction="row" alignItems="center" spacing={1}>
-                                    <Tooltip title="Drag to reorder (slot 0 loads first)">
+                                    <Tooltip title={TIPS.lora.dragReorder}>
                                         <Box
                                             draggable={slots.length > 1}
                                             onDragStart={() => setDragIndex(idx)}
@@ -255,7 +189,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                             </MenuItem>
                                         ))}
                                     </Select>
-                                    <Tooltip title={bypassed ? 'Bypassed (strength 0) — click to enable' : 'Bypass this slot'}>
+                                    <Tooltip title={TIPS.lora.bypass(bypassed)}>
                                         <IconButton
                                             size="small"
                                             color={bypassed ? 'default' : 'primary'}
@@ -264,14 +198,12 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                             <BypassIcon size={14} />
                                         </IconButton>
                                     </Tooltip>
-                                    <Tooltip title="Remove slot">
-                                        <IconButton size="small" onClick={() => removeSlot(idx)}>
-                                            <RemoveIcon size={14} />
-                                        </IconButton>
-                                    </Tooltip>
+                                    <IconButton size="small" onClick={() => removeSlot(idx)} aria-label="Remove slot">
+                                        <RemoveIcon size={14} />
+                                    </IconButton>
                                 </Stack>
 
-                                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1 }}>
+                                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mt: 1, mb: 2 }}>
                                     <Typography variant="caption" color="text.secondary" sx={{ width: 60 }}>
                                         Strength
                                     </Typography>
@@ -305,6 +237,19 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                     })}
                 </Box>
             )}
-        </Box>
+
+            <Stack direction="row" sx={{ mt: 1 }}>
+                <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<AddIcon size={14} />}
+                    disabled={slots.length >= MAX_SLOTS || !compatible.length}
+                    onClick={addSlot}
+                >
+                    Add LoRA
+                </Button>
+            </Stack>
+            </AccordionDetails>
+        </Accordion>
     );
 }

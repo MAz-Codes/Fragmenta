@@ -2,6 +2,11 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from
 import { Box } from '@mui/material';
 
 const DEFAULT_COLOR = '#279FBB';
+// Fixed, low waveform resolution — matches the dataset-page waveforms
+// (/peaks?n=80). Decoding to a constant bucket count (instead of one pair per
+// pixel) means the decode runs once per clip rather than re-running on every
+// resize, so fragments render faster.
+const PEAK_COUNT = 80;
 
 /**
  * Compact waveform indicator for a single generated fragment.
@@ -60,17 +65,15 @@ export default function GenerationWaveform({
         return () => ro.disconnect();
     }, []);
 
-    // Decode into mono peaks bucketed to one pair per output pixel.
+    // Decode into PEAK_COUNT mono min/max pairs — a fixed low resolution,
+    // independent of pixel width, so the (expensive) decode runs once per clip
+    // and not again on every resize.
     //
     // Audio source can be either a Blob (in-memory, fresh generations) or
     // an HTTP audioUrl (fragments hydrated from disk on app load have
     // audioBlob=null and audioUrl=/api/fragments/...). The blob path is
     // preferred when available; otherwise fetch the URL.
-    //
-    // Runs once per (blob, audioUrl, width) — re-renders during playback
-    // don't touch this effect because currentTime isn't in the deps.
     useEffect(() => {
-        if (!width) return;
         if (!blob && !audioUrl) return;
         let cancelled = false;
         (async () => {
@@ -100,9 +103,9 @@ export default function GenerationWaveform({
                 const ch0 = audio.getChannelData(0);
                 const ch1 = audio.numberOfChannels > 1 ? audio.getChannelData(1) : null;
                 const totalSamples = ch0.length;
-                const bucketSize = Math.max(1, Math.floor(totalSamples / width));
-                const out = new Float32Array(width * 2);
-                for (let i = 0; i < width; i++) {
+                const bucketSize = Math.max(1, Math.floor(totalSamples / PEAK_COUNT));
+                const out = new Float32Array(PEAK_COUNT * 2);
+                for (let i = 0; i < PEAK_COUNT; i++) {
                     const s = i * bucketSize;
                     const e = Math.min(totalSamples, s + bucketSize);
                     let mn = 0, mx = 0;
@@ -120,7 +123,7 @@ export default function GenerationWaveform({
             }
         })();
         return () => { cancelled = true; };
-    }, [blob, audioUrl, width]);
+    }, [blob, audioUrl]);
 
     // Draw — re-runs on every currentTime tick so the playhead moves.
     const draw = useCallback(() => {
@@ -142,28 +145,25 @@ export default function GenerationWaveform({
 
         const mid = height / 2;
         const scale = (height - 2) / 2;
-        const progressPx = duration > 0
-            ? Math.max(0, Math.min(width, (currentTime / duration) * width))
+        // Stretch the fixed PEAK_COUNT buckets across the canvas width as bars
+        // (with a 1px gap), matching the dataset-page waveform look.
+        const n = peaks.length / 2;
+        const step = width / n;
+        const barW = Math.max(1, step - 1);
+        const progressFrac = duration > 0
+            ? Math.max(0, Math.min(1, currentTime / duration))
             : 0;
+        const progressPx = progressFrac * width;
+        const splitIdx = Math.floor(progressFrac * n);
 
-        // Played portion: full color.
-        ctx.fillStyle = color;
-        const splitPx = Math.floor(progressPx);
-        for (let i = 0; i < splitPx; i++) {
+        for (let i = 0; i < n; i++) {
             const mn = peaks[i * 2];
             const mx = peaks[i * 2 + 1];
             const y0 = mid - mx * scale;
             const y1 = mid - mn * scale;
-            ctx.fillRect(i, y0, 1, Math.max(1, y1 - y0));
-        }
-        // Unplayed portion: dimmed (35% alpha of accent).
-        ctx.fillStyle = `${color}59`;
-        for (let i = splitPx; i < width; i++) {
-            const mn = peaks[i * 2];
-            const mx = peaks[i * 2 + 1];
-            const y0 = mid - mx * scale;
-            const y1 = mid - mn * scale;
-            ctx.fillRect(i, y0, 1, Math.max(1, y1 - y0));
+            // Played bars: full color; unplayed: dimmed (35% alpha of accent).
+            ctx.fillStyle = i < splitIdx ? color : `${color}59`;
+            ctx.fillRect(i * step, y0, barW, Math.max(1, y1 - y0));
         }
         // Thin playhead at the split.
         if (progressPx > 0 && progressPx < width) {

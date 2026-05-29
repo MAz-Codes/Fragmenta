@@ -459,11 +459,30 @@ let theme = createTheme({
         MuiModal: {
             defaultProps: { disableScrollLock: true },
         },
+        // Dropdown / popover paper. Promotes the look the performance MIDI /
+        // Audio / Save menus pioneered (crisp 1px divider border + 20px
+        // rounding + clean overflow, layered over the global glass Paper) to
+        // every Select dropdown, Menu, and Popover. 20px === sx borderRadius:
+        // 2 at shape.borderRadius 10.
         MuiPopover: {
             defaultProps: { disableScrollLock: true },
+            styleOverrides: {
+                paper: {
+                    border: `1px solid ${DARK.divider}`,
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                },
+            },
         },
         MuiMenu: {
             defaultProps: { disableScrollLock: true },
+            styleOverrides: {
+                paper: {
+                    border: `1px solid ${DARK.divider}`,
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                },
+            },
         },
         MuiDrawer: {
             defaultProps: { disableScrollLock: true },
@@ -1025,11 +1044,26 @@ export const lightTheme = createTheme(theme, {
         MuiModal: {
             defaultProps: { disableScrollLock: true },
         },
+        // See dark theme above — same dropdown/popover paper treatment.
         MuiPopover: {
             defaultProps: { disableScrollLock: true },
+            styleOverrides: {
+                paper: {
+                    border: `1px solid ${LIGHT.divider}`,
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                },
+            },
         },
         MuiMenu: {
             defaultProps: { disableScrollLock: true },
+            styleOverrides: {
+                paper: {
+                    border: `1px solid ${LIGHT.divider}`,
+                    borderRadius: 20,
+                    overflow: 'hidden',
+                },
+            },
         },
         MuiDrawer: {
             defaultProps: { disableScrollLock: true },

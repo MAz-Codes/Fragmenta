@@ -34,10 +34,11 @@ import {
     TableHead,
     TableRow,
     TextField,
-    Tooltip,
     Typography,
     useTheme,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     ChevronDown as ChevronDownIcon,
     FolderOpenIcon,
@@ -670,7 +671,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                                             ))}
                                         </Select>
                                     </FormControl>
-                                    <Tooltip title="Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.">
+                                    <Tooltip title={TIPS.dataset.richAnnotate}>
                                         <FormControlLabel
                                             control={
                                                 <Switch
@@ -684,7 +685,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
                                             sx={{ mr: 0 }}
                                         />
                                     </Tooltip>
-                                    <Tooltip title="When on, Auto-annotate skips clips that already have an annotation. Off means every run overwrites existing prompts.">
+                                    <Tooltip title={TIPS.dataset.skipAnnotated}>
                                         <FormControlLabel
                                             control={
                                                 <Switch
@@ -1093,7 +1094,7 @@ function LoadProjectDialog({ open, projects, currentName, onClose, onLoad, onDel
                                     }
                                     sx={{ alignItems: 'flex-start', flex: 1, mr: 0 }}
                                 />
-                                <Tooltip title="Delete this project (folder, audio, sidecars, drafts) — irreversible">
+                                <Tooltip title={TIPS.dataset.deleteProject}>
                                     <span>
                                         <IconButton
                                             size="small"
@@ -1140,22 +1141,18 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                         {' · '}{stateLabel}
                     </Typography>
                 </Box>
-                <Tooltip title="Add audio files to this project">
-                    <span>
-                        <Button
-                            variant="outlined"
-                            size="small"
-                            startIcon={<MusicIcon size={16} />}
-                            onClick={onAddAudio}
-                            disabled={disabled}
-                        >
-                            Add audio
-                        </Button>
-                    </span>
-                </Tooltip>
+                <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<MusicIcon size={16} />}
+                    onClick={onAddAudio}
+                    disabled={disabled}
+                >
+                    Add audio
+                </Button>
             </Stack>
             <Stack direction="row" spacing={1}>
-                <Tooltip title="Delete unsaved changes — reverts to the last created dataset (removes any audio added since)">
+                <Tooltip title={TIPS.dataset.discardChanges}>
                     <span>
                         <Button
                             variant="outlined"
@@ -1169,7 +1166,7 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                         </Button>
                     </span>
                 </Tooltip>
-                <Tooltip title="Save a draft — persists across app restarts but isn't the SA3 sidecar form">
+                <Tooltip title={TIPS.dataset.saveDraft}>
                     <span>
                         <Button
                             variant="outlined"
@@ -1182,7 +1179,7 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                         </Button>
                     </span>
                 </Tooltip>
-                <Tooltip title="Create Dataset — writes the .txt sidecars (overwrites the previous dataset)">
+                <Tooltip title={TIPS.dataset.createDataset}>
                     <span>
                         <Button
                             variant="contained"
@@ -1279,7 +1276,7 @@ function HealthStrip({ health, onSelectFiles }) {
                     }}
                 >
                     {empty.count > 0 && (
-                        <Tooltip title="Click to select these clips — then Auto-annotate them.">
+                        <Tooltip title={TIPS.dataset.selectClips}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1290,7 +1287,7 @@ function HealthStrip({ health, onSelectFiles }) {
                         </Tooltip>
                     )}
                     {tooShort.count > 0 && (
-                        <Tooltip title={`Shorter than ${tooShort.threshold_sec}s — gets silence-padded into each batch. Consider deleting. Click to select.`}>
+                        <Tooltip title={TIPS.dataset.tooShort(tooShort.threshold_sec)}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1301,7 +1298,7 @@ function HealthStrip({ health, onSelectFiles }) {
                         </Tooltip>
                     )}
                     {mixedSR.count > 0 && (
-                        <Tooltip title={`Dataset has mixed sample rates (${(mixedSR.rates || []).join(' Hz, ')} Hz). The dominant is ${mixedSR.dominant_sr} Hz; click to select the minority and resample or delete.`}>
+                        <Tooltip title={TIPS.dataset.mixedSR(mixedSR.rates, mixedSR.dominant_sr)}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1312,7 +1309,7 @@ function HealthStrip({ health, onSelectFiles }) {
                         </Tooltip>
                     )}
                     {loud.count > 0 && (
-                        <Tooltip title={`Loudness more than ${loud.threshold_db} dB from the dataset median (${loud.median_db?.toFixed(1)} dB). Click to select; consider normalizing or removing.`}>
+                        <Tooltip title={TIPS.dataset.loudness(loud.threshold_db, loud.median_db)}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1323,7 +1320,7 @@ function HealthStrip({ health, onSelectFiles }) {
                         </Tooltip>
                     )}
                     {dups.count > 0 && (
-                        <Tooltip title={`${dups.group_count} group${dups.group_count === 1 ? '' : 's'} of clips share the same annotation. Bad for training diversity — click to select all of them.`}>
+                        <Tooltip title={TIPS.dataset.duplicates(dups.group_count)}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1334,7 +1331,7 @@ function HealthStrip({ health, onSelectFiles }) {
                         </Tooltip>
                     )}
                     {unsupported.count > 0 && (
-                        <Tooltip title={`SA3 only trains on ${(unsupported.accepted || []).join(', ')}. These clips will be silently skipped at train time — re-export them as .wav (or another accepted format) before committing. Click to select.`}>
+                        <Tooltip title={TIPS.dataset.unsupported(unsupported.accepted)}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1390,10 +1387,10 @@ function Waveform({ projectName, fileName, isActive, progress }) {
         const barCount = peaks.length;
         const barWidth = Math.max(1, w / barCount - 1);
         const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
-        const playedColor = theme.palette.warm?.main || '#FDA22B';
-        const restColor = theme.palette.mode === 'dark'
-            ? 'rgba(255, 255, 255, 0.35)'
-            : 'rgba(0, 0, 0, 0.35)';
+        // Match the Generated-Fragments waveforms: teal accent for the played
+        // portion, dimmed (35% alpha) for the rest.
+        const playedColor = '#279FBB';
+        const restColor = '#279FBB59';
 
         for (let i = 0; i < barCount; i++) {
             const v = peaks[i];
@@ -1507,17 +1504,13 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
             </TableCell>
             <TableCell sx={{ wordBreak: 'break-all' }}>
                 <Stack direction="row" alignItems="center" spacing={1}>
-                    <Tooltip title={isPlaying ? 'Pause' : 'Play'}>
-                        <span>
-                            <IconButton
-                                size="small"
-                                onClick={() => onPlayToggle(clip.file_name)}
-                                sx={{ width: 28, height: 28 }}
-                            >
-                                {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                            </IconButton>
-                        </span>
-                    </Tooltip>
+                    <IconButton
+                        size="small"
+                        onClick={() => onPlayToggle(clip.file_name)}
+                        sx={{ width: 28, height: 28 }}
+                    >
+                        {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                    </IconButton>
                     <Waveform
                         projectName={projectName}
                         fileName={clip.file_name}
@@ -1542,7 +1535,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                 />
             </TableCell>
             <TableCell sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                <Tooltip title="Auto-annotate this clip (overwrites any current prompt)">
+                <Tooltip title={TIPS.dataset.autoAnnotateClip}>
                     <span>
                         <IconButton
                             size="small"
@@ -1554,7 +1547,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                         </IconButton>
                     </span>
                 </Tooltip>
-                <Tooltip title="Slice this clip into shorter children (immediate)">
+                <Tooltip title={TIPS.dataset.sliceClip}>
                     <span>
                         <IconButton
                             size="small"
@@ -1565,7 +1558,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                         </IconButton>
                     </span>
                 </Tooltip>
-                <Tooltip title="Remove this clip from the project (immediate)">
+                <Tooltip title={TIPS.dataset.removeClip}>
                     <span>
                         <IconButton
                             size="small"

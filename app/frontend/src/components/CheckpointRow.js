@@ -7,8 +7,9 @@ import {
     LinearProgress,
     Stack,
     IconButton,
-    Tooltip,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     CloudDownload as DownloadIcon,
     Trash2 as DeleteIcon,
@@ -139,18 +140,14 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
     const renderAction = () => {
         if (downloading || queued) {
             return (
-                <Tooltip title="Cancel download">
-                    <IconButton size="small" onClick={cancelDownload}><CancelIcon size={16} /></IconButton>
-                </Tooltip>
+                <IconButton size="small" onClick={cancelDownload} aria-label="Cancel download"><CancelIcon size={16} /></IconButton>
             );
         }
         if (checkpoint.downloaded) {
             return (
-                <Tooltip title="Delete from disk">
-                    <IconButton size="small" onClick={deleteCheckpoint} disabled={busy}>
-                        <DeleteIcon size={16} />
-                    </IconButton>
-                </Tooltip>
+                <IconButton size="small" onClick={deleteCheckpoint} disabled={busy} aria-label="Delete from disk">
+                    <DeleteIcon size={16} />
+                </IconButton>
             );
         }
         if (incompatReason) {
@@ -196,7 +193,7 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
             <Stack direction="row" alignItems="center" spacing={2}>
                 <Box sx={{ flex: 1, minWidth: 0, opacity: (incompatReason && !checkpoint.downloaded) ? 0.55 : 1 }}>
                     <Stack direction="row" alignItems="center" spacing={1}>
-                        <Tooltip title="Open on HuggingFace to accept the model's gated-access terms">
+                        <Tooltip title={TIPS.checkpoints.gatedAccess}>
                             <Typography
                                 component="a"
                                 href={`https://huggingface.co/${checkpoint.repo}`}

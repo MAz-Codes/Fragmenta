@@ -17,7 +17,7 @@
 
 Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA training, generation, audio editing, and live performance capabilities — powered by **Stable Audio 3**.
 
-> **Version 0.2.0 runs Stable Audio 3 only.** The previous Stable Audio Open (SA2) engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. SA3 LoRAs and fine-tunes are not compatible with SA2.
+> **Version 0.2.0 runs Stable Audio 3 only.** The previous Stable Audio Open engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. SA3 LoRAs are not compatible with previous version.
 
 This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Phd Research](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
 

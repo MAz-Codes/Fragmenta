@@ -299,25 +299,26 @@ export class ChannelStrip {
         const h = canvas.height;
         ctx2d.clearRect(0, 0, w, h);
         const data = this.buffer.getChannelData(0);
-        const step = Math.max(1, Math.floor(data.length / w));
-        ctx2d.strokeStyle = color || '#35C2D4';
-        ctx2d.lineWidth = 1;
-        ctx2d.beginPath();
-        for (let i = 0; i < w; i++) {
+        // Fixed low resolution (80 buckets) rendered as bars — matches the
+        // dataset-page and Generated-Fragments waveforms.
+        const PEAK_COUNT = 80;
+        const bucket = Math.max(1, Math.floor(data.length / PEAK_COUNT));
+        const xStep = w / PEAK_COUNT;
+        const barW = Math.max(1, xStep - 1);
+        ctx2d.fillStyle = color || '#279FBB';
+        for (let i = 0; i < PEAK_COUNT; i++) {
             let min = 1.0, max = -1.0;
-            const start = i * step;
-            const end = Math.min(data.length, start + step);
+            const start = i * bucket;
+            const end = Math.min(data.length, start + bucket);
             for (let j = start; j < end; j++) {
                 const v = data[j];
                 if (v < min) min = v;
                 if (v > max) max = v;
             }
-            const yMin = (1 + min) * 0.5 * h;
-            const yMax = (1 + max) * 0.5 * h;
-            ctx2d.moveTo(i + 0.5, yMin);
-            ctx2d.lineTo(i + 0.5, yMax);
+            const yA = (1 + min) * 0.5 * h;
+            const yB = (1 + max) * 0.5 * h;
+            ctx2d.fillRect(i * xStep, yA, barW, Math.max(1, yB - yA));
         }
-        ctx2d.stroke();
     }
 
     dispose() {

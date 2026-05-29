@@ -14,7 +14,6 @@ import {
     MenuItem,
     TextField,
     IconButton,
-    Tooltip,
     ButtonBase,
     Menu,
     ListItemText,
@@ -25,6 +24,8 @@ import {
     DialogActions,
     InputAdornment,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
@@ -423,7 +424,7 @@ function PerformancePanelInner({
                 {model.displayName || model.name}
             </Box>
             {!model.downloaded && (
-                <Tooltip title="Not downloaded — open Checkpoint Manager">
+                <Tooltip title={TIPS.perf.notDownloaded}>
                     <IconButton
                         size="small"
                         onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -888,15 +889,7 @@ function PerformancePanelInner({
             }}>
                 {/* Link — compact rectangle, Ableton-style */}
                 <Tooltip
-                    title={
-                        linkInstalling
-                            ? 'Installing LinkPython-extern…'
-                            : !linkAvailable
-                                ? 'Click to install Ableton Link script'
-                                : linkEnabled
-                                    ? `Link on — ${linkPeers} peer${linkPeers === 1 ? '' : 's'} (click to disable)`
-                                    : 'Click to sync BPM with other Link-enabled apps on this network'
-                    }
+                    title={TIPS.perf.link({ installing: linkInstalling, available: linkAvailable, enabled: linkEnabled, peers: linkPeers })}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <ButtonBase
@@ -947,13 +940,7 @@ function PerformancePanelInner({
 
                 {/* MIDI learn toggle — same compact rectangle style as Link. */}
                 <Tooltip
-                    title={
-                        !midi?.supported
-                            ? (midi?.permissionError || 'Web MIDI is not available')
-                            : midi.learnMode
-                                ? 'Exit MIDI mode (Esc)'
-                                : 'Enter MIDI mode — click a control then move a hardware knob/button to bind'
-                    }
+                    title={TIPS.perf.midiMode({ supported: midi?.supported, permissionError: midi?.permissionError, learnMode: midi?.learnMode })}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <ButtonBase
@@ -985,7 +972,7 @@ function PerformancePanelInner({
                         </ButtonBase>
                     </span>
                 </Tooltip>
-                <Tooltip title="MIDI settings & mappings">
+                <Tooltip title={TIPS.perf.midiSettings}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
@@ -1003,9 +990,7 @@ function PerformancePanelInner({
                 />
 
                 <Tooltip
-                    title={cueSupported
-                        ? 'Audio setup — choose output device'
-                        : 'Audio device selection requires Chrome/Edge (AudioContext.setSinkId). Output falls back to system default.'}
+                    title={TIPS.perf.audioSetup(cueSupported)}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
@@ -1114,7 +1099,7 @@ function PerformancePanelInner({
                     </Box>
                 </Menu>
 
-                <Tooltip title="Save / load presets">
+                <Tooltip title={TIPS.perf.presets}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
@@ -1264,7 +1249,7 @@ function PerformancePanelInner({
                                     }}>
                                         {name}
                                     </Box>
-                                    <Tooltip title="Delete preset" placement="left" arrow>
+                                    <Tooltip title={TIPS.perf.deletePreset} placement="left" arrow>
                                         <IconButton
                                             size="small"
                                             onClick={(e) => handleDeletePreset(name, e)}
@@ -1284,9 +1269,7 @@ function PerformancePanelInner({
                         and MIDI mappings. Auto-disarms after 3 s. */}
                     <Box sx={{ px: 0.75, py: 0.75 }}>
                         <Tooltip
-                            title={restoreArmed
-                                ? 'Click again within 3s to confirm — clears session, fragments, and MIDI mappings'
-                                : 'Reset all panel settings, clear fragments, and clear MIDI mappings'}
+                            title={TIPS.perf.restoreDefaults(restoreArmed)}
                             placement="left"
                             arrow
                         >
@@ -1316,7 +1299,7 @@ function PerformancePanelInner({
                     </Box>
                 </Menu>
 
-                <Tooltip placement="right" title="Launch quantization — match Live's">
+                <Tooltip placement="right" title={TIPS.perf.launchQuant}>
                     <FormControl size="small" sx={{ ...styles.pillControl, minWidth: 92 }}>
                         <Select
                             value={launchQuantum}
@@ -1685,7 +1668,7 @@ function PerformancePanelInner({
                                 <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {model.name}
                                 </Box>
-                                <Tooltip title="Delete fine-tuned model">
+                                <Tooltip title={TIPS.perf.deleteFineTuned}>
                                     <IconButton
                                         size="small"
                                         onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -1727,7 +1710,7 @@ function PerformancePanelInner({
                     const loraDisabled = compatibleLoras.length === 0;
 
                     const deleteBtn = (loraName, size = 'md') => (
-                        <Tooltip title="Delete LoRA">
+                        <Tooltip title={TIPS.perf.deleteLora}>
                             <IconButton
                                 size="small"
                                 onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -1845,11 +1828,7 @@ function PerformancePanelInner({
                     </Box>
                     <Tooltip
                         placement="right"
-                        title={
-                            isDistilledSA3
-                                ? 'Locked at 8 steps for distilled SA3 models — pick a *-base checkpoint to override'
-                                : 'Diffusion steps per generation (more = higher quality, slower)'
-                        }
+                        title={TIPS.perf.steps(isDistilledSA3)}
                     >
                         <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
 
@@ -1922,7 +1901,7 @@ function PerformancePanelInner({
                     <Box component="span" sx={perfTokens.labelMuted}>
                         Inject
                     </Box>
-                    <Tooltip title="Musical key to auto-inject (e.g. C minor). Leave empty to skip." placement="top" arrow enterDelay={500}>
+                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
                         <TextField
                             size="small"
                             placeholder="Key"
@@ -1939,9 +1918,7 @@ function PerformancePanelInner({
                         />
                     </Tooltip>
                     <Tooltip
-                        title={promptInjectBpm
-                            ? `Injecting master BPM (${Math.round(bpm)}) into prompts — click to disable`
-                            : 'Click to auto-inject the master BPM (top bar) into every prompt'}
+                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
                         placement="top"
                         arrow
                         enterDelay={500}
@@ -1972,7 +1949,7 @@ function PerformancePanelInner({
                             {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
                         </ButtonBase>
                     </Tooltip>
-                    <Tooltip title="Time signature to auto-inject (e.g. 4/4). Leave empty to skip." placement="top" arrow enterDelay={500}>
+                    <Tooltip title={TIPS.perf.timeSig} placement="top" arrow enterDelay={500}>
                         <TextField
                             size="small"
                             placeholder="Time"

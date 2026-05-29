@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
     Box,
     IconButton,
-    Tooltip,
     Dialog,
     DialogTitle,
     DialogContent,
@@ -10,6 +9,8 @@ import {
     DialogActions,
     Button,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Play as PlayIcon,
     Square as StopIcon,
@@ -75,16 +76,14 @@ export default function ChannelFragmentHistory({
                     Fragments
                 </Box>
                 {fragments.length > 0 && (
-                    <Tooltip title="Clear fragment history" placement="top" arrow>
-                        <IconButton
-                            size="small"
-                            onClick={() => setClearConfirmOpen(true)}
-                            sx={styles.fragmentHistoryHeaderBtn}
-                            aria-label="Clear all fragments"
-                        >
-                            <ClearAllIcon size={12} />
-                        </IconButton>
-                    </Tooltip>
+                    <IconButton
+                        size="small"
+                        onClick={() => setClearConfirmOpen(true)}
+                        sx={styles.fragmentHistoryHeaderBtn}
+                        aria-label="Clear all fragments"
+                    >
+                        <ClearAllIcon size={12} />
+                    </IconButton>
                 )}
             </Box>
 
@@ -116,7 +115,7 @@ export default function ChannelFragmentHistory({
                                     onChange={() => onAudition(fragment.id)}
                                 >
                                     <Tooltip
-                                        title={isAuditioning ? 'Stop cue' : 'Audition through cue output'}
+                                        title={TIPS.fragments.audition(isAuditioning)}
                                         placement="top"
                                         arrow
                                         enterDelay={300}
@@ -141,7 +140,7 @@ export default function ChannelFragmentHistory({
                                 </Box>
 
                                 <Tooltip
-                                    title={fragment.starred ? 'Unstar' : 'Star (keep through eviction)'}
+                                    title={TIPS.fragments.star(fragment.starred)}
                                     placement="top"
                                     arrow
                                     enterDelay={300}
@@ -160,19 +159,17 @@ export default function ChannelFragmentHistory({
                                     </IconButton>
                                 </Tooltip>
 
-                                <Tooltip title="Delete fragment" placement="top" arrow enterDelay={300}>
-                                    <IconButton
-                                        size="small"
-                                        onClick={() => onDelete(fragment.id)}
-                                        sx={styles.fragmentDeleteBtn}
-                                        aria-label="Delete fragment"
-                                    >
-                                        <DeleteIcon size={12} />
-                                    </IconButton>
-                                </Tooltip>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => onDelete(fragment.id)}
+                                    sx={styles.fragmentDeleteBtn}
+                                    aria-label="Delete fragment"
+                                >
+                                    <DeleteIcon size={12} />
+                                </IconButton>
 
                                 <Tooltip
-                                    title={isCommitted ? 'Currently loaded' : 'Load into channel'}
+                                    title={TIPS.fragments.commit(isCommitted)}
                                     placement="top"
                                     arrow
                                     enterDelay={300}

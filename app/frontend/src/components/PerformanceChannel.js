@@ -5,11 +5,12 @@ import {
     TextField,
     IconButton,
     Slider,
-    Tooltip,
     Select,
     MenuItem,
     ButtonBase,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Play as PlayIcon,
     Square as StopIcon,
@@ -32,8 +33,11 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
-    '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
+    // Muted/dusty palette. Ch1 ochre-gold, ch2 lavender, ch3 terracotta,
+    // ch4 sage. (Ch1 used to share the master/system cyan; the muted cyan now
+    // lives in spare slot 4 — only 4 channels render, so 4–7 are spares.)
+    '#D4BA60', '#968CCC', '#CC6A47', '#5EAC8A',
+    '#50A8BA', '#CC85B4', '#6B97C8', '#A2C06E',
 ];
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
@@ -282,6 +286,7 @@ export default function PerformanceChannel({
 
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
+            // Each channel's waveform is drawn in that channel's own color.
             strip.drawWaveform(canvasRef.current, color);
         }
     }, [strip, color]);
@@ -650,13 +655,7 @@ export default function PerformanceChannel({
                     </MidiMappable>
                     <MidiMappable id={ctrlId('loop')} label={ctrlLabel('Loop')} kind="trigger" onChange={handleLoopToggle}>
                         <Tooltip
-                            title={
-                                looping
-                                    ? (durationMode === 'bars'
-                                        ? 'Seamless loop — next generation will be inpaint-stitched at the bar boundary'
-                                        : 'Playback loop on')
-                                    : 'Loop off'
-                            }
+                            title={TIPS.channel.loop(looping, durationMode)}
                             placement="top"
                             enterDelay={400}
                         >
@@ -673,12 +672,12 @@ export default function PerformanceChannel({
                 </Box>
                 <Box sx={styles.muteSoloRow}>
                     <MidiMappable id={ctrlId('mute')} label={ctrlLabel('Mute')} kind="trigger" onChange={handleMuteToggle}>
-                        <Tooltip title="Mute">
+                        <Tooltip title={TIPS.channel.mute}>
                             <IconButton size="small" onClick={handleMuteToggle} sx={styles.muteBtn(muted)}>M</IconButton>
                         </Tooltip>
                     </MidiMappable>
                     <MidiMappable id={ctrlId('solo')} label={ctrlLabel('Solo')} kind="trigger" onChange={handleSoloToggle}>
-                        <Tooltip title="Solo">
+                        <Tooltip title={TIPS.channel.solo}>
                             <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
                         </Tooltip>
                     </MidiMappable>
@@ -784,15 +783,7 @@ export default function PerformanceChannel({
                         live progress while generating; resets when complete. */}
                     <MidiMappable id={ctrlId('generate')} label={ctrlLabel('Generate')} kind="trigger" onChange={handleGenerate}>
                         <Tooltip
-                            title={
-                                generating
-                                    ? ''
-                                    : !canGenerate
-                                        ? 'Pick a model in the Generation tab first'
-                                        : !prompt.trim()
-                                            ? 'Enter a prompt to generate'
-                                            : ''
-                            }
+                            title={TIPS.channel.generateDisabled(generating, canGenerate, prompt.trim())}
                             placement="top"
                         >
                             <span style={{ display: 'inline-flex', flex: 1, minWidth: 0 }}>
@@ -823,7 +814,7 @@ export default function PerformanceChannel({
                         its content (×1…×8 + dropdown arrow); no need to match
                         the wider Sec/Bars toggle above. */}
                     <Tooltip
-                        title="Number of candidates to generate. Each fragment lands in the channel's fragment history."
+                        title={TIPS.channel.batch}
                         placement="top"
                         enterDelay={500}
                     >
@@ -851,18 +842,19 @@ export default function PerformanceChannel({
                         init_audio (Phase 8). Disabled until a fragment exists. */}
                     <MidiMappable id={ctrlId('variation')} label={ctrlLabel('Variation')} kind="trigger" onChange={handleVariation}>
                         <Tooltip
-                            title={
-                                !loaded
-                                    ? 'Generate a fragment first, then create variations of it'
-                                    : 'Variation — a related-but-different take from the current clip'
-                            }
+                            title={TIPS.channel.variation(loaded)}
                             placement="top"
                         >
                             <span style={{ display: 'inline-flex', flexShrink: 0 }}>
                                 <ButtonBase
                                     onClick={handleVariation}
                                     disabled={!loaded || generating}
-                                    sx={{ ...styles.channelPillControl, width: 40, justifyContent: 'center' }}
+                                    sx={{
+                                        ...styles.channelPillControl,
+                                        width: 40,
+                                        justifyContent: 'center',
+                                        '&.Mui-disabled': { opacity: 0.4, color: 'text.disabled' },
+                                    }}
                                     aria-label="Variation"
                                 >
                                     <VariationIcon size={15} strokeWidth={2.25} />

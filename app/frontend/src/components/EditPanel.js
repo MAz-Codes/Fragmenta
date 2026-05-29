@@ -11,7 +11,6 @@ import {
     Alert,
     LinearProgress,
     IconButton,
-    Tooltip,
 } from '@mui/material';
 import { Upload as UploadIcon, X as ClearIcon } from 'lucide-react';
 import api from '../api';
@@ -226,9 +225,7 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
                             {sourceName}
                             {sourceDurationSec && ` · ${sourceDurationSec.toFixed(2)}s`}
                         </Typography>
-                        <Tooltip title="Remove source">
-                            <IconButton size="small" onClick={clearSource}><ClearIcon size={14} /></IconButton>
-                        </Tooltip>
+                        <IconButton size="small" onClick={clearSource} aria-label="Remove source"><ClearIcon size={14} /></IconButton>
                     </Stack>
                 ) : (
                     <Button
