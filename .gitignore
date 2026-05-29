@@ -14,7 +14,7 @@ parts/
 sdist/
 var/
 ....venv
-uplaods
+uploads/
 redesign
 .venv-sa3
 DATASET_PREP_REDESIGN.md
