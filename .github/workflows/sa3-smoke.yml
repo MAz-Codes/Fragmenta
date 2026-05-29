@@ -1,0 +1,51 @@
+name: SA3 smoke
+
+# CPU smoke suite for the SA3 backend. The contract + pre-encode tests run on
+# every push/PR; the model-gated generation/training tests self-skip when no
+# checkpoint is present (they need gated HF downloads), so CI stays green and
+# fast without shipping multi-GB weights into the runner.
+
+on:
+  push:
+    branches: [main, dev/sa3]
+  pull_request:
+    branches: [main, dev/sa3]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip "setuptools<70" wheel
+          # CPU-only torch index keeps the runner light; flash-attn is gated to
+          # Linux+CUDA in requirements.txt and is harmless to skip on CI.
+          pip install -r requirements.txt --prefer-binary \
+            --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Contract smoke (offline)
+        env:
+          PYTHONPATH: vendor/stable-audio-3
+          FRAGMENTA_FORCE_DEVICE: cpu
+        run: python tests/smoke_test_sa3_contract.py
+
+      - name: Pre-encode wiring smoke (offline)
+        env:
+          PYTHONPATH: vendor/stable-audio-3
+        run: python tests/smoke_test_pre_encode.py
+
+      - name: Generation smoke (skips without a downloaded model)
+        env:
+          PYTHONPATH: vendor/stable-audio-3
+          FRAGMENTA_FORCE_DEVICE: cpu
+        run: python tests/smoke_test_sa3.py
