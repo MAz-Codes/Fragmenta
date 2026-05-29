@@ -14,9 +14,11 @@ parts/
 sdist/
 var/
 ....venv
+uplaods
 redesign
 .venv-sa3
 DATASET_PREP_REDESIGN.md
+SA3_COMPLETION_PLAN.md
 models/pretrained/sa3
 projects/
 wheels/
@@ -120,6 +122,7 @@ debug_binaries.py
 
 distribution
 scripts
+tests/
 !vendor/stable-audio-3/scripts/
 !vendor/stable-audio-3/scripts/**
 SA3_INTEGRATION_PLAN.md
