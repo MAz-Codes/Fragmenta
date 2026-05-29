@@ -1,165 +1,57 @@
 #!/bin/bash
+# Fragmenta launcher (macOS — double-clickable .command).
+#
+# Thin by design: acquires Python 3.11 (via Homebrew if needed), then hands
+# off to install.py, which owns the venv + dependency setup and is idempotent
+# (relaunch with an unchanged requirements.txt is near-instant). See install.py.
 
 echo "Fragmenta Desktop"
 echo "================================="
-
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 echo "Project root: $PROJECT_ROOT"
 echo ""
 
-install_python311_via_brew() {
-    echo "Installing Python 3.11 via Homebrew..."
-    if command -v brew &> /dev/null; then
-        brew install python@3.11
-        export PATH="/opt/homebrew/bin:/opt/homebrew/opt/python@3.11/bin:/usr/local/bin:/usr/local/opt/python@3.11/bin:$PATH"
-        return 0
-    else
-        echo "Homebrew not available for auto-installation"
-        return 1
-    fi
-}
+PYTHON_CMD=""
+is_py311() { "$1" -c 'import sys; sys.exit(0 if sys.version_info[:2]==(3,11) else 1)' >/dev/null 2>&1; }
 
-setup_python311() {
-    echo "Checking for Python 3.11..."
-    
+find_python_311() {
     for cmd in python3.11 python3; do
-        if command -v "$cmd" &> /dev/null; then
-            PYTHON_VERSION=$($cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
-            if [[ "$PYTHON_VERSION" == "3.11" ]]; then
-                PYTHON_CMD="$cmd"
-                echo "Found Python 3.11 via '$cmd'"
-                $cmd --version
-                return 0
-            fi
+        if command -v "$cmd" >/dev/null 2>&1 && is_py311 "$cmd"; then
+            PYTHON_CMD="$cmd"
+            return 0
         fi
     done
-    
-    echo "Python 3.11 not found, attempting auto-installation..."
-    
-    if install_python311_via_brew; then
-        for cmd in python3.11 python3; do
-            if command -v "$cmd" &> /dev/null; then
-                PYTHON_VERSION=$($cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
-                if [[ "$PYTHON_VERSION" == "3.11" ]]; then
-                    PYTHON_CMD="$cmd"
-                    echo "Successfully installed Python 3.11"
-                    return 0
-                fi
-            fi
-        done
-    fi
-    
-    echo ""
-    echo "Could not automatically install Python 3.11"
-    echo ""
-    echo "Please install Python 3.11 manually:"
-    echo "  1. Install Homebrew: https://brew.sh"
-    echo "  2. Run: brew install python@3.11"
-    echo "  3. Or download from: https://python.org"
-    echo ""
-    echo "Fragmenta requires Python 3.11 for optimal AI model compatibility."
-    echo ""
-    read -p "Press Enter to exit..."
-    exit 1
+    return 1
 }
 
-setup_python311
-echo ""
-
-if command -v brew &> /dev/null; then
-    echo "Installing minimal system dependencies via Homebrew..."
-    echo "(Only installing Python 3.11 if needed)"
-    if ! command -v python3.11 &> /dev/null; then
-        echo "Installing Python 3.11..."
-        brew install python@3.11 2>/dev/null || echo "Python 3.11 installation skipped"
+echo "Checking for Python 3.11..."
+if ! find_python_311; then
+    echo "Python 3.11 not found — attempting auto-install via Homebrew..."
+    if command -v brew >/dev/null 2>&1; then
+        brew install python@3.11
+        export PATH="/opt/homebrew/opt/python@3.11/bin:/usr/local/opt/python@3.11/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
     fi
-    echo "System dependencies ready"
-else
-    echo "Homebrew not found - this is OK for basic functionality"
-    echo "For optimal performance, consider installing Homebrew:"
-    echo "https://brew.sh"
-fi
-echo ""
-
-VENV_PATH="$PROJECT_ROOT/venv"
-if [ ! -d "$VENV_PATH" ]; then
-    echo "Creating Python virtual environment..."
-    echo "(This is a one-time setup)"
-    $PYTHON_CMD -m venv "$VENV_PATH"
-    echo "Virtual environment created"
-else
-    echo "Virtual environment exists"
-fi
-echo ""
-
-echo "Activating virtual environment..."
-source "$VENV_PATH/bin/activate"
-echo "Virtual environment activated"
-echo ""
-
-cd "$PROJECT_ROOT"
-
-echo "Updating Python package tools..."
-pip install --upgrade pip "setuptools<70" wheel build --quiet
-echo "Package tools updated"
-echo ""
-
-# requirements.txt declares --extra-index-url for the CUDA torch wheels at
-# the top of the file, and gates flash-attn behind sys_platform == 'linux'
-# so pip skips it cleanly on macOS. One install resolves the whole graph;
-# no manual torch/numpy pre-installs needed. The Stable Audio 3 vendor
-# lives at vendor/stable-audio-3 and is loaded via sys.path from Python —
-# nothing to pip-install for it here.
-echo "Installing dependencies from requirements.txt..."
-echo "(first run takes several minutes — torch + transformers are large)"
-pip install -r requirements.txt --quiet \
-    --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary || {
-    echo "Retrying with verbose output..."
-    pip install -r requirements.txt \
-        --find-links "$PROJECT_ROOT/utils/vendor/wheels" --prefer-binary || {
-        echo "ERROR: failed to install dependencies. Check the log above."
+    if ! find_python_311; then
+        echo ""
+        echo "Could not automatically install Python 3.11."
+        echo "  1. Install Homebrew: https://brew.sh"
+        echo "  2. Run: brew install python@3.11"
+        echo "  (Fragmenta 0.2 requires Python 3.11 — torch/flash-attn wheels are cp311 only.)"
+        echo ""
         read -p "Press Enter to exit..."
         exit 1
-    }
-}
-echo "Dependencies installed"
-echo ""
-
-# laion-clap pins numpy<2 in its metadata (conflicts with SA3's
-# numpy>=2.2.6) but works fine at runtime with numpy 2.x. Install
-# without re-resolving its deps — requirements.txt above already
-# brought in everything laion-clap actually imports at runtime.
-echo "Installing laion-clap (auto-annotator) with --no-deps..."
-pip install "laion-clap>=1.1.6" --no-deps --quiet || \
-    echo "WARNING: laion-clap install failed — auto-annotation features may not work"
-echo ""
-
-echo "Verifying PyTorch installation..."
-if python -c "import torch; print('PyTorch version:', torch.__version__); print('CUDA available:', torch.cuda.is_available())" 2>/dev/null; then
-    echo "PyTorch working correctly"
-else
-    echo "PyTorch verification failed"
+    fi
 fi
+echo "Using Python 3.11 via: $PYTHON_CMD ($($PYTHON_CMD --version))"
 echo ""
 
-echo "Installation complete! Starting Fragmenta..."
-echo "The desktop application will open in a moment..."
-echo ""
-
-if [ -f "start.py" ]; then
-    python start.py
-else
-    echo "Error: start.py not found in $(pwd)"
-    echo "Available files:"
-    ls -la
+# Hand off: install.py creates/validates the venv, installs deps only if
+# requirements.txt changed, verifies, and launches the app.
+"$PYTHON_CMD" "$PROJECT_ROOT/install.py" --launch
+STATUS=$?
+if [ "$STATUS" != "0" ]; then
     echo ""
-    echo "Please check the installation and try again."
-    read -p "Press Enter to exit..."
-    exit 1
+    echo "Fragmenta exited with code $STATUS."
+    read -p "Press Enter to close..."
 fi
-
-echo ""
-echo "Thanks for using Fragmenta!"
-
-read -p "Press Enter to continue..."
