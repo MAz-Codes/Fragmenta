@@ -2292,41 +2292,6 @@ export const welcomePageStyles = {
     },
 };
 
-export const hfAuthDialogStyles = {
-    checkingBox: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        my: 4,
-    },
-    checkingProgress: {
-        mb: 2,
-    },
-    authStepBox: {
-        mt: 2,
-    },
-    downloadStepBox: {
-        mt: 2,
-        textAlign: 'center',
-    },
-    downloadProgress: {
-        mb: 2,
-        height: 10,
-        borderRadius: 5,
-    },
-    successStepBox: {
-        mt: 2,
-        textAlign: 'center',
-    },
-    stepper: {
-        mb: 4,
-    },
-    errorAlert: {
-        mb: 2,
-    },
-    loginSpinnerSize: 24,
-};
-
 export const lossChartStyles = {
     padding: { top: 10, right: 16, bottom: 28, left: 44 },
     colors: {

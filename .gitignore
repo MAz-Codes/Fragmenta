@@ -13,7 +13,7 @@ lib64/
 parts/
 sdist/
 var/
-....venv
+.venv
 uploads/
 redesign
 .venv-sa3
