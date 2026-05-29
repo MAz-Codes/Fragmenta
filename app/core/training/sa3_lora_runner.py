@@ -155,6 +155,7 @@ def build_train_command(
     sa3_model_name: str,
     data_dir: Path,
     encoded_dir: Optional[Path] = None,
+    svd_bases_path: Optional[Path] = None,
     save_dir: Path,
     rank: int = 16,
     lora_alpha: Optional[int] = None,
@@ -211,6 +212,13 @@ def build_train_command(
         # then uses PreEncodedDataset instead of SampleDataset and skips
         # the SAME autoencoder pass per step.
         cmd += ["--encoded_dir", str(encoded_dir)]
+    if svd_bases_path is not None and adapter_type.endswith("-xs"):
+        # -XS adapters factor weights against precomputed SVD bases. SA3 only
+        # *loads* bases from this path (it doesn't write them), so we pass it
+        # only when a cached .pt already exists — otherwise SA3 recomputes the
+        # SVD per layer on device (slower, but correct). See SA3Trainer for the
+        # cache path convention.
+        cmd += ["--svd_bases_path", str(svd_bases_path)]
     if lora_alpha is not None:
         cmd += ["--lora_alpha", str(int(lora_alpha))]
     if include:

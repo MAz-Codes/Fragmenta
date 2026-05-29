@@ -405,16 +405,31 @@ class SA3Trainer:
         if exclude and isinstance(exclude, str):
             exclude = shlex.split(exclude)
 
+        adapter_type = self.config.get("adapterType") or DEFAULT_ADAPTER
+
+        # -XS adapters can reuse a precomputed SVD-bases cache keyed by base
+        # model, skipping the per-layer SVD at startup. SA3 only loads (never
+        # writes) this file, so we pass it only when present; population is a
+        # manual/precompute step. Ensure the dir exists so it's discoverable.
+        svd_bases_path = None
+        if adapter_type.endswith("-xs"):
+            svd_cache_dir = get_config().get_path("models_fine_tuned") / ".svd_cache"
+            svd_cache_dir.mkdir(parents=True, exist_ok=True)
+            candidate = svd_cache_dir / f"{self.config['baseModel']}.pt"
+            if candidate.exists():
+                svd_bases_path = candidate
+
         cmd = build_train_command(
             venv_python=venv_python,
             sa3_vendor_dir=sa3_vendor,
             sa3_model_name=sa3_name,
             data_dir=self._data_dir,
             encoded_dir=getattr(self, "_encoded_dir", None),
+            svd_bases_path=svd_bases_path,
             save_dir=self.run_dir / "checkpoints",
             rank=int(self.config.get("loraRank") or DEFAULT_RANK),
             lora_alpha=self.config.get("loraAlpha"),
-            adapter_type=self.config.get("adapterType") or DEFAULT_ADAPTER,
+            adapter_type=adapter_type,
             dropout=float(self.config.get("loraDropout") or 0.0),
             lr=float(self.config.get("learningRate") or DEFAULT_LR),
             steps=int(self.config.get("steps") or DEFAULT_STEPS),
