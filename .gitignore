@@ -1,4 +1,4 @@
-
+# ===== Python =====
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,63 +13,91 @@ lib64/
 parts/
 sdist/
 var/
-.venv
-uploads/
-redesign
-.venv-sa3
-DATASET_PREP_REDESIGN.md
-SA3_COMPLETION_PLAN.md
-models/pretrained/sa3
-projects/
-wheels/
-!utils/vendor/wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
-models/pretrained/clap
+
+# ===== Virtual environments =====
+.venv
+.venv-sa3
 venv/
 env/
 ENV/
 env.bak/
 venv.bak/
 
-SIMPLIFICATION_PLAN.md
+# ===== Node / frontend =====
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.eslintcache
 
-main.py
-
+# ===== Models & large artifacts =====
+models/pretrained/sa3
+models/pretrained/clap
 models/pretrained/*.safetensors
 models/pretrained/*.ckpt
 models/pretrained/*.pth
 models/pretrained/models--*/
 models/pretrained/.locks/
 models/pretrained/.cache/
-acestep_vendor/
 models/fine_tuned/*/
 !models/fine_tuned/.gitkeep
+acestep_vendor/
+# Ignore stray wheels everywhere except our bundled offline set.
+wheels/
+!utils/vendor/wheels/
 
-app/backend/*.log
+# ===== Datasets / user data =====
+projects/
+uploads/
+/data/
+!/data/.gitkeep
+
+# ===== Generated audio & checkpoints =====
 output/
 *.wav
 *.mp3
 *.flac
 *.aiff
 *.ogg
-
 lightning_logs/
 *.ckpt
-config/terms_accepted.json
 
+# ===== Logs =====
+app/backend/*.log
 logs/
 *.log
 
+# ===== Data files: ignore by default, keep project + config manifests =====
+*.csv
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!*.config.json
+!config/annotator_labels.json
+models/config/dataset-config.json
+config/annotator_labels.user.json
+config/terms_accepted.json
+
+# ===== Env files =====
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ===== OS / editor cruft =====
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
 .DS_Store
 .DS_Store?
 ._*
@@ -78,22 +106,7 @@ logs/
 ehthumbs.db
 Thumbs.db
 
-
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.npm
-.eslintcache
-
-
-
-build/fragmenta/
-build/fragmenta.spec
-build/windows_source/
-
-scripts/__pycache__/
-
+# ===== Temp / cache =====
 tmp/
 temp/
 *.temp
@@ -101,39 +114,31 @@ temp/
 .cache
 .parcel-cache
 
-*.csv
-*.json
-!package.json
-!package-lock.json
-!tsconfig.json
-!*.config.json
-
-models/config/dataset-config.json
-!config/annotator_labels.json
-config/annotator_labels.user.json
-
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-debug_binaries.py
-
+# ===== Build / packaging artifacts (local-only) =====
+build/fragmenta/
+build/fragmenta.spec
+build/windows_source/
 distribution
 distribution.md
+
+# ===== Local-only directories (never committed) =====
+# `scripts` matches at any depth, so re-include the vendored SA3 scripts.
 scripts
-tests/
 !vendor/stable-audio-3/scripts/
 !vendor/stable-audio-3/scripts/**
-SA3_INTEGRATION_PLAN.md
-/data/
-!/data/.gitkeep
-.dockerignore
+tests/
 # All Docker artifacts live under docker/ (local-only, never committed).
 docker/
-DOCKERHUB.md
+.dockerignore
 .claude
+
+# ===== Local planning / scratch docs =====
+redesign
+DATASET_PREP_REDESIGN.md
+SIMPLIFICATION_PLAN.md
+SA3_COMPLETION_PLAN.md
+SA3_INTEGRATION_PLAN.md
+DOCKERHUB.md
 TRAINING.md
-# ffprobe duration cache for the hyperparam suggester
-data/.duration_cache.json
+main.py
+debug_binaries.py
