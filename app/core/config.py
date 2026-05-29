@@ -45,15 +45,20 @@ class ProjectConfig:
         fine_tuned_override = os.environ.get("FRAGMENTA_FINE_TUNED_DIR")
         fine_tuned_dir = Path(fine_tuned_override) if fine_tuned_override else self.user_data_dir / "models" / "fine_tuned"
 
-        data_override = os.environ.get("FRAGMENTA_DATA_DIR")
-        data_dir = Path(data_override) if data_override else self.user_data_dir / "data"
+        # Scratch area for browser folder uploads (/api/upload-folder). The
+        # SA2-era "data" dataset directory is gone in 0.2.0 — datasets are now
+        # Dataset Workbench projects under projects/. The only remaining legacy
+        # reference is the one-shot "Import data/ as a project" migration, which
+        # resolves the old data/ folder directly (see projects._legacy_data_dir).
+        uploads_override = os.environ.get("FRAGMENTA_UPLOADS_DIR")
+        uploads_dir = Path(uploads_override) if uploads_override else self.user_data_dir / "uploads"
 
         self.paths: Dict[str, Path] = {
             "models": self.user_data_dir / "models",
             "models_config": self.user_data_dir / "models" / "config",
             "models_pretrained": self.user_data_dir / "models" / "pretrained",
             "models_fine_tuned": fine_tuned_dir,
-            "data": data_dir,
+            "uploads": uploads_dir,
             "logs": self.user_data_dir / "logs",
             "output": self.user_data_dir / "output",
 
@@ -73,7 +78,7 @@ class ProjectConfig:
     def _ensure_directories(self) -> None:
 
         for path_name, path in self.paths.items():
-            if path_name.endswith(('_fine_tuned', 'data')):
+            if path_name.endswith(('_fine_tuned', 'uploads')):
                 path.mkdir(parents=True, exist_ok=True)
 
     def get_path(self, path_name: str) -> Path:

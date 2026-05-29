@@ -520,8 +520,13 @@ def ingest_folder(name: str, source_folder: Path, mode: str) -> Dict[str, Any]:
 # ---------- Legacy data/ migration (one-shot, Phase 5.7) --------------------
 
 def _legacy_data_dir() -> Path:
+    # The pre-0.2.0 dataset folder. It's no longer a first-class config path
+    # (datasets are projects now); resolve it directly here so the one-shot
+    # migration can still find legacy content. Honours FRAGMENTA_DATA_DIR for
+    # parity with how the old folder could be relocated.
     from app.core.config import get_config
-    return get_config().get_path("data")
+    override = os.environ.get("FRAGMENTA_DATA_DIR")
+    return Path(override) if override else get_config().user_data_dir / "data"
 
 
 def legacy_data_status() -> Dict[str, Any]:

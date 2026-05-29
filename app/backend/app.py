@@ -2050,7 +2050,7 @@ def upload_folder():
     folder_name = first_rel.split('/', 1)[0] if '/' in first_rel else 'folder'
     safe_folder = ''.join(c for c in folder_name if c.isalnum() or c in '-_') or 'folder'
 
-    staging_root = get_config().get_path('data') / 'uploads'
+    staging_root = get_config().get_path('uploads')
     staging_root.mkdir(parents=True, exist_ok=True)
     target_dir = staging_root / f"{int(time.time())}-{safe_folder}"
     target_dir.mkdir(parents=True, exist_ok=True)
