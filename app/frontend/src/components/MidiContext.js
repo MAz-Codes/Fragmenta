@@ -8,6 +8,7 @@ import React, {
     useState,
 } from 'react';
 import { Box } from '@mui/material';
+import api from '../api';
 
 const STORAGE_KEY = 'fragmenta.midi.config.v1';
 
@@ -73,7 +74,6 @@ export function MidiProvider({ children }) {
     const [learnMode, setLearnMode] = useState(false);
     const [learnTarget, setLearnTarget] = useState(null);
 
-    const accessRef = useRef(null);
     const subscribersRef = useRef(new Map());
     const pickupArmedRef = useRef(new Map());
     const configRef = useRef(config);
@@ -86,39 +86,23 @@ export function MidiProvider({ children }) {
 
     useEffect(() => { learnTargetRef.current = learnTarget; }, [learnTarget]);
 
-    const refreshInputs = useCallback(() => {
-        const access = accessRef.current;
-        if (!access) return;
-        const list = [];
-        access.inputs.forEach((input) => {
-            list.push({
-                id: input.id,
-                name: input.name || 'Unknown device',
-                manufacturer: input.manufacturer || '',
-            });
-        });
-        setInputs(list);
+    // Device list comes from the native backend (python-rtmidi) instead of
+    // Web MIDI, so it works in every web engine.
+    const refreshInputs = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/midi/devices');
+            setSupported(!!data.available);
+            setInputs(Array.isArray(data.inputs) ? data.inputs : []);
+            setPermissionError(data.available
+                ? null
+                : 'Native MIDI is unavailable (python-rtmidi not installed).');
+        } catch (err) {
+            setSupported(false);
+            setPermissionError(err?.message || 'Could not reach the MIDI backend.');
+        }
     }, []);
 
-    useEffect(() => {
-        if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
-            setSupported(false);
-            return undefined;
-        }
-        let cancelled = false;
-        navigator.requestMIDIAccess({ sysex: false })
-            .then((access) => {
-                if (cancelled) return;
-                accessRef.current = access;
-                refreshInputs();
-                access.onstatechange = refreshInputs;
-            })
-            .catch((err) => {
-                setPermissionError(err?.message || 'MIDI permission denied');
-                setSupported(false);
-            });
-        return () => { cancelled = true; };
-    }, [refreshInputs]);
+    useEffect(() => { refreshInputs(); }, [refreshInputs]);
 
     useEffect(() => {
         if (!inputs.length || !config.deviceName) return;
@@ -192,24 +176,30 @@ export function MidiProvider({ children }) {
         }
     }, [captureLearn]);
 
+    // Stream incoming MIDI from the backend over SSE. Each event is the same
+    // {data:[status,d1,d2]} shape Web MIDI gave us, so dispatchMessage is
+    // unchanged. EventSource auto-reconnects on drop.
     useEffect(() => {
-        const access = accessRef.current;
-        if (!access) return undefined;
-        const bound = [];
-        access.inputs.forEach((input) => {
-            if (config.deviceId && input.id === config.deviceId) {
-                input.onmidimessage = dispatchMessage;
-                bound.push(input);
-            } else {
-                input.onmidimessage = null;
-            }
-        });
-
-        pickupArmedRef.current = new Map();
-        return () => {
-            bound.forEach((i) => { i.onmidimessage = null; });
+        if (typeof EventSource === 'undefined') {
+            setSupported(false);
+            return undefined;
+        }
+        const es = new EventSource('/api/midi/stream');
+        es.onmessage = (e) => {
+            try { dispatchMessage(JSON.parse(e.data)); }
+            catch { /* malformed line — ignore */ }
         };
-    }, [config.deviceId, inputs, dispatchMessage]);
+        pickupArmedRef.current = new Map();
+        return () => es.close();
+    }, [dispatchMessage]);
+
+    // Tell the backend which port to open. The stream only carries the open
+    // port's events, so device selection happens server-side.
+    useEffect(() => {
+        if (!supported) return;
+        api.post('/api/midi/select', { port_id: config.deviceId || null })
+            .catch(() => { /* non-fatal */ });
+    }, [config.deviceId, supported]);
 
     function applyContinuous(sub, mapping, midiValue, takeover) {
         const norm = midiValue / 127;

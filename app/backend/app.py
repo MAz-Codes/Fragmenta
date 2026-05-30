@@ -5,11 +5,12 @@ from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
 import os
 import re
 import random
+import queue
 from pathlib import Path
 import sys
 import threading
@@ -2781,6 +2782,60 @@ def clap_unload_route():
     return jsonify({'message': 'CLAP unloaded from memory.'})
 
 
+# --- Native MIDI input -----------------------------------------------------
+# python-rtmidi reads hardware MIDI natively (CoreMIDI / WinMM / ALSA), so MIDI
+# works regardless of the web engine. The frontend keeps all mapping/learn
+# logic; it just consumes /api/midi/stream instead of Web MIDI.
+@app.route('/api/midi/devices', methods=['GET'])
+def midi_devices():
+    from app.core.audio import midi_input
+    return jsonify({
+        "available": midi_input.is_available(),
+        "inputs": midi_input.list_inputs(),
+        "current": midi_input.current_port(),
+    })
+
+
+@app.route('/api/midi/select', methods=['POST'])
+def midi_select():
+    from app.core.audio import midi_input
+    data = request.get_json(silent=True) or {}
+    port_id = data.get('port_id')
+    ok = midi_input.open_input(port_id)
+    if not ok and port_id:
+        return jsonify(APIResponse.error(
+            "Could not open that MIDI input port.", status_code=400)), 400
+    return jsonify({"current": midi_input.current_port()})
+
+
+@app.route('/api/midi/stream', methods=['GET'])
+def midi_stream():
+    """Server-Sent Events stream of incoming MIDI from the open port. Each
+    event is {"data": [status, d1, d2]} — the same shape the frontend's
+    Web-MIDI dispatcher already expects."""
+    from app.core.audio import midi_input
+
+    def gen():
+        q = midi_input.subscribe()
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    payload = q.get(timeout=15)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except queue.Empty:
+                    yield ": keepalive\n\n"   # keep idle proxies/connections alive
+        except GeneratorExit:
+            pass
+        finally:
+            midi_input.unsubscribe(q)
+
+    resp = Response(gen(), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    return resp
+
+
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
     try:
@@ -2797,4 +2852,6 @@ def shutdown():
 if __name__ == '__main__':
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
     port = int(os.environ.get('FLASK_PORT', '5001'))
-    app.run(debug=True, host=host, port=port)
+    # threaded=True so the long-lived MIDI SSE stream (/api/midi/stream) doesn't
+    # block other requests on the single dev-server worker.
+    app.run(debug=True, host=host, port=port, threaded=True)
