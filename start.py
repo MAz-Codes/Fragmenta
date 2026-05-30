@@ -452,7 +452,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--browser",
         action="store_true",
-        help="Use the system browser instead of pywebview window",
+        help="Use the system browser instead of the pywebview window",
+    )
+    parser.add_argument(
+        "--chromium",
+        action="store_true",
+        help=(
+            "Launch in a real Chromium browser (--app mode) instead of the "
+            "native window. Only needed for cue output-device routing "
+            "(AudioContext.setSinkId), which the OS WebViews lack on mac/linux."
+        ),
     )
     return parser.parse_args()
 
@@ -460,19 +469,21 @@ def main() -> int:
     args = parse_args()
     if args.browser:
         return run_browser_mode()
-    # Prefer a real Chromium browser in --app mode on every OS: it's the only
-    # engine with full Web Audio (setSinkId) + AudioWorklet across mac/win/linux
-    # (macOS WKWebView lacks them). Falls back to pywebview (WebView2/WKWebView)
-    # then the system browser.
-    chromium_path = find_chromium()
-    if chromium_path:
-        chromium_exit_code = run_chromium_app_mode(chromium_path)
-        if chromium_exit_code == 0:
-            return 0
-        print(
-            "Chromium app mode failed "
-            f"(exit code {chromium_exit_code}); falling back to pywebview/browser mode."
-        )
+    # Default: the native pywebview window on every OS — branded (Fragmenta
+    # icon + name), no external browser opening. MIDI is native (rtmidi) and
+    # core audio + master recording work in WebView2/WKWebView/WebKitGTK. The
+    # only thing the OS WebViews lack on mac/linux is setSinkId (routing the
+    # cue to a *separate* output device) — opt into `--chromium` if you need it.
+    if args.chromium:
+        chromium_path = find_chromium()
+        if chromium_path:
+            chromium_exit_code = run_chromium_app_mode(chromium_path)
+            if chromium_exit_code == 0:
+                return 0
+            print(
+                "Chromium app mode failed "
+                f"(exit code {chromium_exit_code}); falling back to pywebview."
+            )
     return run_pywebview_mode()
 
 if __name__ == "__main__":
