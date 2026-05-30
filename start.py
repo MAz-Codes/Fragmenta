@@ -82,7 +82,38 @@ def run_browser_mode() -> int:
             except subprocess.TimeoutExpired:
                 backend_process.kill()
 
+def _chromium_install_paths() -> list[str]:
+    """Absolute install locations to probe on macOS/Windows (where the browser
+    isn't on PATH), in priority order: real Chrome/Chromium before Edge/Brave."""
+    if sys.platform == "darwin":
+        home = Path.home()
+        return [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            str(home / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ]
+    if sys.platform == "win32":
+        pf = os.environ.get("PROGRAMFILES", r"C:\Program Files")
+        pfx86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
+        local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        return [
+            rf"{pf}\Google\Chrome\Application\chrome.exe",
+            rf"{pfx86}\Google\Chrome\Application\chrome.exe",
+            rf"{local}\Google\Chrome\Application\chrome.exe",
+            rf"{pf}\Chromium\Application\chrome.exe",
+            rf"{pf}\Microsoft\Edge\Application\msedge.exe",
+            rf"{pfx86}\Microsoft\Edge\Application\msedge.exe",
+            rf"{pf}\BraveSoftware\Brave-Browser\Application\brave.exe",
+            rf"{pfx86}\BraveSoftware\Brave-Browser\Application\brave.exe",
+        ]
+    return []  # Linux resolves via PATH (below)
+
+
 def find_chromium() -> str | None:
+    # 1) PATH names — primarily Linux, but also mac/win if a browser is on PATH.
+    #    Skip snap-confined browsers (they misbehave in --app mode).
     for name in CHROMIUM_CANDIDATES:
         path = shutil.which(name)
         if not path:
@@ -95,6 +126,10 @@ def find_chromium() -> str | None:
         ):
             continue
         return path
+    # 2) Absolute install locations (macOS / Windows, where Chrome isn't on PATH).
+    for candidate in _chromium_install_paths():
+        if candidate and os.path.isfile(candidate):
+            return candidate
     return None
 
 
@@ -126,17 +161,25 @@ def run_chromium_app_mode(chromium_path: str) -> int:
                 print("Backend failed to start in time.")
                 return 1
 
-        ensure_desktop_entry()
+        if sys.platform == "linux":
+            ensure_desktop_entry()
         CHROMIUM_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         launch_args_base = [
             chromium_path,
             f"--app={BACKEND_URL}",
-            f"--class={APP_WM_CLASS}",
             "--window-size=1400,850",
             "--no-first-run",
             "--no-default-browser-check",
+            # Quiet the browser's own console spam (Chromium INFO/WARNING/ERROR,
+            # e.g. Brave's P3A telemetry). FATAL-only.
+            "--log-level=3",
+            "--disable-logging",
         ]
+        if sys.platform == "linux":
+            # X11/Wayland WM class so the launcher/taskbar group under Fragmenta.
+            # macOS/Windows ignore (or warn about) it, so it's Linux-only.
+            launch_args_base.insert(2, f"--class={APP_WM_CLASS}")
 
         attempts = [
             (
@@ -149,9 +192,15 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             ("default profile", launch_args_base),
         ]
 
+        # Silence the browser subprocess entirely — both Chromium's own logging
+        # and library spam printed straight to stderr (e.g. the Mesa
+        # "MESA-LOADER: failed to open dri ... Permission denied" GL fallback
+        # notice) flow through here. Our Python backend logs from a separate
+        # process and is unaffected.
+        quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         last_exit_code = 1
         for index, (label, args) in enumerate(attempts):
-            chromium_process = subprocess.Popen(args, cwd=str(PROJECT_ROOT))
+            chromium_process = subprocess.Popen(args, cwd=str(PROJECT_ROOT), **quiet)
             chromium_process.wait()
             last_exit_code = chromium_process.returncode or 0
             if last_exit_code == 0:
@@ -411,16 +460,19 @@ def main() -> int:
     args = parse_args()
     if args.browser:
         return run_browser_mode()
-    if sys.platform == "linux":
-        chromium_path = find_chromium()
-        if chromium_path:
-            chromium_exit_code = run_chromium_app_mode(chromium_path)
-            if chromium_exit_code == 0:
-                return 0
-            print(
-                "Chromium app mode failed "
-                f"(exit code {chromium_exit_code}); falling back to pywebview/browser mode."
-            )
+    # Prefer a real Chromium browser in --app mode on every OS: it's the only
+    # engine with full Web Audio (setSinkId) + AudioWorklet across mac/win/linux
+    # (macOS WKWebView lacks them). Falls back to pywebview (WebView2/WKWebView)
+    # then the system browser.
+    chromium_path = find_chromium()
+    if chromium_path:
+        chromium_exit_code = run_chromium_app_mode(chromium_path)
+        if chromium_exit_code == 0:
+            return 0
+        print(
+            "Chromium app mode failed "
+            f"(exit code {chromium_exit_code}); falling back to pywebview/browser mode."
+        )
     return run_pywebview_mode()
 
 if __name__ == "__main__":

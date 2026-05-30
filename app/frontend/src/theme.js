@@ -1349,7 +1349,12 @@ export const appStyles = {
         pt: 0,
         pb: { xs: 1.5, sm: 2, md: 3 },
         px: { xs: 1.5, sm: 2, md: 3 },
-        minHeight: '100vh',
+        // Fill `root` (already minHeight:100vh) rather than re-declaring 100vh.
+        // Two stacked 100vh layers + the header tipped scrollHeight a few px
+        // past the viewport, producing a phantom page scroll with nothing
+        // actually clipped.
+        flex: 1,
+        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: 'transparent',
@@ -2996,16 +3001,16 @@ export const performanceChannelStyles = {
     // so the channel strip never resizes as fragments accumulate — past 4
     // fragments the strip scrolls internally instead of growing.
     fragmentHistoryList: {
-        height: 4 * 28 + 3,
+        height: 3 * 28 + 2,
         overflowY: 'auto',
     },
     fragmentHistoryEmpty: {
         ...perfTokens.caps,
         textAlign: 'center',
         color: 'text.disabled',
-        // Match the 4-row list height so the panel doesn't resize when
+        // Match the 3-row list height so the panel doesn't resize when
         // fragments appear / disappear.
-        height: 4 * 28 + 3,
+        height: 3 * 28 + 2,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
