@@ -280,6 +280,39 @@ def _windows_set_app_id() -> None:
     except Exception as exc:
         print(f"Could not set AppUserModelID: {exc}")
 
+def _macos_set_app_metadata() -> None:
+    """Make the macOS menu-bar app name read 'Fragmenta' instead of 'Python'.
+
+    Running a bare interpreter, the app menu's bold title comes from the
+    process bundle's CFBundleName — which is the Python interpreter. Patch the
+    in-memory Info dictionary before pywebview builds the Cocoa menu. (The
+    permanent fix is shipping a real .app bundle — see distribution.md.)"""
+    if sys.platform != "darwin":
+        return
+    try:
+        from Foundation import NSBundle
+        bundle = NSBundle.mainBundle()
+        info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+        if info is not None:
+            info["CFBundleName"] = "Fragmenta"
+    except Exception as exc:
+        print(f"Could not set macOS app name: {exc}")
+
+
+def _macos_apply_dock_icon() -> None:
+    """Set the Dock icon to Fragmenta's at runtime (no .app bundle needed).
+    Bound to the window 'shown' event so NSApplication is already up."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSImage
+        image = NSImage.alloc().initByReferencingFile_(str(APP_ICON_PATH))
+        if image is not None:
+            NSApplication.sharedApplication().setApplicationIconImage_(image)
+    except Exception as exc:
+        print(f"Could not set macOS dock icon: {exc}")
+
+
 def _linux_set_app_metadata() -> None:
     """Linux analogue of `_windows_set_app_id` + bundled icon setup.
 
@@ -383,6 +416,7 @@ def run_pywebview_mode() -> int:
 
     _windows_set_app_id()
     _linux_set_app_metadata()
+    _macos_set_app_metadata()
 
     if sys.platform == "linux":
         deps_ok, deps_error = check_linux_webview_deps()
@@ -428,6 +462,8 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _windows_apply_window_icon
             elif sys.platform == "linux":
                 window.events.shown += _linux_apply_window_icon
+            elif sys.platform == "darwin":
+                window.events.shown += _macos_apply_dock_icon
             webview.start()
             return 0 if window else 1
         except Exception as exc:
