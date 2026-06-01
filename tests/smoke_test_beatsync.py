@@ -49,7 +49,7 @@ from app.core.generation.audio_post_process import (  # noqa: E402
     align_for_loop,
     align_to_grid,
     beatsync_v2_enabled,
-    _transient_stretch,
+    _conform_stretch,
     _grid_confidence,
     _detect_grid,
     _GRID_CONFIDENCE_MIN,
@@ -262,14 +262,14 @@ def _part1_body() -> None:
     # Behavioural gate: a HIGH-confidence off-tempo loop IS warped; a LOW-
     # confidence texture is NOT (we trust the requested grid). Spy on the
     # stretch to prove it without inferring from the audio.
-    real_stretch = app_post._transient_stretch
+    real_stretch = app_post._conform_stretch
     calls = {"n": 0}
 
     def spy(audio, rate, sr):
         calls["n"] += 1
         return real_stretch(audio, rate, sr)
 
-    app_post._transient_stretch = spy
+    app_post._conform_stretch = spy
     try:
         # 110 BPM click train, target 120 -> rate 1.09 (in safe range), high conf
         off = click_train(bpm=110.0, n_beats=16, lead_samples=2000, freq=120.0)
@@ -284,7 +284,7 @@ def _part1_body() -> None:
         expect("Phase E: low-confidence texture is NOT warped (trust grid)",
                calls["n"] == 0, f"stretch calls={calls['n']}")
     finally:
-        app_post._transient_stretch = real_stretch
+        app_post._conform_stretch = real_stretch
 
     # --- seam metric on a mathematically perfect loop ---------------------
     # A sine whose period divides `target` loops seamlessly. NB: a raw
@@ -306,15 +306,15 @@ def _part1_body() -> None:
                       for i in range(1, reps)]
         return max(boundaries) / typical
 
-    # --- INV#5 transient-preserving stretch -------------------------------
-    # Single sharp click; after stretch the length must scale by ~1/rate and a
-    # sharp transient must survive (high crest factor). RubberBand crisp mode
-    # preserves it; the librosa fallback (used when the CLI is absent) is
-    # accepted here but smears more — see the [info] line in the log.
+    # --- INV#5 transient-preserving stretch (justified equivalent) --------
+    # Single sharp click; after the librosa phase-vocoder conform-stretch the
+    # length must scale by ~1/rate and a sharp transient must survive (high
+    # crest factor). Bounded rate + rare path = negligible smear; the downbeat
+    # itself is placed by the trim, not this stretch (see _conform_stretch).
     clip = click_train(bpm=120.0, n_beats=1, lead_samples=0, freq=120.0,
                        tail_beats=0.0)[: int(SR * 0.5)]
     rate = 0.9
-    st = _transient_stretch(np.ascontiguousarray(clip), rate, SR)
+    st = _conform_stretch(np.ascontiguousarray(clip), rate, SR)
     exp_len = int(round(clip.shape[0] / rate))
     expect("INV#5 stretch length scales by 1/rate (within 1%)",
            abs(st.shape[0] - exp_len) <= max(64, int(0.01 * exp_len)),

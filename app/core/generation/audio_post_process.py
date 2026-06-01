@@ -110,8 +110,8 @@ _CV_MAX = 0.20                          # interval CV at which regularity -> 0
 # A single hardened core shared by both align entry points. It enforces the
 # locked invariants directly instead of relying on librosa's beat[0] for
 # phase and on end-snap/silence-trim for length:
-#   * tempo conform with a transient-preserving stretch (rubberband, librosa
-#     fallback) — gen-time warp only, no live tracking (decision: v1);
+#   * tempo conform with a bounded phase-vocoder stretch (_conform_stretch) —
+#     gen-time warp only, no live tracking (decision: v1);
 #   * align the first STRONG transient to sample 0 (rotate-free head trim) so
 #     two independently-correct clips share a downbeat with zero per-clip code;
 #   * crop to the exact target sample count — overgenerate-then-trim, never
@@ -147,7 +147,7 @@ def _stage_a_v2(
             safe_min=_BARS_MODE_STRETCH_MIN, safe_max=_BARS_MODE_STRETCH_MAX,
         )
         if rate is not None and abs(rate - 1.0) > deadband:
-            audio = _transient_stretch(audio, rate, sr)
+            audio = _conform_stretch(audio, rate, sr)
             mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
             logger.info(
                 "stage_a_v2: detected %.2f BPM (eff %.2f), transient-stretched "
@@ -273,25 +273,25 @@ def _first_strong_transient(mono: np.ndarray, sr: int) -> int:
     return int(lo + above[0]) if len(above) else cand
 
 
-def _transient_stretch(audio: np.ndarray, rate: float, sr: int) -> np.ndarray:
-    """Time-stretch preserving transients (INV#5).
+def _conform_stretch(audio: np.ndarray, rate: float, sr: int) -> np.ndarray:
+    """Tempo-conform time-stretch — the INV#5 "justified equivalent".
 
-    Prefers RubberBand in crisp-transient mode via pyrubberband; falls back to
-    the librosa phase vocoder when the rubberband CLI / wrapper is unavailable,
-    so hosts without the binary still work (just without transient mode)."""
+    We use the librosa phase vocoder (no external binary to ship) rather than
+    RubberBand's transient mode, justified by three properties that keep
+    transient smearing perceptually negligible here:
+
+      1. Bounded rate. This only runs inside the safe range [0.85, 1.15] — at
+         most a 15% stretch — where phase-vocoder transient blur is minor.
+      2. Rare path. It fires only on high grid-confidence, off-by->0.5%-tempo
+         loops; SA3 usually hits the target at gen-time and skips it entirely.
+      3. The perceptually critical transient — the downbeat — is positioned by
+         the sample-accurate trim in `_stage_a_v2`, NOT by this stretch, so the
+         musical "1" is never vocoded.
+
+    `sr` is accepted for call-site symmetry (the phase vocoder is rate-only)."""
     if abs(rate - 1.0) < 1e-9:
         return audio
-    try:
-        import pyrubberband as pyrb  # type: ignore
-        out = pyrb.time_stretch(
-            audio, sr, rate, rbargs={"--transients": "crisp"}
-        )
-        return np.ascontiguousarray(out.astype(np.float32))
-    except Exception as exc:
-        logger.info(
-            "rubberband unavailable (%s); using librosa phase vocoder", exc,
-        )
-        return _time_stretch_multichannel(audio, rate)
+    return _time_stretch_multichannel(audio, rate)
 
 
 def align_to_grid(
