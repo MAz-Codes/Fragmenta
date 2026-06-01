@@ -57,6 +57,13 @@ export default function WelcomePage({ open, onClose }) {
                             <Typography variant="body3" color="text.secondary">
                                 Version {APP_VERSION}
                             </Typography>
+                            <Typography
+                                variant="caption"
+                                color="text.disabled"
+                                sx={{ mt: 1 }}
+                            >
+                                Powered by Stable Audio 3 by Stability AI
+                            </Typography>
                         </Stack>
                         <Box mt={5}>
                             <Button
