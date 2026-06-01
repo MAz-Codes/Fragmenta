@@ -938,6 +938,10 @@ export default function PerformanceChannel({
                             marks={[{ value: 0 }]}
                             sx={{
                                 flex: 1,
+                                // Match the channel main color (the global
+                                // MuiSlider override is amber; the vertical
+                                // knobs already pass `color` via knobSlider).
+                                color,
                                 '& .MuiSlider-mark': {
                                     width: 2,
                                     height: 10,
