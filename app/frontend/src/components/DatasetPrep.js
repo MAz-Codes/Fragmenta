@@ -1201,12 +1201,10 @@ function HealthStrip({ health, onSelectFiles }) {
     if (!health || health.total_clips === 0) return null;
     const empty = health.empty_prompts || { count: 0, files: [] };
     const tooShort = health.too_short || { count: 0, files: [] };
-    const mixedSR = health.mixed_sample_rates || { count: 0, files: [] };
-    const loud = health.loudness_outliers || { count: 0, files: [] };
     const dups = health.duplicate_annotations || { count: 0, group_count: 0, files: [] };
     const unsupported = health.unsupported_format || { count: 0, accepted: [], files: [] };
     const issues = empty.count + tooShort.count
-        + mixedSR.count + loud.count + dups.count + unsupported.count;
+        + dups.count + unsupported.count;
 
     // Three-tier status driven by the share of unique clips touched by any
     // health check. A single file showing up in multiple categories only
@@ -1214,8 +1212,6 @@ function HealthStrip({ health, onSelectFiles }) {
     const affected = new Set([
         ...empty.files,
         ...tooShort.files,
-        ...mixedSR.files,
-        ...loud.files,
         ...dups.files,
         ...unsupported.files,
     ]);
@@ -1294,28 +1290,6 @@ function HealthStrip({ health, onSelectFiles }) {
                                 color="error"
                                 label={`${tooShort.count} too short (< ${tooShort.threshold_sec}s)`}
                                 onClick={() => onSelectFiles(tooShort.files)}
-                            />
-                        </Tooltip>
-                    )}
-                    {mixedSR.count > 0 && (
-                        <Tooltip title={TIPS.dataset.mixedSR(mixedSR.rates, mixedSR.dominant_sr)}>
-                            <Chip
-                                size="small"
-                                variant="outlined"
-                                color="warning"
-                                label={`${mixedSR.count} off-rate (≠ ${mixedSR.dominant_sr} Hz)`}
-                                onClick={() => onSelectFiles(mixedSR.files)}
-                            />
-                        </Tooltip>
-                    )}
-                    {loud.count > 0 && (
-                        <Tooltip title={TIPS.dataset.loudness(loud.threshold_db, loud.median_db)}>
-                            <Chip
-                                size="small"
-                                variant="outlined"
-                                color="warning"
-                                label={`${loud.count} loudness outlier${loud.count === 1 ? '' : 's'}`}
-                                onClick={() => onSelectFiles(loud.files)}
                             />
                         </Tooltip>
                     )}

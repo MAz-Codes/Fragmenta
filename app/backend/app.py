@@ -2305,11 +2305,10 @@ def project_health_route(name):
     from app.backend.data.projects import compute_health
     try:
         short_th = float(request.args.get('short_threshold_sec', 1.0))
-        loud_th = float(request.args.get('loudness_outlier_db', 6.0))
     except (TypeError, ValueError):
-        short_th, loud_th = 1.0, 6.0
+        short_th = 1.0
     try:
-        return jsonify(compute_health(name, short_th, loud_th))
+        return jsonify(compute_health(name, short_th))
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:

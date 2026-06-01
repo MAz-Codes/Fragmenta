@@ -58,6 +58,9 @@ def main(args):
         sample_size=args.sample_size,
         sample_rate=ae.sample_rate,
         force_channels="stereo",
+        # Fragmenta: normalize to -16 LUFS at encode time so the cached latents
+        # match what train_lora.py produces (which also sets volume_norm=True).
+        volume_norm=True,
     )
     loader = torch.utils.data.DataLoader(
         dataset,

@@ -99,10 +99,6 @@ export const TIPS = {
         removeClip: 'Remove this clip from the project (immediate)',
         tooShort: (thresholdSec) =>
             `Shorter than ${thresholdSec}s — gets silence-padded into each batch. Consider deleting. Click to select.`,
-        mixedSR: (rates, dominant) =>
-            `Dataset has mixed sample rates (${(rates || []).join(' Hz, ')} Hz). The dominant is ${dominant} Hz; click to select the minority and resample or delete.`,
-        loudness: (thresholdDb, medianDb) =>
-            `Loudness more than ${thresholdDb} dB from the dataset median (${medianDb?.toFixed(1)} dB). Click to select; consider normalizing or removing.`,
         duplicates: (count) =>
             `${count} group${count === 1 ? '' : 's'} of clips share the same annotation. Bad for training diversity — click to select all of them.`,
         unsupported: (accepted) =>

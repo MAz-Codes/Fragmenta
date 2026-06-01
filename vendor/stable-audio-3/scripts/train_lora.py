@@ -129,6 +129,10 @@ def train(args):
             sample_size=sample_size,
             sample_rate=sample_rate,
             force_channels="stereo",
+            # Fragmenta: normalize every clip to -16 LUFS (±2 dB gain aug) so a
+            # mixed-loudness dataset trains evenly. SA3's built-in normalizer;
+            # off upstream, on here. Mirrors pre_encode_dataset.py.
+            volume_norm=True,
         )
     dataloader = torch.utils.data.DataLoader(
         dataset,
