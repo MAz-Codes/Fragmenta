@@ -141,9 +141,9 @@ function App() {
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
     // control. Off by default; preference persisted.
     const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
-        if (typeof window === 'undefined') return true;
-        // On by default — only off if the user explicitly turned it off.
-        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) !== 'off';
+        if (typeof window === 'undefined') return false;
+        // Off by default — only on if the user explicitly turned it on.
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
     });
     const toggleInfoView = useCallback(() => {
         setInfoViewEnabled((prev) => {
@@ -2713,13 +2713,18 @@ function App() {
                 aria-pressed={infoViewEnabled}
                 sx={(theme) => ({
                     position: 'fixed',
+                    // Match the dock's left + width so the toggle centers under
+                    // the dock column. Dock width = icon (40/46) + 2× padding
+                    // (4/8) = 48 / 62.
                     left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
+                    width: { xs: 48, sm: 62 },
                     bottom: { xs: theme.spacing(0.75), sm: theme.spacing(1), md: theme.spacing(1.5) },
                     zIndex: 1350,
-                    display: 'inline-flex',
+                    display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'center',
                     gap: 0.4,
-                    px: 0.6,
+                    px: 0,
                     py: 0.25,
                     m: 0,
                     border: 'none',
