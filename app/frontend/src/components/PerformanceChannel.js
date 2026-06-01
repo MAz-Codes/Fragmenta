@@ -33,12 +33,11 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    // Vibrant palette. Ch1 amber-gold, ch2 violet, ch3 coral, ch4 emerald.
-    // Saturated so the channel tints and waveforms read boldly on the dark
-    // background, but still light enough that the black label text on active
-    // toggles stays legible. Slots 4–7 are spares (only 4 channels render).
-    '#F2B824', '#A678FF', '#FF6B47', '#2FD698',
-    '#22D3EE', '#FF6FB5', '#5B9DFF', '#9BE34A',
+    // Original introduction palette. Ch1 teal, ch2 violet, ch3 green, ch4 amber.
+    // Light enough that the black label text on active toggles stays legible.
+    // Slots 4–7 are spares (only 4 channels render).
+    '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
+    '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
 ];
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
