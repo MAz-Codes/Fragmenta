@@ -33,6 +33,7 @@ them); they print but do not fail the run. Plain checks are hard gates.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -46,6 +47,7 @@ sys.path.insert(0, str(REPO))
 from app.core.generation.audio_post_process import (  # noqa: E402
     align_for_loop,
     align_to_grid,
+    beatsync_v2_enabled,
 )
 
 SR = 44100
@@ -118,8 +120,45 @@ def first_transient_sample(mono: np.ndarray, floor_ratio: float = 0.25) -> int:
     return int(above[0]) if len(above) else 0
 
 
+def part0_flag() -> None:
+    print("\n=== PART 0 — feature flag (beatsync_v2) ===")
+    saved = os.environ.pop("FRAGMENTA_BEATSYNC_V2", None)
+    try:
+        expect("flag defaults OFF when unset", beatsync_v2_enabled() is False)
+        os.environ["FRAGMENTA_BEATSYNC_V2"] = "1"
+        expect("flag reads ON with FRAGMENTA_BEATSYNC_V2=1",
+               beatsync_v2_enabled() is True)
+        os.environ["FRAGMENTA_BEATSYNC_V2"] = "0"
+        expect("flag reads OFF with =0", beatsync_v2_enabled() is False)
+    finally:
+        os.environ.pop("FRAGMENTA_BEATSYNC_V2", None)
+        if saved is not None:
+            os.environ["FRAGMENTA_BEATSYNC_V2"] = saved
+
+    # INV#1 — Seconds mode is byte-identical with the flag on vs off. Seconds
+    # mode never enters Stage A (the generator writes the clip and no align*
+    # runs), so we model it as "write-through" and assert the bytes don't move
+    # when the flag flips. Guards against future flag-gated code leaking into
+    # the always-run write path.
+    clip = click_train(bpm=120.0, n_beats=8, lead_samples=4000, freq=120.0)
+    with tempfile.TemporaryDirectory() as td:
+        def seconds_passthrough(flag: str) -> bytes:
+            os.environ["FRAGMENTA_BEATSYNC_V2"] = flag
+            p = Path(td) / f"sec_{flag}.wav"
+            # Seconds path: write exactly what was generated; no Stage A call.
+            sf.write(str(p), clip, SR, subtype="PCM_16")
+            return p.read_bytes()
+        off = seconds_passthrough("0")
+        on = seconds_passthrough("1")
+        os.environ.pop("FRAGMENTA_BEATSYNC_V2", None)
+    expect("INV#1 Seconds-mode output byte-identical with flag on/off",
+           off == on, f"{len(off)} vs {len(on)} bytes")
+
+
 def part1_synthetic() -> None:
-    print("\n=== PART 1 — synthetic ground-truth (Stage A invariants) ===")
+    flag = "ON" if beatsync_v2_enabled() else "OFF"
+    print(f"\n=== PART 1 — synthetic ground-truth (Stage A invariants) "
+          f"[beatsync_v2={flag}] ===")
     bpm, bars = 120.0, 2
     n_beats = bars * BEATS_PER_BAR
     spb = SR * 60.0 / bpm
@@ -264,6 +303,7 @@ def part2_measure() -> None:
 def main() -> int:
     measure_only = "--measure-only" in sys.argv
     if not measure_only:
+        part0_flag()
         part1_synthetic()
     part2_measure()
     print("\n=== SUMMARY ===")

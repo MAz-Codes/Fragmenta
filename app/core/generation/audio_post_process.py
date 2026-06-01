@@ -25,6 +25,7 @@ Pipeline (in order):
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -33,6 +34,20 @@ import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+
+def beatsync_v2_enabled() -> bool:
+    """Feature gate for the hardened Stage A pipeline (sample-exact length,
+    first-transient-to-zero alignment, transient-preserving stretch).
+
+    Off by default: with the flag unset, every Stage A function takes its
+    legacy code path, so Bars-mode output is byte-identical to pre-flag
+    builds and Seconds mode (which never enters Stage A at all) is unaffected.
+    Enable with ``FRAGMENTA_BEATSYNC_V2=1``.
+    """
+    return os.environ.get("FRAGMENTA_BEATSYNC_V2", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
 
 
 # Liberal module-default range for `_best_stretch_rate`. Kept wide so any
