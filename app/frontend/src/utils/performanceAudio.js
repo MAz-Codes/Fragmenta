@@ -1,10 +1,34 @@
+import { phaseOffsetSec } from './phaseLock.js';
+
 export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
+
+// Stage A renders loops at exactly 44.1 kHz and the sample-exact loop length
+// (INV#2/#6) is defined at that rate. A default AudioContext adopts the system
+// rate (often 48 kHz), which makes decodeAudioData resample our 44.1 kHz WAVs —
+// silently changing the loop's sample count and smearing the seam. Pinning the
+// context to 44.1 kHz keeps our buffers un-resampled inside Web Audio (the OS
+// may still resample at the device, but that's outside the loop math).
+export const ENGINE_SAMPLE_RATE = 44100;
 
 let sharedCtx = null;
 
 export function getAudioContext() {
     if (!sharedCtx) {
-        sharedCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        try {
+            sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
+        } catch (_) {
+            // Some browsers/hosts reject a forced rate — fall back to default
+            // and accept the resample rather than failing to produce audio.
+            sharedCtx = new Ctor();
+        }
+        if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
+            console.warn(
+                `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
+                `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
+                `sample-exact loop length is not guaranteed on this host.`
+            );
+        }
     }
     if (sharedCtx.state === 'suspended') {
         sharedCtx.resume();
@@ -198,7 +222,7 @@ export class ChannelStrip {
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
     }
 
-    play(loop = this.isLooping, startTime = 0) {
+    play(loop = this.isLooping, startTime = 0, offsetSec = 0) {
         if (!this.buffer) return;
         this.stop();
         this.isLooping = loop;
@@ -221,7 +245,11 @@ export class ChannelStrip {
             }
         };
 
-        src.start(Math.max(0, startTime));
+        // offsetSec phase-locks a loop to the global grid: it enters the
+        // buffer at the position matching the current Link/transport beat, so
+        // every clip plays the same loop-position at the same global beat.
+        const offset = (loop && offsetSec > 0) ? offsetSec % this.buffer.duration : 0;
+        src.start(Math.max(0, startTime), offset);
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -663,52 +691,69 @@ export class PerformanceEngine {
         this.launchQuantum = Number.isFinite(v) && v > 0 ? v : 0;
     }
 
+    // Returns { when, beat, bpm }: the AudioContext time to start (0 = ASAP),
+    // the GLOBAL beat at that instant, and the tempo. `beat`+`bpm` let the
+    // caller phase-lock each clip to the global grid (INV#8). Back-compat:
+    // callers that only need `when` read the `.when` field.
     getNextQuantizedAudioTime() {
         const quantum = this.launchQuantum;
-        if (!quantum) return 0;
+        const snap = this.linkSnapshot;
 
-        // First-launch shortcut: if nothing is currently playing, fire
-        // immediately and (re)anchor the internal transport at "now". This
-        // matches Live's Session View — the user pressed Play, they expect
-        // audio, not silence until the next bar. Subsequent launches see at
-        // least one channel playing and quantize as normal. Link's clock is
-        // external so we leave its snapshot alone.
+        // Current global beat + tempo from Link if running, else the internal
+        // transport. Both extrapolate to "now".
+        let currentBeat = 0;
+        let bpm = 0;
+        if (snap && snap.bpm) {
+            bpm = snap.bpm;
+            currentBeat = snap.beat + ((performance.now() - snap.capturedAt) / 1000) * (bpm / 60);
+        } else {
+            const tr = this.internalTransport;
+            if (tr.bpm) {
+                bpm = tr.bpm;
+                currentBeat = tr.anchorBeat + (this.ctx.currentTime - tr.originAudioTime) * (bpm / 60);
+            }
+        }
+
+        // First-launch shortcut: nothing playing -> fire immediately (Live
+        // Session-View feel). With no external clock we anchor the internal
+        // transport at "now" so the beat origin is sample 0.
         const anythingPlaying = this.channels.some(c => c.isPlaying);
         if (!anythingPlaying) {
-            if (!this.linkSnapshot) {
+            if (!snap) {
                 this.internalTransport.originAudioTime = this.ctx.currentTime;
                 this.internalTransport.anchorBeat = 0;
+                currentBeat = 0;
+                bpm = this.internalTransport.bpm || bpm;
             }
-            return 0;
+            return { when: 0, beat: currentBeat, bpm };
         }
 
-        // Prefer the Link snapshot when active so the app stays in phase with
-        // external peers. Falls through to the internal transport when Link
-        // isn't running so 'Q' still works standalone.
-        const snap = this.linkSnapshot;
-        if (snap && snap.bpm) {
-            const elapsedSec = (performance.now() - snap.capturedAt) / 1000;
-            const currentBeat = snap.beat + elapsedSec * (snap.bpm / 60);
-            let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
-            if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
-            const secondsUntil = (nextBeat - currentBeat) * 60 / snap.bpm;
-            return this.ctx.currentTime + secondsUntil;
+        // No quantum (None) -> start ASAP, but still report the live beat so
+        // the clip phase-locks to the grid.
+        if (!quantum || !bpm) {
+            return { when: 0, beat: currentBeat, bpm };
         }
 
-        const tr = this.internalTransport;
-        if (!tr.bpm) return 0;
-        const elapsedSec = this.ctx.currentTime - tr.originAudioTime;
-        const currentBeat = tr.anchorBeat + elapsedSec * (tr.bpm / 60);
+        // Quantize to the next quantum boundary; the global beat there is
+        // exactly nextBeat.
         let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
         if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
-        const secondsUntil = (nextBeat - currentBeat) * 60 / tr.bpm;
-        return this.ctx.currentTime + secondsUntil;
+        const secondsUntil = (nextBeat - currentBeat) * 60 / bpm;
+        return { when: this.ctx.currentTime + secondsUntil, beat: nextBeat, bpm };
+    }
+
+    // Deterministic Link-phase -> loop-position map (INV#8/#9). Delegates to
+    // the pure `phaseOffsetSec` (unit-tested in tests/smoke_test_phaselock.mjs).
+    _phaseOffsetSec(buffer, beat, bpm) {
+        return buffer ? phaseOffsetSec(buffer.duration, beat, bpm) : 0;
     }
 
     playChannel(index, loop) {
         const ch = this.channels[index];
         if (!ch || !ch.buffer) return;
-        ch.play(loop, this.getNextQuantizedAudioTime());
+        const { when, beat, bpm } = this.getNextQuantizedAudioTime();
+        const offset = loop ? this._phaseOffsetSec(ch.buffer, beat, bpm) : 0;
+        ch.play(loop, when, offset);
     }
 
     setMasterGain(value) {
@@ -831,8 +876,16 @@ export class PerformanceEngine {
     }
 
     playAll(loop = true) {
-        const startTime = this.getNextQuantizedAudioTime();
-        this.channels.forEach(ch => { if (ch.buffer) ch.play(loop, startTime); });
+        // One schedule for all channels: same `when` and global `beat`, but
+        // each clip computes its own phase offset from its own loop length —
+        // that is what makes their downbeats coincide (INV#9).
+        const { when, beat, bpm } = this.getNextQuantizedAudioTime();
+        this.channels.forEach(ch => {
+            if (ch.buffer) {
+                const offset = loop ? this._phaseOffsetSec(ch.buffer, beat, bpm) : 0;
+                ch.play(loop, when, offset);
+            }
+        });
     }
 
     stopAll() {
