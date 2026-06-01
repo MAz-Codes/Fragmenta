@@ -102,8 +102,8 @@ export const RAISE_LIGHT = 'inset 0 1px 0 rgba(255,255,255,0.65), 0 1px 2px rgba
 // light→dark overlay layered over the solid fill color for depth; the shadows
 // mirror the MuiButton contained override.
 export const PERF_BTN_SHEEN = 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 45%, rgba(0,0,0,0.20) 100%)';
-export const PERF_BTN_SHADOW = '0 3px 8px rgba(0,0,0,0.45), 0 12px 24px rgba(0,0,0,0.55)';
-export const PERF_BTN_SHADOW_HOVER = '0 5px 12px rgba(0,0,0,0.5), 0 16px 32px rgba(0,0,0,0.7)';
+export const PERF_BTN_SHADOW = '0 1px 2px rgba(0,0,0,0.16), 0 2px 5px rgba(0,0,0,0.12)';
+export const PERF_BTN_SHADOW_HOVER = '0 2px 4px rgba(0,0,0,0.18), 0 4px 9px rgba(0,0,0,0.15)';
 
 // Base slider color — the Nordic slate blue (also performance channel 1).
 // Sliders now take their color from the root `color` (slots use currentColor),
