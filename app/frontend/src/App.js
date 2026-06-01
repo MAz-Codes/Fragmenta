@@ -2635,8 +2635,19 @@ function App() {
                     </Menu>
                 </>
             ) : (
-                <Paper sx={appStyles.bottomDock}>
-                    {/* Small Info View toggle at the top of the dock. */}
+                <Box
+                    sx={(theme) => ({
+                        position: 'fixed',
+                        left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
+                        bottom: { xs: theme.spacing(3.5), sm: theme.spacing(4), md: theme.spacing(6) },
+                        zIndex: 1350,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 0.75,
+                    })}
+                >
+                    {/* Small Info View toggle, sitting above the dock card. */}
                     <Box
                         component="button"
                         type="button"
@@ -2648,8 +2659,7 @@ function App() {
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: 0.4,
-                            width: '100%',
-                            px: 0,
+                            px: 0.5,
                             py: 0.25,
                             m: 0,
                             border: 'none',
@@ -2673,6 +2683,7 @@ function App() {
                         <Box component="span">Info</Box>
                     </Box>
 
+                    <Paper sx={[appStyles.bottomDock, { position: 'static', left: 'auto', right: 'auto', bottom: 'auto', zIndex: 'auto' }]}>
                     <Box sx={appStyles.dockItem}>
                         <IconButton
                             aria-label="Get models"
@@ -2738,7 +2749,8 @@ function App() {
                             About
                         </Typography>
                     </Box>
-                </Paper>
+                    </Paper>
+                </Box>
             )}
 
             <AboutDialog
