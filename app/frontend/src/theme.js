@@ -2631,26 +2631,34 @@ export const performancePanelStyles = {
         flex: 1,
         minWidth: 0,
     },
-    masterStrip: (color) => (theme) => ({
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1.5,
-        p: 1.25,
-        borderRadius: 2.5,
+    masterStrip: (color) => (theme) => {
+        const dark = theme.palette.mode === 'dark';
         // Matches the channel-strip at-rest treatment so master sits in the
-        // same visual family — plain paper bg, divider border, soft shadow.
-        // Was a colored border + gradient overlay + inset color ring, which
-        // made master read as a higher-elevation surface than its neighbours.
-        border: '1px solid',
-        borderColor: 'divider',
-        bgcolor: 'background.paper',
-        boxShadow: `0 2px 8px ${theme.palette.mode === 'dark' ? 'rgba(4, 8, 14, 0.36)' : 'rgba(0,0,0,0.08)'}`,
-        width: { xs: '100%', md: 150 },
-        flex: { xs: '1 1 100%', md: '0 0 150px' },
-        minHeight: 0,
-        overflow: 'hidden',
-        boxSizing: 'border-box',
-    }),
+        // same visual family — same liquid glass (translucent + backdrop blur
+        // + inset rim) rather than a higher-elevation solid surface.
+        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
+        const rim = dark
+            ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
+            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
+        return {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1.5,
+            p: 1.25,
+            borderRadius: 2.5,
+            border: '1px solid',
+            borderColor: dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
+            background: glassBg,
+            backdropFilter: 'blur(28px) saturate(200%)',
+            WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+            boxShadow: `0 2px 10px ${dark ? 'rgba(4, 8, 14, 0.34)' : 'rgba(0,0,0,0.08)'}, ${rim}`,
+            width: { xs: '100%', md: 150 },
+            flex: { xs: '1 1 100%', md: '0 0 150px' },
+            minHeight: 0,
+            overflow: 'hidden',
+            boxSizing: 'border-box',
+        };
+    },
     masterHeader: (color) => ({
         display: 'flex',
         alignItems: 'center',
@@ -2791,24 +2799,36 @@ export const performancePanelStyles = {
 };
 
 export const performanceChannelStyles = {
-    strip: (color, playing) => (theme) => ({
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1,
-        p: 1.25,
-        borderRadius: 2.5,
-        border: '1px solid',
-        borderColor: playing ? color : theme.palette.divider,
-        background: playing
-            ? `linear-gradient(160deg, ${color}1F 0%, ${theme.palette.background.paper} 60%)`
-            : theme.palette.background.paper,
-        boxShadow: playing
-            ? `0 0 0 1px ${color}66, 0 8px 22px ${theme.palette.mode === 'dark' ? 'rgba(4, 8, 14, 0.5)' : 'rgba(0,0,0,0.15)'}`
-            : `0 2px 8px ${theme.palette.mode === 'dark' ? 'rgba(4, 8, 14, 0.36)' : 'rgba(0,0,0,0.08)'}`,
-        transition: 'box-shadow 0.2s ease, border-color 0.2s ease, background 0.3s ease',
-        height: '100%',
-        minWidth: 150,
-    }),
+    strip: (color, playing) => (theme) => {
+        const dark = theme.palette.mode === 'dark';
+        // Liquid glass: translucent surface + backdrop blur so the panel's
+        // glow bleeds through, matching the app's Paper/Card treatment.
+        // Playing channels add a channel-colored tint + accent rim on top.
+        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
+        const rim = dark
+            ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
+            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
+        return {
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+            p: 1.25,
+            borderRadius: 2.5,
+            border: '1px solid',
+            borderColor: playing ? color : (dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)'),
+            background: playing
+                ? `linear-gradient(160deg, ${color}2E 0%, ${glassBg} 60%)`
+                : glassBg,
+            backdropFilter: 'blur(28px) saturate(200%)',
+            WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+            boxShadow: playing
+                ? `0 0 0 1px ${color}66, 0 8px 22px ${dark ? 'rgba(4, 8, 14, 0.5)' : 'rgba(0,0,0,0.15)'}, ${rim}`
+                : `0 2px 10px ${dark ? 'rgba(4, 8, 14, 0.34)' : 'rgba(0,0,0,0.08)'}, ${rim}`,
+            transition: 'box-shadow 0.2s ease, border-color 0.2s ease, background 0.3s ease',
+            height: '100%',
+            minWidth: 150,
+        };
+    },
     stripHeader: (color) => ({
         display: 'flex',
         alignItems: 'center',
