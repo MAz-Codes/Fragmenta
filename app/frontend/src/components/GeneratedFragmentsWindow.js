@@ -13,9 +13,11 @@ import {
     Info as InfoIcon,
     Trash2 as DeleteIcon,
     Eraser as ClearAllIcon,
+    FolderOpen as RevealIcon,
 } from 'lucide-react';
 import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
+import api from '../api';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
 function relativeTime(createdAt) {
@@ -225,6 +227,17 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
         };
     };
 
+    // Reveal a fragment in the OS file manager (folder opens with the file
+    // highlighted where the platform supports it). Disk-hydrated fragments
+    // always have a filename; in-memory-only ones (not yet flushed) won't.
+    const revealInFolder = (fragment) => {
+        if (!fragment.filename) return;
+        api.post('/api/reveal-fragment', { filename: fragment.filename })
+            .catch((err) => {
+                console.warn(`Reveal failed (${fragment.filename}):`, err);
+            });
+    };
+
     const setAudioRef = useCallback((fragmentId, audioElement) => {
         if (audioElement) {
             audioRefs.current[fragmentId] = audioElement;
@@ -388,6 +401,19 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                         <InfoIcon size={14} />
                                     </Box>
                                 </Tooltip>
+
+                                {fragment.filename && (
+                                    <Tooltip title={TIPS.fragments.revealInFolder} placement="top" arrow>
+                                        <IconButton
+                                            size="small"
+                                            onClick={() => revealInFolder(fragment)}
+                                            aria-label="Show in folder"
+                                            sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
+                                        >
+                                            <RevealIcon size={16} />
+                                        </IconButton>
+                                    </Tooltip>
+                                )}
 
                                 {onDelete && (
                                     <Tooltip title={TIPS.fragments.deleteFromDisk} placement="top" arrow>

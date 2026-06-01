@@ -118,12 +118,10 @@ distribution
 distribution.md
 
 # ===== Local-only directories (never committed) =====
-# `scripts` matches at any depth, so re-include the vendored SA3 scripts.
 scripts
 !vendor/stable-audio-3/scripts/
 !vendor/stable-audio-3/scripts/**
 tests/
-# All Docker artifacts live under docker/ (local-only, never committed).
 docker/
 .dockerignore
 .claude

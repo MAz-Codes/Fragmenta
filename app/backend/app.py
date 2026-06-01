@@ -1808,10 +1808,13 @@ def open_output_folder():
     try:
         import subprocess
         import platform
-        
-        output_path = Path("output")
-        output_path.mkdir(exist_ok=True)
-        
+
+        # Use the configured output dir, not Path("output") relative to the
+        # process cwd — the launcher may start the backend from a different
+        # working directory, which would open (or create) the wrong folder.
+        output_path = get_config().get_path("output")
+        output_path.mkdir(parents=True, exist_ok=True)
+
         system = platform.system()
         if system == "Windows":
             subprocess.run(["explorer", str(output_path.absolute())])
@@ -1819,11 +1822,79 @@ def open_output_folder():
             subprocess.run(["open", str(output_path.absolute())])
         else:  # Linux
             subprocess.run(["xdg-open", str(output_path.absolute())])
-            
+
         return jsonify({"success": True, "message": "Output folder opened"})
     except Exception as e:
         logger.error(f"Error opening output folder: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/reveal-fragment', methods=['POST'])
+def reveal_fragment():
+    """Reveal a single generated fragment in the OS file manager, with the
+    file itself selected/highlighted where the platform supports it.
+
+    Body: { "filename": "20260601_120000_sa3-small-music_kick.wav" }
+
+    Platform behaviour:
+      * Windows : explorer /select,<file>   → folder opens, file highlighted
+      * macOS   : open -R <file>            → Finder opens, file highlighted
+      * Linux   : org.freedesktop.FileManager1 ShowItems (D-Bus) highlights
+                  the file in Nautilus/Dolphin/etc.; falls back to
+                  `xdg-open <dir>` (opens the folder, no highlight) when no
+                  FileManager1 provider is on the bus.
+    """
+    import subprocess
+    import platform
+
+    data = request.json or {}
+    filename = str(data.get('filename', '')).strip()
+    if not filename:
+        return jsonify(APIResponse.error("filename is required.", status_code=400)), 400
+    # Guard against path traversal — fragments live flat in the output dir.
+    if '/' in filename or '\\' in filename or filename.startswith('.'):
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+
+    output_dir = get_config().get_path("output")
+    target = output_dir / filename
+    if not target.exists():
+        return jsonify(APIResponse.error(
+            f"Fragment not found on disk: {filename}", status_code=404)), 404
+
+    try:
+        system = platform.system()
+        abs_path = str(target.absolute())
+        if system == "Windows":
+            # /select needs the path glued to the flag (no space after comma).
+            subprocess.run(["explorer", f"/select,{abs_path}"])
+        elif system == "Darwin":
+            subprocess.run(["open", "-R", abs_path])
+        else:  # Linux
+            revealed = False
+            try:
+                subprocess.run(
+                    ["dbus-send", "--session", "--print-reply",
+                     "--dest=org.freedesktop.FileManager1",
+                     "--type=method_call",
+                     "/org/freedesktop/FileManager1",
+                     "org.freedesktop.FileManager1.ShowItems",
+                     f"array:string:file://{abs_path}",
+                     "string:"],
+                    check=True,
+                    timeout=5,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                revealed = True
+            except Exception:
+                revealed = False
+            if not revealed:
+                # No FileManager1 provider — open the containing folder.
+                subprocess.run(["xdg-open", str(output_dir.absolute())])
+        return jsonify({"success": True, "message": "Fragment revealed"})
+    except Exception as e:
+        logger.error(f"Error revealing fragment {filename}: {e}")
+        return jsonify(APIResponse.error(str(e), status_code=500)), 500
 
 @app.route('/api/open-documentation', methods=['POST'])
 def open_documentation():

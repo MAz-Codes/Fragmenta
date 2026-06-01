@@ -293,18 +293,22 @@ class AudioGenerator:
         # Path-set changed. Remove any currently loaded, then load the new set.
         if cur_paths:
             try:
-                from stable_audio_3.models.lora import remove_lora_by_index
+                from stable_audio_3.models.lora import remove_lora
                 # SA3 applies LoRA to the DiffusionCond's DiT (.model) and
                 # conditioner (.conditioner) — mirror StableAudioModel's own
                 # set_lora_strength which iterates both submodules.
                 # `self.model` is StableAudioModel; `self.model.model` is the
-                # inner DiffusionCond. Each call walks named_modules() and
-                # is no-op if no LoRA at that index exists.
-                # remove_lora_by_index pops index 0 each time; loop len-times.
+                # inner DiffusionCond.
+                #
+                # remove_lora() strips *every* LoRA parametrization in one
+                # pass. We use it instead of remove_lora_by_index(..., 0) in a
+                # loop: removal does NOT renumber the remaining adapters, so
+                # repeatedly popping index 0 only ever clears the first LoRA
+                # and leaves indices 1..n-1 stranded — stale adapters then
+                # contaminate every later generation with a different stack.
                 inner = self.model.model
-                for _ in range(len(cur_paths)):
-                    remove_lora_by_index(inner.model, 0)
-                    remove_lora_by_index(inner.conditioner, 0)
+                remove_lora(inner.model)
+                remove_lora(inner.conditioner)
             except Exception as exc:
                 # If removal fails (e.g. an upstream API change), force a
                 # base-model reload so we don't carry stale adapters. KEEP

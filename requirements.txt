@@ -20,9 +20,6 @@ dill>=0.4.1
 
 librosa>=0.11.0,<0.12
 soundfile>=0.13.1
-# Native MIDI input (CoreMIDI / WinMM / ALSA) — used by the Performance tab's
-# MIDI mapping instead of Web MIDI, which WKWebView lacks. Prebuilt cp311 wheels
-# exist for mac/win/linux. Optional: the app no-ops MIDI gracefully if absent.
 python-rtmidi>=1.5.0
 scipy>=1.13,<2
 numba>=0.60,<1
