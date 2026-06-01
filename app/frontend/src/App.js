@@ -2636,6 +2636,43 @@ function App() {
                 </>
             ) : (
                 <Paper sx={appStyles.bottomDock}>
+                    {/* Small Info View toggle at the top of the dock. */}
+                    <Box
+                        component="button"
+                        type="button"
+                        onClick={toggleInfoView}
+                        aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
+                        aria-pressed={infoViewEnabled}
+                        sx={(theme) => ({
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 0.4,
+                            width: '100%',
+                            px: 0,
+                            py: 0.25,
+                            m: 0,
+                            border: 'none',
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            borderRadius: 999,
+                            fontFamily: 'inherit',
+                            fontSize: '0.6rem',
+                            lineHeight: 1,
+                            letterSpacing: '0.02em',
+                            color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
+                            opacity: infoViewEnabled ? 0.9 : 0.55,
+                            transition: 'color 160ms ease, opacity 160ms ease',
+                            '&:hover': {
+                                opacity: 1,
+                                color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
+                            },
+                        })}
+                    >
+                        <InfoViewIcon size={11} />
+                        <Box component="span">Info</Box>
+                    </Box>
+
                     <Box sx={appStyles.dockItem}>
                         <IconButton
                             aria-label="Get models"
@@ -2703,50 +2740,6 @@ function App() {
                     </Box>
                 </Paper>
             )}
-
-            {/* Small standalone Info View toggle, tucked under the dock. */}
-            <Box
-                component="button"
-                type="button"
-                onClick={toggleInfoView}
-                aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
-                aria-pressed={infoViewEnabled}
-                sx={(theme) => ({
-                    position: 'fixed',
-                    // Match the dock's left + width so the toggle centers under
-                    // the dock column. Dock width = icon (40/46) + 2× padding
-                    // (4/8) = 48 / 62.
-                    left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
-                    width: { xs: 48, sm: 62 },
-                    bottom: { xs: theme.spacing(0.75), sm: theme.spacing(1), md: theme.spacing(1.5) },
-                    zIndex: 1350,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 0.4,
-                    px: 0,
-                    py: 0.25,
-                    m: 0,
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    borderRadius: 999,
-                    fontFamily: 'inherit',
-                    fontSize: '0.6rem',
-                    lineHeight: 1,
-                    letterSpacing: '0.02em',
-                    color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
-                    opacity: infoViewEnabled ? 0.9 : 0.55,
-                    transition: 'color 160ms ease, opacity 160ms ease',
-                    '&:hover': {
-                        opacity: 1,
-                        color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
-                    },
-                })}
-            >
-                <InfoViewIcon size={11} />
-                <Box component="span">Info</Box>
-            </Box>
 
             <AboutDialog
                 open={showInfoDialog}
