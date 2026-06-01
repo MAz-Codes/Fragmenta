@@ -52,6 +52,7 @@ import {
     CloudDownload as CloudDownloadIcon,
     FolderOpen as FolderOpenIcon,
     Info as InfoIcon,
+    HelpCircle as AboutIcon,
     Moon as MoonIcon,
     Sun as SunIcon,
     Piano as PerformanceIcon,
@@ -63,6 +64,7 @@ import {
 } from 'lucide-react';
 import api from './api';
 import AboutDialog from './components/AboutDialog';
+import { InfoViewProvider } from './components/InfoView';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
@@ -78,6 +80,7 @@ import PerformancePanel from './components/PerformancePanel';
 
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
+const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
 // Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance.
@@ -133,6 +136,21 @@ function App() {
 
         return 'dark';
     });
+
+    // Ableton-style Info View: when on, control help text shows in a fixed
+    // bottom bar (fed by the shared <Tooltip>) instead of popping over each
+    // control. Off by default; preference persisted.
+    const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
+        if (typeof window === 'undefined') return false;
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
+    });
+    const toggleInfoView = useCallback(() => {
+        setInfoViewEnabled((prev) => {
+            const next = !prev;
+            try { window.localStorage.setItem(INFO_VIEW_STORAGE_KEY, next ? 'on' : 'off'); } catch (_) {}
+            return next;
+        });
+    }, []);
 
     const [trainingConfig, setTrainingConfig] = useState({
         steps: 1000,                          // SA3 quick-start
@@ -1221,7 +1239,8 @@ function App() {
     return (
         <ThemeProvider theme={appTheme}>
             <CssBaseline />
-            <Box sx={appStyles.root}>
+            <InfoViewProvider enabled={infoViewEnabled}>
+            <Box sx={[appStyles.root, infoViewEnabled && { pb: { xs: 6, md: 7 } }]}>
                 <WelcomePage
                     open={showWelcomePage}
                     onClose={(dontShowAgain) => {
@@ -2607,9 +2626,17 @@ function App() {
                             <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
                         </MenuItem>
                         <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); toggleInfoView(); }}
+                        >
+                            <ListItemIcon>
+                                <InfoIcon size={18} color={infoViewEnabled ? 'var(--mui-palette-primary-main, #279FBB)' : undefined} />
+                            </ListItemIcon>
+                            <ListItemText>{infoViewEnabled ? 'Info View: On' : 'Info View: Off'}</ListItemText>
+                        </MenuItem>
+                        <MenuItem
                             onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
                         >
-                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
+                            <ListItemIcon><AboutIcon size={18} /></ListItemIcon>
                             <ListItemText>About</ListItemText>
                         </MenuItem>
                     </Menu>
@@ -2671,11 +2698,25 @@ function App() {
 
                     <Box sx={appStyles.dockItem}>
                         <IconButton
+                            aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
+                            aria-pressed={infoViewEnabled}
+                            onClick={toggleInfoView}
+                            sx={[appStyles.dockIconButton, infoViewEnabled && appStyles.dockIconButtonAccent]}
+                        >
+                            <InfoIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {infoViewEnabled ? 'Info View: On' : 'Info View'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
                             aria-label="Open about and documentation"
                             onClick={() => setShowInfoDialog(true)}
                             sx={appStyles.dockIconButton}
                         >
-                            <InfoIcon size={18} />
+                            <AboutIcon size={18} />
                         </IconButton>
                         <Typography className="dock-label" sx={appStyles.dockLabel}>
                             About
@@ -2842,6 +2883,7 @@ function App() {
                     refreshAllModels();
                 }}
             />
+            </InfoViewProvider>
         </ThemeProvider>
     );
 }
