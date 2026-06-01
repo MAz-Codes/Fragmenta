@@ -683,7 +683,18 @@ let theme = createTheme({
                 // Color is driven by the root `color` via currentColor on the
                 // slots, so any slider recolors just by setting `color` in sx
                 // (channel strips pass their channel color). Default = Nordic blue.
-                root: { color: NORDIC_BLUE, height: 4 },
+                root: {
+                    color: NORDIC_BLUE,
+                    height: 4,
+                    // Beat MUI's color="primary" root color (which is the
+                    // accent cyan) so the DEFAULT slider is the Nordic blue —
+                    // needed in dark mode where the plain root rule lost the
+                    // specificity battle. sx `color` on channel sliders still
+                    // overrides this, so per-channel coloring is unaffected.
+                    '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
+                        color: NORDIC_BLUE,
+                    },
+                },
                 rail: { backgroundColor: 'rgba(240, 237, 229, 0.12)', opacity: 1 },
                 track: { backgroundColor: 'currentColor', border: 0 },
                 thumb: {
@@ -1246,7 +1257,18 @@ export const lightTheme = createTheme(theme, {
         MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
         MuiSlider: {
             styleOverrides: {
-                root: { color: NORDIC_BLUE, height: 4 },
+                root: {
+                    color: NORDIC_BLUE,
+                    height: 4,
+                    // Beat MUI's color="primary" root color (which is the
+                    // accent cyan) so the DEFAULT slider is the Nordic blue —
+                    // needed in dark mode where the plain root rule lost the
+                    // specificity battle. sx `color` on channel sliders still
+                    // overrides this, so per-channel coloring is unaffected.
+                    '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
+                        color: NORDIC_BLUE,
+                    },
+                },
                 rail: { backgroundColor: 'rgba(43, 31, 18, 0.18)', opacity: 1 },
                 track: { backgroundColor: 'currentColor', border: 0 },
                 thumb: {
