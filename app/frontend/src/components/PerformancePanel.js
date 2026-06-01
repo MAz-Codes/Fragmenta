@@ -1380,7 +1380,7 @@ function PerformancePanelInner({
                     <Button
                         size="small"
                         variant="outlined"
-                        startIcon={<PlayAllIcon size={14} />}
+                        startIcon={<PlayAllIcon size={12} />}
                         onClick={handlePlayAll}
                         disabled={!anyLoaded}
                         sx={styles.masterBtn(MASTER_COLOR, 'play')}
@@ -1392,7 +1392,7 @@ function PerformancePanelInner({
                     <Button
                         size="small"
                         variant="outlined"
-                        startIcon={<StopAllIcon size={14} />}
+                        startIcon={<StopAllIcon size={12} />}
                         onClick={handleStopAll}
                         disabled={!anyPlaying}
                         sx={styles.masterBtn(MASTER_COLOR, 'stop')}
@@ -1410,8 +1410,8 @@ function PerformancePanelInner({
                         disableElevation
                         disableRipple
                         startIcon={recording
-                            ? <StopAllIcon size={14} />
-                            : <RecordIcon size={14} fill={RECORD_COLOR} color={RECORD_COLOR} />}
+                            ? <StopAllIcon size={12} />
+                            : <RecordIcon size={12} fill={RECORD_COLOR} color={RECORD_COLOR} />}
                         onClick={handleToggleRecord}
                         sx={(theme) => ({
                             // Base: the shared master-button treatment in red, so

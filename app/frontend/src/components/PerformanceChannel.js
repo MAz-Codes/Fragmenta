@@ -33,11 +33,12 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    // Ch1 green, ch2 red, ch3 blue, ch4 orange. Saturated so the channel tints
-    // and waveforms read boldly on the dark background. Slots 4–7 are spares
-    // (only 4 channels render).
-    '#15A864', '#EC423B', '#1F6FF3', '#FA8519',
-    '#22D3EE', '#FF6FB5', '#5B9DFF', '#9BE34A',
+    // Cool/electric palette. Ch1 sky, ch2 periwinkle-violet, ch3 magenta-pink,
+    // ch4 aqua-green. Bright enough that the black label text on active toggles
+    // stays legible, and tuned to the app's modern glass vibe. Slots 4–7 are
+    // spares (only 4 channels render).
+    '#4FC3F7', '#B388FF', '#FF6FB5', '#4DD6A0',
+    '#22D3EE', '#9BE34A', '#5B9DFF', '#F2B824',
 ];
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
