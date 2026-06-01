@@ -2766,36 +2766,47 @@ export const performancePanelStyles = {
         borderTop: '1px solid',
         borderTopColor: 'divider',
     },
-    masterBtn: (color, variant) => (theme) => ({
-        textTransform: 'none',
-        borderRadius: 1.5,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: perfTokens.weight.bold,
-        height: perfTokens.height.compact,
-        // Override MUI's vertical padding so the button lands at the
-        // shared 26px row height (matches Q select + BPM input).
-        py: 0,
-        px: 1.25,
-        minWidth: 0,
-        lineHeight: 1,
-        ...(variant === 'play'
-            ? {
-                color,
-                borderColor: theme.palette.mode === 'dark' ? `${color}66` : `${color}BB`,
-                backgroundColor: `${color}14`,
-                '&:hover': { backgroundColor: `${color}26`, borderColor: color },
-            }
-            : {
-                color: 'error.main',
-                borderColor: 'error.main',
-                '&:hover': {
-                    bgcolor: theme.palette.mode === 'dark'
-                        ? `${theme.palette.error.main}1F`
-                        : `${theme.palette.error.main}14`,
-                    borderColor: 'error.main',
-                },
-            }),
-    }),
+    masterBtn: (color, variant) => (theme) => {
+        // Solid filled pad (channel/error color + sheen overlay + raised
+        // shadow + dark label), matching the Bars toggle and Generate pill.
+        // 'stop' uses the error palette; 'play' uses the passed color.
+        const fill = variant === 'stop' ? theme.palette.error.main : color;
+        return {
+            textTransform: 'none',
+            borderRadius: 1.5,
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: perfTokens.weight.bold,
+            height: perfTokens.height.compact,
+            // Override MUI's vertical padding so the button lands at the
+            // shared 26px row height (matches Q select + BPM input).
+            py: 0,
+            px: 1.25,
+            minWidth: 0,
+            lineHeight: 1,
+            color: 'rgba(0,0,0,0.88)',
+            backgroundColor: fill,
+            backgroundImage: SHEEN_DARK,
+            border: '1px solid',
+            borderColor: fill,
+            boxShadow: RAISE_DARK,
+            transition: 'filter 120ms, box-shadow 120ms, background-color 120ms',
+            '&:hover': {
+                backgroundColor: fill,
+                borderColor: fill,
+                filter: 'brightness(1.06)',
+            },
+            // Disabled (e.g. Play All with nothing loaded) drops back to a
+            // muted outline so it doesn't read as an active solid pad.
+            '&.Mui-disabled': {
+                color: 'text.disabled',
+                backgroundColor: 'transparent',
+                backgroundImage: 'none',
+                borderColor: 'divider',
+                boxShadow: 'none',
+                opacity: 0.45,
+            },
+        };
+    },
 };
 
 export const performanceChannelStyles = {
@@ -2964,36 +2975,58 @@ export const performanceChannelStyles = {
     // label (`Generate ➝` / `Generating · 47%`) sits flush against the
     // right edge of the pill via `justifyContent: 'flex-end'` so the arrow
     // visually punctuates the action's destination.
-    generatePill: (color, { generating, disabled }) => ({
-        position: 'relative',
-        overflow: 'hidden',
-        // Fills whatever space the wrapping span gives it. Sizing lives
-        // on the parent row (the pill is a flex child via the wrapper
-        // span), so this stays free of magic widths and the right edge
-        // tracks the row's right edge instead of poking past it.
-        boxSizing: 'border-box',
-        width: '100%',
-        height: perfTokens.height.cta,
-        px: 1.5,
-        borderRadius: 1.5,
-        border: '2px solid',
-        borderColor: disabled ? 'divider' : color,
-        // Richer tinted base + raised shadow for lift. Kept translucent (not a
-        // solid gradient) so the progress fill inside still reads while
-        // generating.
-        bgcolor: disabled ? 'transparent' : `${color}2E`,
-        boxShadow: disabled ? 'none' : RAISE_DARK,
-        color: disabled ? 'text.disabled' : color,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: perfTokens.weight.bold,
-        textTransform: 'none',
-        opacity: disabled && !generating ? 0.45 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms, box-shadow 120ms',
-        '&:hover': {
-            bgcolor: disabled || generating ? undefined : `${color}3D`,
-        },
-    }),
+    generatePill: (color, { generating, disabled }) => {
+        const base = {
+            position: 'relative',
+            overflow: 'hidden',
+            // Fills whatever space the wrapping span gives it. Sizing lives
+            // on the parent row (the pill is a flex child via the wrapper
+            // span), so this stays free of magic widths and the right edge
+            // tracks the row's right edge instead of poking past it.
+            boxSizing: 'border-box',
+            width: '100%',
+            height: perfTokens.height.cta,
+            px: 1.5,
+            borderRadius: 1.5,
+            border: '2px solid',
+            fontSize: perfTokens.fontSize.sm,
+            fontWeight: perfTokens.weight.bold,
+            textTransform: 'none',
+            cursor: disabled ? 'not-allowed' : 'pointer',
+            transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms, box-shadow 120ms, filter 120ms',
+        };
+        if (disabled) {
+            return {
+                ...base,
+                borderColor: 'divider',
+                bgcolor: 'transparent',
+                boxShadow: 'none',
+                color: 'text.disabled',
+                opacity: generating ? 1 : 0.45,
+            };
+        }
+        if (generating) {
+            // Translucent track so the progress fill inside still reads.
+            return {
+                ...base,
+                borderColor: color,
+                bgcolor: `${color}2E`,
+                boxShadow: RAISE_DARK,
+                color,
+            };
+        }
+        // Idle + enabled — solid filled pad like the active Bars button:
+        // solid channel color + sheen overlay + raised shadow + dark label.
+        return {
+            ...base,
+            borderColor: color,
+            bgcolor: color,
+            backgroundImage: SHEEN_DARK,
+            boxShadow: RAISE_DARK,
+            color: 'rgba(0,0,0,0.88)',
+            '&:hover': { bgcolor: color, filter: 'brightness(1.06)' },
+        };
+    },
     // The animated fill that lives INSIDE generatePill while generating.
     // Width is the only dynamic field — parent passes a 0-100 number.
     generatePillFill: (color, progressPct) => ({
