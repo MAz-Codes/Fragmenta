@@ -85,6 +85,17 @@ const LIGHT = {
     warning:   '#B47318',
 };
 
+// --- Raised-pad depth recipe ------------------------------------------------
+// The "lively" contained buttons get their depth from a directional gradient +
+// inset top highlight + layered drop shadow. These reproduce that on any filled
+// element regardless of hue: a sheen overlay (light top → dark bottom) rides
+// over the element's own backgroundColor, paired with a matching shadow set.
+// Used by the toggle/chip overrides below and the performance-channel styles.
+export const SHEEN_DARK  = 'linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.05) 46%, rgba(0,0,0,0.18) 100%)';
+export const SHEEN_LIGHT = 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.12) 46%, rgba(0,0,0,0.10) 100%)';
+export const RAISE_DARK  = 'inset 0 1px 0 rgba(255,255,255,0.30), 0 1px 2px rgba(0,0,0,0.45), 0 4px 10px rgba(0,0,0,0.34)';
+export const RAISE_LIGHT = 'inset 0 1px 0 rgba(255,255,255,0.65), 0 1px 2px rgba(43,31,18,0.14), 0 4px 10px rgba(43,31,18,0.12)';
+
 let theme = createTheme({
     palette: {
         mode: 'dark',
@@ -510,15 +521,21 @@ let theme = createTheme({
                     color: DARK.text,
                     border: `1px solid rgba(240, 237, 229, 0.12)`,
                     borderRadius: 999,            // pill, matches button language
-                    '&.MuiChip-colorPrimary': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.16)',
-                        color: DARK.amberHi,
-                        borderColor: 'rgba(39, 159, 187, 0.4)',
+                    // Filled colored chips become raised gradient pads (depth
+                    // scoped to .MuiChip-filled so outlined chips stay quiet).
+                    '&.MuiChip-filled.MuiChip-colorPrimary': {
+                        backgroundColor: DARK.amber,
+                        backgroundImage: `linear-gradient(135deg, ${DARK.amberHi} 0%, ${DARK.amber} 55%, ${DARK.amberLo} 100%)`,
+                        color: '#082028',
+                        borderColor: DARK.amberHi,
+                        boxShadow: RAISE_DARK,
                     },
-                    '&.MuiChip-colorSuccess': {
-                        backgroundColor: 'rgba(122, 199, 149, 0.16)',
-                        color: '#9FDDB5',
-                        borderColor: 'rgba(122, 199, 149, 0.4)',
+                    '&.MuiChip-filled.MuiChip-colorSuccess': {
+                        backgroundColor: DARK.success,
+                        backgroundImage: `linear-gradient(135deg, #9FDDB5 0%, ${DARK.success} 55%, #5BA579 100%)`,
+                        color: '#06200F',
+                        borderColor: '#9FDDB5',
+                        boxShadow: RAISE_DARK,
                     },
                 },
                 outlined: {
@@ -757,10 +774,15 @@ let theme = createTheme({
                         color: DARK.text,
                     },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
-                        color: DARK.amberHi,
-                        borderColor: DARK.amber,
-                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
+                        backgroundColor: DARK.amber,
+                        backgroundImage: `linear-gradient(135deg, ${DARK.amberHi} 0%, ${DARK.amber} 55%, ${DARK.amberLo} 100%)`,
+                        color: '#082028',
+                        borderColor: DARK.amberHi,
+                        boxShadow: RAISE_DARK,
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${DARK.amberHi} 0%, ${DARK.amberHi} 55%, ${DARK.amber} 100%)`,
+                            backgroundColor: DARK.amberHi,
+                        },
                     },
                 },
             },
@@ -1088,15 +1110,19 @@ export const lightTheme = createTheme(theme, {
                     color: LIGHT.text,
                     border: `1px solid rgba(43, 31, 18, 0.14)`,
                     borderRadius: 999,
-                    '&.MuiChip-colorPrimary': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        color: LIGHT.amberLo,
-                        borderColor: 'rgba(31, 126, 148, 0.36)',
+                    '&.MuiChip-filled.MuiChip-colorPrimary': {
+                        backgroundColor: LIGHT.amber,
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
+                        color: '#FFFBF1',
+                        borderColor: LIGHT.amber,
+                        boxShadow: RAISE_LIGHT,
                     },
-                    '&.MuiChip-colorSuccess': {
-                        backgroundColor: 'rgba(46, 138, 82, 0.14)',
-                        color: '#1F6038',
-                        borderColor: 'rgba(46, 138, 82, 0.36)',
+                    '&.MuiChip-filled.MuiChip-colorSuccess': {
+                        backgroundColor: LIGHT.success,
+                        backgroundImage: `linear-gradient(135deg, #3FA86A 0%, ${LIGHT.success} 55%, #1F6038 100%)`,
+                        color: '#FFFBF1',
+                        borderColor: LIGHT.success,
+                        boxShadow: RAISE_LIGHT,
                     },
                 },
                 outlined: {
@@ -1294,10 +1320,15 @@ export const lightTheme = createTheme(theme, {
                         color: LIGHT.text,
                     },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        color: LIGHT.amberLo,
+                        backgroundColor: LIGHT.amber,
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
+                        color: '#FFFBF1',
                         borderColor: LIGHT.amber,
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
+                        boxShadow: RAISE_LIGHT,
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amberHi} 55%, ${LIGHT.amber} 100%)`,
+                            backgroundColor: LIGHT.amberHi,
+                        },
                     },
                 },
             },
@@ -2791,14 +2822,18 @@ export const performanceChannelStyles = {
     channelBadge: (color) => ({
         fontFamily: 'inherit',
         fontSize: perfTokens.fontSize.md,
-        fontWeight: 600,
-        color,
+        fontWeight: 700,
+        // Solid channel color with a sheen overlay + raised shadow so the
+        // badge reads as a filled gradient pad, not a flat tinted box.
+        color: 'rgba(0,0,0,0.85)',
         letterSpacing: perfTokens.letterSpacing.wide,
-        px: 0.75,
+        px: 0.85,
         py: 0.25,
         borderRadius: 1,
-        backgroundColor: `${color}1F`,
-        border: `1px solid ${color}55`,
+        backgroundColor: color,
+        backgroundImage: SHEEN_DARK,
+        border: `1px solid ${color}`,
+        boxShadow: RAISE_DARK,
     }),
     muteSoloRow: {
         display: 'flex',
@@ -2814,8 +2849,10 @@ export const performanceChannelStyles = {
             borderRadius: 1,
             color: active ? '#fff' : 'text.secondary',
             backgroundColor: active ? `${c}D9` : 'transparent',   // D9 ≈ 85%
+            backgroundImage: active ? SHEEN_DARK : 'none',
             border: '1px solid',
             borderColor: active ? `${c}D9` : 'divider',
+            boxShadow: active ? RAISE_DARK : 'none',
             '&:hover': {
                 backgroundColor: active ? c : `${c}2E`,            // 2E ≈ 18%
             },
@@ -2831,8 +2868,10 @@ export const performanceChannelStyles = {
             borderRadius: 1,
             color: active ? '#0c1018' : 'text.secondary',
             backgroundColor: active ? `${c}F2` : 'transparent',   // F2 ≈ 95%
+            backgroundImage: active ? SHEEN_DARK : 'none',
             border: '1px solid',
             borderColor: active ? `${c}F2` : 'divider',
+            boxShadow: active ? RAISE_DARK : 'none',
             '&:hover': {
                 backgroundColor: active ? c : `${c}33`,            // 33 ≈ 20%
             },
@@ -2919,16 +2958,20 @@ export const performanceChannelStyles = {
         borderRadius: 1.5,
         border: '2px solid',
         borderColor: disabled ? 'divider' : color,
-        bgcolor: disabled ? 'transparent' : `${color}1A`,
+        // Richer tinted base + raised shadow for lift. Kept translucent (not a
+        // solid gradient) so the progress fill inside still reads while
+        // generating.
+        bgcolor: disabled ? 'transparent' : `${color}2E`,
+        boxShadow: disabled ? 'none' : RAISE_DARK,
         color: disabled ? 'text.disabled' : color,
         fontSize: perfTokens.fontSize.sm,
         fontWeight: perfTokens.weight.bold,
         textTransform: 'none',
         opacity: disabled && !generating ? 0.45 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms',
+        transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms, box-shadow 120ms',
         '&:hover': {
-            bgcolor: disabled || generating ? undefined : `${color}28`,
+            bgcolor: disabled || generating ? undefined : `${color}3D`,
         },
     }),
     // The animated fill that lives INSIDE generatePill while generating.
@@ -3138,7 +3181,9 @@ export const performanceChannelStyles = {
         borderRadius: 1.5,
         color: playing ? '#0c1018' : color,
         backgroundColor: playing ? color : `${color}14`,
-        border: `1px solid ${color}55`,
+        backgroundImage: playing ? SHEEN_DARK : 'none',
+        border: `1px solid ${color}${playing ? '' : '55'}`,
+        boxShadow: playing ? RAISE_DARK : 'none',
         '&:hover': { backgroundColor: playing ? color : `${color}28` },
         '&.Mui-disabled': theme.palette.mode === 'dark' ? { opacity: 0.3 } : {},
     }),
@@ -3161,9 +3206,11 @@ export const performanceChannelStyles = {
         lineHeight: 1,
         color: active ? '#0c1018' : 'text.disabled',
         backgroundColor: active ? color : 'transparent',
+        backgroundImage: active ? SHEEN_DARK : 'none',
         border: '1px solid',
         borderColor: active ? color : 'divider',
-        transition: 'background-color 120ms, color 120ms, border-color 120ms',
+        boxShadow: active ? RAISE_DARK : 'none',
+        transition: 'background-color 120ms, color 120ms, border-color 120ms, box-shadow 120ms',
         '&:hover': {
             backgroundColor: active ? color : 'action.hover',
             color: active ? '#0c1018' : 'text.secondary',

@@ -19,7 +19,7 @@ import {
     VolumeX as MuteIcon,
     Shuffle as VariationIcon,
 } from 'lucide-react';
-import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens } from '../theme';
+import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import {
@@ -757,9 +757,11 @@ export default function PerformanceChannel({
                                         px: 0.7,
                                         minWidth: 36,
                                         bgcolor: active ? color : 'transparent',
+                                        backgroundImage: active ? SHEEN_DARK : 'none',
+                                        boxShadow: active ? RAISE_DARK : 'none',
                                         color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
                                         fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
-                                        transition: 'background-color 120ms, color 120ms',
+                                        transition: 'background-color 120ms, color 120ms, box-shadow 120ms',
                                         '&:hover': {
                                             bgcolor: active ? color : 'action.hover',
                                             color: active ? 'rgba(0,0,0,0.88)' : 'text.secondary',
