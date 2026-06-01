@@ -17,6 +17,7 @@ import {
 import { Upload as UploadIcon, X as ClearIcon, Play as PlayIcon, Square as StopIcon } from 'lucide-react';
 import api from '../api';
 import AudioWaveform from './AudioWaveform';
+import { getFragmentDragPayload } from '../utils/fragmentDrag';
 
 /**
  * SA3 audio-to-audio + inpainting UI.
@@ -206,7 +207,21 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
         // fragment filename; OS file drags carry dataTransfer.files. Read the
         // custom payload synchronously before any await.
         const fragName = e.dataTransfer.getData('application/x-fragmenta-fragment');
-        if (fragName) { await loadFragmentByName(fragName); return; }
+        if (fragName) {
+            // Prefer the in-memory blob handed off on dragStart — no disk
+            // round-trip, and immune to any in-memory vs on-disk name mismatch.
+            const payload = getFragmentDragPayload();
+            if (payload?.blob && payload.filename === fragName) {
+                const file = new File([payload.blob], fragName || 'fragment.wav', {
+                    type: payload.blob.type || 'audio/wav',
+                });
+                await uploadFile(file);
+            } else {
+                // Fallback: blob wasn't preloaded — fetch it from disk by name.
+                await loadFragmentByName(fragName);
+            }
+            return;
+        }
         const f = e.dataTransfer.files?.[0];
         await uploadFile(f);
     };

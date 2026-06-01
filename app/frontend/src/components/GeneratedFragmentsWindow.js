@@ -18,6 +18,7 @@ import {
 import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
 import api from '../api';
+import { setFragmentDragPayload, clearFragmentDragPayload } from '../utils/fragmentDrag';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
 function relativeTime(createdAt) {
@@ -360,7 +361,19 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                             fragment.filename || '',
                                         );
                                         e.dataTransfer.effectAllowed = 'copy';
+                                        // Hand off the in-memory blob too so the drop can
+                                        // use it directly — no disk fetch, immune to any
+                                        // name mismatch. Falls back to the filename when
+                                        // the blob isn't preloaded yet.
+                                        const blob = effectiveBlob(fragment);
+                                        if (blob) {
+                                            setFragmentDragPayload({
+                                                filename: fragment.filename || '',
+                                                blob,
+                                            });
+                                        }
                                     }}
+                                    onDragEnd={() => clearFragmentDragPayload()}
                                     title="Drag into the Edit tab to use as a source clip"
                                 >
                                     <Typography
