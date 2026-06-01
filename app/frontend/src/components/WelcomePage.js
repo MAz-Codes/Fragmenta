@@ -58,9 +58,9 @@ export default function WelcomePage({ open, onClose }) {
                                 Version {APP_VERSION}
                             </Typography>
                             <Typography
-                                variant="caption"
-                                color="text.disabled"
-                                sx={{ mt: 1 }}
+                                variant="body3"
+                                color="text.secondary"
+                                sx={{ mt: 1, fontSize: 'calc(0.7rem - 1px)' }}
                             >
                                 Powered by Stable Audio 3 by Stability AI
                             </Typography>
