@@ -36,40 +36,56 @@ export function InfoViewProvider({ enabled, children }) {
 }
 
 function InfoViewBar({ hint }) {
-    // Only present when there's something to say — no card, no placeholder.
+    // Only present when there's something to say — no placeholder.
     if (!hint) return null;
 
     return (
+        // Full-width fixed row that centers the pill at the bottom of the page.
         <Box
-            role="status"
-            aria-live="polite"
-            sx={(theme) => ({
+            sx={{
                 position: 'fixed',
                 left: 0,
                 right: 0,
-                bottom: 0,
-                zIndex: 1340,           // under the bottom dock (1350) so the dock floats above its left edge
+                bottom: { xs: 16, md: 24 },
+                zIndex: 1340,           // under the bottom dock (1350)
+                px: 2,
                 display: 'flex',
-                alignItems: 'center',
-                gap: 1.25,
+                justifyContent: 'center',
                 pointerEvents: 'none',  // pure overlay — never intercepts clicks
-                // Clear the bottom-left floating dock column on the left.
-                pl: { xs: '64px', sm: '76px', md: '88px' },
-                pr: { xs: 2, sm: 3 },
-                py: 1,
-                // No background card — text reads directly over the page. A
-                // soft shadow keeps it legible over arbitrary content.
-                textShadow: theme.palette.mode === 'dark'
-                    ? '0 1px 3px rgba(0,0,0,0.85), 0 0 10px rgba(0,0,0,0.6)'
-                    : '0 1px 3px rgba(242,237,227,0.95), 0 0 10px rgba(242,237,227,0.8)',
-            })}
+            }}
         >
-            <Box component="span" sx={{ flexShrink: 0, display: 'inline-flex', color: 'primary.main' }}>
-                <InfoIcon size={16} />
+            <Box
+                role="status"
+                aria-live="polite"
+                sx={(theme) => ({
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    maxWidth: 'min(680px, 90vw)',
+                    px: 1.75,
+                    py: 0.9,
+                    borderRadius: 999,
+                    // Blurred translucent pill — just enough backing for the
+                    // text to stay readable over any content behind it.
+                    backgroundColor: theme.palette.mode === 'dark'
+                        ? 'rgba(20, 22, 24, 0.55)'
+                        : 'rgba(248, 243, 234, 0.62)',
+                    backdropFilter: 'blur(16px) saturate(160%)',
+                    WebkitBackdropFilter: 'blur(16px) saturate(160%)',
+                    border: `1px solid ${theme.palette.divider}`,
+                    boxShadow: theme.palette.mode === 'dark'
+                        ? '0 8px 28px rgba(0,0,0,0.5)'
+                        : '0 8px 28px rgba(43,31,18,0.16)',
+                    animation: 'fragmenta-fade-up 240ms cubic-bezier(0.16, 1, 0.3, 1)',
+                })}
+            >
+                <Box component="span" sx={{ flexShrink: 0, display: 'inline-flex', color: 'primary.main' }}>
+                    <InfoIcon size={15} />
+                </Box>
+                <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.3 }}>
+                    {hint}
+                </Typography>
             </Box>
-            <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.35 }}>
-                {hint}
-            </Typography>
         </Box>
     );
 }
