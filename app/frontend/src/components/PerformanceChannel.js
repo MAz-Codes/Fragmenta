@@ -33,11 +33,10 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    // Vibrant palette. Ch1 amber-gold, ch2 violet, ch3 coral, ch4 emerald.
-    // Saturated so the channel tints and waveforms read boldly on the dark
-    // background, but still light enough that the black label text on active
-    // toggles stays legible. Slots 4–7 are spares (only 4 channels render).
-    '#F2B824', '#A678FF', '#FF6B47', '#2FD698',
+    // Ch1 green, ch2 red, ch3 blue, ch4 orange. Saturated so the channel tints
+    // and waveforms read boldly on the dark background. Slots 4–7 are spares
+    // (only 4 channels render).
+    '#15A864', '#EC423B', '#1F6FF3', '#FA8519',
     '#22D3EE', '#FF6FB5', '#5B9DFF', '#9BE34A',
 ];
 
