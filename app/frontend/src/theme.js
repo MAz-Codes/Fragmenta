@@ -105,6 +105,11 @@ export const PERF_BTN_SHEEN = 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%
 export const PERF_BTN_SHADOW = '0 3px 8px rgba(0,0,0,0.45), 0 12px 24px rgba(0,0,0,0.55)';
 export const PERF_BTN_SHADOW_HOVER = '0 5px 12px rgba(0,0,0,0.5), 0 16px 32px rgba(0,0,0,0.7)';
 
+// Base slider color — the Nordic slate blue (also performance channel 1).
+// Sliders now take their color from the root `color` (slots use currentColor),
+// so this is the default and any caller can recolor a slider via `color` in sx.
+export const NORDIC_BLUE = '#7FB0C9';
+
 let theme = createTheme({
     palette: {
         mode: 'dark',
@@ -675,19 +680,22 @@ let theme = createTheme({
         },
         MuiSlider: {
             styleOverrides: {
-                root: { color: DARK.amber, height: 4 },
+                // Color is driven by the root `color` via currentColor on the
+                // slots, so any slider recolors just by setting `color` in sx
+                // (channel strips pass their channel color). Default = Nordic blue.
+                root: { color: NORDIC_BLUE, height: 4 },
                 rail: { backgroundColor: 'rgba(240, 237, 229, 0.12)', opacity: 1 },
-                track: { backgroundColor: DARK.amber, border: 0 },
+                track: { backgroundColor: 'currentColor', border: 0 },
                 thumb: {
-                    backgroundColor: DARK.amberHi,
+                    backgroundColor: 'currentColor',
                     width: 16,
                     height: 16,
                     boxShadow: '0 2px 6px rgba(0, 0, 0, 0.5)',
                     '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(39, 159, 187, 0.18)',
+                        boxShadow: '0 0 0 8px rgba(127, 176, 201, 0.18)',
                     },
                     '&.Mui-active': {
-                        boxShadow: '0 0 0 12px rgba(39, 159, 187, 0.24)',
+                        boxShadow: '0 0 0 12px rgba(127, 176, 201, 0.24)',
                     },
                 },
                 valueLabel: {
@@ -699,7 +707,7 @@ let theme = createTheme({
                     fontSize: '0.75rem',
                 },
                 mark: { backgroundColor: 'rgba(240, 237, 229, 0.24)' },
-                markActive: { backgroundColor: DARK.amber },
+                markActive: { backgroundColor: 'currentColor' },
             },
         },
         MuiLinearProgress: {
@@ -1238,17 +1246,17 @@ export const lightTheme = createTheme(theme, {
         MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
         MuiSlider: {
             styleOverrides: {
-                root: { color: LIGHT.amber, height: 4 },
+                root: { color: NORDIC_BLUE, height: 4 },
                 rail: { backgroundColor: 'rgba(43, 31, 18, 0.18)', opacity: 1 },
-                track: { backgroundColor: LIGHT.amber, border: 0 },
+                track: { backgroundColor: 'currentColor', border: 0 },
                 thumb: {
-                    backgroundColor: LIGHT.amber,
+                    backgroundColor: 'currentColor',
                     width: 16,
                     height: 16,
                     border: `2px solid ${LIGHT.paper}`,
                     boxShadow: '0 2px 6px rgba(43, 31, 18, 0.20)',
                     '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(31, 126, 148, 0.18)',
+                        boxShadow: '0 0 0 8px rgba(127, 176, 201, 0.18)',
                     },
                 },
                 valueLabel: {
@@ -1258,7 +1266,7 @@ export const lightTheme = createTheme(theme, {
                     fontWeight: 400,
                 },
                 mark: { backgroundColor: 'rgba(43, 31, 18, 0.28)' },
-                markActive: { backgroundColor: LIGHT.amber },
+                markActive: { backgroundColor: 'currentColor' },
             },
         },
         MuiLinearProgress: {
