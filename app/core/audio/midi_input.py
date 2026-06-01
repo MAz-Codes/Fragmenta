@@ -13,16 +13,54 @@ MidiContext — it just consumes these events instead of Web MIDI.
 """
 from __future__ import annotations
 
+import ctypes
+import glob
+import os
 import queue
+import sys
 import threading
 from typing import Any, Dict, List, Optional
+
+
+def _preload_bundled_jack() -> None:
+    """Work around a broken RPATH in python-rtmidi's manylinux wheel.
+
+    The wheel bundles libjack as `python_rtmidi/libjack-<hash>.so.*`, but the
+    `_rtmidi` extension's RPATH points at a directory that doesn't exist
+    (`$ORIGIN/../python_rtmidi.` — note the stray trailing dot), so the loader
+    can't find it and `import rtmidi` dies with
+    `ImportError: libjack-<hash>.so...: cannot open shared object file`.
+
+    The bundled lib's soname matches the extension's DT_NEEDED exactly, so
+    dlopen'ing it with RTLD_GLOBAL first lets the loader satisfy the dependency
+    from the already-loaded object. Doing it here (rather than patching the
+    venv) survives a pip reinstall and needs no patchelf/root. Linux-only; a
+    no-op everywhere the glob finds nothing.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    for base in sys.path:
+        if not base or not os.path.isdir(base):
+            continue
+        for lib in glob.glob(os.path.join(base, "python_rtmidi*", "libjack-*.so*")):
+            try:
+                ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                pass
+
 
 try:
     import rtmidi  # python-rtmidi
     _RTMIDI_OK = True
 except Exception:  # pragma: no cover - import guard
-    rtmidi = None
-    _RTMIDI_OK = False
+    # Most likely the bundled-libjack RPATH bug — preload it and retry once.
+    try:
+        _preload_bundled_jack()
+        import rtmidi
+        _RTMIDI_OK = True
+    except Exception:
+        rtmidi = None
+        _RTMIDI_OK = False
 
 _lock = threading.Lock()
 _midi_in: Any = None                 # the open rtmidi.MidiIn, or None
