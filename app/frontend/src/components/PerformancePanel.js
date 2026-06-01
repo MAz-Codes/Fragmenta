@@ -64,12 +64,11 @@ import {
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
-// Transport colors, softened to the Nordic channel palette — same hue basis
-// (green / orange / red) but desaturated + lighter so they sit in the same
-// elegant family as the channel colors.
-const RECORD_COLOR = '#D17479';   // muted red  (was #E5484D)
-const STOP_COLOR = '#E0A368';     // soft amber-orange (was #FA8519)
-const PLAY_COLOR = '#5FB88E';     // nordic green (was #15A864)
+// Transport colors (original): Play uses the master cyan, Stop the error red,
+// Record its own red — kept as icon-only buttons.
+const RECORD_COLOR = '#E5484D';   // record red
+const STOP_COLOR = '#E26B5E';     // error red
+const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
 const MASTER_DB_DEFAULT = -6;

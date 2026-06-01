@@ -33,12 +33,12 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    // Nordic-cool palette — calm, slightly desaturated, modern/elegant. Ch1
-    // slate blue, ch2 grey-lilac, ch3 blush, ch4 sage. Mid-tone but light
-    // enough that the black label text on active toggles stays legible. Slots
-    // 4–7 are spares (only 4 channels render).
-    '#7FB0C9', '#A99BC9', '#D49AA0', '#8FBFA6',
-    '#22D3EE', '#9BE34A', '#5B9DFF', '#F2B824',
+    // Vibrant palette. Ch1 amber-gold, ch2 violet, ch3 coral, ch4 emerald.
+    // Saturated so the channel tints and waveforms read boldly on the dark
+    // background, but still light enough that the black label text on active
+    // toggles stays legible. Slots 4–7 are spares (only 4 channels render).
+    '#F2B824', '#A678FF', '#FF6B47', '#2FD698',
+    '#22D3EE', '#FF6FB5', '#5B9DFF', '#9BE34A',
 ];
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
