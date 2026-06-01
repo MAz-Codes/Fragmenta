@@ -427,7 +427,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                         end={maskEnd}
                         onRegionChange={(s, e) => { setMaskStart(s); setMaskEnd(e); }}
                     />
-                    <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+                    <Stack direction="row" alignItems="center" spacing={2} sx={{ mt: 1 }}>
                         <TextField
                             label="Start (s)"
                             type="number"
@@ -435,7 +435,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             value={maskStart.toFixed(2)}
                             onChange={(e) => setMaskStart(parseFloat(e.target.value) || 0)}
                             inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
-                            sx={{ flex: 1 }}
+                            sx={{ width: 96 }}
                         />
                         <TextField
                             label="End (s)"
@@ -444,7 +444,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             value={maskEnd.toFixed(2)}
                             onChange={(e) => setMaskEnd(parseFloat(e.target.value) || 0)}
                             inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
-                            sx={{ flex: 1 }}
+                            sx={{ width: 96 }}
                         />
                         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Button
@@ -453,6 +453,9 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                                 startIcon={regionPlaying ? <StopIcon size={14} /> : <PlayIcon size={14} />}
                                 onClick={toggleRegionPreview}
                                 disabled={!regionUrl || (maskEnd - maskStart) < 0.05}
+                                // Fixed width so swapping "Preview" ↔ "Stop" doesn't
+                                // resize the button. Sized to fit "Preview" + icon.
+                                sx={{ width: 108, flexShrink: 0 }}
                             >
                                 {regionPlaying ? 'Stop' : 'Preview'}
                             </Button>
