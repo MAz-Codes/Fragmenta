@@ -126,18 +126,31 @@ def _pick_adapter(base_model: Optional[str], vram_gb: Optional[float]) -> Tuple[
     return ("dora-rows-xs" if constrained else default), constrained
 
 
-def _pick_duration(p95_clip_sec: Optional[float]) -> float:
+def _model_max_window_sec(base_model: Optional[str]) -> float:
+    """SA3's native training length for the base, from its model config
+    sample_size / sample_rate: medium-base ≈380s, small bases ≈120s. The
+    `seconds_total` conditioner caps at 384s, so 380 is the safe medium ceiling.
+    Longer windows aren't a model limit below these — they're VRAM/time bound.
+    """
+    if base_model and "medium" in base_model:
+        return 380.0
+    return 120.0
+
+
+def _pick_duration(p95_clip_sec: Optional[float], base_model: Optional[str]) -> float:
     """Set training window from the project's actual p95 clip length.
 
-    Floors at 5s (very short clips), caps at 30s (SA3 LoRA convention for
-    non-pre-encoded training — anything longer wants Phase 6 latents to be
-    practical). Round up the p95 with 2s headroom so the window isn't
-    cropping out the tails of typical clips.
+    Floors at 5s; caps at the model's native length (≈120s small / ≈380s
+    medium) rather than an arbitrary 30s — SA3 random-crops longer files, so
+    the only real limits are the model's sequence length and VRAM. Rounds up
+    p95 with 2s headroom so the window isn't cropping the tails of typical
+    clips. With no duration data, defaults to a conservative 30s.
     """
+    model_max = _model_max_window_sec(base_model)
     if p95_clip_sec is None or p95_clip_sec <= 0:
-        return 30.0
+        return float(min(30.0, model_max))
     suggested = math.ceil(p95_clip_sec + 2.0)
-    return float(max(5, min(30, suggested)))
+    return float(max(5, min(model_max, suggested)))
 
 
 def _pick_batch_size(bucket: str, vram_gb: Optional[float]) -> int:
@@ -174,7 +187,7 @@ def _heuristic(
     bucket = _bucket(file_count)
     steps = _STEPS_BY_BUCKET[bucket]
     adapter, constrained = _pick_adapter(base_model, vram_gb)
-    duration = _pick_duration(dur_stats.get("p95"))
+    duration = _pick_duration(dur_stats.get("p95"), base_model)
     batch = _pick_batch_size(bucket, vram_gb)
 
     # Mild dropout for tiny datasets only — extra regularization where overfit
@@ -289,12 +302,11 @@ def _compose_rationale(
             f"({config['duration']:.0f}s) will be silence-padded. "
             "Re-slice the source material to longer chunks for better signal."
         )
-    if p95 is not None and p95 > 60:
+    if config["duration"] > 45:
         warnings.append(
-            f"p95 clip is {p95:.0f}s; training will random-crop "
-            f"{config['duration']:.0f}s windows per step. "
-            "For long-form structure learning, wait for pre-encoded latents (Phase 6) "
-            "and raise the duration ceiling."
+            f"Training window is {config['duration']:.0f}s. Longer windows use "
+            "markedly more VRAM and step time (DiT attention scales with length). "
+            "If you hit OOM, lower the window or pre-encode the dataset first."
         )
 
     # VRAM × base model crosscheck
@@ -342,6 +354,21 @@ def suggest(data_dir: Path, base_model: Optional[str] = None) -> Dict[str, Any]:
     bullets, warnings = _compose_rationale(
         file_count, dur_stats, base_model, vram_gb, suggestion, meta
     )
+
+    # Caption coverage: SA3 trains on audio + matching .txt sidecars, and
+    # silently drops clips whose prompt is blank. Surface missing captions so
+    # the user isn't unknowingly training on a fraction of the dataset.
+    uncaptioned = sum(
+        1 for p in audio_files
+        if not (p.with_suffix(".txt").exists()
+                and p.with_suffix(".txt").read_text(encoding="utf-8", errors="ignore").strip())
+    )
+    if uncaptioned:
+        warnings.insert(0, (
+            f"{uncaptioned} of {file_count} clip{'s' if file_count != 1 else ''} "
+            "have no annotation. SA3 silently skips un-captioned clips at train "
+            "time — annotate them first or they won't contribute to the LoRA."
+        ))
 
     return {
         "ok": True,

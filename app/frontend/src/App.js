@@ -1488,10 +1488,15 @@ function App() {
                                                         open={trainingBaseModelSelectOpen}
                                                         onOpen={() => setTrainingBaseModelSelectOpen(true)}
                                                         onClose={() => setTrainingBaseModelSelectOpen(false)}
-                                                        onChange={(e) => setTrainingConfig({
-                                                            ...trainingConfig,
-                                                            baseModel: e.target.value,
-                                                        })}
+                                                        onChange={(e) => {
+                                                            const cap = (e.target.value || '').includes('medium') ? 380 : 120;
+                                                            setTrainingConfig({
+                                                                ...trainingConfig,
+                                                                baseModel: e.target.value,
+                                                                // Keep the window within the new base's native length.
+                                                                duration: Math.min(trainingConfig.duration, cap),
+                                                            });
+                                                        }}
                                                     >
                                                         {/* LoRA training requires CFG-aware *-base checkpoints —
                                                             post-trained models have CFG distilled out and
@@ -1579,10 +1584,10 @@ function App() {
                                                                             const val = parseInt(e.target.value) || 500;
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                steps: Math.max(100, Math.min(50000, val))
+                                                                                steps: Math.max(500, Math.min(20000, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 100, max: 50000, step: 100 }}
+                                                                        inputProps={{ min: 500, max: 20000, step: 100 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
@@ -1691,7 +1696,12 @@ function App() {
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Learning Rate</Typography>
+                                                                <Box sx={appStyles.fieldLabelRow}>
+                                                                    <Typography>Learning Rate</Typography>
+                                                                    <Tooltip arrow placement="top" title={TIPS.training.learningRate}>
+                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
+                                                                    </Tooltip>
+                                                                </Box>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.learningRate}
@@ -1919,8 +1929,9 @@ function App() {
                                                                                 duration: value,
                                                                             })}
                                                                             min={5}
-                                                                            max={30}
+                                                                            max={(trainingConfig.baseModel || '').includes('medium') ? 380 : 120}
                                                                             step={1}
+                                                                            marks={[{ value: 30, label: '30s' }]}
                                                                             valueLabelDisplay="auto"
                                                                             sx={appStyles.sliderFlexGrow}
                                                                         />
@@ -1928,10 +1939,11 @@ function App() {
                                                                             type="number"
                                                                             value={trainingConfig.duration}
                                                                             onChange={(e) => {
-                                                                                const v = Math.max(5, Math.min(30, parseFloat(e.target.value) || 30));
+                                                                                const cap = (trainingConfig.baseModel || '').includes('medium') ? 380 : 120;
+                                                                                const v = Math.max(5, Math.min(cap, parseFloat(e.target.value) || 30));
                                                                                 setTrainingConfig({ ...trainingConfig, duration: v });
                                                                             }}
-                                                                            inputProps={{ min: 5, max: 30, step: 1 }}
+                                                                            inputProps={{ min: 5, max: (trainingConfig.baseModel || '').includes('medium') ? 380 : 120, step: 1 }}
                                                                             sx={appStyles.sliderInputSmall}
                                                                             size="small"
                                                                         />

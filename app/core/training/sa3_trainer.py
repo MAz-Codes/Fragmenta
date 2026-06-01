@@ -100,6 +100,8 @@ class SA3Trainer:
     # --- Public API --------------------------------------------------------
 
     def start(self) -> Dict[str, Any]:
+        # Fresh run on this trainer — clear any stop flag from a prior run.
+        self._stop_requested = False
         # Mark training as in-flight BEFORE any blocking work. /api/start-training
         # can block for tens of seconds (T5Gemma sibling fetch, base-model
         # prestaging) — during that window the frontend polls
@@ -168,6 +170,9 @@ class SA3Trainer:
         if not self.process or self.process.poll() is not None:
             return {"error": "Nothing to stop — no active training run."}
         try:
+            # Flag the stop so the monitor thread labels the exit "stopped"
+            # rather than "failed" — SIGINT doesn't yield a stable rc==-2.
+            self._stop_requested = True
             self.process.send_signal(signal.SIGINT)
             try:
                 self.process.wait(timeout=10)
@@ -434,11 +439,17 @@ class SA3Trainer:
             lr=float(self.config.get("learningRate") or DEFAULT_LR),
             steps=int(self.config.get("steps") or DEFAULT_STEPS),
             batch_size=int(self.config.get("batchSize") or DEFAULT_BATCH_SIZE),
-            duration=float(self.config.get("duration") or DEFAULT_DURATION),
+            # Clamp to the base model's native training length (medium ≈380s,
+            # small ≈120s) — SA3's DiT tops out at 4096 latent tokens, so a
+            # longer window would exceed the model rather than just cost VRAM.
+            duration=min(
+                float(self.config.get("duration") or DEFAULT_DURATION),
+                380.0 if "medium" in sa3_name else 120.0,
+            ),
             base_precision=precision,
             include=include,
             exclude=exclude,
-            seed=int(self.config.get("seed") or 42),
+            seed=(int(self.config["seed"]) if self.config.get("seed") is not None else 42),
             checkpoint_every=int(self.config.get("checkpointSteps") or DEFAULT_CHECKPOINT_STEPS),
             name=self.config.get("modelName") or "fragmenta-lora",
         )
@@ -611,8 +622,13 @@ class SA3Trainer:
 
         self.status["ended_at"] = time.time()
         self.status["is_training"] = False
-        self.status["status"] = "complete" if rc == 0 else ("stopped" if rc == -2 else "failed")
-        if rc != 0 and not self.status.get("error"):
+        # A user-requested stop wins regardless of the exit code (SIGINT can
+        # surface as various negative/non-zero codes across platforms).
+        if getattr(self, "_stop_requested", False):
+            self.status["status"] = "stopped"
+        else:
+            self.status["status"] = "complete" if rc == 0 else "failed"
+        if self.status["status"] == "failed" and not self.status.get("error"):
             self.status["error"] = f"train_lora.py exited with code {rc}"
 
         # Convert PyTorch Lightning .ckpt files to SA3's native .safetensors
