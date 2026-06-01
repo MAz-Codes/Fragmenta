@@ -2854,4 +2854,8 @@ if __name__ == '__main__':
     port = int(os.environ.get('FLASK_PORT', '5001'))
     # threaded=True so the long-lived MIDI SSE stream (/api/midi/stream) doesn't
     # block other requests on the single dev-server worker.
-    app.run(debug=True, host=host, port=port, threaded=True)
+    # use_reloader=False: Fragmenta is launched as a packaged desktop app via
+    # start.py, not a hot-reload dev loop. The reloader would fork a second
+    # process that re-imports the module (re-running init and doubling backend
+    # processes); we don't want that here.
+    app.run(debug=True, host=host, port=port, threaded=True, use_reloader=False)

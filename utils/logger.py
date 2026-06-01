@@ -82,6 +82,7 @@ class FragmentaLogger:
         root_logger.handlers.clear()
 
         console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.name = 'fragmenta'
         console_handler.setLevel(numeric_level)
 
         console_format = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
