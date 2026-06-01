@@ -348,8 +348,14 @@ def _linux_set_app_metadata() -> None:
 
 def _linux_apply_window_icon() -> None:
     """Belt-and-suspenders: after pywebview shows the window, reach into the
-    GTK backend and reapply the icon/WM_CLASS directly. Safe no-op if the
+    GTK backend and reapply the window icon directly. Safe no-op if the
     internals differ from the version we expect.
+
+    NOTE: we deliberately do NOT reapply WM_CLASS here. set_wmclass() is
+    deprecated in GTK3 and a no-op once the window is realized (the WM reads
+    WM_CLASS only at map time) — calling it from the 'shown' event just emits
+    a DeprecationWarning + Gtk-WARNING. The class is set correctly before the
+    window exists, in _linux_set_app_metadata() via Gdk.set_program_class().
     """
     if sys.platform != "linux":
         return
@@ -363,10 +369,6 @@ def _linux_apply_window_icon() -> None:
                 continue
             try:
                 gtk_window.set_icon_from_file(str(APP_ICON_PATH))
-            except Exception:
-                pass
-            try:
-                gtk_window.set_wmclass(APP_WM_CLASS, APP_WM_CLASS)
             except Exception:
                 pass
     except Exception as exc:
