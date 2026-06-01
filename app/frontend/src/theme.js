@@ -96,6 +96,15 @@ export const SHEEN_LIGHT = 'linear-gradient(180deg, rgba(255,255,255,0.55) 0%, r
 export const RAISE_DARK  = 'inset 0 1px 0 rgba(255,255,255,0.30), 0 1px 2px rgba(0,0,0,0.45), 0 4px 10px rgba(0,0,0,0.34)';
 export const RAISE_LIGHT = 'inset 0 1px 0 rgba(255,255,255,0.65), 0 1px 2px rgba(43,31,18,0.14), 0 4px 10px rgba(43,31,18,0.12)';
 
+// Performance-tab colored buttons (Generate / Play All / Stop All / Record):
+// the "contained" aesthetic — gradient fill + drop shadow, NO border (matches
+// the Suggest-hyperparameters button). PERF_BTN_SHEEN is a diagonal
+// light→dark overlay layered over the solid fill color for depth; the shadows
+// mirror the MuiButton contained override.
+export const PERF_BTN_SHEEN = 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0) 45%, rgba(0,0,0,0.20) 100%)';
+export const PERF_BTN_SHADOW = '0 3px 8px rgba(0,0,0,0.45), 0 12px 24px rgba(0,0,0,0.55)';
+export const PERF_BTN_SHADOW_HOVER = '0 5px 12px rgba(0,0,0,0.5), 0 16px 32px rgba(0,0,0,0.7)';
+
 let theme = createTheme({
     palette: {
         mode: 'dark',
@@ -2767,15 +2776,16 @@ export const performancePanelStyles = {
         borderTopColor: 'divider',
     },
     masterBtn: (color, variant) => (theme) => {
-        // Solid filled pad (channel/error color + sheen overlay + raised
-        // shadow + dark label), matching the Bars toggle and Generate pill.
-        // 'stop' uses the error palette; 'play' uses the passed color.
+        // Gradient fill + drop shadow, NO border (matches the Suggest-
+        // hyperparameters contained button). 'stop' uses the error palette;
+        // 'play' uses the passed color.
         const fill = variant === 'stop' ? theme.palette.error.main : color;
         return {
             textTransform: 'none',
             borderRadius: 1.5,
             fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            // Match the app's buttons (MuiButton root is 400) — not bold.
+            fontWeight: 400,
             height: perfTokens.height.compact,
             // Override MUI's vertical padding so the button lands at the
             // shared 26px row height (matches Q select + BPM input).
@@ -2783,27 +2793,24 @@ export const performancePanelStyles = {
             px: 1.25,
             minWidth: 0,
             lineHeight: 1,
+            border: 'none',
             color: 'rgba(0,0,0,0.88)',
-            backgroundColor: fill,
-            backgroundImage: SHEEN_DARK,
-            border: '1px solid',
-            borderColor: fill,
-            boxShadow: RAISE_DARK,
-            transition: 'filter 120ms, box-shadow 120ms, background-color 120ms',
+            background: `${PERF_BTN_SHEEN}, ${fill}`,
+            boxShadow: PERF_BTN_SHADOW,
+            transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms',
             '&:hover': {
-                backgroundColor: fill,
-                borderColor: fill,
-                filter: 'brightness(1.06)',
+                border: 'none',
+                filter: 'brightness(1.05)',
+                transform: 'translateY(-1px)',
+                boxShadow: PERF_BTN_SHADOW_HOVER,
             },
-            // Disabled (e.g. Play All with nothing loaded) drops back to a
-            // muted outline so it doesn't read as an active solid pad.
+            // Disabled (e.g. Play All with nothing loaded) → neutral gray chip,
+            // matching the contained button's disabled look.
             '&.Mui-disabled': {
-                color: 'text.disabled',
-                backgroundColor: 'transparent',
-                backgroundImage: 'none',
-                borderColor: 'divider',
+                border: 'none',
+                color: 'rgba(255,255,255,0.26)',
+                background: 'rgba(255,255,255,0.06)',
                 boxShadow: 'none',
-                opacity: 0.45,
             },
         };
     },
@@ -2988,43 +2995,44 @@ export const performanceChannelStyles = {
             height: perfTokens.height.cta,
             px: 1.5,
             borderRadius: 1.5,
-            border: '2px solid',
+            border: 'none',
             fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            // Match the app's buttons (MuiButton root is 400) — not bold.
+            fontWeight: 400,
             textTransform: 'none',
             cursor: disabled ? 'not-allowed' : 'pointer',
-            transition: 'background-color 120ms, color 120ms, opacity 120ms, border-color 120ms, box-shadow 120ms, filter 120ms',
+            transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms, background-color 120ms, color 120ms',
         };
         if (disabled) {
+            // Neutral gray chip — matches the contained button's disabled look.
             return {
                 ...base,
-                borderColor: 'divider',
-                bgcolor: 'transparent',
+                background: 'rgba(255,255,255,0.06)',
+                color: 'rgba(255,255,255,0.26)',
                 boxShadow: 'none',
-                color: 'text.disabled',
-                opacity: generating ? 1 : 0.45,
             };
         }
         if (generating) {
             // Translucent track so the progress fill inside still reads.
             return {
                 ...base,
-                borderColor: color,
-                bgcolor: `${color}2E`,
-                boxShadow: RAISE_DARK,
+                backgroundColor: `${color}2E`,
                 color,
+                boxShadow: PERF_BTN_SHADOW,
             };
         }
-        // Idle + enabled — solid filled pad like the active Bars button:
-        // solid channel color + sheen overlay + raised shadow + dark label.
+        // Idle + enabled — gradient fill + drop shadow, no border, matching the
+        // "Suggest hyperparameters" contained button.
         return {
             ...base,
-            borderColor: color,
-            bgcolor: color,
-            backgroundImage: SHEEN_DARK,
-            boxShadow: RAISE_DARK,
+            background: `${PERF_BTN_SHEEN}, ${color}`,
             color: 'rgba(0,0,0,0.88)',
-            '&:hover': { bgcolor: color, filter: 'brightness(1.06)' },
+            boxShadow: PERF_BTN_SHADOW,
+            '&:hover': {
+                filter: 'brightness(1.05)',
+                transform: 'translateY(-1px)',
+                boxShadow: PERF_BTN_SHADOW_HOVER,
+            },
         };
     },
     // The animated fill that lives INSIDE generatePill while generating.
