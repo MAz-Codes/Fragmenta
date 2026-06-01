@@ -409,22 +409,6 @@ def _windows_apply_window_icon() -> None:
         print(f"Could not set Windows window icon: {exc}")
 
 
-def _linux_webkit_env_workarounds() -> None:
-    """Work around WebKitGTK rendering a blank/dark window on many Linux GPU
-    stacks. WebKit's accelerated compositing + DMABUF buffer-sharing path
-    frequently produces an empty surface (the page loads but nothing paints),
-    while the same backend serves fine in a real browser. Forcing WebKit off
-    those paths makes it fall back to a renderer that actually draws.
-
-    Must run before WebKit spawns its web process (i.e. before webview.start()).
-    We only set defaults — an explicitly-set env var from the user wins.
-    """
-    if sys.platform != "linux":
-        return
-    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
-    os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
-
-
 def run_pywebview_mode() -> int:
     try:
         import webview
@@ -433,7 +417,6 @@ def run_pywebview_mode() -> int:
         return run_browser_mode()
 
     _windows_set_app_id()
-    _linux_webkit_env_workarounds()
     _linux_set_app_metadata()
     _macos_set_app_metadata()
 
@@ -524,12 +507,19 @@ def main() -> int:
     args = parse_args()
     if args.browser:
         return run_browser_mode()
-    # Default: the native pywebview window on every OS — branded (Fragmenta
-    # icon + name), no external browser opening. MIDI is native (rtmidi) and
-    # core audio + master recording work in WebView2/WKWebView/WebKitGTK. The
-    # only thing the OS WebViews lack on mac/linux is setSinkId (routing the
-    # cue to a *separate* output device) — opt into `--chromium` if you need it.
-    if args.chromium:
+    # Default window engine per OS:
+    #   macOS/Windows → the native pywebview window (WKWebView/WebView2),
+    #     branded (Fragmenta icon + name) and rendering reliably.
+    #   Linux → Chromium --app mode. WebKitGTK frequently renders the app as a
+    #     blank/dark window (the page loads but never paints), so the native
+    #     window isn't dependable here; a real Chromium engine is. Falls back
+    #     to pywebview if no usable (non-snap) Chromium/Brave is found.
+    # `--chromium` forces Chromium mode on any OS; `--browser` opens the system
+    # browser. MIDI is native (rtmidi); core audio + master recording work in
+    # every engine. The only thing the OS WebViews lack on mac/linux is setSinkId
+    # (routing the cue to a *separate* output device).
+    prefer_chromium = args.chromium or sys.platform == "linux"
+    if prefer_chromium:
         chromium_path = find_chromium()
         if chromium_path:
             chromium_exit_code = run_chromium_app_mode(chromium_path)
