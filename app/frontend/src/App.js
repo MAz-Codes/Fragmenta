@@ -1555,12 +1555,9 @@ function App() {
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
-                                                                <Box sx={appStyles.fieldLabelRow}>
-                                                                    <Typography>Training Steps</Typography>
-                                                                    <Tooltip arrow placement="top" title={TIPS.training.steps}>
-                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                    </Tooltip>
-                                                                </Box>
+                                                                <Tooltip title={TIPS.training.steps}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Training Steps</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.steps}
@@ -1595,15 +1592,14 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Box sx={appStyles.fieldLabelRow}>
-                                                                    <Typography>Adapter Type</Typography>
-                                                                    <Tooltip arrow placement="top" title={TIPS.training.adapter}>
-                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                    </Tooltip>
-                                                                </Box>
+                                                                <Tooltip title={TIPS.training.adapter}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Adapter Type</Typography>
                                                                 <Select
                                                                     fullWidth
                                                                     size="small"
@@ -1622,16 +1618,15 @@ function App() {
                                                                     <MenuItem value="dora-cols-xs">DoRA-cols-XS (compact)</MenuItem>
                                                                     <MenuItem value="bora-xs">BoRA-XS (compact)</MenuItem>
                                                                 </Select>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
+                                                                <Tooltip title={TIPS.training.checkpointEvery}>
+                                                                <Box>
                                                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                                                        <Typography>Checkpoint Interval (steps)</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.checkpointEvery}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
-                                                                    </Box>
+                                                                    <Typography>Checkpoint Interval (steps)</Typography>
                                                                     <FormControlLabel
                                                                         sx={{ m: 0 }}
                                                                         control={
@@ -1696,15 +1691,14 @@ function App() {
                                                                         {trainingConfig.checkpointAuto ? ' (auto)' : ''}
                                                                     </Typography>
                                                                 )}
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Box sx={appStyles.fieldLabelRow}>
-                                                                    <Typography>Learning Rate</Typography>
-                                                                    <Tooltip arrow placement="top" title={TIPS.training.learningRate}>
-                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                    </Tooltip>
-                                                                </Box>
+                                                                <Tooltip title={TIPS.training.learningRate}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Learning Rate</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.learningRate}
@@ -1733,15 +1727,14 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Box sx={appStyles.fieldLabelRow}>
-                                                                    <Typography>Batch Size</Typography>
-                                                                    <Tooltip arrow placement="top" title={TIPS.training.batchSize}>
-                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                    </Tooltip>
-                                                                </Box>
+                                                                <Tooltip title={TIPS.training.batchSize}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Batch Size</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.batchSize}
@@ -1771,15 +1764,14 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Box sx={appStyles.fieldLabelRow}>
-                                                                    <Typography>Base-model Precision</Typography>
-                                                                    <Tooltip arrow placement="top" title={TIPS.training.precision}>
-                                                                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                    </Tooltip>
-                                                                </Box>
+                                                                <Tooltip title={TIPS.training.precision}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Base-model Precision</Typography>
                                                                 <FormControl fullWidth size="small">
                                                                     <Select
                                                                         value={trainingConfig.precision}
@@ -1792,6 +1784,8 @@ function App() {
                                                                         <MenuItem value="fp16">fp16 (legacy — only if your GPU lacks bf16 support)</MenuItem>
                                                                     </Select>
                                                                 </FormControl>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
@@ -1799,12 +1793,9 @@ function App() {
                                                                     LoRA settings
                                                                 </Typography>
 
-                                                                    <Box sx={appStyles.fieldLabelRow}>
-                                                                        <Typography>Rank</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.rank}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
-                                                                    </Box>
+                                                                    <Tooltip title={TIPS.training.rank}>
+                                                                    <Box>
+                                                                    <Typography sx={{ mb: 0.5 }}>Rank</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraRank}
@@ -1834,12 +1825,11 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Alpha</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.alpha}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
                                                                     </Box>
+                                                                    </Tooltip>
+                                                                    <Tooltip title={TIPS.training.alpha}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Alpha</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraAlpha}
@@ -1865,12 +1855,11 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Dropout</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.dropout}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
                                                                     </Box>
+                                                                    </Tooltip>
+                                                                    <Tooltip title={TIPS.training.dropout}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Dropout</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraDropout}
@@ -1896,13 +1885,12 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Seed</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.seed}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
                                                                     </Box>
+                                                                    </Tooltip>
+
+                                                                    <Tooltip title={TIPS.training.seed}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Seed</Typography>
                                                                     <TextField
                                                                         type="number"
                                                                         size="small"
@@ -1917,13 +1905,12 @@ function App() {
                                                                         }}
                                                                         inputProps={{ min: 0, step: 1 }}
                                                                     />
-
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Training Window (seconds)</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.sampleLength}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
                                                                     </Box>
+                                                                    </Tooltip>
+
+                                                                    <Tooltip title={TIPS.training.sampleLength}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Training Window (seconds)</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.duration}
@@ -1951,32 +1938,13 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Include layers</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.includeLayers}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
                                                                     </Box>
-                                                                    <TextField
-                                                                        fullWidth
-                                                                        size="small"
-                                                                        value={trainingConfig.include}
-                                                                        onChange={(e) => setTrainingConfig({ ...trainingConfig, include: e.target.value })}
-                                                                    />
-
-                                                                    <Box sx={{ ...appStyles.fieldLabelRow, mt: 2 }}>
-                                                                        <Typography>Exclude layers</Typography>
-                                                                        <Tooltip arrow placement="top" title={TIPS.training.excludeLayers}>
-                                                                            <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                                                                        </Tooltip>
-                                                                    </Box>
-                                                                    <TextField
-                                                                        fullWidth
-                                                                        size="small"
-                                                                        value={trainingConfig.exclude}
-                                                                        onChange={(e) => setTrainingConfig({ ...trainingConfig, exclude: e.target.value })}
-                                                                    />
+                                                                    </Tooltip>
+                                                                    {/* include/exclude layer targeting is intentionally not
+                                                                        exposed — the default (transformer.layers / exclude
+                                                                        seconds_total to_local_embed) is SA3's documented
+                                                                        small-dataset-safe filter; a wrong value silently
+                                                                        degrades training. Still sent from trainingConfig. */}
                                                             </Grid>
 
                                                         </Grid>
