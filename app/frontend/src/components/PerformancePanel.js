@@ -65,6 +65,7 @@ import {
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
 const RECORD_COLOR = '#E5484D';
+const STOP_COLOR = '#FA8519';
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
 const MASTER_DB_DEFAULT = -6;
@@ -1395,7 +1396,7 @@ function PerformancePanelInner({
                         startIcon={<StopAllIcon size={12} />}
                         onClick={handleStopAll}
                         disabled={!anyPlaying}
-                        sx={styles.masterBtn(MASTER_COLOR, 'stop')}
+                        sx={styles.masterBtn(STOP_COLOR, 'play')}
                     >
                         Stop All
                     </Button>

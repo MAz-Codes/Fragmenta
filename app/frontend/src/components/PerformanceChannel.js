@@ -33,11 +33,11 @@ import api from '../api';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
-    // Cool/electric palette. Ch1 sky, ch2 periwinkle-violet, ch3 magenta-pink,
-    // ch4 aqua-green. Bright enough that the black label text on active toggles
-    // stays legible, and tuned to the app's modern glass vibe. Slots 4–7 are
-    // spares (only 4 channels render).
-    '#4FC3F7', '#B388FF', '#FF6FB5', '#4DD6A0',
+    // Nordic-cool palette — calm, slightly desaturated, modern/elegant. Ch1
+    // slate blue, ch2 grey-lilac, ch3 blush, ch4 sage. Mid-tone but light
+    // enough that the black label text on active toggles stays legible. Slots
+    // 4–7 are spares (only 4 channels render).
+    '#7FB0C9', '#A99BC9', '#D49AA0', '#8FBFA6',
     '#22D3EE', '#9BE34A', '#5B9DFF', '#F2B824',
 ];
 
