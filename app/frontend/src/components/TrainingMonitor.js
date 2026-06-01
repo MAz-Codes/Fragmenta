@@ -121,6 +121,14 @@ export default function TrainingMonitor({
                         {trainingStatus?.status || 'idle'}
                     </Typography>
                 </Grid>
+                {Number.isFinite(trainingStatus?.seed) && (
+                    <Grid item xs={12} sm={6}>
+                        <Typography variant="body2" color="textSecondary">Seed</Typography>
+                        <Typography variant="body1" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {trainingStatus.seed}
+                        </Typography>
+                    </Grid>
+                )}
             </Grid>
 
             {lossPoints.length > 1 && (

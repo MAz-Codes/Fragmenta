@@ -171,7 +171,8 @@ function App() {
         loraAlpha: 16,
         loraDropout: 0,
         adapterType: 'dora-rows',             // SA3 upstream default
-        seed: 42,                              // reproducible by default
+        seedRandom: true,                     // fresh random seed each run (recorded server-side)
+        seed: 42,                              // used only when seedRandom is off
 
         // SA3 docs' "common case" layer filter — prevents conditioner-hijacking
         // on small datasets. Stored as space-separated strings (the format SA3's
@@ -851,11 +852,13 @@ function App() {
         await api.post('/api/clap/unload').catch(() => {});
 
         try {
-            const { checkpointAuto, ...rest } = trainingConfig;
+            const { checkpointAuto, seedRandom, ...rest } = trainingConfig;
             const payload = {
                 ...rest,
                 projectName: trainingProject,
                 checkpointSteps: checkpointAuto ? null : trainingConfig.checkpointSteps,
+                // null = let the backend roll a fresh seed and record it.
+                seed: seedRandom ? null : trainingConfig.seed,
                 overwrite: overwrite,
             };
             const response = await api.post('/api/start-training', payload);
@@ -1890,12 +1893,31 @@ function App() {
 
                                                                     <Tooltip title={TIPS.training.seed}>
                                                                     <Box sx={{ mt: 2 }}>
-                                                                    <Typography sx={{ mb: 0.5 }}>Seed</Typography>
+                                                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                                                                        <Typography>Seed</Typography>
+                                                                        <FormControlLabel
+                                                                            sx={{ m: 0 }}
+                                                                            control={
+                                                                                <Switch
+                                                                                    size="small"
+                                                                                    checked={trainingConfig.seedRandom}
+                                                                                    onChange={(e) => setTrainingConfig({
+                                                                                        ...trainingConfig,
+                                                                                        seedRandom: e.target.checked,
+                                                                                    })}
+                                                                                />
+                                                                            }
+                                                                            label="Random"
+                                                                            labelPlacement="start"
+                                                                        />
+                                                                    </Box>
                                                                     <TextField
                                                                         type="number"
                                                                         size="small"
                                                                         fullWidth
-                                                                        value={trainingConfig.seed}
+                                                                        placeholder={trainingConfig.seedRandom ? 'Randomized each run (recorded)' : 'e.g. 42'}
+                                                                        value={trainingConfig.seedRandom ? '' : trainingConfig.seed}
+                                                                        disabled={trainingConfig.seedRandom}
                                                                         onChange={(e) => {
                                                                             const v = parseInt(e.target.value, 10);
                                                                             setTrainingConfig({

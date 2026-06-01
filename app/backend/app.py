@@ -268,6 +268,11 @@ def start_training():
         training_config.setdefault('loraAlpha', training_config['loraRank'])
         training_config.setdefault('loraDropout', 0.0)
         training_config.setdefault('adapterType', 'dora-rows')
+        # Random seed by default: the UI sends seed=null when "Random" is on.
+        # Roll a concrete seed here so it's recorded (training_metadata.json +
+        # status) and the run stays reproducible if the user liked the result.
+        if training_config.get('seed') is None:
+            training_config['seed'] = random.randint(0, 2**31 - 1)
 
         logger.info(
             f"Training request: base={base_model}, name={training_config['modelName']}, "

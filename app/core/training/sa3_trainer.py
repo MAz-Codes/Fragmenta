@@ -117,6 +117,9 @@ class SA3Trainer:
             "loss": None,
             "error": None,
             "checkpoints": [],
+            # Surface the concrete seed (the backend rolls a random one when the
+            # UI requests it) so the user can reproduce a run they liked.
+            "seed": (int(self.config["seed"]) if self.config.get("seed") is not None else None),
             "message": "Preparing dataset and base model…",
         })
         try:
