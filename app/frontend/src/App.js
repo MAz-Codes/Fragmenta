@@ -52,7 +52,7 @@ import {
     CloudDownload as CloudDownloadIcon,
     FolderOpen as FolderOpenIcon,
     Info as InfoIcon,
-    HelpCircle as AboutIcon,
+    HelpCircle as InfoViewIcon,
     Moon as MoonIcon,
     Sun as SunIcon,
     Piano as PerformanceIcon,
@@ -141,8 +141,9 @@ function App() {
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
     // control. Off by default; preference persisted.
     const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
-        if (typeof window === 'undefined') return false;
-        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
+        if (typeof window === 'undefined') return true;
+        // On by default — only off if the user explicitly turned it off.
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) !== 'off';
     });
     const toggleInfoView = useCallback(() => {
         setInfoViewEnabled((prev) => {
@@ -2626,17 +2627,9 @@ function App() {
                             <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
                         </MenuItem>
                         <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); toggleInfoView(); }}
-                        >
-                            <ListItemIcon>
-                                <InfoIcon size={18} color={infoViewEnabled ? 'var(--mui-palette-primary-main, #279FBB)' : undefined} />
-                            </ListItemIcon>
-                            <ListItemText>{infoViewEnabled ? 'Info View: On' : 'Info View: Off'}</ListItemText>
-                        </MenuItem>
-                        <MenuItem
                             onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
                         >
-                            <ListItemIcon><AboutIcon size={18} /></ListItemIcon>
+                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
                             <ListItemText>About</ListItemText>
                         </MenuItem>
                     </Menu>
@@ -2698,25 +2691,11 @@ function App() {
 
                     <Box sx={appStyles.dockItem}>
                         <IconButton
-                            aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
-                            aria-pressed={infoViewEnabled}
-                            onClick={toggleInfoView}
-                            sx={[appStyles.dockIconButton, infoViewEnabled && appStyles.dockIconButtonAccent]}
-                        >
-                            <InfoIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {infoViewEnabled ? 'Info View: On' : 'Info View'}
-                        </Typography>
-                    </Box>
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
                             aria-label="Open about and documentation"
                             onClick={() => setShowInfoDialog(true)}
                             sx={appStyles.dockIconButton}
                         >
-                            <AboutIcon size={18} />
+                            <InfoIcon size={18} />
                         </IconButton>
                         <Typography className="dock-label" sx={appStyles.dockLabel}>
                             About
@@ -2724,6 +2703,45 @@ function App() {
                     </Box>
                 </Paper>
             )}
+
+            {/* Small standalone Info View toggle, tucked under the dock. */}
+            <Box
+                component="button"
+                type="button"
+                onClick={toggleInfoView}
+                aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
+                aria-pressed={infoViewEnabled}
+                sx={(theme) => ({
+                    position: 'fixed',
+                    left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
+                    bottom: { xs: theme.spacing(0.75), sm: theme.spacing(1), md: theme.spacing(1.5) },
+                    zIndex: 1350,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 0.4,
+                    px: 0.6,
+                    py: 0.25,
+                    m: 0,
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    borderRadius: 999,
+                    fontFamily: 'inherit',
+                    fontSize: '0.6rem',
+                    lineHeight: 1,
+                    letterSpacing: '0.02em',
+                    color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
+                    opacity: infoViewEnabled ? 0.9 : 0.55,
+                    transition: 'color 160ms ease, opacity 160ms ease',
+                    '&:hover': {
+                        opacity: 1,
+                        color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
+                    },
+                })}
+            >
+                <InfoViewIcon size={11} />
+                <Box component="span">Info</Box>
+            </Box>
 
             <AboutDialog
                 open={showInfoDialog}
