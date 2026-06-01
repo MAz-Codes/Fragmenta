@@ -418,7 +418,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
             {mode === 'inpaint' && (
                 <Box sx={{ mb: 2 }}>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                        Drag the highlighted region to mask the segment SA3 should regenerate
+                        Drag the highlighted region to inpaint
                     </Typography>
                     <AudioWaveform
                         file={sourceFile}
@@ -465,8 +465,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                         </Box>
                     </Stack>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                        Output stays {sourceDurationSec ? `${sourceDurationSec.toFixed(2)} s` : 'the source length'} —
-                        only the masked region is regenerated.
+                        Output is the same length as the source — only your selected region is replaced
                     </Typography>
                 </Box>
             )}
@@ -491,7 +490,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
 
             {/* Shared inputs */}
             <TextField
-                label={mode === 'inpaint' ? 'Prompt for the masked region' : 'Prompt for the edit'}
+                label={mode === 'inpaint' ? 'Prompt for the inpainting region' : 'Prompt for the edit'}
                 placeholder={
                     mode === 'style' ? 'How the source should sound now…' :
                     mode === 'inpaint' ? 'What goes in the gap…' :
