@@ -2814,6 +2814,29 @@ export const performancePanelStyles = {
             },
         };
     },
+    // Icon-only transport buttons (Play / Stop / Record). Same contained
+    // aesthetic as masterBtn — gradient fill + drop shadow, no border — but a
+    // compact square so the top bar is just three colored icons.
+    masterIconBtn: (color) => ({
+        width: perfTokens.height.compact,
+        height: perfTokens.height.compact,
+        borderRadius: 1.5,
+        color: 'rgba(0,0,0,0.88)',
+        background: `${PERF_BTN_SHEEN}, ${color}`,
+        boxShadow: PERF_BTN_SHADOW,
+        transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms',
+        '&:hover': {
+            background: `${PERF_BTN_SHEEN}, ${color}`,
+            filter: 'brightness(1.05)',
+            transform: 'translateY(-1px)',
+            boxShadow: PERF_BTN_SHADOW_HOVER,
+        },
+        '&.Mui-disabled': {
+            color: 'rgba(255,255,255,0.26)',
+            background: 'rgba(255,255,255,0.06)',
+            boxShadow: 'none',
+        },
+    }),
 };
 
 export const performanceChannelStyles = {

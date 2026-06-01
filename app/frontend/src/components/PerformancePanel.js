@@ -66,6 +66,7 @@ const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
 const RECORD_COLOR = '#E5484D';
 const STOP_COLOR = '#FA8519';
+const PLAY_COLOR = '#15A864';
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
 const MASTER_DB_DEFAULT = -6;
@@ -1377,62 +1378,56 @@ function PerformancePanelInner({
                 {/* Model picker + FT-checkpoint + LoRA pickers now live in the
                     bottom bar so the top strip stays just BPM + transport. */}
 
+                {/* Icon-only transport — titles live in the tooltips. */}
                 <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<PlayAllIcon size={12} />}
-                        onClick={handlePlayAll}
-                        disabled={!anyLoaded}
-                        sx={styles.masterBtn(MASTER_COLOR, 'play')}
-                    >
-                        Play All
-                    </Button>
+                    <Tooltip title="Play All">
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                onClick={handlePlayAll}
+                                disabled={!anyLoaded}
+                                aria-label="Play All"
+                                sx={styles.masterIconBtn(PLAY_COLOR)}
+                            >
+                                <PlayAllIcon size={14} fill="currentColor" />
+                            </IconButton>
+                        </span>
+                    </Tooltip>
                 </MidiMappable>
                 <MidiMappable id="master.stopAll" label="Stop All" kind="trigger" onChange={handleStopAll}>
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<StopAllIcon size={12} />}
-                        onClick={handleStopAll}
-                        disabled={!anyPlaying}
-                        sx={styles.masterBtn(STOP_COLOR, 'play')}
-                    >
-                        Stop All
-                    </Button>
+                    <Tooltip title="Stop All">
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                onClick={handleStopAll}
+                                disabled={!anyPlaying}
+                                aria-label="Stop All"
+                                sx={styles.masterIconBtn(STOP_COLOR)}
+                            >
+                                <StopAllIcon size={14} fill="currentColor" />
+                            </IconButton>
+                        </span>
+                    </Tooltip>
                 </MidiMappable>
 
                 {/* Record the master output. Stopping opens a dialog to name
                     the capture, saved as a WAV in the output folder. */}
                 <MidiMappable id="master.record" label="Record Performance" kind="trigger" onChange={handleToggleRecord}>
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        disableElevation
-                        disableRipple
-                        startIcon={recording
-                            ? <StopAllIcon size={12} />
-                            : <RecordIcon size={12} fill={RECORD_COLOR} color={RECORD_COLOR} />}
-                        onClick={handleToggleRecord}
-                        sx={(theme) => ({
-                            // Base: the shared master-button treatment in red, so
-                            // at rest it matches Play All / Stop All exactly.
-                            ...styles.masterBtn(RECORD_COLOR, 'play')(theme),
-                            // Active: steady solid red fill so an in-progress
-                            // capture is unmistakable. Variant stays `outlined`
-                            // (never `contained`) so MUI doesn't inject its blue
-                            // primary palette / focus-elevation states.
-                            ...(recording && {
-                                color: '#0c1018',
-                                backgroundColor: RECORD_COLOR,
-                                borderColor: RECORD_COLOR,
-                                '&:hover': { backgroundColor: RECORD_COLOR, borderColor: RECORD_COLOR },
-                                '&:focus': { backgroundColor: RECORD_COLOR },
-                            }),
-                        })}
-                    >
-                        {recording ? 'Stop Rec' : 'Record'}
-                    </Button>
+                    <Tooltip title={recording ? 'Stop recording' : 'Record performance'}>
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                disableRipple
+                                onClick={handleToggleRecord}
+                                aria-label={recording ? 'Stop recording' : 'Record performance'}
+                                sx={styles.masterIconBtn(RECORD_COLOR)}
+                            >
+                                {recording
+                                    ? <StopAllIcon size={14} fill="currentColor" />
+                                    : <RecordIcon size={14} fill="currentColor" />}
+                            </IconButton>
+                        </span>
+                    </Tooltip>
                 </MidiMappable>
 
                 {/* Main / Cue output channel-pair selectors. Pushed to the right
