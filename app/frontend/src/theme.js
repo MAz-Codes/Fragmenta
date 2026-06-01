@@ -37,9 +37,9 @@ const DARK = {
     text:      '#ECECEC',      // near-white, faintly cool
     textDim:   '#9B9B9D',      // neutral gray
     textFaint: '#65676A',
-    amber:     '#279FBB',      // primary accent — saturated cyan
-    amberHi:   '#4DBAD3',      // hover / lighter
-    amberLo:   '#1F7E94',      // pressed / darker
+    amber:     '#7FB0C9',      // primary accent — Nordic slate blue
+    amberHi:   '#9AC5DA',      // hover / lighter
+    amberLo:   '#5E94B0',      // pressed / darker
     // Warm complement — used to signal "active / in progress" state
     // (training, generation, download) against the cool cyan UI chrome.
     warm:      '#FDA22B',
@@ -67,9 +67,9 @@ const LIGHT = {
     // "amber" is a legacy token name — the accent is actually a deep
     // cyan that mirrors dark mode. Cream + gold read as muddy yellow-on-
     // amber; cyan gives the accents real separation from the warm paper.
-    amber:     '#1F7E94',      // deep cyan accent for legibility on cream
-    amberHi:   '#2DA0BC',
-    amberLo:   '#155F71',
+    amber:     '#3D7A9C',      // deep Nordic blue accent, legible on cream
+    amberHi:   '#4E8FB2',
+    amberLo:   '#2C5C78',
     // Warm complement on cream — same hue family as dark mode but deeper
     // for legibility against the warm-paper background.
     warm:      '#C97A1A',
@@ -219,7 +219,7 @@ let theme = createTheme({
                     // the upper-right corner still reads neutral.
                     backgroundColor: DARK.bg,
                     backgroundImage:
-                        `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.14), transparent 60%), ` +
+                        `radial-gradient(900px 700px at -5% 50%, rgba(127, 176, 201, 0.14), transparent 60%), ` +
                         `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.11), transparent 55%), ` +
                         `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`,
                     backgroundAttachment: 'fixed',
@@ -305,7 +305,7 @@ let theme = createTheme({
                             '0 6px 16px rgba(0, 0, 0, 0.45), ' +
                             'inset 0 1px 0 rgba(255, 255, 255, 0.30), ' +
                             'inset 0 -1px 0 rgba(0, 0, 0, 0.40), ' +
-                            '0 0 0 1px rgba(39, 159, 187, 0.30)',
+                            '0 0 0 1px rgba(127, 176, 201, 0.30)',
                     },
                 },
             },
@@ -347,7 +347,7 @@ let theme = createTheme({
                 contained: {
                     boxShadow: '0 3px 8px rgba(0, 0, 0, 0.45), 0 12px 24px rgba(0, 0, 0, 0.55)',
                     '&:hover': {
-                        boxShadow: '0 5px 12px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(39, 159, 187, 0.4)',
+                        boxShadow: '0 5px 12px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(127, 176, 201, 0.4)',
                         transform: 'translateY(-1px)',
                     },
                     // Strip the gradient + colored fill when disabled so
@@ -375,11 +375,11 @@ let theme = createTheme({
                     // Cyan accent by default — outlined still reads as
                     // the secondary action vs filled contained, but
                     // carries enough color to feel active.
-                    borderColor: 'rgba(39, 159, 187, 0.50)',
+                    borderColor: 'rgba(127, 176, 201, 0.50)',
                     color: DARK.amberHi,
                     '&:hover': {
                         borderColor: DARK.amber,
-                        backgroundColor: 'rgba(39, 159, 187, 0.10)',
+                        backgroundColor: 'rgba(127, 176, 201, 0.10)',
                         color: DARK.amberHi,
                     },
                     '&.Mui-disabled': {
@@ -403,7 +403,7 @@ let theme = createTheme({
                 text: {
                     color: DARK.text,
                     '&:hover': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.08)',
+                        backgroundColor: 'rgba(127, 176, 201, 0.08)',
                         color: DARK.amberHi,
                     },
                 },
@@ -449,7 +449,7 @@ let theme = createTheme({
                         '&:hover fieldset': { borderColor: 'rgba(240, 237, 229, 0.32)' },
                         '&.Mui-focused fieldset': {
                             borderColor: DARK.amber,
-                            boxShadow: '0 0 0 3px rgba(39, 159, 187, 0.12)',
+                            boxShadow: '0 0 0 3px rgba(127, 176, 201, 0.12)',
                         },
                     },
                 },
@@ -466,7 +466,7 @@ let theme = createTheme({
                     '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(240, 237, 229, 0.32)' },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
                         borderColor: DARK.amber,
-                        boxShadow: '0 0 0 3px rgba(39, 159, 187, 0.12)',
+                        boxShadow: '0 0 0 3px rgba(127, 176, 201, 0.12)',
                     },
                 },
                 select: { display: 'flex', alignItems: 'center', fontSize: '0.8rem' },
@@ -520,9 +520,9 @@ let theme = createTheme({
                     backgroundColor: DARK.paper,
                     '&:hover': { backgroundColor: DARK.paperHi },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
+                        backgroundColor: 'rgba(127, 176, 201, 0.14)',
                         color: DARK.amberHi,
-                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(127, 176, 201, 0.20)' },
                     },
                 },
             },
@@ -600,7 +600,7 @@ let theme = createTheme({
                     '& .MuiAccordionSummary-content': { margin: '12px 0', alignItems: 'center' },
                     '&.Mui-expanded': { minHeight: 48 },
                     '&.Mui-expanded .MuiAccordionSummary-content': { margin: '12px 0' },
-                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(127, 176, 201, 0.06)' },
                 },
             },
         },
@@ -658,10 +658,10 @@ let theme = createTheme({
         MuiListItem: {
             styleOverrides: {
                 root: {
-                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(127, 176, 201, 0.06)' },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.20)' },
+                        backgroundColor: 'rgba(127, 176, 201, 0.14)',
+                        '&:hover': { backgroundColor: 'rgba(127, 176, 201, 0.20)' },
                     },
                 },
             },
@@ -671,7 +671,7 @@ let theme = createTheme({
                 root: {
                     color: DARK.textDim,
                     '&.Mui-checked': { color: DARK.amber },
-                    '&:hover': { backgroundColor: 'rgba(39, 159, 187, 0.08)' },
+                    '&:hover': { backgroundColor: 'rgba(127, 176, 201, 0.08)' },
                 },
             },
         },
@@ -778,7 +778,7 @@ let theme = createTheme({
                     color: DARK.textDim,
                     transition: 'background-color 220ms ease, color 220ms ease, transform 220ms cubic-bezier(0.16, 1, 0.3, 1)',
                     '&:hover': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.10)',
+                        backgroundColor: 'rgba(127, 176, 201, 0.10)',
                         color: DARK.amberHi,
                     },
                     '&:active:not(.Mui-disabled)': {
@@ -798,7 +798,7 @@ let theme = createTheme({
                     fontWeight: 400,
                     letterSpacing: '-0.005em',
                     '&:hover': {
-                        backgroundColor: 'rgba(39, 159, 187, 0.06)',
+                        backgroundColor: 'rgba(127, 176, 201, 0.06)',
                         color: DARK.text,
                     },
                     '&.Mui-selected': {
@@ -918,7 +918,7 @@ export const lightTheme = createTheme(theme, {
                     // Opacities are low so the paper still reads neutral.
                     backgroundColor: LIGHT.bg,
                     backgroundImage:
-                        `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.06), transparent 60%), ` +
+                        `radial-gradient(900px 700px at -5% 50%, rgba(61, 122, 156, 0.06), transparent 60%), ` +
                         `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.05), transparent 55%), ` +
                         `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
                     backgroundAttachment: 'fixed',
@@ -987,7 +987,7 @@ export const lightTheme = createTheme(theme, {
                             '0 5px 14px rgba(43, 31, 18, 0.08), ' +
                             'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
                             'inset 0 -1px 0 rgba(43, 31, 18, 0.10), ' +
-                            '0 0 0 1px rgba(31, 126, 148, 0.25)',
+                            '0 0 0 1px rgba(61, 122, 156, 0.25)',
                     },
                 },
             },
@@ -1007,8 +1007,8 @@ export const lightTheme = createTheme(theme, {
             ],
             styleOverrides: {
                 contained: {
-                    boxShadow: '0 6px 14px rgba(31, 126, 148, 0.18)',
-                    '&:hover': { boxShadow: '0 10px 20px rgba(31, 126, 148, 0.26)' },
+                    boxShadow: '0 6px 14px rgba(61, 122, 156, 0.18)',
+                    '&:hover': { boxShadow: '0 10px 20px rgba(61, 122, 156, 0.26)' },
                     '&.Mui-disabled': {
                         backgroundImage: 'none',
                         backgroundColor: 'rgba(43, 31, 18, 0.08)',
@@ -1031,11 +1031,11 @@ export const lightTheme = createTheme(theme, {
                     // buttons. Keeps "Browse / Choose CSV" etc. visually
                     // active without going to a fully filled (contained)
                     // treatment.
-                    borderColor: 'rgba(31, 126, 148, 0.50)',
+                    borderColor: 'rgba(61, 122, 156, 0.50)',
                     color: LIGHT.amber,
                     '&:hover': {
                         borderColor: LIGHT.amberLo,
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
+                        backgroundColor: 'rgba(61, 122, 156, 0.10)',
                         color: LIGHT.amberLo,
                     },
                     '&.Mui-disabled': {
@@ -1055,7 +1055,7 @@ export const lightTheme = createTheme(theme, {
                 text: {
                     color: LIGHT.text,
                     '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.08)',
+                        backgroundColor: 'rgba(61, 122, 156, 0.08)',
                         color: LIGHT.amberLo,
                     },
                 },
@@ -1071,7 +1071,7 @@ export const lightTheme = createTheme(theme, {
                         '&:hover fieldset': { borderColor: 'rgba(43, 31, 18, 0.36)' },
                         '&.Mui-focused fieldset': {
                             borderColor: LIGHT.amber,
-                            boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
+                            boxShadow: '0 0 0 3px rgba(61, 122, 156, 0.14)',
                         },
                     },
                 },
@@ -1086,7 +1086,7 @@ export const lightTheme = createTheme(theme, {
                     '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.36)' },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
                         borderColor: LIGHT.amber,
-                        boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
+                        boxShadow: '0 0 0 3px rgba(61, 122, 156, 0.14)',
                     },
                 },
             },
@@ -1124,9 +1124,9 @@ export const lightTheme = createTheme(theme, {
                     backgroundColor: LIGHT.paper,
                     '&:hover': { backgroundColor: LIGHT.paperHi },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
+                        backgroundColor: 'rgba(61, 122, 156, 0.14)',
                         color: LIGHT.amberLo,
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
+                        '&:hover': { backgroundColor: 'rgba(61, 122, 156, 0.20)' },
                     },
                 },
             },
@@ -1186,7 +1186,7 @@ export const lightTheme = createTheme(theme, {
             styleOverrides: {
                 root: {
                     backgroundColor: 'transparent',
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(61, 122, 156, 0.06)' },
                 },
             },
         },
@@ -1237,10 +1237,10 @@ export const lightTheme = createTheme(theme, {
         MuiListItem: {
             styleOverrides: {
                 root: {
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
+                    '&:hover': { backgroundColor: 'rgba(61, 122, 156, 0.06)' },
                     '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
+                        backgroundColor: 'rgba(61, 122, 156, 0.14)',
+                        '&:hover': { backgroundColor: 'rgba(61, 122, 156, 0.20)' },
                     },
                 },
             },
@@ -1250,7 +1250,7 @@ export const lightTheme = createTheme(theme, {
                 root: {
                     color: LIGHT.textDim,
                     '&.Mui-checked': { color: LIGHT.amber },
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.08)' },
+                    '&:hover': { backgroundColor: 'rgba(61, 122, 156, 0.08)' },
                 },
             },
         },
@@ -1341,7 +1341,7 @@ export const lightTheme = createTheme(theme, {
                     color: LIGHT.textDim,
                     transition: 'all 160ms ease',
                     '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
+                        backgroundColor: 'rgba(61, 122, 156, 0.10)',
                         color: LIGHT.amberLo,
                     },
                 },
@@ -1355,7 +1355,7 @@ export const lightTheme = createTheme(theme, {
                     color: LIGHT.textDim,
                     fontWeight: 400,
                     '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.06)',
+                        backgroundColor: 'rgba(61, 122, 156, 0.06)',
                         color: LIGHT.text,
                     },
                     '&.Mui-selected': {
@@ -2343,10 +2343,10 @@ export const welcomePageStyles = {
         return {
             zIndex: 9999,
             background: isDark
-                ? `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.18), transparent 60%), ` +
+                ? `radial-gradient(900px 700px at -5% 50%, rgba(127, 176, 201, 0.18), transparent 60%), ` +
                   `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.14), transparent 55%), ` +
                   `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`
-                : `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.09), transparent 60%), ` +
+                : `radial-gradient(900px 700px at -5% 50%, rgba(61, 122, 156, 0.09), transparent 60%), ` +
                   `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.08), transparent 55%), ` +
                   `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
             display: 'flex',
