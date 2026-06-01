@@ -20,6 +20,11 @@ dill>=0.4.1
 
 librosa>=0.11.0,<0.12
 soundfile>=0.13.1
+# Transient-preserving time-stretch for beat-sync Stage A (FRAGMENTA_BEATSYNC_V2).
+# Requires the `rubberband` CLI binary on PATH (apt: rubberband-cli, brew:
+# rubberband). When the binary is absent the pipeline falls back to the librosa
+# phase vocoder automatically, so this stays a soft dependency.
+pyrubberband>=0.3.0
 python-rtmidi>=1.5.0
 scipy>=1.13,<2
 numba>=0.60,<1

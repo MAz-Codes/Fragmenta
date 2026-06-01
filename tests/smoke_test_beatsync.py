@@ -48,6 +48,7 @@ from app.core.generation.audio_post_process import (  # noqa: E402
     align_for_loop,
     align_to_grid,
     beatsync_v2_enabled,
+    _transient_stretch,
 )
 
 SR = 44100
@@ -102,11 +103,18 @@ def click_train(
     burst_n = int(SR * click_ms / 1000.0)
     t = np.arange(burst_n)
     env = np.exp(-t / (burst_n / 4.0)).astype(np.float32)
-    burst = (env * np.sin(2 * np.pi * freq * t / SR)).astype(np.float32)
+    # cos => instant attack (burst[0] is the peak), like a real kick/click,
+    # so "downbeat at sample 0" is measurable to the sample after trimming.
+    burst = (env * np.cos(2 * np.pi * freq * t / SR)).astype(np.float32)
     for k in range(n_beats + int(tail_beats)):
         start = int(round(lead_samples + k * spb))
         end = min(total, start + burst_n)
         mono[start:end] += burst[: end - start]
+    # Low-level continuous bed so there are no exact-zero regions: lets INV#3
+    # distinguish "real (quiet) audio in the tail" from "appended zeros". Far
+    # below the click peak, so it never fools the strong-transient detector.
+    bed = (0.02 * np.sin(2 * np.pi * 110.0 * np.arange(total) / SR)).astype(np.float32)
+    mono = mono + bed
     return np.stack([mono, mono], axis=1)
 
 
@@ -156,9 +164,23 @@ def part0_flag() -> None:
 
 
 def part1_synthetic() -> None:
-    flag = "ON" if beatsync_v2_enabled() else "OFF"
-    print(f"\n=== PART 1 — synthetic ground-truth (Stage A invariants) "
-          f"[beatsync_v2={flag}] ===")
+    # Stage A v2 is the contract under test, so run the invariant gates with
+    # the flag ON. (Flag OFF = legacy path, covered structurally by INV#1.)
+    saved = os.environ.get("FRAGMENTA_BEATSYNC_V2")
+    os.environ["FRAGMENTA_BEATSYNC_V2"] = "1"
+    try:
+        assert beatsync_v2_enabled()
+        _part1_body()
+    finally:
+        if saved is None:
+            os.environ.pop("FRAGMENTA_BEATSYNC_V2", None)
+        else:
+            os.environ["FRAGMENTA_BEATSYNC_V2"] = saved
+
+
+def _part1_body() -> None:
+    print("\n=== PART 1 — synthetic ground-truth (Stage A invariants) "
+          "[beatsync_v2=ON] ===")
     bpm, bars = 120.0, 2
     n_beats = bars * BEATS_PER_BAR
     spb = SR * 60.0 / bpm
@@ -182,8 +204,8 @@ def part1_synthetic() -> None:
            f"tail peak={float(np.max(np.abs(last_block))):.5f}")
 
     onset = first_transient_sample(out.mean(axis=1))
-    note_gap("INV#4 first transient at sample 0 (<=1 sample)",
-             onset <= 1, f"onset @ sample {onset} ({onset*ONE_SAMPLE_MS:.1f} ms)")
+    expect("INV#4 first transient at sample 0 (<=1 sample)",
+           onset <= 1, f"onset @ sample {onset} ({onset*ONE_SAMPLE_MS:.1f} ms)")
 
     # --- align_to_grid (plain Bars-mode, file-based) ----------------------
     with tempfile.TemporaryDirectory() as td:
@@ -191,9 +213,9 @@ def part1_synthetic() -> None:
         sf.write(str(p), clip, SR, subtype="PCM_16")
         align_to_grid(p, target_bpm=bpm, target_bars=bars)
         ag, _ = sf.read(str(p), always_2d=True)
-    note_gap("INV#2 align_to_grid length is sample-exact",
-             ag.shape[0] == target, f"{ag.shape[0]} vs {target} "
-             f"(delta {ag.shape[0]-target:+d} samp)")
+    expect("INV#2 align_to_grid length is sample-exact",
+           ag.shape[0] == target, f"{ag.shape[0]} vs {target} "
+           f"(delta {ag.shape[0]-target:+d} samp)")
 
     # --- INV#9 two clips share a downbeat, no per-clip code ---------------
     clip_a = click_train(bpm=bpm, n_beats=n_beats, lead_samples=3000, freq=60.0)
@@ -204,8 +226,8 @@ def part1_synthetic() -> None:
            f"{a.shape[0]} vs {b.shape[0]}")
     oa = first_transient_sample(a.mean(axis=1))
     ob = first_transient_sample(b.mean(axis=1))
-    note_gap("INV#9 downbeats coincide (<=1 sample)", abs(oa - ob) <= 1,
-             f"A@{oa}, B@{ob}, delta={abs(oa-ob)} samp")
+    expect("INV#9 downbeats coincide (<=1 sample)", abs(oa - ob) <= 1,
+           f"A@{oa}, B@{ob}, delta={abs(oa-ob)} samp")
 
     # --- seam metric on a mathematically perfect loop ---------------------
     # A sine whose period divides `target` loops seamlessly. NB: a raw
@@ -226,6 +248,24 @@ def part1_synthetic() -> None:
                               tiled[i * len(loop_1d) - 1]))
                       for i in range(1, reps)]
         return max(boundaries) / typical
+
+    # --- INV#5 transient-preserving stretch -------------------------------
+    # Single sharp click; after stretch the length must scale by ~1/rate and a
+    # sharp transient must survive (high crest factor). RubberBand crisp mode
+    # preserves it; the librosa fallback (used when the CLI is absent) is
+    # accepted here but smears more — see the [info] line in the log.
+    clip = click_train(bpm=120.0, n_beats=1, lead_samples=0, freq=120.0,
+                       tail_beats=0.0)[: int(SR * 0.5)]
+    rate = 0.9
+    st = _transient_stretch(np.ascontiguousarray(clip), rate, SR)
+    exp_len = int(round(clip.shape[0] / rate))
+    expect("INV#5 stretch length scales by 1/rate (within 1%)",
+           abs(st.shape[0] - exp_len) <= max(64, int(0.01 * exp_len)),
+           f"{st.shape[0]} vs ~{exp_len}")
+    m = st.mean(axis=1)
+    crest = float(np.max(np.abs(m)) / (np.sqrt(np.mean(m ** 2)) + 1e-9))
+    expect("INV#5 transient survives stretch (crest factor > 5)",
+           crest > 5.0, f"crest={crest:.1f}")
 
     perfect_ratio = seam_ratio(perfect)
     expect("INV 8x loop seam: perfect loop is seamless (step ~ typical step)",

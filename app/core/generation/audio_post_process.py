@@ -84,6 +84,157 @@ _SILENCE_THRESHOLD_DB = -50.0          # anything below is silence
 _SILENCE_WINDOW_SEC = 0.05             # RMS window granularity
 _SILENCE_TAIL_KEEP_SEC = 0.010         # leave a tiny natural decay
 
+# v2 first-transient search: a downbeat lands within the first bar or two of
+# generated content, so we never hunt past this window for the musical "1".
+_V2_TRANSIENT_SEARCH_SEC = 1.5
+_V2_STRONG_RATIO = 0.30                 # candidate must reach 30% of peak
+_V2_RISE_RATIO = 0.15                   # rising-edge threshold for refinement
+_V2_REFINE_WIN_SEC = 0.03               # +/- window for sample-accurate refine
+
+
+# === Stage A v2 (FRAGMENTA_BEATSYNC_V2) ====================================
+# A single hardened core shared by both align entry points. It enforces the
+# locked invariants directly instead of relying on librosa's beat[0] for
+# phase and on end-snap/silence-trim for length:
+#   * tempo conform with a transient-preserving stretch (rubberband, librosa
+#     fallback) — gen-time warp only, no live tracking (decision: v1);
+#   * align the first STRONG transient to sample 0 (rotate-free head trim) so
+#     two independently-correct clips share a downbeat with zero per-clip code;
+#   * crop to the exact target sample count — overgenerate-then-trim, never
+#     zero-pad in the common path (pad only as a logged last resort).
+
+def _stage_a_v2(
+    audio: np.ndarray,
+    sr: int,
+    *,
+    target_samples: int,
+    target_bpm: float,
+    deadband: float,
+) -> np.ndarray:
+    """Hardened Stage A core. Input/return: float32 ``[T, C]``.
+
+    Order: tempo-conform -> first-strong-transient to sample 0 -> exact crop.
+    """
+    mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
+    detected_bpm, _beats = _detect_grid(mono, sr, start_bpm=target_bpm)
+
+    # --- tempo conform (transient-preserving, gen-time) -------------------
+    if detected_bpm is not None:
+        rate, eff = _best_stretch_rate(
+            detected_bpm, target_bpm,
+            safe_min=_BARS_MODE_STRETCH_MIN, safe_max=_BARS_MODE_STRETCH_MAX,
+        )
+        if rate is not None and abs(rate - 1.0) > deadband:
+            audio = _transient_stretch(audio, rate, sr)
+            mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
+            logger.info(
+                "stage_a_v2: detected %.2f BPM (eff %.2f), transient-stretched "
+                "by %.4f to %.2f target", detected_bpm, eff, rate, target_bpm,
+            )
+        else:
+            logger.info(
+                "stage_a_v2: detected %.2f BPM within %.2f%% of %.2f target; "
+                "no stretch", detected_bpm, deadband * 100, target_bpm,
+            )
+    else:
+        logger.info("stage_a_v2: no usable tempo detected; skipping stretch")
+
+    # --- first strong transient -> sample 0 (INV#4, enables INV#9) --------
+    d = _first_strong_transient(mono, sr)
+    if d > 0:
+        audio = audio[d:]
+        logger.info("stage_a_v2: trimmed %.1f ms to first strong transient",
+                    d / sr * 1000)
+
+    # --- exact length, no tail pad in the common path (INV#2, INV#3) ------
+    if audio.shape[0] >= target_samples:
+        audio = audio[:target_samples]
+    else:
+        pad = target_samples - audio.shape[0]
+        logger.warning(
+            "stage_a_v2: content short by %d samp (%.0f ms) after trim — "
+            "padding as a last resort; raise generation headroom or re-roll",
+            pad, pad / sr * 1000,
+        )
+        audio = np.concatenate(
+            [audio, np.zeros((pad, audio.shape[1]), dtype=np.float32)], axis=0,
+        )
+    return np.ascontiguousarray(audio, dtype=np.float32)
+
+
+def _first_strong_transient(mono: np.ndarray, sr: int) -> int:
+    """Sample index of the first STRONG transient, refined to the rising edge.
+
+    Two-stage so we neither latch onto low-level noise nor lose sample
+    accuracy to librosa's 512-sample hop:
+      1. librosa onset candidates; take the first whose local peak reaches
+         ``_V2_STRONG_RATIO`` of the search-window peak;
+      2. refine within a small window to the first sample crossing
+         ``_V2_RISE_RATIO`` of that local peak — the attack's true start.
+    Returns 0 when the clip is silent or no strong transient is found.
+    """
+    n = len(mono)
+    search = min(n, int(sr * _V2_TRANSIENT_SEARCH_SEC))
+    if search <= 0:
+        return 0
+    peak = float(np.max(np.abs(mono[:search])))
+    if peak <= 1e-6:
+        return 0
+
+    try:
+        onsets = librosa.onset.onset_detect(
+            y=mono, sr=sr, units="samples", backtrack=True
+        )
+    except Exception as exc:
+        logger.warning("v2 onset detection failed: %s", exc)
+        onsets = None
+
+    cand: Optional[int] = None
+    if onsets is not None and len(onsets) > 0:
+        look = int(sr * 0.05)
+        for o in np.asarray(onsets, dtype=np.int64):
+            if o >= search:
+                break
+            lo, hi = int(o), min(n, int(o) + look)
+            if float(np.max(np.abs(mono[lo:hi]))) >= _V2_STRONG_RATIO * peak:
+                cand = int(o)
+                break
+
+    if cand is None:
+        # No qualifying onset — fall back to the first sample that crosses a
+        # fraction of the window peak (handles smooth/pad content).
+        idx = np.flatnonzero(np.abs(mono[:search]) >= _V2_STRONG_RATIO * peak)
+        return int(idx[0]) if len(idx) else 0
+
+    win = int(sr * _V2_REFINE_WIN_SEC)
+    lo = max(0, cand - win)
+    hi = min(n, cand + win)
+    local_peak = float(np.max(np.abs(mono[lo:hi]))) or peak
+    seg = np.abs(mono[lo:hi])
+    above = np.flatnonzero(seg >= _V2_RISE_RATIO * local_peak)
+    return int(lo + above[0]) if len(above) else cand
+
+
+def _transient_stretch(audio: np.ndarray, rate: float, sr: int) -> np.ndarray:
+    """Time-stretch preserving transients (INV#5).
+
+    Prefers RubberBand in crisp-transient mode via pyrubberband; falls back to
+    the librosa phase vocoder when the rubberband CLI / wrapper is unavailable,
+    so hosts without the binary still work (just without transient mode)."""
+    if abs(rate - 1.0) < 1e-9:
+        return audio
+    try:
+        import pyrubberband as pyrb  # type: ignore
+        out = pyrb.time_stretch(
+            audio, sr, rate, rbargs={"--transients": "crisp"}
+        )
+        return np.ascontiguousarray(out.astype(np.float32))
+    except Exception as exc:
+        logger.info(
+            "rubberband unavailable (%s); using librosa phase vocoder", exc,
+        )
+        return _time_stretch_multichannel(audio, rate)
+
 
 def align_to_grid(
     input_path: Path,
@@ -95,6 +246,19 @@ def align_to_grid(
     audio = audio.astype(np.float32, copy=False)
     samples_per_beat = sr * 60.0 / float(target_bpm)
     target_samples = int(round(target_bars * beats_per_bar * samples_per_beat))
+
+    if beatsync_v2_enabled():
+        out = _stage_a_v2(
+            np.ascontiguousarray(audio), sr,
+            target_samples=target_samples, target_bpm=float(target_bpm),
+            deadband=_BARS_MODE_DEADBAND,
+        )
+        # 3 ms head fade-in masks any click at the new sample-0 transient.
+        _apply_fade(out, _HEAD_FADE_SEC, sr, fade_in=True)
+        sf.write(str(input_path), out, sr, subtype="PCM_16")
+        logger.info("align_to_grid[v2]: %d samples (exact target %d)",
+                    out.shape[0], target_samples)
+        return input_path
 
     mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
 
@@ -225,6 +389,14 @@ def align_for_loop(
     else:
         squeeze_out = False
     audio = np.ascontiguousarray(audio, dtype=np.float32)
+
+    if beatsync_v2_enabled():
+        out = _stage_a_v2(
+            audio, sr,
+            target_samples=target_samples, target_bpm=float(target_bpm),
+            deadband=_LOOP_MODE_DEADBAND,
+        )
+        return out.squeeze(1) if squeeze_out else out
 
     mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
     detected_bpm, beat_samples = _detect_grid(mono, sr, start_bpm=target_bpm)
