@@ -48,6 +48,10 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app,
      resources={r"/api/*": {"origins": "*"}},
      supports_credentials=True,
+     # /api/generate returns the WAV as the body, so the canonical on-disk
+     # filename (and resolved seed) ride back in custom headers. They must be
+     # whitelisted here or the browser hides them from axios cross-origin.
+     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 
@@ -636,12 +640,20 @@ def generate_audio():
         except Exception as exc:
             logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
 
-        return send_file(
+        resp = send_file(
             str(output_path),
             mimetype='audio/wav',
             as_attachment=True,
-            download_name='generated_audio.wav',
+            download_name=output_path.name,
         )
+        # Backend is the single source of truth for the on-disk name. The
+        # frontend used to invent its own filename, which never matched what
+        # _finalize wrote — so reveal-in-folder and delete both 404'd on
+        # freshly generated fragments. Hand the real name (and resolved seed)
+        # back so the UI's fragment.filename always points at a real file.
+        resp.headers['X-Fragment-Filename'] = output_path.name
+        resp.headers['X-Fragment-Seed'] = str(int(seed))
+        return resp
 
     except (ModelNotFoundError, GenerationError, ValidationError) as e:
         logger.error(f"Generation error: {e}")

@@ -186,7 +186,10 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             }
 
             const resp = await api.post('/api/generate', body, { responseType: 'blob' });
-            const fname = `${mode}_${Date.now()}.wav`;
+            // Use the backend's real on-disk name (header) so the fragment in
+            // the list resolves to an actual file for reveal/delete; only fall
+            // back to a synthetic name if the header is absent.
+            const fname = resp.headers?.['x-fragment-filename'] || `${mode}_${Date.now()}.wav`;
             onGenerated?.(resp.data, fname, body);
         } catch (err) {
             setError(err.response?.data?.error?.message || err.message || 'Generation failed');

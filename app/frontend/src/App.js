@@ -1048,9 +1048,15 @@ function App() {
                 setGenerationProgress(100);
 
                 const audioUrl = URL.createObjectURL(response.data);
-                const fragmentFilename = buildFragmentFilename(
-                    generationPrompt, batchTimestamp, batchIndex, totalRuns
-                );
+                // The backend is authoritative for the on-disk name (it writes
+                // the WAV + sidecar). Use the header it returns so reveal /
+                // delete / serve all hit the real file; only fall back to a
+                // locally-built name if the header is somehow missing.
+                const fragmentFilename =
+                    response.headers?.['x-fragment-filename'] ||
+                    buildFragmentFilename(
+                        generationPrompt, batchTimestamp, batchIndex, totalRuns
+                    );
 
                 setGeneratedAudio(audioUrl);
                 setGeneratedAudioBlob(response.data);
