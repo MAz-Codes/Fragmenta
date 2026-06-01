@@ -1240,7 +1240,7 @@ function App() {
         <ThemeProvider theme={appTheme}>
             <CssBaseline />
             <InfoViewProvider enabled={infoViewEnabled}>
-            <Box sx={[appStyles.root, infoViewEnabled && { pb: { xs: 6, md: 7 } }]}>
+            <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
                     onClose={(dontShowAgain) => {

@@ -36,6 +36,9 @@ export function InfoViewProvider({ enabled, children }) {
 }
 
 function InfoViewBar({ hint }) {
+    // Only present when there's something to say — no card, no placeholder.
+    if (!hint) return null;
+
     return (
         <Box
             role="status"
@@ -46,44 +49,26 @@ function InfoViewBar({ hint }) {
                 right: 0,
                 bottom: 0,
                 zIndex: 1340,           // under the bottom dock (1350) so the dock floats above its left edge
-                minHeight: 44,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 1.25,
+                pointerEvents: 'none',  // pure overlay — never intercepts clicks
                 // Clear the bottom-left floating dock column on the left.
                 pl: { xs: '64px', sm: '76px', md: '88px' },
                 pr: { xs: 2, sm: 3 },
                 py: 1,
-                borderTop: `1px solid ${theme.palette.divider}`,
-                backgroundColor: theme.palette.mode === 'dark'
-                    ? 'rgba(24, 26, 27, 0.82)'
-                    : 'rgba(242, 237, 227, 0.88)',
-                backdropFilter: 'blur(18px) saturate(160%)',
-                WebkitBackdropFilter: 'blur(18px) saturate(160%)',
-                boxShadow: theme.palette.mode === 'dark'
-                    ? '0 -8px 24px rgba(0,0,0,0.45)'
-                    : '0 -8px 24px rgba(43,31,18,0.12)',
+                // No background card — text reads directly over the page. A
+                // soft shadow keeps it legible over arbitrary content.
+                textShadow: theme.palette.mode === 'dark'
+                    ? '0 1px 3px rgba(0,0,0,0.85), 0 0 10px rgba(0,0,0,0.6)'
+                    : '0 1px 3px rgba(242,237,227,0.95), 0 0 10px rgba(242,237,227,0.8)',
             })}
         >
-            <Box
-                component="span"
-                sx={{
-                    flexShrink: 0,
-                    display: 'inline-flex',
-                    color: hint ? 'primary.main' : 'text.disabled',
-                }}
-            >
+            <Box component="span" sx={{ flexShrink: 0, display: 'inline-flex', color: 'primary.main' }}>
                 <InfoIcon size={16} />
             </Box>
-            <Typography
-                variant="body2"
-                sx={{
-                    color: hint ? 'text.primary' : 'text.disabled',
-                    fontStyle: hint ? 'normal' : 'italic',
-                    lineHeight: 1.35,
-                }}
-            >
-                {hint || 'Info View — hover any control to see what it does.'}
+            <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.35 }}>
+                {hint}
             </Typography>
         </Box>
     );
