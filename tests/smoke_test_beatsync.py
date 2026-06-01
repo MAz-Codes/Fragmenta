@@ -44,11 +44,15 @@ import soundfile as sf
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
+import app.core.generation.audio_post_process as app_post  # noqa: E402
 from app.core.generation.audio_post_process import (  # noqa: E402
     align_for_loop,
     align_to_grid,
     beatsync_v2_enabled,
     _transient_stretch,
+    _grid_confidence,
+    _detect_grid,
+    _GRID_CONFIDENCE_MIN,
 )
 
 SR = 44100
@@ -115,6 +119,21 @@ def click_train(
     # below the click peak, so it never fools the strong-transient detector.
     bed = (0.02 * np.sin(2 * np.pi * 110.0 * np.arange(total) / SR)).astype(np.float32)
     mono = mono + bed
+    return np.stack([mono, mono], axis=1)
+
+
+def texture_clip(*, seconds: float = 4.0, seed: int = 7) -> np.ndarray:
+    """A pulse-less drone/texture: low-passed noise + slow swells. Stands in
+    for ambient/pad content where librosa's beat tracker latches onto noise."""
+    rng = np.random.default_rng(seed)
+    n = int(SR * seconds)
+    noise = rng.standard_normal(n).astype(np.float32)
+    # crude low-pass (cumulative smoothing) so it's a wash, not a click train
+    k = 400
+    kernel = np.ones(k, dtype=np.float32) / k
+    smooth = np.convolve(noise, kernel, mode="same")
+    swell = (0.5 + 0.5 * np.sin(2 * np.pi * 0.13 * np.arange(n) / SR)).astype(np.float32)
+    mono = (0.3 * smooth * swell).astype(np.float32)
     return np.stack([mono, mono], axis=1)
 
 
@@ -229,6 +248,44 @@ def _part1_body() -> None:
     expect("INV#9 downbeats coincide (<=1 sample)", abs(oa - ob) <= 1,
            f"A@{oa}, B@{ob}, delta={abs(oa-ob)} samp")
 
+    # --- Phase E: detection-confidence gate -------------------------------
+    # A regular click train is a trustworthy grid; a pulse-less texture is not.
+    conf_beat = _grid_confidence(*(lambda m: (m, SR, _detect_grid(m, SR, start_bpm=bpm)[1]))(
+        click_train(bpm=bpm, n_beats=16, lead_samples=0, freq=120.0).mean(axis=1)))
+    conf_tex = _grid_confidence(*(lambda m: (m, SR, _detect_grid(m, SR)[1]))(
+        texture_clip().mean(axis=1)))
+    expect("Phase E: rhythmic content scores high confidence",
+           conf_beat >= _GRID_CONFIDENCE_MIN, f"conf={conf_beat:.2f}")
+    expect("Phase E: pulse-less texture scores low confidence",
+           conf_tex < _GRID_CONFIDENCE_MIN, f"conf={conf_tex:.2f}")
+
+    # Behavioural gate: a HIGH-confidence off-tempo loop IS warped; a LOW-
+    # confidence texture is NOT (we trust the requested grid). Spy on the
+    # stretch to prove it without inferring from the audio.
+    real_stretch = app_post._transient_stretch
+    calls = {"n": 0}
+
+    def spy(audio, rate, sr):
+        calls["n"] += 1
+        return real_stretch(audio, rate, sr)
+
+    app_post._transient_stretch = spy
+    try:
+        # 110 BPM click train, target 120 -> rate 1.09 (in safe range), high conf
+        off = click_train(bpm=110.0, n_beats=16, lead_samples=2000, freq=120.0)
+        calls["n"] = 0
+        align_for_loop(off, SR, target_samples=target, target_bpm=bpm)
+        expect("Phase E: high-confidence off-tempo loop is warped",
+               calls["n"] >= 1, f"stretch calls={calls['n']}")
+        # texture at the same target -> low conf -> must NOT warp
+        calls["n"] = 0
+        align_for_loop(texture_clip(seconds=4.5), SR, target_samples=target,
+                       target_bpm=bpm)
+        expect("Phase E: low-confidence texture is NOT warped (trust grid)",
+               calls["n"] == 0, f"stretch calls={calls['n']}")
+    finally:
+        app_post._transient_stretch = real_stretch
+
     # --- seam metric on a mathematically perfect loop ---------------------
     # A sine whose period divides `target` loops seamlessly. NB: a raw
     # |x[0]-x[L-1]| step is NOT a discontinuity measure — adjacent samples
@@ -286,6 +343,7 @@ def _part1_body() -> None:
 
 def _measure_fixture(wav: Path, meta: dict) -> dict:
     import librosa
+    from app.core.generation.audio_post_process import _grid_confidence
     bars = int(meta["align_bars"]); bpm = float(meta["align_bpm"])
     audio, sr = sf.read(str(wav), always_2d=True)
     mono = audio.astype(np.float32).mean(axis=1)
@@ -295,6 +353,7 @@ def _measure_fixture(wav: Path, meta: dict) -> dict:
     tempo, beats = librosa.beat.beat_track(y=mono, sr=sr, units="samples",
                                            start_bpm=bpm)
     tempo = float(np.atleast_1d(tempo).flatten()[0])
+    confidence = _grid_confidence(mono, sr, beats)
     drift_std = drift_max = float("nan")
     if beats is not None and len(beats) >= 4:
         idx = np.arange(len(beats))
@@ -308,7 +367,8 @@ def _measure_fixture(wav: Path, meta: dict) -> dict:
     seam_ratio = abs(float(mono[0] - mono[-1])) / rms
     return dict(name=wav.name, bars=bars, bpm=bpm, stitch=meta.get("loop_stitch"),
                 n=n, expected=expected, delta=n - expected, det_bpm=tempo,
-                drift_std=drift_std, drift_max=drift_max, seam_ratio=seam_ratio)
+                drift_std=drift_std, drift_max=drift_max, seam_ratio=seam_ratio,
+                confidence=confidence)
 
 
 def part2_measure() -> None:
@@ -333,11 +393,12 @@ def part2_measure() -> None:
     print(f"  measuring {len(found)} fixture(s):")
     for wav, meta in found:
         r = _measure_fixture(wav, meta)
+        warp = "WARP" if r["confidence"] >= _GRID_CONFIDENCE_MIN else "trust-grid"
         print(f"  - {r['name'][:54]}")
         print(f"      {r['bars']}bars@{r['bpm']:.0f} stitch={r['stitch']}  "
               f"len delta={r['delta']:+d} samp  det_bpm={r['det_bpm']:.1f}")
         print(f"      intra-drift std={r['drift_std']:.1f}ms max={r['drift_max']:.1f}ms  "
-              f"seam_ratio={r['seam_ratio']:.3f}")
+              f"seam_ratio={r['seam_ratio']:.3f}  conf={r['confidence']:.2f} -> {warp}")
 
 
 def main() -> int:

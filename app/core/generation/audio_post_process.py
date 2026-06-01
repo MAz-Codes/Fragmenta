@@ -91,6 +91,20 @@ _V2_STRONG_RATIO = 0.30                 # candidate must reach 30% of peak
 _V2_RISE_RATIO = 0.15                   # rising-edge threshold for refinement
 _V2_REFINE_WIN_SEC = 0.03               # +/- window for sample-accurate refine
 
+# Grid confidence. librosa's beat tracker emits a tempo for ANY input — on
+# ambient/textural content it is essentially noise (measured: 49-161 BPM on a
+# 120-BPM target, 130+ ms intra-beat drift). Warping toward a wrong detected
+# tempo is worse than not warping, so we only tempo-conform when the detected
+# grid is trustworthy: beats evenly spaced (low interval CV) AND a clear pulse
+# in the onset envelope. Below the threshold we trust the *requested* grid and
+# skip the stretch (still doing the safe, tempo-independent transient@0 + crop).
+# Calibrated on real fixtures: clean drum/bass loops score 0.76-0.88, pure
+# pads 0.00 (no trackable beat), and ambiguous textures 0.44-0.57 — often with
+# a wrong detected tempo. 0.65 sits in that gap. (The safe-range gate in
+# _best_stretch_rate independently rejects octave-wrong tempos like 49/161 BPM.)
+_GRID_CONFIDENCE_MIN = 0.65
+_CV_MAX = 0.20                          # interval CV at which regularity -> 0
+
 
 # === Stage A v2 (FRAGMENTA_BEATSYNC_V2) ====================================
 # A single hardened core shared by both align entry points. It enforces the
@@ -119,6 +133,14 @@ def _stage_a_v2(
     detected_bpm, _beats = _detect_grid(mono, sr, start_bpm=target_bpm)
 
     # --- tempo conform (transient-preserving, gen-time) -------------------
+    confidence = _grid_confidence(mono, sr, _beats)
+    if detected_bpm is not None and confidence < _GRID_CONFIDENCE_MIN:
+        logger.info(
+            "stage_a_v2: low grid confidence (%.2f < %.2f) on detected %.2f BPM; "
+            "trusting requested %.2f BPM grid, skipping warp",
+            confidence, _GRID_CONFIDENCE_MIN, detected_bpm, target_bpm,
+        )
+        detected_bpm = None  # fall through to the no-warp branch below
     if detected_bpm is not None:
         rate, eff = _best_stretch_rate(
             detected_bpm, target_bpm,
@@ -160,6 +182,42 @@ def _stage_a_v2(
             [audio, np.zeros((pad, audio.shape[1]), dtype=np.float32)], axis=0,
         )
     return np.ascontiguousarray(audio, dtype=np.float32)
+
+
+def _grid_confidence(
+    mono: np.ndarray, sr: int, beats: Optional[np.ndarray]
+) -> float:
+    """Trustworthiness of the detected beat grid, in [0, 1].
+
+    Two evidence sources, averaged:
+      * regularity — how evenly spaced the detected beats are (1 - interval
+        coefficient of variation, clamped); a locked tracker gives near-even
+        intervals, ambient content gives erratic ones;
+      * pulse clarity — the strongest off-zero peak of the onset-envelope
+        autocorrelation relative to lag 0; high when there is a real periodic
+        pulse, low for drones/pads.
+    """
+    if beats is None or len(beats) < 4:
+        return 0.0
+    intervals = np.diff(beats.astype(np.float64))
+    mean_i = float(np.mean(intervals)) if len(intervals) else 0.0
+    if mean_i <= 0:
+        return 0.0
+    cv = float(np.std(intervals) / mean_i)
+    regularity = max(0.0, min(1.0, 1.0 - cv / _CV_MAX))
+
+    clarity = 0.0
+    try:
+        oenv = librosa.onset.onset_strength(y=mono, sr=sr)
+        oenv = oenv - float(np.mean(oenv))
+        ac = librosa.autocorrelate(oenv)
+        if len(ac) > 4 and ac[0] > 0:
+            clarity = float(np.max(ac[4:]) / ac[0])
+            clarity = max(0.0, min(1.0, clarity))
+    except Exception as exc:
+        logger.warning("grid-confidence clarity failed: %s", exc)
+
+    return 0.5 * regularity + 0.5 * clarity
 
 
 def _first_strong_transient(mono: np.ndarray, sr: int) -> int:
