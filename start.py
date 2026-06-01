@@ -409,6 +409,22 @@ def _windows_apply_window_icon() -> None:
         print(f"Could not set Windows window icon: {exc}")
 
 
+def _linux_webkit_env_workarounds() -> None:
+    """Work around WebKitGTK rendering a blank/dark window on many Linux GPU
+    stacks. WebKit's accelerated compositing + DMABUF buffer-sharing path
+    frequently produces an empty surface (the page loads but nothing paints),
+    while the same backend serves fine in a real browser. Forcing WebKit off
+    those paths makes it fall back to a renderer that actually draws.
+
+    Must run before WebKit spawns its web process (i.e. before webview.start()).
+    We only set defaults — an explicitly-set env var from the user wins.
+    """
+    if sys.platform != "linux":
+        return
+    os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+    os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+
+
 def run_pywebview_mode() -> int:
     try:
         import webview
@@ -417,6 +433,7 @@ def run_pywebview_mode() -> int:
         return run_browser_mode()
 
     _windows_set_app_id()
+    _linux_webkit_env_workarounds()
     _linux_set_app_metadata()
     _macos_set_app_metadata()
 
