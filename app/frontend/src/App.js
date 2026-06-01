@@ -2434,6 +2434,9 @@ function App() {
                                                     <EditPanel
                                                         model_id={selectedModel}
                                                         negativePrompt={negativePrompt}
+                                                        loraStack={loraStack}
+                                                        steps={steps}
+                                                        cfgScale={cfgScale}
                                                         onGenerated={(blob, filename, params) => {
                                                             const audioUrl = URL.createObjectURL(blob);
                                                             const newFrag = {

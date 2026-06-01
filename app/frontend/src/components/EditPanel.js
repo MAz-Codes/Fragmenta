@@ -11,6 +11,8 @@ import {
     Alert,
     LinearProgress,
     IconButton,
+    Switch,
+    FormControlLabel,
 } from '@mui/material';
 import { Upload as UploadIcon, X as ClearIcon } from 'lucide-react';
 import api from '../api';
@@ -33,9 +35,15 @@ import AudioWaveform from './AudioWaveform';
  * Props:
  *   model_id:        active SA3 model id
  *   negativePrompt:  optional, passed through
+ *   loraStack:       [{path, strength, bypassed}] from the Generation panel —
+ *                    applied to the edit so style/inpaint/extend inherit the
+ *                    same LoRA character as plain generation.
+ *   steps:           sampler step count from the Generation panel.
+ *   cfgScale:        CFG from the Generation panel (only sent for *-base models;
+ *                    distilled models bake CFG at 1.0).
  *   onGenerated(blob, filename, params): called with the resulting WAV
  */
-export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
+export default function EditPanel({ model_id, negativePrompt, loraStack, steps, cfgScale, onGenerated }) {
     const [mode, setMode] = useState('style');   // 'style' | 'inpaint' | 'extend'
     const [sourcePath, setSourcePath] = useState('');
     const [sourceName, setSourceName] = useState('');
@@ -44,7 +52,18 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
     const [dropActive, setDropActive] = useState(false);
     const [prompt, setPrompt] = useState('');
     const [duration, setDuration] = useState(8);
-    const [seed, setSeed] = useState(-1);
+    // Seed: random by default, mirroring the rest of the app. When off, the
+    // numeric field is honoured (0 included — a legitimate seed).
+    const [randomSeed, setRandomSeed] = useState(true);
+    const [seedValue, setSeedValue] = useState('');
+
+    // sa3-medium generates up to 380s; small models cap at 120s. Matches the
+    // generator's _MODEL_INFO so the slider can't request past the model max.
+    const maxDuration = (model_id || '').includes('medium') ? 380 : 120;
+    // Distilled (post-trained) models bake CFG at 1.0 and ignore cfg_scale; only
+    // *-base variants honour it. Same rule the Generation panel uses.
+    const isDistilledBase =
+        !!model_id && model_id.startsWith('sa3-') && !model_id.endsWith('-base');
 
     // style transfer
     const [initNoiseLevel, setInitNoiseLevel] = useState(0.7);
@@ -80,6 +99,11 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             a.addEventListener('loadedmetadata', () => {
                 if (Number.isFinite(a.duration)) {
                     setSourceDurationSec(a.duration);
+                    // Default the output length to the source length (clamped to
+                    // the model max). For inpaint this is mandatory — the mask is
+                    // measured in source seconds, so the output must be the same
+                    // length or the masked region drifts off the audio you see.
+                    setDuration(Math.max(1, Math.min(maxDuration, Math.round(a.duration))));
                     // Seed inpaint region to the middle quarter so the
                     // waveform shows something sensible without a 4 s default
                     // landing past the end of short clips.
@@ -155,18 +179,50 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
         setGenerating(true);
         setError(null);
         try {
+            // Seed: -1 lets the backend pick (and record) a random one; an
+            // explicit value is parsed with parseInt so 0 stays 0 rather than
+            // collapsing to random via `|| -1`.
+            let seedToSend = -1;
+            if (!randomSeed) {
+                const parsed = parseInt(seedValue, 10);
+                if (Number.isNaN(parsed) || parsed < 0) {
+                    setError('Enter a non-negative integer seed, or switch Seed to Random.');
+                    setGenerating(false);
+                    return;
+                }
+                seedToSend = parsed;
+            }
+
             const body = {
                 model_id,
                 prompt: prompt.trim() || 'continue',
                 duration,
-                seed: Number(seed) || -1,
+                seed: seedToSend,
+                steps,
             };
             if (negativePrompt) body.negative_prompt = negativePrompt;
+            // Only base models honour CFG; sending it on a distilled model is
+            // harmless (backend forces 1.0) but we keep the UI honest.
+            if (!isDistilledBase) body.cfg_scale = cfgScale;
+            // Inherit the Generation panel's LoRA stack. Bypassed slots stay in
+            // load order but contribute strength 0 (same as plain generation).
+            const activeLoras = (loraStack || [])
+                .filter((s) => s.path)
+                .map((s) => ({ path: s.path, strength: s.bypassed ? 0 : s.strength }));
+            if (activeLoras.length) body.loras = activeLoras;
 
             if (mode === 'style') {
                 body.init_audio_path = sourcePath;
                 body.init_noise_level = initNoiseLevel;
             } else if (mode === 'inpaint') {
+                // Pin output length to the source so the mask (measured in
+                // source seconds) maps onto the same timeline the user sees.
+                if (!Number.isFinite(sourceDurationSec)) {
+                    setError("Couldn't read source duration — re-upload the file.");
+                    setGenerating(false);
+                    return;
+                }
+                body.duration = sourceDurationSec;
                 body.inpaint_audio_path = sourcePath;
                 body.inpaint_starts = [Number(maskStart)];
                 body.inpaint_ends = [Number(maskEnd)];
@@ -190,7 +246,11 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
             // the list resolves to an actual file for reveal/delete; only fall
             // back to a synthetic name if the header is absent.
             const fname = resp.headers?.['x-fragment-filename'] || `${mode}_${Date.now()}.wav`;
-            onGenerated?.(resp.data, fname, body);
+            // Record the resolved seed (the backend picks a concrete one when we
+            // sent -1) so the fragment shows the real value, not "random".
+            const resolvedSeed = parseInt(resp.headers?.['x-fragment-seed'], 10);
+            const params = Number.isFinite(resolvedSeed) ? { ...body, seed: resolvedSeed } : body;
+            onGenerated?.(resp.data, fname, params);
         } catch (err) {
             setError(err.response?.data?.error?.message || err.message || 'Generation failed');
         } finally {
@@ -334,6 +394,10 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
                             </Typography>
                         </Box>
                     </Stack>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                        Output stays {sourceDurationSec ? `${sourceDurationSec.toFixed(2)} s` : 'the source length'} —
+                        only the masked region is regenerated.
+                    </Typography>
                 </Box>
             )}
 
@@ -372,16 +436,16 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
                 sx={{ mb: 2 }}
             />
 
-            {mode !== 'extend' && (
+            {mode === 'style' && (
                 <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
                     <Typography variant="body2" color="text.secondary" sx={{ minWidth: 80 }}>
                         Duration
                     </Typography>
                     <Slider
-                        value={duration}
+                        value={Math.min(duration, maxDuration)}
                         onChange={(_, v) => setDuration(v)}
                         min={1}
-                        max={120}
+                        max={maxDuration}
                         step={1}
                         valueLabelDisplay="auto"
                         sx={{ flex: 1 }}
@@ -391,6 +455,34 @@ export default function EditPanel({ model_id, negativePrompt, onGenerated }) {
                     </Typography>
                 </Stack>
             )}
+
+            {/* Seed — random by default, mirrors the Generation panel */}
+            <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ minWidth: 80 }}>
+                    Seed
+                </Typography>
+                <FormControlLabel
+                    control={
+                        <Switch
+                            size="small"
+                            checked={randomSeed}
+                            onChange={(e) => setRandomSeed(e.target.checked)}
+                        />
+                    }
+                    label="Random"
+                    sx={{ mr: 0 }}
+                />
+                <TextField
+                    size="small"
+                    type="number"
+                    value={seedValue}
+                    disabled={randomSeed}
+                    onChange={(e) => setSeedValue(e.target.value)}
+                    placeholder={randomSeed ? 'Randomized each run (recorded)' : 'e.g. 42'}
+                    inputProps={{ min: 0, step: 1 }}
+                    sx={{ flex: 1 }}
+                />
+            </Stack>
 
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
             {generating && <LinearProgress sx={{ mb: 2 }} />}
