@@ -1,57 +1,35 @@
-import React, { cloneElement, useState } from 'react';
-import { Tooltip as MuiTooltip } from '@mui/material';
+import React, { cloneElement } from 'react';
 import { useInfoView } from './InfoView';
 
 /**
  * App-wide Tooltip.
  *
- * Two modes, switched by the Info View toggle (see components/InfoView.js):
+ * Help text is shown exclusively through the Info View (see
+ * components/InfoView.js) — there are no popup tooltips on the controls:
  *
- *  • Info View OFF (default) — a thin wrapper around MUI's Tooltip that also
- *    dismisses the tooltip the instant its child is activated (clicked /
- *    key-pressed). Stock MUI keeps the tooltip open after a click because the
- *    control retains hover + focus, so help text lingers over a button you've
- *    already pressed. We take control of `open` and force it shut on click,
- *    then let the normal hover/focus listeners reopen it.
+ *  • Info View ON  — on hover/focus the `title` is reported to the bottom
+ *    Info View pill, so help shows in one fixed place rather than over the
+ *    control itself.
+ *  • Info View OFF — no hover help at all; the child renders untouched.
  *
- *  • Info View ON — no popup. On hover/focus the `title` is reported to the
- *    bottom Info View bar instead, so help text shows in one fixed place
- *    rather than over the control itself.
- *
- * The API is identical to MUI's Tooltip — every prop (title, placement,
- * arrow, enterDelay, …) passes straight through, and the child's own handlers
- * are preserved. Drop-in replacement for `import { Tooltip } from '@mui/material'`.
+ * The API matches MUI's Tooltip (drop-in for the existing call sites): pass a
+ * `title` plus a single child element. Placement/arrow/delay props are
+ * accepted but ignored, since there's no popup.
  */
-export default function Tooltip({ children, title, ...props }) {
-    const [open, setOpen] = useState(false);
+export default function Tooltip({ children, title }) {
     const { enabled, setHint } = useInfoView();
     const child = React.Children.only(children);
 
-    // Info View mode: route the tip to the bottom bar; no popup.
-    if (enabled) {
-        return cloneElement(child, {
-            onMouseEnter: (e) => { setHint(title); child.props?.onMouseEnter?.(e); },
-            onMouseLeave: (e) => { setHint(null); child.props?.onMouseLeave?.(e); },
-            onFocus: (e) => { setHint(title); child.props?.onFocus?.(e); },
-            onBlur: (e) => { setHint(null); child.props?.onBlur?.(e); },
-        });
+    if (!enabled) {
+        // No popup tooltips — the Info View is the only help surface.
+        return child;
     }
 
-    const handleClick = (e) => {
-        setOpen(false);
-        // Preserve whatever the child already does on click.
-        child.props?.onClick?.(e);
-    };
-
-    return (
-        <MuiTooltip
-            {...props}
-            title={title}
-            open={open}
-            onOpen={() => setOpen(true)}
-            onClose={() => setOpen(false)}
-        >
-            {cloneElement(child, { onClick: handleClick })}
-        </MuiTooltip>
-    );
+    // Info View mode: route the tip to the bottom pill on hover/focus.
+    return cloneElement(child, {
+        onMouseEnter: (e) => { setHint(title); child.props?.onMouseEnter?.(e); },
+        onMouseLeave: (e) => { setHint(null); child.props?.onMouseLeave?.(e); },
+        onFocus: (e) => { setHint(title); child.props?.onFocus?.(e); },
+        onBlur: (e) => { setHint(null); child.props?.onBlur?.(e); },
+    });
 }
