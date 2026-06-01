@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
     Box,
     Typography,
@@ -14,7 +14,7 @@ import {
     Switch,
     FormControlLabel,
 } from '@mui/material';
-import { Upload as UploadIcon, X as ClearIcon } from 'lucide-react';
+import { Upload as UploadIcon, X as ClearIcon, Play as PlayIcon, Square as StopIcon } from 'lucide-react';
 import api from '../api';
 import AudioWaveform from './AudioWaveform';
 
@@ -79,6 +79,64 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
     const [generating, setGenerating] = useState(false);
     const [error, setError] = useState(null);
     const fileInputRef = useRef(null);
+
+    // Inpaint region audition — a hidden <audio> set to the source clip, played
+    // from maskStart and auto-stopped at maskEnd, so users can hear the segment
+    // they're about to regenerate before committing.
+    const regionAudioRef = useRef(null);
+    const regionStopRef = useRef(null);   // removes the active timeupdate guard
+    const [regionUrl, setRegionUrl] = useState(null);
+    const [regionPlaying, setRegionPlaying] = useState(false);
+
+    useEffect(() => {
+        if (!sourceFile) { setRegionUrl(null); return undefined; }
+        const url = URL.createObjectURL(sourceFile);
+        setRegionUrl(url);
+        return () => URL.revokeObjectURL(url);
+    }, [sourceFile]);
+
+    // Stop any in-flight preview when the source changes or the mode switches
+    // away from inpaint (don't auto-stop on every region drag — the end is
+    // captured per play, so dragging mid-play just runs to the old boundary).
+    useEffect(() => {
+        const a = regionAudioRef.current;
+        if (a) { try { a.pause(); } catch { /* ignore */ } }
+        regionStopRef.current?.();
+        regionStopRef.current = null;
+        setRegionPlaying(false);
+    }, [regionUrl, mode]);
+
+    const toggleRegionPreview = () => {
+        const a = regionAudioRef.current;
+        if (!a || !regionUrl) return;
+        if (regionPlaying) {
+            a.pause();
+            regionStopRef.current?.();
+            regionStopRef.current = null;
+            setRegionPlaying(false);
+            return;
+        }
+        const start = Math.max(0, Number(maskStart) || 0);
+        const end = Math.max(start + 0.05, Number(maskEnd) || 0);
+        const onTime = () => {
+            if (a.currentTime >= end) {
+                a.pause();
+                a.removeEventListener('timeupdate', onTime);
+                regionStopRef.current = null;
+                setRegionPlaying(false);
+            }
+        };
+        try { a.currentTime = start; } catch { /* ignore */ }
+        a.addEventListener('timeupdate', onTime);
+        regionStopRef.current = () => a.removeEventListener('timeupdate', onTime);
+        a.play()
+            .then(() => setRegionPlaying(true))
+            .catch(() => {
+                a.removeEventListener('timeupdate', onTime);
+                regionStopRef.current = null;
+                setRegionPlaying(false);
+            });
+    };
 
     // --- source upload ---------------------------------------------------
     const onPickFile = () => fileInputRef.current?.click();
@@ -388,9 +446,18 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
                             sx={{ flex: 1 }}
                         />
-                        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Button
+                                size="small"
+                                variant="outlined"
+                                startIcon={regionPlaying ? <StopIcon size={14} /> : <PlayIcon size={14} />}
+                                onClick={toggleRegionPreview}
+                                disabled={!regionUrl || (maskEnd - maskStart) < 0.05}
+                            >
+                                {regionPlaying ? 'Stop' : 'Preview'}
+                            </Button>
                             <Typography variant="caption" color="text.secondary">
-                                {(maskEnd - maskStart).toFixed(2)} s region
+                                {(maskEnd - maskStart).toFixed(2)} s
                             </Typography>
                         </Box>
                     </Stack>
@@ -483,6 +550,15 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                     sx={{ flex: 1 }}
                 />
             </Stack>
+
+            {/* Hidden element backing the inpaint region preview */}
+            <audio
+                ref={regionAudioRef}
+                src={regionUrl || undefined}
+                preload="auto"
+                style={{ display: 'none' }}
+                onEnded={() => setRegionPlaying(false)}
+            />
 
             {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
             {generating && <LinearProgress sx={{ mb: 2 }} />}

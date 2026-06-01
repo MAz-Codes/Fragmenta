@@ -22,10 +22,8 @@ import {
     GripVertical as DragIcon,
     Power as BypassIcon,
     ChevronDown as ChevronDownIcon,
-    Info as InfoIcon,
 } from 'lucide-react';
 import api from '../api';
-import { appStyles } from '../theme';
 import { isLoraCompatible } from '../utils/loraMatch';
 
 const MAX_SLOTS = 4;
@@ -113,12 +111,11 @@ export default function LoraStack({ selectedModel, value, onChange }) {
             defaultExpanded={Boolean(value && value.some((s) => s.path))}
         >
             <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                {/* Hover the title to surface the help in the Info View pill
+                    (when it's on) — no inline "i", matching the rest of the app. */}
+                <Tooltip title={TIPS.lora.stackInfo(MAX_SLOTS)}>
                     <Typography variant="subtitle1">LoRA Stack</Typography>
-                    <Tooltip arrow placement="top" title={TIPS.lora.stackInfo(MAX_SLOTS)}>
-                        <Box component="span" sx={appStyles.fieldHelpIcon}><InfoIcon size={14} /></Box>
-                    </Tooltip>
-                </Box>
+                </Tooltip>
             </AccordionSummary>
             <AccordionDetails>
             {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
