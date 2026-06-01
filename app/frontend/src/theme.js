@@ -42,15 +42,15 @@ const DARK = {
     amberLo:   '#5E94B0',      // pressed / darker
     // Warm complement — used to signal "active / in progress" state
     // (training, generation, download) against the cool cyan UI chrome.
-    warm:      '#FDA22B',
-    warmHi:    '#FFB855',
-    warmLo:    '#D17F1A',
+    warm:      '#E0A368',      // soft Nordic amber-orange (was golden #FDA22B)
+    warmHi:    '#ECB97F',
+    warmLo:    '#C9893F',
     // Deep blue used for moon-icon / night cues on dark mode.
     night:     '#3D6FA8',
     blue:      '#5BA9E8',      // secondary — selected-file cue
     blueDim:   '#84BFEE',
     success:   '#7AC795',
-    error:     '#E26B5E',
+    error:     '#D2706F',      // muted Nordic red (was #E26B5E)
     warning:   '#E3A34B',
 };
 
@@ -72,16 +72,16 @@ const LIGHT = {
     amberLo:   '#2C5C78',
     // Warm complement on cream — same hue family as dark mode but deeper
     // for legibility against the warm-paper background.
-    warm:      '#C97A1A',
-    warmHi:    '#E59334',
-    warmLo:    '#9C5C0F',
+    warm:      '#C68A47',      // deeper Nordic amber-orange for cream
+    warmHi:    '#DBA45C',
+    warmLo:    '#A66E2E',
     // Deep navy for moon-icon / night cues on light mode — needs strong
     // contrast against the warm cream paper.
     night:     '#1F3A5F',
     blue:      '#3B6E9B',
     blueDim:   '#5E8FB8',
     success:   '#2E8A52',
-    error:     '#B84E45',
+    error:     '#BD5957',      // deeper Nordic red for cream legibility
     warning:   '#B47318',
 };
 
@@ -220,7 +220,7 @@ let theme = createTheme({
                     backgroundColor: DARK.bg,
                     backgroundImage:
                         `radial-gradient(900px 700px at -5% 50%, rgba(127, 176, 201, 0.14), transparent 60%), ` +
-                        `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.11), transparent 55%), ` +
+                        `radial-gradient(1100px 700px at 95% 108%, rgba(224, 163, 104, 0.11), transparent 55%), ` +
                         `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`,
                     backgroundAttachment: 'fixed',
                     color: DARK.text,
@@ -369,7 +369,7 @@ let theme = createTheme({
                     backgroundImage: `linear-gradient(135deg, ${DARK.blueDim} 0%, ${DARK.blue} 100%)`,
                 },
                 containedError: {
-                    backgroundImage: 'linear-gradient(135deg, #ED7B6E 0%, #C95A4F 100%)',
+                    backgroundImage: 'linear-gradient(135deg, #DD8A89 0%, #BC5F5E 100%)',
                 },
                 outlined: {
                     // Cyan accent by default — outlined still reads as
@@ -392,11 +392,11 @@ let theme = createTheme({
                 // buttons (Delete project, Clear annotations) gets clobbered
                 // and silently reads as cyan.
                 outlinedError: {
-                    borderColor: 'rgba(226, 107, 94, 0.55)',
+                    borderColor: 'rgba(210, 112, 111, 0.55)',
                     color: DARK.error,
                     '&:hover': {
                         borderColor: DARK.error,
-                        backgroundColor: 'rgba(226, 107, 94, 0.10)',
+                        backgroundColor: 'rgba(210, 112, 111, 0.10)',
                         color: DARK.error,
                     },
                 },
@@ -919,7 +919,7 @@ export const lightTheme = createTheme(theme, {
                     backgroundColor: LIGHT.bg,
                     backgroundImage:
                         `radial-gradient(900px 700px at -5% 50%, rgba(61, 122, 156, 0.06), transparent 60%), ` +
-                        `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.05), transparent 55%), ` +
+                        `radial-gradient(1100px 700px at 95% 108%, rgba(198, 138, 71, 0.05), transparent 55%), ` +
                         `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
                     backgroundAttachment: 'fixed',
                     color: LIGHT.text,
@@ -1024,7 +1024,7 @@ export const lightTheme = createTheme(theme, {
                     backgroundImage: `linear-gradient(135deg, ${LIGHT.blueDim} 0%, ${LIGHT.blue} 100%)`,
                 },
                 containedError: {
-                    backgroundImage: 'linear-gradient(135deg, #C95A50 0%, #A03B33 100%)',
+                    backgroundImage: 'linear-gradient(135deg, #C66E6D 0%, #9E4B49 100%)',
                 },
                 outlined: {
                     // Cyan accent by default, mirroring dark-mode outlined
@@ -1044,11 +1044,11 @@ export const lightTheme = createTheme(theme, {
                     },
                 },
                 outlinedError: {
-                    borderColor: 'rgba(184, 78, 69, 0.55)',
+                    borderColor: 'rgba(189, 89, 87, 0.55)',
                     color: LIGHT.error,
                     '&:hover': {
                         borderColor: LIGHT.error,
-                        backgroundColor: 'rgba(184, 78, 69, 0.10)',
+                        backgroundColor: 'rgba(189, 89, 87, 0.10)',
                         color: LIGHT.error,
                     },
                 },
@@ -2344,10 +2344,10 @@ export const welcomePageStyles = {
             zIndex: 9999,
             background: isDark
                 ? `radial-gradient(900px 700px at -5% 50%, rgba(127, 176, 201, 0.18), transparent 60%), ` +
-                  `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.14), transparent 55%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(224, 163, 104, 0.14), transparent 55%), ` +
                   `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`
                 : `radial-gradient(900px 700px at -5% 50%, rgba(61, 122, 156, 0.09), transparent 60%), ` +
-                  `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.08), transparent 55%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(198, 138, 71, 0.08), transparent 55%), ` +
                   `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
             display: 'flex',
             alignItems: 'center',
