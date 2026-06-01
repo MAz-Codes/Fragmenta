@@ -439,11 +439,12 @@ class SA3Trainer:
             lr=float(self.config.get("learningRate") or DEFAULT_LR),
             steps=int(self.config.get("steps") or DEFAULT_STEPS),
             batch_size=int(self.config.get("batchSize") or DEFAULT_BATCH_SIZE),
-            # Clamp to the base model's native training length (medium ≈380s,
-            # small ≈120s) — SA3's DiT tops out at 4096 latent tokens, so a
-            # longer window would exceed the model rather than just cost VRAM.
+            # Default to AND clamp at the base model's native training length
+            # (medium ≈380s, small ≈120s) — SA3's DiT tops out at 4096 latent
+            # tokens, so a longer window would exceed the model, not just cost
+            # VRAM. A missing duration defaults to the model max.
             duration=min(
-                float(self.config.get("duration") or DEFAULT_DURATION),
+                float(self.config.get("duration") or (380.0 if "medium" in sa3_name else 120.0)),
                 380.0 if "medium" in sa3_name else 120.0,
             ),
             base_precision=precision,

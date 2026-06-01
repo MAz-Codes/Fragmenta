@@ -140,15 +140,15 @@ def _model_max_window_sec(base_model: Optional[str]) -> float:
 def _pick_duration(p95_clip_sec: Optional[float], base_model: Optional[str]) -> float:
     """Set training window from the project's actual p95 clip length.
 
-    Floors at 5s; caps at the model's native length (≈120s small / ≈380s
-    medium) rather than an arbitrary 30s — SA3 random-crops longer files, so
-    the only real limits are the model's sequence length and VRAM. Rounds up
-    p95 with 2s headroom so the window isn't cropping the tails of typical
-    clips. With no duration data, defaults to a conservative 30s.
+    Floors at 5s; caps at — and defaults to — the model's native length
+    (≈120s small / ≈380s medium) rather than an arbitrary 30s. SA3 random-crops
+    longer files, so the only real limits are the model's sequence length and
+    VRAM. Rounds up p95 with 2s headroom so the window isn't cropping the tails
+    of typical clips. With no duration data, defaults to the model max.
     """
     model_max = _model_max_window_sec(base_model)
     if p95_clip_sec is None or p95_clip_sec <= 0:
-        return float(min(30.0, model_max))
+        return model_max
     suggested = math.ceil(p95_clip_sec + 2.0)
     return float(max(5, min(model_max, suggested)))
 

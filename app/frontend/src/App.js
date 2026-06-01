@@ -162,7 +162,10 @@ function App() {
         modelName: 'my_lora',
         baseModel: 'sa3-small-music-base',    // only *-base checkpoints are valid targets
         precision: 'bf16',
-        duration: 30.0,                       // training window in seconds
+        // Training window defaults to the base model's native length (small
+        // ≈120s; medium ≈380s — set on base-model change). Default base is
+        // small-music-base → 120s.
+        duration: 120.0,
 
         loraRank: 16,
         loraAlpha: 16,
@@ -1493,8 +1496,8 @@ function App() {
                                                             setTrainingConfig({
                                                                 ...trainingConfig,
                                                                 baseModel: e.target.value,
-                                                                // Keep the window within the new base's native length.
-                                                                duration: Math.min(trainingConfig.duration, cap),
+                                                                // Default the window to the new base's native length.
+                                                                duration: cap,
                                                             });
                                                         }}
                                                     >

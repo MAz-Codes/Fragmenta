@@ -257,7 +257,12 @@ def start_training():
         training_config.setdefault('checkpointSteps', 500)
         training_config.setdefault('batchSize', 1)
         training_config.setdefault('learningRate', 1e-4)
-        training_config.setdefault('duration', 30.0)
+        # Window defaults to the base model's native length (medium ≈380s,
+        # small ≈120s); sa3_trainer clamps to the same ceiling.
+        training_config.setdefault(
+            'duration',
+            380.0 if 'medium' in str(training_config.get('baseModel', '')) else 120.0,
+        )
         training_config.setdefault('precision', 'bf16')
         training_config.setdefault('loraRank', 16)
         training_config.setdefault('loraAlpha', training_config['loraRank'])
