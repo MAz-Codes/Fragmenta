@@ -714,11 +714,13 @@ export class PerformanceEngine {
             }
         }
 
-        // First-launch shortcut: nothing playing -> fire immediately (Live
-        // Session-View feel). With no external clock we anchor the internal
-        // transport at "now" so the beat origin is sample 0.
+        // First-launch handling. When slaved to Link with a quantum set, even
+        // the FIRST clip waits for the shared downbeat (true slave behaviour —
+        // Fragmenta drops in on Ableton's bar like any Link peer): fall through
+        // to the quantize block. Standalone or quantum=None keeps the Live
+        // Session-View instant-fire feel and anchors the internal transport.
         const anythingPlaying = this.channels.some(c => c.isPlaying);
-        if (!anythingPlaying) {
+        if (!anythingPlaying && !(snap && snap.bpm && quantum)) {
             if (!snap) {
                 this.internalTransport.originAudioTime = this.ctx.currentTime;
                 this.internalTransport.anchorBeat = 0;

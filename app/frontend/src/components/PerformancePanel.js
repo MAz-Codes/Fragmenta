@@ -608,9 +608,14 @@ function PerformancePanelInner({
         }
         let cancelled = false;
         const poll = async () => {
-            const capturedAt = performance.now();
+            const sentAt = performance.now();
             try {
                 const r = await api.get('/api/link/state');
+                // Best estimate of when the backend sampled the Link clock: the
+                // round-trip midpoint (assumes ~symmetric latency). Stamping at
+                // send-time biased the beat ~½ RTT into the future, nudging
+                // quantized launches early.
+                const capturedAt = (sentAt + performance.now()) / 2;
                 if (cancelled || !r.data?.enabled) return;
                 const serverBpm = Math.round(r.data.bpm);
                 if (serverBpm >= BPM_MIN && serverBpm <= BPM_MAX) {
@@ -642,7 +647,9 @@ function PerformancePanelInner({
             }
         };
         poll();
-        const timer = setInterval(poll, 500);
+        // 200 ms (was 500): fresher beat for launch extrapolation and a tighter
+        // bound on mirroring Ableton's stop. Localhost round-trips are cheap.
+        const timer = setInterval(poll, 200);
         return () => { cancelled = true; clearInterval(timer); };
     }, [linkEnabled]);
 

@@ -137,6 +137,47 @@ def texture_clip(*, seconds: float = 4.0, seed: int = 7) -> np.ndarray:
     return np.stack([mono, mono], axis=1)
 
 
+def drifting_click_train(*, bpm: float, n_beats: int, freq: float,
+                         wobble: float = 0.08) -> np.ndarray:
+    """A click train whose tempo slowly wobbles: adjacent beat intervals stay
+    similar (so it still reads as a confident grid) but accumulate a large
+    residual vs a single straight grid — the non-uniform drift the beat-sync
+    warp targets. First click at sample 0."""
+    spb = SR * 60.0 / bpm
+    intervals = [spb * (1.0 + wobble * np.sin(2 * np.pi * k / n_beats))
+                 for k in range(n_beats)]
+    positions = np.concatenate([[0.0], np.cumsum(intervals)])
+    total = int(positions[-1] + spb)
+    mono = np.zeros(total, dtype=np.float32)
+    burst_n = int(SR * 6.0 / 1000.0)
+    t = np.arange(burst_n)
+    burst = (np.exp(-t / (burst_n / 4.0)) * np.cos(2 * np.pi * freq * t / SR)).astype(np.float32)
+    for p in positions[:-1]:
+        s = int(round(p)); e = min(total, s + burst_n)
+        mono[s:e] += burst[: e - s]
+    mono += (0.02 * np.sin(2 * np.pi * 110.0 * np.arange(total) / SR)).astype(np.float32)
+    return np.stack([mono, mono], axis=1)
+
+
+def xcorr_lag_ms(a_mono: np.ndarray, b_mono: np.ndarray, bpm: float,
+                 hop: int = 64, max_beats: float = 0.5) -> float:
+    """HONEST alignment ruler: phase offset (ms) between two clips' grids via
+    onset-envelope cross-correlation, searched within +/- max_beats. Assumption-
+    free — it answers 'do their grids line up?' without picking a single
+    transient (the mistake that produced a bogus 564 ms reading earlier)."""
+    import librosa
+    ea = librosa.onset.onset_strength(y=a_mono, sr=SR, hop_length=hop)
+    eb = librosa.onset.onset_strength(y=b_mono, sr=SR, hop_length=hop)
+    n = min(len(ea), len(eb))
+    ea = ea[:n] - ea[:n].mean(); eb = eb[:n] - eb[:n].mean()
+    full = np.correlate(ea, eb, mode="full")
+    lags = np.arange(-n + 1, n)
+    spb = SR * 60.0 / bpm
+    keep = np.abs(lags) <= int(max_beats * spb / hop)
+    lf = lags[keep]; fv = full[keep]
+    return float(lf[int(np.argmax(fv))] * hop / SR * 1000.0)
+
+
 def first_transient_sample(mono: np.ndarray, floor_ratio: float = 0.25) -> int:
     """Index of the first sample exceeding floor_ratio * peak — a detector-
     free 'where does audible content start' measure for ground-truth signals."""
@@ -286,6 +327,27 @@ def _part1_body() -> None:
     finally:
         app_post._conform_stretch = real_stretch
 
+    # --- beat-sync warp: removes non-uniform drift ------------------------
+    # A tempo-wobbling click train (confident grid, but high residual vs a
+    # straight grid) must take the warp path and come out near-uniform.
+    from app.core.generation.audio_post_process import (
+        _detect_grid as _dg, _grid_drift_samples as _drift)
+    drifty = drifting_click_train(bpm=bpm, n_beats=16, freq=120.0, wobble=0.08)
+    _, beats_in = _dg(drifty.mean(axis=1), SR, start_bpm=bpm)
+    drift_in_ms = _drift(beats_in) / SR * 1000
+    warped = align_for_loop(drifty, SR, target_samples=target, target_bpm=bpm)
+    _, beats_out = _dg(warped.mean(axis=1), SR, start_bpm=bpm)
+    drift_out_ms = _drift(beats_out) / SR * 1000
+    expect("Phase warp: input has high non-uniform drift (>15 ms)",
+           drift_in_ms > 15.0, f"drift_in={drift_in_ms:.1f} ms")
+    # Honest claim: per-beat warp is limited by beat-detector precision, so it
+    # substantially REDUCES drift rather than perfectly flattening it.
+    expect("Phase warp: beat-sync warp substantially reduces drift (>=35%)",
+           drift_out_ms < 0.65 * drift_in_ms,
+           f"drift_out={drift_out_ms:.1f} ms (was {drift_in_ms:.1f})")
+    expect("Phase warp: warped output is still sample-exact length",
+           warped.shape[0] == target, f"{warped.shape[0]} vs {target}")
+
     # --- seam metric on a mathematically perfect loop ---------------------
     # A sine whose period divides `target` loops seamlessly. NB: a raw
     # |x[0]-x[L-1]| step is NOT a discontinuity measure — adjacent samples
@@ -401,12 +463,58 @@ def part2_measure() -> None:
               f"seam_ratio={r['seam_ratio']:.3f}  conf={r['confidence']:.2f} -> {warp}")
 
 
+def part3_real_coincidence() -> None:
+    """The acceptance test I botched before, done right: run two REAL same-tempo
+    drum loops through Stage A v2 and measure downbeat coincidence with the
+    cross-correlation ruler. Self-skips when the fixtures aren't present."""
+    print("\n=== PART 3 — real two-loop coincidence (v2, honest ruler) ===")
+    bpm = 120.0
+    target = int(round(4 * BEATS_PER_BAR * SR * 60.0 / bpm))  # 4 bars @120
+    candidates = [
+        "20260525_154432_sa3-small-music_techno_kick_drum_loop_120_bpm.wav",
+        "20260525_154434_sa3-small-music_techno_kick_drum_loop_120_bpm.wav",
+        "20260521_164404_sa3-small-music_techno_beat_120_bpm.wav",
+    ]
+    paths = [REPO / "output" / c for c in candidates]
+    paths = [p for p in paths if p.exists()]
+    if len(paths) < 2:
+        print("  [skip] need >=2 of the reference 120-BPM drum loops in output/")
+        return
+    saved = os.environ.get("FRAGMENTA_BEATSYNC_V2")
+    os.environ["FRAGMENTA_BEATSYNC_V2"] = "1"
+    try:
+        outs = []
+        for p in paths:
+            a, sr = sf.read(str(p), always_2d=True)
+            a = a.astype(np.float32)
+            while a.shape[0] < target + SR:
+                a = np.concatenate([a, a], 0)
+            outs.append(align_for_loop(np.ascontiguousarray(a), SR,
+                                       target_samples=target, target_bpm=bpm))
+    finally:
+        if saved is None:
+            os.environ.pop("FRAGMENTA_BEATSYNC_V2", None)
+        else:
+            os.environ["FRAGMENTA_BEATSYNC_V2"] = saved
+
+    worst = 0.0
+    for i in range(len(outs)):
+        for j in range(i + 1, len(outs)):
+            lag = xcorr_lag_ms(outs[i].mean(axis=1), outs[j].mean(axis=1), bpm)
+            worst = max(worst, abs(lag))
+            print(f"  pair ({i},{j}) grid offset = {lag:+.1f} ms")
+    # Perceptual lock: a flam is audible ~10-20 ms; we require comfortably under.
+    expect("PART 3: real loops are downbeat-coincident (<10 ms)", worst < 10.0,
+           f"worst pair = {worst:.1f} ms")
+
+
 def main() -> int:
     measure_only = "--measure-only" in sys.argv
     if not measure_only:
         part0_flag()
         part1_synthetic()
     part2_measure()
+    part3_real_coincidence()
     print("\n=== SUMMARY ===")
     if _gaps:
         print(f"  known gaps (Phase C/D will close): {len(_gaps)}")

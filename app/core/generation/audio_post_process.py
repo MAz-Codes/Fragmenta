@@ -105,6 +105,14 @@ _V2_REFINE_WIN_SEC = 0.03               # +/- window for sample-accurate refine
 _GRID_CONFIDENCE_MIN = 0.65
 _CV_MAX = 0.20                          # interval CV at which regularity -> 0
 
+# Beat-synchronous warp (Ableton "Beats"-style). Measured: real drum loops are
+# already coherent to ~3-6 ms, where anchor+exact-crop alone lands single-digit
+# ms — so a global/elastic warp there only adds phase-vocoder jitter for no gain.
+# We therefore warp ONLY when a confident grid still drifts past this threshold,
+# and need enough beats to define segments.
+_WARP_DRIFT_MIN_MS = 15.0
+_WARP_MIN_BEATS = 6
+
 
 # === Stage A v2 (FRAGMENTA_BEATSYNC_V2) ====================================
 # A single hardened core shared by both align entry points. It enforces the
@@ -127,61 +135,152 @@ def _stage_a_v2(
 ) -> np.ndarray:
     """Hardened Stage A core. Input/return: float32 ``[T, C]``.
 
-    Order: tempo-conform -> first-strong-transient to sample 0 -> exact crop.
+    Decides per clip how to land it on the grid:
+      * low grid confidence -> place as-is (trust the requested grid; no warp,
+        no trim — Ableton likewise won't warp a pulse-less texture);
+      * confident + non-uniform drift -> beat-synchronous warp (each inter-beat
+        segment stretched onto the exact grid, Ableton "Beats" warp);
+      * confident + already coherent -> anchor + (optional) whole-loop tempo
+        nudge; the measured workhorse path (single-digit ms on real loops).
+    Always finishes with: first-strong-transient -> sample 0, then exact crop.
     """
     mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
-    detected_bpm, _beats = _detect_grid(mono, sr, start_bpm=target_bpm)
+    detected_bpm, beats = _detect_grid(mono, sr, start_bpm=target_bpm)
+    confidence = _grid_confidence(mono, sr, beats)
+    spb = sr * 60.0 / target_bpm
 
-    # --- tempo conform (transient-preserving, gen-time) -------------------
-    confidence = _grid_confidence(mono, sr, _beats)
-    if detected_bpm is not None and confidence < _GRID_CONFIDENCE_MIN:
+    trusted = (
+        detected_bpm is not None
+        and confidence >= _GRID_CONFIDENCE_MIN
+        and beats is not None
+        and len(beats) >= _WARP_MIN_BEATS
+    )
+
+    if not trusted:
         logger.info(
-            "stage_a_v2: low grid confidence (%.2f < %.2f) on detected %.2f BPM; "
-            "trusting requested %.2f BPM grid, skipping warp",
-            confidence, _GRID_CONFIDENCE_MIN, detected_bpm, target_bpm,
+            "stage_a_v2: %s; trusting requested %.2f BPM grid, exact-length only",
+            "low grid confidence (%.2f < %.2f)" % (confidence, _GRID_CONFIDENCE_MIN)
+            if detected_bpm is not None else "no usable grid",
+            target_bpm,
         )
-        detected_bpm = None  # fall through to the no-warp branch below
-    if detected_bpm is not None:
+        return _exact_len(audio, target_samples, sr)
+
+    # --- anchor the musical "1" to sample 0 (INV#4, enables INV#9) --------
+    # Anchor to the first TRACKED beat, not the "first loud onset": the tracked
+    # beat is the same metrical position across clips, so two loops coincide;
+    # "first loud onset" lands on whatever transient happens to be loudest and
+    # differs per clip (measured: 200+ ms apart). Refine beats[0] to the exact
+    # rising edge for sample accuracy.
+    anchor = _refine_to_transient(mono, int(beats[0]), sr)
+    if anchor > 0:
+        audio = audio[anchor:]
+        mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
+    beats = np.asarray(beats, dtype=np.int64) - anchor
+    beats = beats[beats >= 0]
+
+    drift = _grid_drift_samples(beats)
+    if drift > _WARP_DRIFT_MIN_MS * sr / 1000.0 and len(beats) >= 2:
+        # Non-uniform intra-loop drift: stretch each inter-beat segment onto the
+        # exact grid. Reduces the drift a single global stretch cannot (limited
+        # by beat-detector precision), and conforms tempo in the same pass.
+        audio = _beat_sync_warp(audio, beats, spb)
+        logger.info("stage_a_v2: anchored + beat-sync warp (intra-loop drift "
+                    "%.1f ms)", drift / sr * 1000)
+    else:
+        # Already coherent: a single global stretch is sufficient (and cleaner
+        # than per-segment warping) when the overall tempo is off; otherwise
+        # the anchor + exact crop is all that's needed.
         rate, eff = _best_stretch_rate(
             detected_bpm, target_bpm,
             safe_min=_BARS_MODE_STRETCH_MIN, safe_max=_BARS_MODE_STRETCH_MAX,
         )
         if rate is not None and abs(rate - 1.0) > deadband:
             audio = _conform_stretch(audio, rate, sr)
-            mono = audio.mean(axis=1) if audio.shape[1] > 1 else audio[:, 0]
-            logger.info(
-                "stage_a_v2: detected %.2f BPM (eff %.2f), transient-stretched "
-                "by %.4f to %.2f target", detected_bpm, eff, rate, target_bpm,
-            )
+            logger.info("stage_a_v2: anchored + global tempo conform x%.4f "
+                        "(detected %.2f -> %.2f)", rate, detected_bpm, target_bpm)
         else:
-            logger.info(
-                "stage_a_v2: detected %.2f BPM within %.2f%% of %.2f target; "
-                "no stretch", detected_bpm, deadband * 100, target_bpm,
-            )
-    else:
-        logger.info("stage_a_v2: no usable tempo detected; skipping stretch")
+            logger.info("stage_a_v2: anchored only (low drift, on-tempo)")
 
-    # --- first strong transient -> sample 0 (INV#4, enables INV#9) --------
-    d = _first_strong_transient(mono, sr)
-    if d > 0:
-        audio = audio[d:]
-        logger.info("stage_a_v2: trimmed %.1f ms to first strong transient",
-                    d / sr * 1000)
+    return _exact_len(audio, target_samples, sr)
 
-    # --- exact length, no tail pad in the common path (INV#2, INV#3) ------
+
+def _exact_len(audio: np.ndarray, target_samples: int, sr: int) -> np.ndarray:
+    """Crop to exactly target_samples (INV#2/#3). Pads only as a logged last
+    resort — the generation overshoots duration so trimming is the norm."""
     if audio.shape[0] >= target_samples:
-        audio = audio[:target_samples]
-    else:
-        pad = target_samples - audio.shape[0]
-        logger.warning(
-            "stage_a_v2: content short by %d samp (%.0f ms) after trim — "
-            "padding as a last resort; raise generation headroom or re-roll",
-            pad, pad / sr * 1000,
-        )
-        audio = np.concatenate(
-            [audio, np.zeros((pad, audio.shape[1]), dtype=np.float32)], axis=0,
-        )
-    return np.ascontiguousarray(audio, dtype=np.float32)
+        return np.ascontiguousarray(audio[:target_samples], dtype=np.float32)
+    pad = target_samples - audio.shape[0]
+    logger.warning(
+        "stage_a_v2: content short by %d samp (%.0f ms) — padding as a last "
+        "resort; raise generation headroom or re-roll", pad, pad / sr * 1000,
+    )
+    return np.ascontiguousarray(
+        np.concatenate([audio, np.zeros((pad, audio.shape[1]), np.float32)], 0),
+        dtype=np.float32,
+    )
+
+
+def _grid_drift_samples(beats: Optional[np.ndarray]) -> float:
+    """Std of detected-beat residuals vs a uniform least-squares grid (samples).
+    A coherent loop sits near 0; tempo wobble shows up as a large residual."""
+    if beats is None or len(beats) < 4:
+        return 0.0
+    idx = np.arange(len(beats))
+    A = np.vstack([idx, np.ones_like(idx)]).T
+    slope, icpt = np.linalg.lstsq(A, beats.astype(float), rcond=None)[0]
+    resid = beats.astype(float) - (slope * idx + icpt)
+    return float(np.std(resid))
+
+
+def _refine_to_transient(mono: np.ndarray, approx: int, sr: int,
+                         win_sec: float = 0.015) -> int:
+    """Snap a frame-resolution beat sample to the exact rising edge of the
+    transient AT that beat. librosa picks WHICH transient is the beat (good);
+    this gives it sample accuracy (INV#4). The window is deliberately tight
+    (~15 ms): wide enough to cover beat-tracker frame jitter, narrow enough not
+    to jump to a neighbouring transient (which would desync clips, INV#9)."""
+    n = len(mono)
+    if n == 0:
+        return 0
+    approx = int(max(0, min(approx, n - 1)))
+    lo = max(0, approx - int(sr * win_sec))
+    hi = min(n, approx + int(sr * win_sec))
+    if hi - lo < 2:
+        return approx
+    seg = np.abs(mono[lo:hi])
+    pk = float(seg.max())
+    if pk <= 1e-6:
+        return approx
+    above = np.flatnonzero(seg >= _V2_RISE_RATIO * pk)
+    return int(lo + above[0]) if len(above) else approx
+
+
+def _beat_sync_warp(audio: np.ndarray, beats: np.ndarray, spb: float) -> np.ndarray:
+    """Ableton 'Beats'-style warp: stretch each inter-beat segment to exactly
+    round(spb) samples. Output starts at the first detected beat and has a
+    perfectly uniform grid, so two clips at the same tempo become sample-for-
+    sample periodic (INV#9). Phase-vocoder per segment; only invoked when drift
+    is high enough to be worth the boundary jitter."""
+    beats = np.asarray(beats, dtype=np.int64)
+    beats = beats[(beats >= 0) & (beats < audio.shape[0])]
+    if len(beats) < 2:
+        return audio
+    target_spb = int(round(spb))
+    segs = []
+    for i in range(len(beats) - 1):
+        s, e = int(beats[i]), int(beats[i + 1])
+        seg = audio[s:e]
+        if seg.shape[0] < 16:
+            continue
+        rate = float(np.clip(seg.shape[0] / spb, 0.5, 2.0))
+        w = librosa.effects.time_stretch(seg.T, rate=rate).T
+        if w.shape[0] >= target_spb:
+            w = w[:target_spb]
+        else:
+            w = np.concatenate(
+                [w, np.zeros((target_spb - w.shape[0], w.shape[1]), np.float32)], 0)
+        segs.append(np.ascontiguousarray(w, dtype=np.float32))
+    return np.concatenate(segs, 0) if segs else audio
 
 
 def _grid_confidence(
