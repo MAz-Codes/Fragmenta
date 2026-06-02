@@ -638,6 +638,70 @@ def test_hierarchical_snap_prefers_coarse() -> None:
 # --- Phase 7: beat-tracking anchors ----------------------------------------
 
 
+def test_head_trim_skips_weak_pretransient() -> None:
+    """Phase 9: head-trim must ignore quiet noise-floor blips that fire
+    the onset detector BEFORE the real downbeat.
+
+    Fixture: a single quiet click at +30 ms (amplitude 0.05) followed by
+    a strong kick burst at +500 ms (amplitude 0.9). The naive head-trim
+    would lock onto the quiet click and leave the kick stranded 470 ms
+    into the loop; the filtered head-trim should drop the click and pin
+    the loud kick at the start of the output.
+    """
+    from app.core.loop_quantizer import AubioDetector, NO_STRETCHER
+
+    sr = SAMPLE_RATE
+    cg = canonical_grid(bpm=BPM, bars=BARS, grid=16, sample_rate=sr)
+    src_len = cg.total_samples + int(0.2 * sr)
+    audio = np.zeros(src_len, dtype=np.float32)
+
+    # Quiet pre-transient at +30 ms (amplitude 0.05 ≈ -26 dB below kick)
+    pre_pos = int(0.030 * sr)
+    decay = int(0.010 * sr)
+    audio[pre_pos:pre_pos + decay] += (
+        0.05 * np.exp(-np.arange(decay) / (decay * 0.3))
+    ).astype(np.float32)
+
+    # Loud kick at +500 ms (the actual musical downbeat)
+    kick_pos = int(0.500 * sr)
+    kdecay = int(0.030 * sr)
+    env = (0.9 * np.exp(-np.arange(kdecay) / (kdecay * 0.2))).astype(np.float32)
+    tone = np.sin(np.linspace(0.0, np.pi * 40, kdecay)).astype(np.float32)
+    audio[kick_pos:kick_pos + kdecay] += env * tone
+
+    # Subsequent kicks at every quarter so beat-track has something to lock to
+    for q in np.asarray(cg.beat_samples)[1:]:
+        p = int(q) + (kick_pos - 0)  # source positions shift with first kick
+        if 0 <= p < src_len - kdecay:
+            audio[p:p + kdecay] += env * tone
+
+    out = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=16,
+        sample_rate=sr,
+        detector=AubioDetector(),
+        stretcher=NO_STRETCHER,
+        loop_wrap_crossfade_ms=0.0,
+        tempo_conform=False,
+    )
+    # First peak in the OUTPUT should land at sample 0 (head-trim moved
+    # the loud kick there), with amplitude close to the kick's 0.9, NOT
+    # the quiet 0.05. If the filter failed and head-trimmed to the pre-
+    # transient, sample 0 would be silence and the kick would appear
+    # ~470 ms in.
+    head_peak = float(np.max(np.abs(out[: int(0.005 * sr)])))
+    assert head_peak > 0.5, (
+        f"head-trim filter failed: output starts with amplitude {head_peak:.3f}, "
+        f"expected the loud kick (~0.9) at sample 0"
+    )
+    print(
+        f"  ✓ head-trim filter: skipped 0.05-amplitude pre-transient at +30 ms, "
+        f"locked loud kick to sample 0 (head peak {head_peak:.3f})"
+    )
+
+
 def test_beat_track_locks_to_quarter_lines() -> None:
     """Phase 7: when ``beat_track=True`` the quantizer should land its
     detected pulses on the QUARTER-note grid lines.
@@ -867,6 +931,7 @@ def main() -> int:
         test_quantize_wav_file_roundtrip,
         test_metrical_levels_pattern,
         test_hierarchical_snap_prefers_coarse,
+        test_head_trim_skips_weak_pretransient,
         test_beat_track_locks_to_quarter_lines,
     ]
     print(f"\nloop_quantizer Phase 1–5 acceptance — {len(tests)} tests\n")

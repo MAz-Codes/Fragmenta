@@ -143,23 +143,25 @@ class RubberBandStretcher:
 def _try_default_stretcher() -> Optional["Stretcher"]:
     """Pick the best stretcher available on this machine.
 
-    Order: RubberBand (when ``FRAGMENTA_LOOP_QUANTIZER_RUBBERBAND=1`` AND
-    both ``pyrubberband`` and the CLI are present) → WSOLA via pytsmod
-    → ``None`` (caller falls back to linear interpolation for sustained
-    segments).
+    Order: RubberBand (when ``pyrubberband`` and the CLI are present)
+    → WSOLA via pytsmod → ``None`` (caller falls back to linear
+    interpolation for sustained segments).
 
-    WSOLA is the conservative default — RubberBand has higher-quality
-    output on sustained tonal content but introduces ~+2 ms mean
-    diagnostic-off-grid (it preserves secondary transients more
-    faithfully, which the timing metric penalises). Listen-test before
-    flipping the default; opt-in via the env var until then.
+    RubberBand is the production default — user A/B-confirmed it sounds
+    clearly better on tonal/sustained content (pads, synth bass,
+    textures). The +2 ms diagnostic regression vs WSOLA is the metric
+    counting RubberBand's better-preserved secondary transients as
+    "off-grid"; the perceptual reality is the opposite. Override with
+    ``FRAGMENTA_LOOP_QUANTIZER_NO_RUBBERBAND=1`` to force WSOLA.
     """
     import os
     import shutil
 
-    if os.environ.get("FRAGMENTA_LOOP_QUANTIZER_RUBBERBAND", "0").strip().lower() in (
-        "1", "true", "yes", "on",
-    ):
+    no_rubberband = os.environ.get(
+        "FRAGMENTA_LOOP_QUANTIZER_NO_RUBBERBAND", "0"
+    ).strip().lower() in ("1", "true", "yes", "on")
+
+    if not no_rubberband:
         try:
             import pyrubberband  # noqa: F401
             if shutil.which("rubberband") is not None:

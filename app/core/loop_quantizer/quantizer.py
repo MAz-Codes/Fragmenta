@@ -86,6 +86,14 @@ DEFAULT_TEMPO_CONFORM_MAX_RATIO = 1.50   # rates outside are octave errors or
 DEFAULT_BEAT_TRACK_TOLERANCE_MS = 80.0
 DEFAULT_BEAT_TRACK_RATIO_MIN = 0.75
 DEFAULT_BEAT_TRACK_RATIO_MAX = 1.33
+# Head-trim strength gate: the first onset whose local peak amplitude is
+# at least this fraction of the LOUDEST onset's peak becomes the head
+# anchor. A typical noise-floor blip is 20-40 dB below the main kick;
+# 30% (≈ -10 dB) keeps real ghost notes (which are 6-10 dB below the
+# main hit) while dropping silence-to-noise transitions and stray clicks
+# that the onset detector would otherwise pick first.
+DEFAULT_HEAD_TRIM_REL_THRESHOLD = 0.30
+DEFAULT_HEAD_TRIM_PEAK_WINDOW_MS = 10.0
 # Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
 # when pytsmod is installed (e.g. when measuring pure slice-and-place
 # behaviour). Distinguishable from ``None`` which means "use default".
@@ -344,15 +352,23 @@ def _quantize_one(
     raw_onsets = np.asarray(det(mono, cg.sample_rate), dtype=np.int64)
     refined = _refine_all(mono, raw_onsets, cg.sample_rate, window_sec=refine_window_sec)
 
-    # Head-trim so the first strong onset lands at sample 0. Without this
-    # the (0, 0) boundary anchor pins SILENCE to the downbeat, leaving the
-    # first musical event stranded inside an unanchored stretched segment.
-    # Equivalent to the v2 path's `beats[0]`-to-zero step (AUDIT.md §9c).
-    if refined.size > 0 and int(refined[0]) > 0:
-        head = int(refined[0])
-        audio_2d = audio_2d[head:]
-        mono = mono[head:]
-        refined = refined - head
+    # Head-trim so the first strong onset lands at sample 0. The naive
+    # version (take refined[0]) anchors on whatever the onset detector
+    # fires first — including noise-floor blips and quiet pre-transients
+    # that precede the actual downbeat. Filter onsets by local peak
+    # amplitude relative to the loudest onset in the loop, then use the
+    # FIRST SURVIVING onset as the head anchor. Drops weak leading
+    # noise-floor activity that would otherwise leave the main event
+    # stranded mid-stretch.
+    head_anchor = _first_strong_onset(
+        mono, refined, cg.sample_rate,
+        peak_window_ms=10.0,
+        rel_threshold=DEFAULT_HEAD_TRIM_REL_THRESHOLD,
+    )
+    if head_anchor > 0:
+        audio_2d = audio_2d[head_anchor:]
+        mono = mono[head_anchor:]
+        refined = refined[refined >= head_anchor] - head_anchor
         src_length = audio_2d.shape[0]
         if src_length == 0:
             out = np.zeros((cg.total_samples, audio_2d.shape[1]), dtype=np.float32)
@@ -465,6 +481,44 @@ def _quantize_one(
         fade_samples = int(round(loop_wrap_crossfade_ms * 0.001 * cg.sample_rate))
         _loop_wrap_crossfade(out, fade_samples)
     return out[:, 0] if was_1d else out
+
+
+def _first_strong_onset(
+    mono: np.ndarray,
+    refined: np.ndarray,
+    sample_rate: int,
+    *,
+    peak_window_ms: float = DEFAULT_HEAD_TRIM_PEAK_WINDOW_MS,
+    rel_threshold: float = DEFAULT_HEAD_TRIM_REL_THRESHOLD,
+) -> int:
+    """Return the sample index of the first onset that's "strong enough."
+
+    "Strong enough" = its local peak amplitude is at least
+    ``rel_threshold`` * the loudest onset's peak. This filters out
+    noise-floor blips and quiet pre-transients that the onset detector
+    fires on before the actual downbeat — they're up to 20-40 dB below
+    the main hit, so a relative gate is safe.
+
+    Returns 0 if no onsets qualify (caller leaves audio unmodified).
+    """
+    if refined.size == 0:
+        return 0
+    win = max(1, int(round(peak_window_ms * 0.001 * sample_rate)))
+    peaks = np.zeros(refined.size, dtype=np.float32)
+    n = mono.size
+    for i, p in enumerate(refined):
+        lo = max(0, int(p) - win)
+        hi = min(n, int(p) + win)
+        if hi > lo:
+            peaks[i] = float(np.max(np.abs(mono[lo:hi])))
+    max_peak = float(peaks.max()) if peaks.size > 0 else 0.0
+    if max_peak <= 0.0:
+        return 0
+    strong = peaks >= rel_threshold * max_peak
+    survivors = refined[strong]
+    if survivors.size == 0:
+        return 0
+    return int(survivors[0])
 
 
 def _extract_beats(
