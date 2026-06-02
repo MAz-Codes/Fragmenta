@@ -94,6 +94,16 @@ DEFAULT_BEAT_TRACK_RATIO_MAX = 1.33
 # that the onset detector would otherwise pick first.
 DEFAULT_HEAD_TRIM_REL_THRESHOLD = 0.30
 DEFAULT_HEAD_TRIM_PEAK_WINDOW_MS = 10.0
+# After picking the first strong onset, walk forward inside its window to
+# the sample where amplitude first reaches this fraction of the onset's
+# local peak. 0.6 ≈ -4 dB — high enough that a listener perceives the
+# loop as starting on the hit, low enough to preserve a few ms of attack
+# transient. The 15%-of-peak rising-edge crossing returned by
+# ``refine_to_transient`` is great for sample-accurate inter-layer
+# anchoring, but on slow-attack kicks it places sample 0 in the
+# inaudible pre-attack and the output sounds like it starts with
+# silence.
+DEFAULT_HEAD_TRIM_AUDIBILITY = 0.60
 # Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
 # when pytsmod is installed (e.g. when measuring pure slice-and-place
 # behaviour). Distinguishable from ``None`` which means "use default".
@@ -490,14 +500,23 @@ def _first_strong_onset(
     *,
     peak_window_ms: float = DEFAULT_HEAD_TRIM_PEAK_WINDOW_MS,
     rel_threshold: float = DEFAULT_HEAD_TRIM_REL_THRESHOLD,
+    audibility_threshold: float = DEFAULT_HEAD_TRIM_AUDIBILITY,
 ) -> int:
-    """Return the sample index of the first onset that's "strong enough."
+    """Return a head-trim sample index that begins the loop audibly.
 
-    "Strong enough" = its local peak amplitude is at least
-    ``rel_threshold`` * the loudest onset's peak. This filters out
-    noise-floor blips and quiet pre-transients that the onset detector
-    fires on before the actual downbeat — they're up to 20-40 dB below
-    the main hit, so a relative gate is safe.
+    Two-step process:
+    1. Filter onsets by local peak amplitude vs. the loudest onset
+       (``rel_threshold`` * max_peak). This drops noise-floor blips and
+       quiet pre-transients that the onset detector fires on before the
+       actual downbeat — they're 20-40 dB below the main hit.
+    2. For the FIRST surviving onset, walk forward to the sample where
+       amplitude first exceeds ``audibility_threshold * onset_peak``.
+       ``refine_to_transient`` returns the 15%-of-peak crossing (the
+       rising edge), which on a slow-attack kick can be 20-30 ms BEFORE
+       the audible part. That leaves the output starting with what
+       sounds like silence even though the math is correct. A higher
+       threshold (~60 %, ≈ -4 dB) places the head where a listener
+       perceives the hit to begin.
 
     Returns 0 if no onsets qualify (caller leaves audio unmodified).
     """
@@ -515,10 +534,23 @@ def _first_strong_onset(
     if max_peak <= 0.0:
         return 0
     strong = peaks >= rel_threshold * max_peak
-    survivors = refined[strong]
-    if survivors.size == 0:
+    survivor_indices = np.where(strong)[0]
+    if survivor_indices.size == 0:
         return 0
-    return int(survivors[0])
+    first_idx = int(survivor_indices[0])
+    first_pos = int(refined[first_idx])
+    first_peak = float(peaks[first_idx])
+    # Walk forward inside the onset window to the audibility crossing.
+    lo = max(0, first_pos - win)
+    hi = min(n, first_pos + win)
+    if hi > lo and first_peak > 0.0:
+        window = np.abs(mono[lo:hi])
+        crossings = np.where(window >= audibility_threshold * first_peak)[0]
+        if crossings.size > 0:
+            audible_pos = lo + int(crossings[0])
+            if audible_pos > first_pos:
+                first_pos = audible_pos
+    return int(first_pos)
 
 
 def _extract_beats(

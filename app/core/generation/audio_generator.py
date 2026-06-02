@@ -757,7 +757,38 @@ class AudioGenerator:
             pad = N - inpainted.shape[-1]
             inpainted = torch.nn.functional.pad(inpainted, (0, pad))
 
-        return torch.roll(inpainted, shifts=-half_samples, dims=-1)
+        unrolled = torch.roll(inpainted, shifts=-half_samples, dims=-1)
+
+        # Preserve the baseline's loop boundary content — the quantizer
+        # placed the downbeat precisely at sample 0 and the previous beat's
+        # tail at sample N-1; the inpaint pass tends to regenerate those
+        # regions as a smooth fade, which presents as "silence at the start
+        # of the loop" (and a lost final transient at the end). Splice the
+        # baseline back in over a short window at each end, then equal-
+        # power crossfade into the inpainted middle so there's no click.
+        preserve_n = int(round(0.030 * sr))   # 30 ms ≈ kick attack envelope
+        fade_n = int(round(0.010 * sr))       # 10 ms blend into inpaint
+        if preserve_n + fade_n < N // 4 and baseline.shape == unrolled.shape:
+            t = torch.linspace(
+                0.0, math.pi / 2.0, fade_n,
+                device=unrolled.device, dtype=unrolled.dtype,
+            )
+            fade_in = (torch.sin(t) ** 2).reshape(1, 1, -1)
+            fade_out = (torch.cos(t) ** 2).reshape(1, 1, -1)
+            # Head: restore baseline[:preserve_n], crossfade into inpaint.
+            unrolled[..., :preserve_n] = baseline[..., :preserve_n]
+            unrolled[..., preserve_n:preserve_n + fade_n] = (
+                baseline[..., preserve_n:preserve_n + fade_n] * fade_out
+                + unrolled[..., preserve_n:preserve_n + fade_n] * fade_in
+            )
+            # Tail: same pattern, mirrored at the other end of the loop.
+            unrolled[..., -preserve_n:] = baseline[..., -preserve_n:]
+            unrolled[..., -(preserve_n + fade_n):-preserve_n] = (
+                unrolled[..., -(preserve_n + fade_n):-preserve_n] * fade_out
+                + baseline[..., -(preserve_n + fade_n):-preserve_n] * fade_in
+            )
+
+        return unrolled
 
     @staticmethod
     def _crossfade_seam(audio: torch.Tensor, fade_sec: float, sr: int) -> torch.Tensor:
