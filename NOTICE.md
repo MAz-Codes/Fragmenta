@@ -76,6 +76,9 @@ The following Python packages are distributed with Fragmenta:
   - Used by `app/core/loop_quantizer/` for onset detection (specflux method).
   - GPL is compatible with this project's AGPL-3.0 license; the combined work
     is governed by AGPL-3.0. Source remains available per AGPL §13.
+- **pytsmod** - MIT License - https://github.com/KAIST-MACLab/PyTSMod
+  - Used by `app/core/loop_quantizer/` for sustained-segment time-stretch
+    (WSOLA). MIT is permissive; no extra obligations.
 
 ### Web Framework & API
 - **Flask** - BSD-3-Clause License - https://github.com/pallets/flask

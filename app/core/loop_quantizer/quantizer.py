@@ -34,9 +34,11 @@ from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
 
+from .classify import DEFAULT_FLATNESS_THRESHOLD, classify_segment
 from .detectors import OnsetDetector, default_detector
 from .grid import CanonicalGrid, canonical_grid
 from .refine import refine_to_transient
+from .stretch import Stretcher, default_stretcher
 
 
 DEFAULT_RATIO_MIN = 0.80
@@ -47,6 +49,10 @@ DEFAULT_RATIO_MAX = 1.25
 # the window a bit. 25 ms still can't reach a neighbour at any musically
 # plausible tempo (32nd notes at 240 BPM = 62.5 ms apart).
 DEFAULT_REFINE_WINDOW_SEC = 0.025
+# Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
+# when pytsmod is installed (e.g. when measuring pure slice-and-place
+# behaviour). Distinguishable from ``None`` which means "use default".
+NO_STRETCHER: object = object()
 
 
 def quantize_to_loop(
@@ -58,15 +64,21 @@ def quantize_to_loop(
     time_sig: Tuple[int, int] = (4, 4),
     sample_rate: int = 44100,
     detector: Optional[OnsetDetector] = None,
+    stretcher: object = None,
     ratio_min: float = DEFAULT_RATIO_MIN,
     ratio_max: float = DEFAULT_RATIO_MAX,
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
+    flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
 ) -> np.ndarray:
     """Quantize one clip to the canonical grid for ``(bpm, bars, grid, …)``.
 
     Returns a float32 array of shape ``(total_samples, channels)`` — or 1-D
     if the input was 1-D. ``total_samples`` is fixed by the canonical grid
     (see ``grid.canonical_grid``), independent of the input length.
+
+    Pass ``stretcher=NO_STRETCHER`` to disable WSOLA and force linear-interp
+    for all segments (Phase 1 behaviour, useful for measurement). ``None``
+    resolves to ``default_stretcher()`` (WSOLA if pytsmod is installed).
     """
     cg = canonical_grid(
         bpm=bpm, bars=bars, grid=grid, time_sig=time_sig, sample_rate=sample_rate
@@ -75,9 +87,11 @@ def quantize_to_loop(
         audio,
         cg,
         detector=detector,
+        stretcher=_resolve_stretcher(stretcher),
         ratio_min=ratio_min,
         ratio_max=ratio_max,
         refine_window_sec=refine_window_sec,
+        flatness_threshold=flatness_threshold,
     )
 
 
@@ -90,9 +104,11 @@ def quantize_batch(
     time_sig: Tuple[int, int] = (4, 4),
     sample_rate: int = 44100,
     detector: Optional[OnsetDetector] = None,
+    stretcher: object = None,
     ratio_min: float = DEFAULT_RATIO_MIN,
     ratio_max: float = DEFAULT_RATIO_MAX,
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
+    flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
 ) -> List[np.ndarray]:
     """Quantize N clips against a single shared canonical grid.
 
@@ -104,17 +120,28 @@ def quantize_batch(
     cg = canonical_grid(
         bpm=bpm, bars=bars, grid=grid, time_sig=time_sig, sample_rate=sample_rate
     )
+    resolved_stretcher = _resolve_stretcher(stretcher)
     return [
         _quantize_one(
             clip,
             cg,
             detector=detector,
+            stretcher=resolved_stretcher,
             ratio_min=ratio_min,
             ratio_max=ratio_max,
             refine_window_sec=refine_window_sec,
+            flatness_threshold=flatness_threshold,
         )
         for clip in clips
     ]
+
+
+def _resolve_stretcher(stretcher: object) -> Optional[Stretcher]:
+    if stretcher is NO_STRETCHER:
+        return None
+    if stretcher is None:
+        return default_stretcher()
+    return stretcher  # type: ignore[return-value]
 
 
 # --- internals -------------------------------------------------------------
@@ -125,9 +152,11 @@ def _quantize_one(
     cg: CanonicalGrid,
     *,
     detector: Optional[OnsetDetector],
+    stretcher: Optional[Stretcher],
     ratio_min: float,
     ratio_max: float,
     refine_window_sec: float,
+    flatness_threshold: float,
 ) -> np.ndarray:
     audio_2d, was_1d = _to_2d(audio)
     src_length = audio_2d.shape[0]
@@ -162,7 +191,13 @@ def _quantize_one(
         ratio_min=ratio_min,
         ratio_max=ratio_max,
     )
-    out = _slice_and_place(audio_2d, anchors, cg.total_samples)
+    out = _warp_segments(
+        audio_2d,
+        anchors,
+        cg.total_samples,
+        stretcher=stretcher,
+        flatness_threshold=flatness_threshold,
+    )
     return out[:, 0] if was_1d else out
 
 
@@ -252,17 +287,27 @@ def _assign_anchors(
     return anchors
 
 
-def _slice_and_place(
+def _warp_segments(
     audio_2d: np.ndarray,
     anchors: List[Tuple[int, int]],
     total_samples: int,
+    *,
+    stretcher: Optional[Stretcher],
+    flatness_threshold: float,
 ) -> np.ndarray:
-    """Copy each anchor-bounded segment to its destination, linear-interp
-    resampling the filler. Phase 3 will replace this with attack-preserving
-    placement plus Rubber Band / WSOLA on the filler, plus equal-power
-    crossfades at the seams. Phase 1 is good enough for the determinism
-    test because the anchors land exactly on grid lines regardless of how
-    the filler in-between is stretched.
+    """Route each inter-anchor segment to its appropriate warp.
+
+    * Identity (src_len == dst_len): direct copy.
+    * Transient-dominant: linear-interp filler stretch. Cheap, preserves
+      attack at the anchor since both endpoints are pinned.
+    * Sustained (low spectral flatness, ``stretcher`` available): WSOLA
+      time-stretch. Preserves pitch.
+    * Sustained but no stretcher: falls back to linear-interp (will pitch-
+      shift but stays correct on timing — graceful degradation).
+
+    Phase 4 will add equal-power crossfade at the seams where segments
+    meet. For Phase 3 there is no overlap zone; segments are placed
+    butt-jointed at their assigned grid lines.
     """
     n_channels = audio_2d.shape[1]
     src_n = audio_2d.shape[0]
@@ -283,11 +328,48 @@ def _slice_and_place(
             out[dst0 : dst0 + dst_len] = segment
             continue
 
-        x_old = np.arange(src_len, dtype=np.float64)
-        x_new = np.linspace(0.0, src_len - 1, dst_len, dtype=np.float64)
-        for c in range(n_channels):
-            out[dst0 : dst0 + dst_len, c] = np.interp(
-                x_new, x_old, segment[:, c].astype(np.float64)
-            ).astype(np.float32)
+        if stretcher is not None:
+            mono = segment.mean(axis=1) if n_channels > 1 else segment[:, 0]
+            klass = classify_segment(mono, threshold=flatness_threshold)
+            if klass == "sustained":
+                _place_stretched(out, segment, dst0, dst_len, src_len, stretcher)
+                continue
+
+        _place_linear_interp(out, segment, dst0, dst_len, src_len, n_channels)
 
     return out
+
+
+def _place_linear_interp(
+    out: np.ndarray,
+    segment: np.ndarray,
+    dst0: int,
+    dst_len: int,
+    src_len: int,
+    n_channels: int,
+) -> None:
+    x_old = np.arange(src_len, dtype=np.float64)
+    x_new = np.linspace(0.0, src_len - 1, dst_len, dtype=np.float64)
+    for c in range(n_channels):
+        out[dst0 : dst0 + dst_len, c] = np.interp(
+            x_new, x_old, segment[:, c].astype(np.float64)
+        ).astype(np.float32)
+
+
+def _place_stretched(
+    out: np.ndarray,
+    segment: np.ndarray,
+    dst0: int,
+    dst_len: int,
+    src_len: int,
+    stretcher: Stretcher,
+) -> None:
+    rate = dst_len / src_len
+    warped = stretcher(segment, rate)
+    if warped.ndim == 1:
+        warped = warped[:, None]
+    n_w = warped.shape[0]
+    if n_w >= dst_len:
+        out[dst0 : dst0 + dst_len] = warped[:dst_len]
+    else:
+        out[dst0 : dst0 + n_w] = warped

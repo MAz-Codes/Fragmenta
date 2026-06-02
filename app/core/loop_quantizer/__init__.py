@@ -11,20 +11,29 @@ Public API (Phase 1):
     canonical_grid(bpm, bars, *, grid, time_sig, sample_rate) -> CanonicalGrid
 """
 
+from .classify import SegmentClass, classify_segment, spectral_flatness
 from .detectors import AubioDetector, EnergyFluxDetector, OnsetDetector, default_detector
 from .grid import CanonicalGrid, canonical_grid, snap_to_grid
-from .quantizer import quantize_batch, quantize_to_loop
+from .quantizer import NO_STRETCHER, quantize_batch, quantize_to_loop
 from .refine import refine_to_transient
+from .stretch import Stretcher, WSOLAStretcher, default_stretcher
 
 __all__ = [
     "AubioDetector",
     "CanonicalGrid",
     "EnergyFluxDetector",
+    "NO_STRETCHER",
     "OnsetDetector",
+    "SegmentClass",
+    "Stretcher",
+    "WSOLAStretcher",
     "canonical_grid",
+    "classify_segment",
     "default_detector",
+    "default_stretcher",
     "quantize_batch",
     "quantize_to_loop",
     "refine_to_transient",
     "snap_to_grid",
+    "spectral_flatness",
 ]

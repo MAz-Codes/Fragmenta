@@ -30,6 +30,10 @@ numpy>=2.2.6,<3
 # Builds from source on install; pip wheel exists for cpython-3.11.
 aubio>=0.4.9,<0.5
 
+# Time-stretch (WSOLA) for sustained segments in app/core/loop_quantizer
+# (Phase 3). MIT-licensed, pure Python on numpy/scipy. See NOTICE.md.
+pytsmod>=0.3.8,<0.4
+
 matplotlib>=3.8
 pandas>=2.2,<3
 

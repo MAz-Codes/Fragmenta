@@ -30,9 +30,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.loop_quantizer import (  # noqa: E402
+    NO_STRETCHER,
     CanonicalGrid,
     EnergyFluxDetector,
     canonical_grid,
+    classify_segment,
     quantize_batch,
     quantize_to_loop,
 )
@@ -383,6 +385,117 @@ def test_aubio_byte_identical() -> None:
     print("  ✓ aubio byte-identical determinism")
 
 
+# --- Phase 3: classifier + WSOLA --------------------------------------------
+
+
+def _pytsmod_available() -> bool:
+    try:
+        import pytsmod  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def test_classifier_distinguishes_pad_from_noise() -> None:
+    """Spectral-flatness classifier separates a tonal pad from white noise."""
+    sr = SAMPLE_RATE
+    n = sr * 2
+    t = np.arange(n) / sr
+    pad = (0.4 * np.sin(2 * np.pi * 220 * t)
+           + 0.3 * np.sin(2 * np.pi * 440 * t)
+           + 0.2 * np.sin(2 * np.pi * 880 * t)).astype(np.float32)
+    rng = np.random.default_rng(13)
+    noise = (rng.standard_normal(n).astype(np.float32) * 0.3)
+
+    pad_class = classify_segment(pad)
+    noise_class = classify_segment(noise)
+    assert pad_class == "sustained", f"pad → {pad_class!r}, expected 'sustained'"
+    assert noise_class == "transient", f"noise → {noise_class!r}, expected 'transient'"
+    print(f"  ✓ classifier: pad → {pad_class}, noise → {noise_class}")
+
+
+def test_sustained_content_preserves_pitch() -> None:
+    """A pure tone quantized through the WSOLA path should keep its
+    fundamental — linear-interp resampling would shift it by the same
+    factor as the duration change.
+    """
+    if not _pytsmod_available():
+        print("  ↷ pytsmod not installed; skipping WSOLA pitch test")
+        return
+
+    sr = SAMPLE_RATE
+    src_seconds = 9.0  # > 8 s canonical, so the segment compresses by 8/9
+    n = int(sr * src_seconds)
+    t = np.arange(n) / sr
+    target_hz = 440.0
+    audio = (0.5 * np.sin(2 * np.pi * target_hz * t)).astype(np.float32)
+
+    out_wsola = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        sample_rate=sr,
+        detector=EnergyFluxDetector(),  # finds no onsets in a pure sine — by design
+    )
+    out_lin = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        sample_rate=sr,
+        detector=EnergyFluxDetector(),
+        stretcher=NO_STRETCHER,
+    )
+
+    peak_wsola = _peak_freq(out_wsola, sr)
+    peak_lin = _peak_freq(out_lin, sr)
+
+    # WSOLA should preserve pitch within an FFT bin.
+    bin_hz = sr / out_wsola.shape[0]
+    assert abs(peak_wsola - target_hz) < max(2.0, 2 * bin_hz), (
+        f"WSOLA shifted pitch: {peak_wsola:.2f} Hz != {target_hz} Hz "
+        f"(tolerance {max(2.0, 2 * bin_hz):.2f} Hz)"
+    )
+    # Linear-interp must visibly shift — the segment compresses 9 → 8,
+    # so pitch rises by 9/8 = 1.125x. Expect ~495 Hz.
+    expected_lin = target_hz * (src_seconds * sr) / out_lin.shape[0]
+    assert abs(peak_lin - expected_lin) < 5.0, (
+        f"linear-interp control: got {peak_lin:.2f}, expected {expected_lin:.2f}"
+    )
+    print(
+        f"  ✓ sustained pitch preserved: WSOLA peak {peak_wsola:.2f} Hz "
+        f"(target {target_hz}), linear-interp shifted to {peak_lin:.2f} Hz"
+    )
+
+
+def test_speed_budget() -> None:
+    """A 4-bar loop must quantize in well under 1 second on a modern CPU
+    (task_1.md speed budget).
+    """
+    sr = SAMPLE_RATE
+    src_len = sr * 9
+    positions = (np.arange(16) * (sr // 2) + 100).astype(np.int64)
+    audio = make_kick_burst(src_len, positions)
+
+    t0 = time.time()
+    out = quantize_to_loop(
+        audio, bpm=BPM, bars=BARS, grid=GRID, sample_rate=sr
+    )
+    elapsed = time.time() - t0
+    assert out.shape[0] == EXPECTED_TOTAL_SAMPLES
+    assert elapsed < 1.0, f"quantize_to_loop took {elapsed:.3f} s, budget 1.0 s"
+    print(f"  ✓ speed budget: {elapsed * 1000:.1f} ms for one 4-bar loop")
+
+
+def _peak_freq(audio: np.ndarray, sample_rate: int) -> float:
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    window = np.hanning(mono.size).astype(np.float32)
+    spec = np.abs(np.fft.rfft(mono * window))
+    freqs = np.fft.rfftfreq(mono.size, 1 / sample_rate)
+    return float(freqs[int(np.argmax(spec))])
+
+
 def _detect_and_refine_with(audio: np.ndarray, sample_rate: int, detector) -> np.ndarray:
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     raw = detector(mono.astype(np.float32), sample_rate)
@@ -477,8 +590,11 @@ def main() -> int:
         test_batch_byte_identical,
         test_aubio_multi_layer_alignment,
         test_aubio_byte_identical,
+        test_classifier_distinguishes_pad_from_noise,
+        test_sustained_content_preserves_pitch,
+        test_speed_budget,
     ]
-    print(f"\nloop_quantizer Phase 1+2 acceptance — {len(tests)} tests\n")
+    print(f"\nloop_quantizer Phase 1–3 acceptance — {len(tests)} tests\n")
     t0 = time.time()
     failures = 0
     for t in tests:

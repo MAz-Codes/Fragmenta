@@ -19,12 +19,39 @@ the active production code until acceptance.
 | 2 | Onset detector interface — `detectors.py` | ✅ |
 | 2 | Real onset detector (aubio specflux) | ✅ |
 | 2 | Real-detector multi-layer alignment test | ✅ |
-| 3 | Segment classification (transient vs sustained) | ⏳ |
-| 3 | Rubber Band / pytsmod WSOLA for sustained stretch | ⏳ |
-| 4 | Loop-wrap overhang fold-back + equal-power seam | ⏳ |
+| 3 | Segment classification — `classify.py` (spectral flatness) | ✅ |
+| 3 | pytsmod WSOLA for sustained stretch — `stretch.py` | ✅ |
+| 3 | Per-segment warp routing in quantizer | ✅ |
+| 3 | Sustained-pitch-preservation + speed-budget tests | ✅ |
+| 3b | Rubber Band stretcher (opt-in, system-binary dep) | ⏳ |
+| 4 | Equal-power crossfade at segment seams | ⏳ |
+| 4 | Loop-wrap overhang fold-back | ⏳ |
 | 4 | Parallel `quantize_batch` execution | ⏳ |
 | 5 | Wire into `/api/generate` and Phase 7 loop path | ⏳ |
 | 5 | Full acceptance test suite | ⏳ |
+
+### Phase 3 notes
+
+Each inter-anchor segment is classified by ``classify_segment`` via mean
+spectral flatness (geometric mean / arithmetic mean of the magnitude
+spectrum). Threshold 0.30 — below = sustained / tonal; above = noisy /
+transient. Sustained segments route to ``WSOLAStretcher`` (pytsmod);
+transient and identity-ratio segments use linear interpolation (cheap,
+sample-exact at the anchor points).
+
+The test suite enforces this with a 440 Hz pure-tone fixture: WSOLA
+holds the fundamental at 440 Hz exactly, while linear-interp on the same
+8/9 compression ratio shifts the peak to 495 Hz (exactly 9/8 — confirms
+the routing is exercised).
+
+``RubberBandStretcher`` is reserved for Phase 3b (same ``Stretcher``
+Protocol, opt-in via the ``stretcher=`` kwarg). It needs the
+``rubberband`` CLI binary in ``PATH`` — light desktop work, no
+production-blocker. Skipped in Phase 3 to keep the install story
+pip-only.
+
+Pass ``stretcher=NO_STRETCHER`` to opt out of WSOLA — useful for
+measurement / comparing against the pure slice-and-place baseline.
 
 ### Phase 2 notes
 
@@ -91,7 +118,7 @@ Phase 1:
 | numpy   | (existing pin) | BSD-3-Clause | array ops, sliding-window framing |
 | soundfile | (existing pin) | BSD-3-Clause | CLI I/O only |
 
-Phase 2 (this commit):
+Phase 2:
 
 | Library | Version | License | Used for |
 |---------|---------|---------|----------|
@@ -100,12 +127,19 @@ Phase 2 (this commit):
 aubio's GPL-3.0 is compatible with this project's AGPL-3.0. The combined
 work is governed by AGPL-3.0; source remains available per AGPL §13.
 
-Considered but not used in Phase 2:
+Phase 3 (this commit):
+
+| Library | Version | License | Used for |
+|---------|---------|---------|----------|
+| pytsmod | `>=0.3.8,<0.4` | MIT | WSOLA time-stretch for sustained segments |
+
+Considered but not used:
 
 | Library | License | Status |
 |---------|---------|--------|
 | madmom | BSD-3-Clause | broken on Python 3.11 (Cython 0.27 build) |
 | Essentia | AGPL-3.0 | install-heavy; no Linux pip wheel; deferred |
+| Rubber Band (via pyrubberband) | GPL-2+ | Phase 3b — needs `rubberband` CLI in PATH |
 
 Planned for Phase 3:
 
