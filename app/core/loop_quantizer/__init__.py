@@ -34,7 +34,7 @@ from .detectors import AubioDetector, EnergyFluxDetector, OnsetDetector, default
 from .grid import CanonicalGrid, canonical_grid, snap_to_grid
 from .quantizer import NO_STRETCHER, quantize_batch, quantize_to_loop, quantize_wav_file
 from .refine import refine_to_transient
-from .stretch import Stretcher, WSOLAStretcher, default_stretcher
+from .stretch import RubberBandStretcher, Stretcher, WSOLAStretcher, default_stretcher
 
 
 def loop_quantizer_enabled() -> bool:
@@ -57,6 +57,7 @@ __all__ = [
     "EnergyFluxDetector",
     "NO_STRETCHER",
     "OnsetDetector",
+    "RubberBandStretcher",
     "SegmentClass",
     "Stretcher",
     "WSOLAStretcher",

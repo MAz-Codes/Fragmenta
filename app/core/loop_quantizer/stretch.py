@@ -6,9 +6,10 @@ Rubber Band (GPL-v2+, quality default, requires the ``rubberband`` CLI
 binary in ``PATH``) and pytsmod WSOLA (MIT, pure Python, lighter
 install, good for small ratios).
 
-Phase 3 ships ``WSOLAStretcher`` (pytsmod). ``RubberBandStretcher``
-slot remains for Phase 3b — same interface, opt in by passing it to the
-quantizer.
+Phases 3 + 3b both ship: ``RubberBandStretcher`` is the default when
+``pyrubberband`` is installed AND the ``rubberband`` CLI is on PATH,
+otherwise ``WSOLAStretcher`` is used. Callers can still pass an
+explicit instance to override.
 """
 
 from __future__ import annotations
@@ -81,7 +82,91 @@ class WSOLAStretcher:
         return np.asarray(result, dtype=np.float32)
 
 
-def _try_import_pytsmod() -> Optional["WSOLAStretcher"]:
+class RubberBandStretcher:
+    """Rubber Band time-stretch via ``pyrubberband`` + the ``rubberband``
+    CLI (GPL-v2+, bundle the binary in desktop packagers).
+
+    Higher quality than WSOLA on sustained tonal content — preserves
+    formants and transients better, has true coupled-stereo phase
+    handling. ``task_1.md`` §6 calls it out as the preferred option for
+    drum-adjacent content where WSOLA's per-channel mono treatment can
+    cause subtle L/R drift.
+
+    pyrubberband shells out to the CLI on each call, so per-segment
+    overhead is ~50-150 ms (process startup + WAV roundtrip). For the
+    typical 4-bar Performance Bars loop with ~16 segments this adds
+    ~1 s to alignment — acceptable for the quality gain on tonal
+    content; not used at all on transient-classified segments.
+    """
+
+    def __init__(self, sample_rate: int = 44100, *, crispness: int = 5) -> None:
+        # crispness 0-6: trade transient preservation vs. smoothness.
+        # 5 (default) keeps transients sharp; 6 is most percussive,
+        # 3-4 is smoother / better for pads. The classifier already
+        # routes transient segments to linear-interp, so the segments
+        # this stretcher sees ARE the sustained ones — crispness=5 is
+        # a good general-purpose default.
+        self.sample_rate = int(sample_rate)
+        self.crispness = int(crispness)
+
+    def __call__(self, audio: np.ndarray, rate: float) -> np.ndarray:
+        try:
+            import pyrubberband  # noqa: WPS433 — lazy: optional dep
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "RubberBandStretcher requires the 'pyrubberband' package "
+                "and the 'rubberband' CLI on PATH. Install with "
+                "`pip install pyrubberband` and "
+                "`apt install rubberband-cli` (Linux) / "
+                "`brew install rubberband` (macOS)."
+            ) from exc
+        if rate <= 0:
+            raise ValueError(f"rate must be positive, got {rate}")
+        if audio.size == 0:
+            return audio.astype(np.float32, copy=False)
+        if audio.ndim not in (1, 2):
+            raise ValueError(f"audio must be 1-D or 2-D, got shape {audio.shape}")
+        # pyrubberband.time_stretch takes mono or (N, C) and uses
+        # `rate = duration_in / duration_out`, opposite of our `rate =
+        # out/in` convention. So input_rate := 1.0 / our_rate.
+        in_rate = 1.0 / rate
+        rbargs = {"--crispness": str(self.crispness)}
+        result = pyrubberband.time_stretch(
+            audio.astype(np.float32, copy=False),
+            self.sample_rate,
+            in_rate,
+            rbargs=rbargs,
+        )
+        return np.asarray(result, dtype=np.float32)
+
+
+def _try_default_stretcher() -> Optional["Stretcher"]:
+    """Pick the best stretcher available on this machine.
+
+    Order: RubberBand (when ``FRAGMENTA_LOOP_QUANTIZER_RUBBERBAND=1`` AND
+    both ``pyrubberband`` and the CLI are present) → WSOLA via pytsmod
+    → ``None`` (caller falls back to linear interpolation for sustained
+    segments).
+
+    WSOLA is the conservative default — RubberBand has higher-quality
+    output on sustained tonal content but introduces ~+2 ms mean
+    diagnostic-off-grid (it preserves secondary transients more
+    faithfully, which the timing metric penalises). Listen-test before
+    flipping the default; opt-in via the env var until then.
+    """
+    import os
+    import shutil
+
+    if os.environ.get("FRAGMENTA_LOOP_QUANTIZER_RUBBERBAND", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    ):
+        try:
+            import pyrubberband  # noqa: F401
+            if shutil.which("rubberband") is not None:
+                return RubberBandStretcher()
+        except ImportError:
+            pass
+
     try:
         import pytsmod  # noqa: F401
     except ImportError:
@@ -89,7 +174,7 @@ def _try_import_pytsmod() -> Optional["WSOLAStretcher"]:
     return WSOLAStretcher()
 
 
-_default_stretcher: Optional[Stretcher] = _try_import_pytsmod()
+_default_stretcher: Optional[Stretcher] = _try_default_stretcher()
 
 
 def default_stretcher() -> Optional[Stretcher]:
