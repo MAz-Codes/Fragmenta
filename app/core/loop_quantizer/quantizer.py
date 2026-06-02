@@ -41,7 +41,12 @@ from .refine import refine_to_transient
 
 DEFAULT_RATIO_MIN = 0.80
 DEFAULT_RATIO_MAX = 1.25
-DEFAULT_REFINE_WINDOW_SEC = 0.015
+# ±25 ms refine window. v2 used ±30 ms; the Phase 1 EnergyFluxDetector
+# works at ±15 ms because its frame error is small. Phase 2's AubioDetector
+# (specflux) fires up to ~20 ms before the actual rising edge, so we open
+# the window a bit. 25 ms still can't reach a neighbour at any musically
+# plausible tempo (32nd notes at 240 BPM = 62.5 ms apart).
+DEFAULT_REFINE_WINDOW_SEC = 0.025
 
 
 def quantize_to_loop(

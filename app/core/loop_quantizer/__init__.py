@@ -11,12 +11,13 @@ Public API (Phase 1):
     canonical_grid(bpm, bars, *, grid, time_sig, sample_rate) -> CanonicalGrid
 """
 
-from .detectors import EnergyFluxDetector, OnsetDetector, default_detector
+from .detectors import AubioDetector, EnergyFluxDetector, OnsetDetector, default_detector
 from .grid import CanonicalGrid, canonical_grid, snap_to_grid
 from .quantizer import quantize_batch, quantize_to_loop
 from .refine import refine_to_transient
 
 __all__ = [
+    "AubioDetector",
     "CanonicalGrid",
     "EnergyFluxDetector",
     "OnsetDetector",

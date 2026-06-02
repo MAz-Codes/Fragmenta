@@ -4,17 +4,22 @@
 Essentia, madmom, or aubio. **librosa is explicitly excluded** from this
 module ("Keep librosa only for the annotation tier, not here.").
 
-Phase 1 (this commit) only ships ``EnergyFluxDetector``, a pure-numpy
-placeholder good enough for synthetic test signals where transients are
-sharp and well-separated. Phase 2 will add ``MadmomDetector`` (BSD,
-RNN-based) and optionally ``EssentiaSuperFluxDetector`` /
-``AubioDetector`` behind the same interface. Use ``EnergyFluxDetector``
-for tests and CLI demos only — not for real audio.
+Phase 2 ships ``AubioDetector`` (GPL-3, fast C bindings via the ``aubio``
+package — AGPL-3-compatible). madmom is currently broken on Python 3.11
+(its Cython 0.27 build step fails — long-standing upstream issue);
+Essentia is install-heavy and deferred. SuperFlux specifically is not
+exposed through ``aubio.onset()`` (it lives under ``aubio.specdesc`` and
+needs its own peak-picker), so this wrapper defaults to ``specflux`` —
+the spectral-flux algorithm SuperFlux extends. Good enough for real
+audio; a follow-up can wire true SuperFlux via ``specdesc`` if needed.
+
+``EnergyFluxDetector`` (pure numpy) remains as a no-dep fallback for
+tests and for environments where aubio cannot be installed.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -96,13 +101,83 @@ class EnergyFluxDetector:
         return np.asarray(peaks, dtype=np.int64)
 
 
-_default_detector: OnsetDetector = EnergyFluxDetector()
+class AubioDetector:
+    """Onset detector backed by aubio.
+
+    aubio is GPL-3.0; compatible with this project's AGPL-3.0 license. The
+    library wraps libaubio (C) — fast, allocation-light, deterministic.
+    Configure attribution in ``NOTICE.md``.
+
+    Default method is ``specflux`` (spectral flux). aubio's onset reporter
+    fires at the FIRST frame whose flux exceeds the threshold, which for
+    a sharp transient lands a few hops BEFORE the actual rising edge —
+    typically 15–20 ms early. The quantizer's ``refine_to_transient``
+    pass (default ±25 ms) brings each onset back to sample accuracy.
+
+    Methods passed verbatim to ``aubio.onset(...)``: ``energy``, ``hfc``,
+    ``complex``, ``phase``, ``specdiff``, ``kl``, ``mkl``, ``specflux``.
+    True ``superflux`` is not currently reachable through aubio.onset.
+    """
+
+    def __init__(
+        self,
+        *,
+        method: str = "specflux",
+        buf_size: int = 1024,
+        hop_size: int = 512,
+        threshold: float = 0.30,
+        min_ioi_ms: float = 30.0,
+    ) -> None:
+        self.method = method
+        self.buf_size = int(buf_size)
+        self.hop_size = int(hop_size)
+        self.threshold = float(threshold)
+        self.min_ioi_ms = float(min_ioi_ms)
+
+    def __call__(self, mono: np.ndarray, sample_rate: int) -> np.ndarray:
+        try:
+            import aubio  # noqa: WPS433 — lazy: aubio is an optional dep
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "AubioDetector requires the 'aubio' package; install with "
+                "`pip install aubio` (GPL-3, see NOTICE.md)."
+            ) from exc
+        if mono.ndim != 1:
+            raise ValueError("AubioDetector expects mono input")
+        if mono.dtype != np.float32:
+            mono = mono.astype(np.float32)
+
+        onset = aubio.onset(self.method, self.buf_size, self.hop_size, int(sample_rate))
+        onset.set_threshold(self.threshold)
+        onset.set_minioi_ms(self.min_ioi_ms)
+
+        positions: list[int] = []
+        n = mono.size
+        hop = self.hop_size
+        end = n - hop + 1
+        for i in range(0, end, hop):
+            frame = np.ascontiguousarray(mono[i : i + hop])
+            if onset(frame):
+                positions.append(int(onset.get_last()))
+        return np.asarray(positions, dtype=np.int64)
+
+
+def _try_import_aubio() -> Optional["AubioDetector"]:
+    try:
+        import aubio  # noqa: F401
+    except ImportError:
+        return None
+    return AubioDetector()
+
+
+_default_detector: OnsetDetector = _try_import_aubio() or EnergyFluxDetector()
 
 
 def default_detector() -> OnsetDetector:
     """The detector used when no explicit detector is passed to the quantizer.
 
-    Returns the Phase 1 placeholder. Phase 2 will switch this to a real
-    detector (madmom-first) once it lands.
+    Prefers ``AubioDetector`` when aubio is installed (the Phase 2
+    production path). Falls back to ``EnergyFluxDetector`` — the
+    pure-numpy placeholder — when aubio is unavailable.
     """
     return _default_detector

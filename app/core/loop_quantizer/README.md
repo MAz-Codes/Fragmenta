@@ -13,17 +13,39 @@ the active production code until acceptance.
 | 1 | Canonical grid (pure, deterministic) — `grid.py` | ✅ |
 | 1 | `quantize_to_loop` / `quantize_batch` entries — `quantizer.py` | ✅ (minimal) |
 | 1 | Sample-accurate refinement — `refine.py` | ✅ |
-| 1 | Onset detector interface — `detectors.py` | ✅ (placeholder) |
 | 1 | Slice-and-place with §5 guards | ✅ (linear-interp filler) |
 | 1 | Determinism + multi-layer-alignment test | ✅ |
 | 1 | CLI for manual testing | ✅ |
-| 2 | Real onset detector (madmom / Essentia / aubio) | ⏳ |
+| 2 | Onset detector interface — `detectors.py` | ✅ |
+| 2 | Real onset detector (aubio specflux) | ✅ |
+| 2 | Real-detector multi-layer alignment test | ✅ |
 | 3 | Segment classification (transient vs sustained) | ⏳ |
 | 3 | Rubber Band / pytsmod WSOLA for sustained stretch | ⏳ |
 | 4 | Loop-wrap overhang fold-back + equal-power seam | ⏳ |
 | 4 | Parallel `quantize_batch` execution | ⏳ |
 | 5 | Wire into `/api/generate` and Phase 7 loop path | ⏳ |
 | 5 | Full acceptance test suite | ⏳ |
+
+### Phase 2 notes
+
+`AubioDetector` uses aubio's `specflux` (spectral flux) by default. True
+SuperFlux is not currently reachable through `aubio.onset()` — it lives
+in `aubio.specdesc` and needs its own peak picker; a follow-up can wire
+that if specflux proves inadequate on real SA3 output. madmom is the
+other detector named in `task_1.md` §2 but cannot install on Python 3.11
+(Cython build failure, long-standing upstream issue); we'll revisit if a
+patched fork lands or we change Python versions. Essentia is also
+allowed by §2 but install-heavy (no pip wheel on Linux); deferred.
+
+The default refine window opened from ±15 ms (Phase 1) to ±25 ms because
+aubio's spectral-flux peak fires up to ~20 ms before the rising edge.
+±25 ms still can't reach a neighbour at any musically plausible tempo
+(32nd notes at 240 BPM = 62.5 ms apart).
+
+`default_detector()` resolves to `AubioDetector()` when `aubio` is
+importable and `EnergyFluxDetector()` otherwise — production paths get
+the real detector, environments that can't install aubio (CI smoke,
+docker-without-aubio) keep working at degraded quality.
 
 ## Public API
 
@@ -62,22 +84,28 @@ anchored onsets land on the same canonical samples.
 
 ## Dependencies and licenses
 
-Phase 1 (this commit):
+Phase 1:
 
 | Library | Version | License | Used for |
 |---------|---------|---------|----------|
 | numpy   | (existing pin) | BSD-3-Clause | array ops, sliding-window framing |
 | soundfile | (existing pin) | BSD-3-Clause | CLI I/O only |
 
-No new pins. The Phase 1 detector is pure numpy.
+Phase 2 (this commit):
 
-Planned for Phase 2 (subject to install-story verification on Python 3.11):
+| Library | Version | License | Used for |
+|---------|---------|---------|----------|
+| aubio   | `>=0.4.9,<0.5` | GPL-3.0+ | onset detection (`specflux`) |
 
-| Library | License | Compatible with AGPL-3.0 host? |
-|---------|---------|-------------------------------|
-| madmom | BSD-3-Clause | yes (permissive) |
-| Essentia | AGPLv3 | yes (same license) |
-| aubio | GPL-3.0 | yes (GPL is AGPL-3.0-compatible) |
+aubio's GPL-3.0 is compatible with this project's AGPL-3.0. The combined
+work is governed by AGPL-3.0; source remains available per AGPL §13.
+
+Considered but not used in Phase 2:
+
+| Library | License | Status |
+|---------|---------|--------|
+| madmom | BSD-3-Clause | broken on Python 3.11 (Cython 0.27 build) |
+| Essentia | AGPL-3.0 | install-heavy; no Linux pip wheel; deferred |
 
 Planned for Phase 3:
 

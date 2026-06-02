@@ -1,11 +1,14 @@
 #!/usr/bin/env python
-"""Phase 1 acceptance tests for ``app.core.loop_quantizer``.
+"""Phase 1+2 acceptance tests for ``app.core.loop_quantizer``.
 
 These tests prove the determinism property — the headline of task_1.md:
 *multiple clips processed independently at the same BPM/bars/grid must
-align sample-exactly*. They do **not** yet exercise the DSP-quality
-pieces (real onset detection, segment classification, Rubber Band
-stretch, loop-wrap fold-back) — those land in Phases 2/3/4.
+align sample-exactly*. Phase 1 covers the canonical grid, slice-and-place
+math, and §5 guards using an ``EnergyFluxDetector`` placeholder; Phase 2
+adds tests against ``AubioDetector`` (the production detector) on
+realistic kick-burst signals. The DSP-quality pieces still pending —
+segment classification, Rubber Band stretch, loop-wrap fold-back — land
+in Phases 3/4.
 
 Run::
 
@@ -117,7 +120,12 @@ def test_quantize_length_exact() -> None:
     n = SAMPLE_RATE * 9  # 9 s of noise, longer than the 8 s canonical loop
     noise = (rng.standard_normal(n).astype(np.float32) * 0.1)
     out = quantize_to_loop(
-        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+        noise,
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        sample_rate=SAMPLE_RATE,
+        detector=EnergyFluxDetector(),
     )
     assert out.shape[0] == EXPECTED_TOTAL_SAMPLES, (
         f"length mismatch: {out.shape[0]} != {EXPECTED_TOTAL_SAMPLES}"
@@ -131,8 +139,13 @@ def test_quantize_byte_identical_across_runs() -> None:
     rng = np.random.default_rng(7)
     n = SAMPLE_RATE * 9
     noise = (rng.standard_normal(n).astype(np.float32) * 0.1)
-    a = quantize_to_loop(noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
-    b = quantize_to_loop(noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
+    det = EnergyFluxDetector()
+    a = quantize_to_loop(
+        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    )
+    b = quantize_to_loop(
+        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    )
     assert np.array_equal(a, b), "quantize_to_loop must be deterministic"
     print("  ✓ byte-identical determinism (single-clip)")
 
@@ -179,6 +192,7 @@ def test_multi_layer_alignment() -> None:
         grid=GRID,
         time_sig=TIME_SIG,
         sample_rate=SAMPLE_RATE,
+        detector=EnergyFluxDetector(),
     )
     out1, out2 = outs
     assert out1.shape[0] == cg.total_samples
@@ -224,15 +238,162 @@ def test_batch_byte_identical() -> None:
     src_len = SAMPLE_RATE * 9
     a_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
     b_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
+    det = EnergyFluxDetector()
     run1 = quantize_batch(
-        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
     )
     run2 = quantize_batch(
-        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
     )
     assert np.array_equal(run1[0], run2[0]), "batch run 1 clip 0 not deterministic"
     assert np.array_equal(run1[1], run2[1]), "batch run 1 clip 1 not deterministic"
     print("  ✓ byte-identical determinism (batch)")
+
+
+# --- Phase 2: real detector (aubio) ---------------------------------------
+
+
+def _aubio_available() -> bool:
+    try:
+        import aubio  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def make_kick_burst(
+    n_samples: int,
+    positions: np.ndarray,
+    *,
+    freq_hz: float = 80.0,
+    duration_ms: float = 100.0,
+    decay_rate: float = 30.0,
+    amplitude: float = 0.9,
+    sr: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Realistic kick-like sine burst — aubio's spectral detectors actually
+    fire on these, unlike the 3 ms impulses used by the EnergyFlux tests.
+    """
+    out = np.zeros(n_samples, dtype=np.float32)
+    duration = int(duration_ms * sr / 1000.0)
+    t = np.arange(duration) / sr
+    env = (amplitude * np.exp(-t * decay_rate)).astype(np.float32)
+    sine = np.sin(2 * np.pi * freq_hz * t).astype(np.float32)
+    kick = sine * env
+    for p in positions:
+        p = int(p)
+        if p < 0 or p >= n_samples:
+            continue
+        end = min(n_samples, p + duration)
+        out[p:end] += kick[: end - p]
+    return out
+
+
+def test_aubio_multi_layer_alignment() -> None:
+    """Real production detector (AubioDetector / specflux) on kick-burst
+    layers. Tighter tolerance is impossible with spectral flux because the
+    detector itself fires up to ~20 ms before the rising edge; the refiner
+    drags it back but cannot beat its own window. We hold the bar at 64
+    samples (~1.5 ms) — well under one 16th-note for any musical tempo.
+    """
+    if not _aubio_available():
+        print("  ↷ aubio not installed; skipping AubioDetector test")
+        return
+    from app.core.loop_quantizer import AubioDetector
+
+    AUBIO_TOLERANCE = 64  # samples (~1.5 ms at 44.1 kHz)
+
+    cg = canonical_grid(
+        bpm=BPM, bars=BARS, grid=GRID, time_sig=TIME_SIG, sample_rate=SAMPLE_RATE
+    )
+    grid_lines = np.asarray(cg.grid_lines)
+    beat_samples = np.asarray(cg.beat_samples)
+    src_len = cg.total_samples + int(0.2 * SAMPLE_RATE)
+
+    rng = np.random.default_rng(2026)
+    kick_jitter = rng.integers(-220, 221, size=beat_samples.size - 1)
+    kick_positions = beat_samples[:-1] + kick_jitter
+    layer1 = make_kick_burst(src_len, kick_positions, freq_hz=80.0)
+
+    eighth_lines = grid_lines[:-1:2]
+    hat_jitter = rng.integers(-300, 301, size=eighth_lines.size)
+    hat_positions = eighth_lines + hat_jitter
+    # Hi-hat-ish: noise burst, short. Use kick_burst with high freq + short
+    # decay as a stand-in.
+    layer2 = make_kick_burst(
+        src_len, hat_positions, freq_hz=6000.0, duration_ms=30.0, decay_rate=120.0, amplitude=0.5
+    )
+
+    det = AubioDetector()
+    outs = quantize_batch(
+        [layer1, layer2],
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        time_sig=TIME_SIG,
+        sample_rate=SAMPLE_RATE,
+        detector=det,
+    )
+    out1, out2 = outs
+    assert out1.shape[0] == cg.total_samples
+    assert out2.shape[0] == cg.total_samples
+
+    refined1 = _detect_and_refine_with(out1, cg.sample_rate, det)
+    refined2 = _detect_and_refine_with(out2, cg.sample_rate, det)
+    assert refined1.size > 0, "AubioDetector found no onsets in layer 1 output"
+    assert refined2.size > 0, "AubioDetector found no onsets in layer 2 output"
+
+    max_dev1 = _max_distance_to_grid(refined1, grid_lines)
+    max_dev2 = _max_distance_to_grid(refined2, grid_lines)
+    assert max_dev1 <= AUBIO_TOLERANCE, (
+        f"aubio layer 1 max grid dev {max_dev1} > {AUBIO_TOLERANCE}"
+    )
+    assert max_dev2 <= AUBIO_TOLERANCE, (
+        f"aubio layer 2 max grid dev {max_dev2} > {AUBIO_TOLERANCE}"
+    )
+    print(
+        f"  ✓ aubio multi-layer alignment: {refined1.size}+{refined2.size} onsets, "
+        f"max grid dev={max(max_dev1, max_dev2)} samp "
+        f"(tolerance {AUBIO_TOLERANCE})"
+    )
+
+
+def test_aubio_byte_identical() -> None:
+    """AubioDetector must be deterministic — the C library has no
+    randomness, so two runs on the same input produce identical output.
+    """
+    if not _aubio_available():
+        print("  ↷ aubio not installed; skipping AubioDetector determinism")
+        return
+    from app.core.loop_quantizer import AubioDetector
+
+    src_len = SAMPLE_RATE * 9
+    rng = np.random.default_rng(99)
+    positions = (np.arange(8) * (SAMPLE_RATE // 2) + 100).astype(np.int64)
+    audio = make_kick_burst(src_len, positions)
+
+    det = AubioDetector()
+    a = quantize_to_loop(
+        audio, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    )
+    b = quantize_to_loop(
+        audio, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    )
+    assert np.array_equal(a, b), "AubioDetector path must be deterministic"
+    print("  ✓ aubio byte-identical determinism")
+
+
+def _detect_and_refine_with(audio: np.ndarray, sample_rate: int, detector) -> np.ndarray:
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    raw = detector(mono.astype(np.float32), sample_rate)
+    if raw.size == 0:
+        return raw
+    refined = np.fromiter(
+        (refine_to_transient(mono, int(o), sample_rate, window_sec=0.025) for o in raw),
+        dtype=np.int64,
+        count=raw.size,
+    )
+    return np.unique(refined)
 
 
 # --- analysis helpers -----------------------------------------------------
@@ -314,8 +475,10 @@ def main() -> int:
         test_quantize_byte_identical_across_runs,
         test_multi_layer_alignment,
         test_batch_byte_identical,
+        test_aubio_multi_layer_alignment,
+        test_aubio_byte_identical,
     ]
-    print(f"\nloop_quantizer Phase 1 acceptance — {len(tests)} tests\n")
+    print(f"\nloop_quantizer Phase 1+2 acceptance — {len(tests)} tests\n")
     t0 = time.time()
     failures = 0
     for t in tests:

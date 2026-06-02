@@ -25,6 +25,11 @@ scipy>=1.13,<2
 numba>=0.60,<1
 numpy>=2.2.6,<3
 
+# Onset detection for app/core/loop_quantizer (Phase 2). aubio is GPL-3,
+# compatible with this project's AGPL-3.0 — see NOTICE.md for attribution.
+# Builds from source on install; pip wheel exists for cpython-3.11.
+aubio>=0.4.9,<0.5
+
 matplotlib>=3.8
 pandas>=2.2,<3
 

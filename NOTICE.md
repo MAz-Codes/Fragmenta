@@ -72,6 +72,10 @@ The following Python packages are distributed with Fragmenta:
 - **librosa** - ISC License - https://github.com/librosa/librosa
 - **soundfile** - BSD-3-Clause License - https://github.com/bastibe/python-soundfile
 - **scipy** - BSD-3-Clause License - https://github.com/scipy/scipy
+- **aubio** - GNU General Public License v3.0 or later - https://github.com/aubio/aubio
+  - Used by `app/core/loop_quantizer/` for onset detection (specflux method).
+  - GPL is compatible with this project's AGPL-3.0 license; the combined work
+    is governed by AGPL-3.0. Source remains available per AGPL §13.
 
 ### Web Framework & API
 - **Flask** - BSD-3-Clause License - https://github.com/pallets/flask
