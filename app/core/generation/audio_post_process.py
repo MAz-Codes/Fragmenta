@@ -50,6 +50,18 @@ def beatsync_v2_enabled() -> bool:
     )
 
 
+def _warp_enabled() -> bool:
+    """Per-beat (Ableton 'Beats'-style) warp gate — OFF by default.
+
+    The warp is only as reliable as librosa's per-beat detection; on real audio
+    a single mis-detected beat scrambles the groove. Anchor + exact-crop already
+    lands real loops at ~3 ms, so the warp is opt-in for experimentation only.
+    Enable with ``FRAGMENTA_BEATSYNC_WARP=1``."""
+    return os.environ.get("FRAGMENTA_BEATSYNC_WARP", "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 # Liberal module-default range for `_best_stretch_rate`. Kept wide so any
 # future force-warp caller has room; the bars-mode drift-correction path
 # (`align_to_grid`) overrides with tighter bounds below.
@@ -179,10 +191,14 @@ def _stage_a_v2(
     beats = beats[beats >= 0]
 
     drift = _grid_drift_samples(beats)
-    if drift > _WARP_DRIFT_MIN_MS * sr / 1000.0 and len(beats) >= 2:
-        # Non-uniform intra-loop drift: stretch each inter-beat segment onto the
-        # exact grid. Reduces the drift a single global stretch cannot (limited
-        # by beat-detector precision), and conforms tempo in the same pass.
+    if (_warp_enabled() and drift > _WARP_DRIFT_MIN_MS * sr / 1000.0
+            and len(beats) >= 2):
+        # OFF BY DEFAULT (FRAGMENTA_BEATSYNC_WARP). Per-beat warp is only as good
+        # as librosa's beat detection — when detection is even slightly off it
+        # warps the wrong points onto the grid and SCRAMBLES the groove on real
+        # audio. Measured gain on clean drift was marginal (it merely halved it
+        # and added jitter), while anchor + exact-crop already lands real loops
+        # at ~3 ms. So it's opt-in for experiments, not the default path.
         audio = _beat_sync_warp(audio, beats, spb)
         logger.info("stage_a_v2: anchored + beat-sync warp (intra-loop drift "
                     "%.1f ms)", drift / sr * 1000)
