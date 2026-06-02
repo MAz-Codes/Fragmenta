@@ -387,6 +387,7 @@ def _quantize_one(
                 ratio_max=DEFAULT_BEAT_TRACK_RATIO_MAX,
                 tolerance_samples=tolerance_samp,
             )
+            anchor_candidates = np.union1d(beats, refined)
         else:
             # aubio.tempo failed the BPM sanity check (locked onto wrong
             # subdivision, octave-error, or low confidence). Fall back to
@@ -406,6 +407,26 @@ def _quantize_one(
                 tolerance_samples=tolerance_samp,
                 hierarchy=hierarchy,
             )
+            anchor_candidates = refined
+
+        # Downbeat post-pass: ensure every bar boundary has an anchor.
+        # Bar-level structure is the strongest metrical position in a
+        # loop; pinning it explicitly stops late-loop phase drift.
+        bar_stride = cg.time_sig[0] * (cg.grid // 4)
+        bar_dst_targets = cg.grid_lines[::bar_stride]
+        bar_tolerance_samp = int(
+            round(beat_track_tolerance_ms * 0.001 * cg.sample_rate)
+        )
+        anchors = _force_bar_boundary_anchors(
+            anchors,
+            anchor_candidates,
+            bar_dst_targets=bar_dst_targets,
+            src_length=src_length,
+            total_samples=cg.total_samples,
+            tolerance_samples=bar_tolerance_samp,
+            ratio_min=DEFAULT_BEAT_TRACK_RATIO_MIN,
+            ratio_max=DEFAULT_BEAT_TRACK_RATIO_MAX,
+        )
     elif tempo_only:
         # Boundary anchors only — head-trim already happened above, so
         # the first transient is at sample 0; the closing anchor crops/
@@ -525,6 +546,96 @@ def _extract_beats(
     prefix.reverse()
     all_beats = np.asarray(prefix + beats, dtype=np.int64)
     return np.unique(all_beats)
+
+
+def _force_bar_boundary_anchors(
+    anchors: List[Tuple[int, int]],
+    candidate_src: np.ndarray,
+    *,
+    bar_dst_targets: np.ndarray,
+    src_length: int,
+    total_samples: int,
+    tolerance_samples: int,
+    ratio_min: float,
+    ratio_max: float,
+) -> List[Tuple[int, int]]:
+    """Force-anchor every bar boundary that the primary pass left unanchored.
+
+    Each downbeat (start of a bar) is the strongest metrical position in
+    the loop — if the primary anchor pass left one without a nearby
+    anchor (e.g. beat-track missed a bar because aubio.tempo's phase
+    drifted, or the hierarchical fallback dropped it via ratio clamp),
+    bar-level structure breaks down. This post-pass walks each target
+    bar boundary; if no existing anchor lands within ``tolerance_samples``
+    of it, it finds the nearest candidate source position (refined onset
+    or beat) and inserts ``(src, bar_dst)`` — provided the new anchor
+    respects monotonicity and the §5 ratio clamp against its neighbours.
+
+    First and last bar boundaries are skipped — they're already pinned
+    by the (0, 0) and (src_length, total_samples) boundary anchors.
+    """
+    if candidate_src.size == 0 or bar_dst_targets.size <= 2:
+        return anchors
+    if len(anchors) < 2:
+        return anchors
+
+    candidates_sorted = np.sort(candidate_src.astype(np.int64))
+    out = list(anchors)
+
+    for bar_dst in bar_dst_targets[1:-1]:  # skip endpoints
+        bar_dst_i = int(bar_dst)
+        # Is there an existing anchor close enough in dst?
+        dsts = np.asarray([a[1] for a in out], dtype=np.int64)
+        if np.min(np.abs(dsts - bar_dst_i)) <= tolerance_samples:
+            continue  # bar boundary already covered
+
+        # Locate the gap in `out` that contains bar_dst.
+        idx = int(np.searchsorted(dsts, bar_dst_i))
+        if idx == 0 or idx >= len(out):
+            continue
+        prev_src, prev_dst = out[idx - 1]
+        next_src, next_dst = out[idx]
+        # The new source candidate must lie strictly between prev_src and next_src.
+        # Use proportional position in the gap as the search target.
+        gap_dst = next_dst - prev_dst
+        gap_src = next_src - prev_src
+        if gap_dst <= 0 or gap_src <= 0:
+            continue
+        target_src = prev_src + int(
+            round((bar_dst_i - prev_dst) * gap_src / gap_dst)
+        )
+        # Find the closest source candidate to target_src, strictly inside
+        # (prev_src, next_src) and within tolerance.
+        lo = int(np.searchsorted(candidates_sorted, prev_src, side="right"))
+        hi = int(np.searchsorted(candidates_sorted, next_src, side="left"))
+        if lo >= hi:
+            continue
+        window = candidates_sorted[lo:hi]
+        j = int(np.argmin(np.abs(window - target_src)))
+        src_i = int(window[j])
+        if abs(src_i - target_src) > tolerance_samples:
+            continue
+        if src_i <= prev_src or src_i >= next_src:
+            continue
+
+        # Ratio clamp against both neighbours.
+        left_src = src_i - prev_src
+        left_dst = bar_dst_i - prev_dst
+        right_src = next_src - src_i
+        right_dst = next_dst - bar_dst_i
+        if left_src <= 0 or left_dst <= 0 or right_src <= 0 or right_dst <= 0:
+            continue
+        left_ratio = left_dst / left_src
+        right_ratio = right_dst / right_src
+        if (
+            left_ratio < ratio_min or left_ratio > ratio_max
+            or right_ratio < ratio_min or right_ratio > ratio_max
+        ):
+            continue
+
+        out.insert(idx, (src_i, bar_dst_i))
+
+    return out
 
 
 def _assign_anchors_beats(
