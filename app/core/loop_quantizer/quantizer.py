@@ -30,6 +30,8 @@ What's NOT in Phase 1, deferred per the project plan:
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -49,6 +51,11 @@ DEFAULT_RATIO_MAX = 1.25
 # the window a bit. 25 ms still can't reach a neighbour at any musically
 # plausible tempo (32nd notes at 240 BPM = 62.5 ms apart).
 DEFAULT_REFINE_WINDOW_SEC = 0.025
+# Loop-wrap crossfade: tail-head equal-power blend so the wrap from
+# out[total-1] → out[0] doesn't click on content that wasn't generated to
+# loop seamlessly. ~5 ms is enough to mask the discontinuity without
+# noticeably smearing the loop boundary. 0 disables.
+DEFAULT_LOOP_WRAP_CROSSFADE_MS = 5.0
 # Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
 # when pytsmod is installed (e.g. when measuring pure slice-and-place
 # behaviour). Distinguishable from ``None`` which means "use default".
@@ -69,6 +76,7 @@ def quantize_to_loop(
     ratio_max: float = DEFAULT_RATIO_MAX,
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
     flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
+    loop_wrap_crossfade_ms: float = DEFAULT_LOOP_WRAP_CROSSFADE_MS,
 ) -> np.ndarray:
     """Quantize one clip to the canonical grid for ``(bpm, bars, grid, …)``.
 
@@ -79,6 +87,8 @@ def quantize_to_loop(
     Pass ``stretcher=NO_STRETCHER`` to disable WSOLA and force linear-interp
     for all segments (Phase 1 behaviour, useful for measurement). ``None``
     resolves to ``default_stretcher()`` (WSOLA if pytsmod is installed).
+    Set ``loop_wrap_crossfade_ms=0`` to disable the tail-head crossfade
+    (e.g., when the source is known to loop cleanly already).
     """
     cg = canonical_grid(
         bpm=bpm, bars=bars, grid=grid, time_sig=time_sig, sample_rate=sample_rate
@@ -92,6 +102,7 @@ def quantize_to_loop(
         ratio_max=ratio_max,
         refine_window_sec=refine_window_sec,
         flatness_threshold=flatness_threshold,
+        loop_wrap_crossfade_ms=loop_wrap_crossfade_ms,
     )
 
 
@@ -109,20 +120,31 @@ def quantize_batch(
     ratio_max: float = DEFAULT_RATIO_MAX,
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
     flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
+    loop_wrap_crossfade_ms: float = DEFAULT_LOOP_WRAP_CROSSFADE_MS,
+    workers: Optional[int] = None,
 ) -> List[np.ndarray]:
     """Quantize N clips against a single shared canonical grid.
 
     The grid is computed ONCE — that's the property that lets independent
     clips post-quantization stack on top of each other without flamming.
     Each clip is processed independently; same params + same input bytes
-    produce byte-identical output.
+    produce byte-identical output, in the same order as ``clips``.
+
+    ``workers`` controls parallelism: ``None`` (default) auto-picks
+    ``min(len(clips), os.cpu_count())`` and runs a ``ThreadPoolExecutor``;
+    pass ``1`` to force sequential. NumPy and aubio release the GIL
+    during heavy work, so threading helps; pytsmod (pure Python) holds it,
+    so the speedup is partial. Results are byte-identical regardless of
+    worker count.
     """
     cg = canonical_grid(
         bpm=bpm, bars=bars, grid=grid, time_sig=time_sig, sample_rate=sample_rate
     )
     resolved_stretcher = _resolve_stretcher(stretcher)
-    return [
-        _quantize_one(
+    clip_list = list(clips)
+
+    def _one(clip: np.ndarray) -> np.ndarray:
+        return _quantize_one(
             clip,
             cg,
             detector=detector,
@@ -131,9 +153,16 @@ def quantize_batch(
             ratio_max=ratio_max,
             refine_window_sec=refine_window_sec,
             flatness_threshold=flatness_threshold,
+            loop_wrap_crossfade_ms=loop_wrap_crossfade_ms,
         )
-        for clip in clips
-    ]
+
+    n_workers = workers if workers is not None else min(
+        len(clip_list), os.cpu_count() or 1
+    )
+    if n_workers <= 1 or len(clip_list) < 2:
+        return [_one(c) for c in clip_list]
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        return list(ex.map(_one, clip_list))
 
 
 def _resolve_stretcher(stretcher: object) -> Optional[Stretcher]:
@@ -157,6 +186,7 @@ def _quantize_one(
     ratio_max: float,
     refine_window_sec: float,
     flatness_threshold: float,
+    loop_wrap_crossfade_ms: float,
 ) -> np.ndarray:
     audio_2d, was_1d = _to_2d(audio)
     src_length = audio_2d.shape[0]
@@ -198,6 +228,9 @@ def _quantize_one(
         stretcher=stretcher,
         flatness_threshold=flatness_threshold,
     )
+    if loop_wrap_crossfade_ms > 0:
+        fade_samples = int(round(loop_wrap_crossfade_ms * 0.001 * cg.sample_rate))
+        _loop_wrap_crossfade(out, fade_samples)
     return out[:, 0] if was_1d else out
 
 
@@ -354,6 +387,37 @@ def _place_linear_interp(
         out[dst0 : dst0 + dst_len, c] = np.interp(
             x_new, x_old, segment[:, c].astype(np.float64)
         ).astype(np.float32)
+
+
+def _loop_wrap_crossfade(out: np.ndarray, fade_samples: int) -> None:
+    """Equal-power tail-head crossfade to mask the loop boundary click.
+
+    Replaces ``out[-K:]`` with ``out[-K:] * fade_out + out[:K] * fade_in``
+    where ``fade_in = sin²`` and ``fade_out = cos²`` over ``[0, π/2]`` —
+    so ``fade_in + fade_out = 1`` (constant-power). The HEAD is unchanged
+    so the loop start stays sharp; the modified TAIL ends close to
+    ``out[0]`` so the wrap from ``out[-1] → out[0]`` is continuous.
+
+    This is the practical alternative to task_1.md §7's "render past
+    loop_end, fold it back" — that requires a source that overgenerates,
+    which Fragmenta's SA3 path does not. Tail-head crossfade is the
+    standard loop-cleanup technique and lands the same musical result on
+    content that doesn't overgenerate.
+    """
+    if fade_samples <= 0:
+        return
+    n = out.shape[0]
+    k = min(fade_samples, n // 4)
+    if k <= 0:
+        return
+    angle = np.linspace(0.0, np.pi / 2.0, k, dtype=np.float32)
+    fade_in = np.sin(angle) ** 2  # 0 → 1
+    fade_out = np.cos(angle) ** 2  # 1 → 0
+    head_copy = out[:k].copy()
+    if out.ndim == 2:
+        out[-k:] = out[-k:] * fade_out[:, None] + head_copy * fade_in[:, None]
+    else:
+        out[-k:] = out[-k:] * fade_out + head_copy * fade_in
 
 
 def _place_stretched(

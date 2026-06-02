@@ -128,6 +128,7 @@ def test_quantize_length_exact() -> None:
         grid=GRID,
         sample_rate=SAMPLE_RATE,
         detector=EnergyFluxDetector(),
+        loop_wrap_crossfade_ms=0.0,
     )
     assert out.shape[0] == EXPECTED_TOTAL_SAMPLES, (
         f"length mismatch: {out.shape[0]} != {EXPECTED_TOTAL_SAMPLES}"
@@ -142,12 +143,12 @@ def test_quantize_byte_identical_across_runs() -> None:
     n = SAMPLE_RATE * 9
     noise = (rng.standard_normal(n).astype(np.float32) * 0.1)
     det = EnergyFluxDetector()
-    a = quantize_to_loop(
-        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    kwargs = dict(
+        bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE,
+        detector=det, loop_wrap_crossfade_ms=0.0,
     )
-    b = quantize_to_loop(
-        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
-    )
+    a = quantize_to_loop(noise, **kwargs)
+    b = quantize_to_loop(noise, **kwargs)
     assert np.array_equal(a, b), "quantize_to_loop must be deterministic"
     print("  ✓ byte-identical determinism (single-clip)")
 
@@ -195,6 +196,7 @@ def test_multi_layer_alignment() -> None:
         time_sig=TIME_SIG,
         sample_rate=SAMPLE_RATE,
         detector=EnergyFluxDetector(),
+        loop_wrap_crossfade_ms=0.0,  # crossfade smears the test's onset reading
     )
     out1, out2 = outs
     assert out1.shape[0] == cg.total_samples
@@ -241,12 +243,11 @@ def test_batch_byte_identical() -> None:
     a_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
     b_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
     det = EnergyFluxDetector()
-    run1 = quantize_batch(
-        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
+    kwargs = dict(
+        bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det,
     )
-    run2 = quantize_batch(
-        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE, detector=det
-    )
+    run1 = quantize_batch([a_in, b_in], **kwargs)
+    run2 = quantize_batch([a_in, b_in], **kwargs)
     assert np.array_equal(run1[0], run2[0]), "batch run 1 clip 0 not deterministic"
     assert np.array_equal(run1[1], run2[1]), "batch run 1 clip 1 not deterministic"
     print("  ✓ byte-identical determinism (batch)")
@@ -488,6 +489,79 @@ def test_speed_budget() -> None:
     print(f"  ✓ speed budget: {elapsed * 1000:.1f} ms for one 4-bar loop")
 
 
+# --- Phase 4: loop-wrap crossfade + parallel batch -------------------------
+
+
+def test_loop_boundary_clickfree() -> None:
+    """Tail-head equal-power crossfade must collapse the wrap-point
+    discontinuity for content that doesn't loop cleanly on its own.
+
+    Source: a linear ramp from -0.5 to +0.5 over 9 s. After any
+    pitch-preserving stretch, ``out[0] ≈ -0.5`` and ``out[-1] ≈ +0.5``
+    — a textbook discontinuity. With crossfade on, ``out[-1]`` should
+    sit near ``out[0]`` so the loop boundary doesn't click.
+    """
+    sr = SAMPLE_RATE
+    src_len = sr * 9
+    audio = np.linspace(-0.5, 0.5, src_len, dtype=np.float32)
+
+    raw = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        sample_rate=sr,
+        detector=EnergyFluxDetector(),
+        loop_wrap_crossfade_ms=0.0,
+    )
+    blended = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        sample_rate=sr,
+        detector=EnergyFluxDetector(),
+    )
+
+    disc_raw = float(abs(raw[-1] - raw[0]))
+    disc_blended = float(abs(blended[-1] - blended[0]))
+
+    assert disc_raw > 0.4, (
+        f"sanity: ramp -0.5→+0.5 should leave a visible boundary mismatch, got {disc_raw}"
+    )
+    assert disc_blended < 0.05, (
+        f"crossfade should mask boundary; got |out[-1] - out[0]| = {disc_blended}"
+    )
+    # Sample 0 must be unchanged — the loop start should stay sharp.
+    assert raw[0] == blended[0], "crossfade modified the head (it should only touch the tail)"
+    print(
+        f"  ✓ loop boundary: discontinuity {disc_raw:.4f} → {disc_blended:.4f} "
+        f"(head unchanged: {blended[0]:.5f})"
+    )
+
+
+def test_batch_parallel_matches_sequential() -> None:
+    """``quantize_batch`` with workers > 1 must produce byte-identical
+    output to the sequential path. Threading is a perf knob, not a
+    semantic change.
+    """
+    rng = np.random.default_rng(2026)
+    src_len = SAMPLE_RATE * 9
+    clips = [
+        make_kick_burst(src_len, (np.arange(8) * (SAMPLE_RATE // 2) + 100 * i).astype(np.int64))
+        for i in range(4)
+    ]
+    kwargs = dict(
+        bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE,
+    )
+    seq = quantize_batch(clips, workers=1, **kwargs)
+    par = quantize_batch(clips, workers=4, **kwargs)
+    assert len(seq) == len(par) == len(clips)
+    for i, (s, p) in enumerate(zip(seq, par)):
+        assert np.array_equal(s, p), f"clip {i}: parallel != sequential"
+    print(f"  ✓ parallel batch byte-identical (4 clips, workers=4 vs workers=1)")
+
+
 def _peak_freq(audio: np.ndarray, sample_rate: int) -> float:
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     window = np.hanning(mono.size).astype(np.float32)
@@ -593,8 +667,10 @@ def main() -> int:
         test_classifier_distinguishes_pad_from_noise,
         test_sustained_content_preserves_pitch,
         test_speed_budget,
+        test_loop_boundary_clickfree,
+        test_batch_parallel_matches_sequential,
     ]
-    print(f"\nloop_quantizer Phase 1–3 acceptance — {len(tests)} tests\n")
+    print(f"\nloop_quantizer Phase 1–4 acceptance — {len(tests)} tests\n")
     t0 = time.time()
     failures = 0
     for t in tests:

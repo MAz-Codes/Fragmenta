@@ -24,11 +24,31 @@ the active production code until acceptance.
 | 3 | Per-segment warp routing in quantizer | ✅ |
 | 3 | Sustained-pitch-preservation + speed-budget tests | ✅ |
 | 3b | Rubber Band stretcher (opt-in, system-binary dep) | ⏳ |
-| 4 | Equal-power crossfade at segment seams | ⏳ |
-| 4 | Loop-wrap overhang fold-back | ⏳ |
-| 4 | Parallel `quantize_batch` execution | ⏳ |
+| 4 | Equal-power tail-head crossfade — `_loop_wrap_crossfade` | ✅ |
+| 4 | Parallel `quantize_batch` (`workers=N`, ThreadPoolExecutor) | ✅ |
+| 4 | Click-free loop-boundary + parallel-determinism tests | ✅ |
 | 5 | Wire into `/api/generate` and Phase 7 loop path | ⏳ |
 | 5 | Full acceptance test suite | ⏳ |
+
+### Phase 4 notes
+
+**Loop-wrap crossfade.** ``task_1.md`` §7 describes "render past loop_end,
+fold it back, equal-power crossfade into the head". That technique
+needs a source that overgenerates — Fragmenta's SA3 path doesn't, so
+the implementation here uses the equivalent tail-head crossfade
+instead: the last ``loop_wrap_crossfade_ms`` of the output are replaced
+by ``tail · cos² + head · sin²``. The head is preserved unchanged
+(loop start stays sharp); the tail ends close to ``out[0]`` so the
+wrap is click-free. Test fixture: a -0.5 → +0.5 linear ramp collapses
+from a 0.5 boundary discontinuity to 0.0006 with crossfade on. Default
+crossfade is 5 ms; pass ``loop_wrap_crossfade_ms=0`` to disable (e.g.,
+when measuring slice-and-place precision).
+
+**Parallel batch.** ``quantize_batch`` accepts a ``workers`` kwarg
+(default: ``min(len(clips), cpu_count())``). Each clip runs through a
+``ThreadPoolExecutor``; aubio and NumPy release the GIL during heavy
+work, pytsmod doesn't, so the speedup is partial. Output is
+byte-identical across worker counts — verified by the test suite.
 
 ### Phase 3 notes
 
