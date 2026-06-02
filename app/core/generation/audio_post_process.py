@@ -1,5 +1,13 @@
 """Beat-align and tempo-conform a generated WAV to a target BPM and bar count.
 
+DEPRECATED — this entire module is superseded by ``app/core/loop_quantizer/``
+(see ``task_1.md`` and ``AUDIT.md`` §9 "Scheduled for removal"). The legacy
+``align_to_grid`` / ``align_for_loop`` path and the gated ``_stage_a_v2`` path
+both live here until the new module passes acceptance; once it does, every
+public symbol below is removed and the file deletes itself. Do NOT add new
+callers, do NOT extend the v1 helpers, and prefer adding work directly under
+``app/core/loop_quantizer/`` for any new behaviour.
+
 SA3 generates at the exact requested duration via variable-length flow
 matching, so the post-processor's role is **drift correction**, not length
 control: it only nudges the audio when librosa detects that the realised
@@ -26,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -36,6 +45,7 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
+# DEPRECATED: flag goes away with the v1/v2 split (AUDIT.md §9d).
 def beatsync_v2_enabled() -> bool:
     """Feature gate for the hardened Stage A pipeline (sample-exact length,
     first-transient-to-zero alignment, transient-preserving stretch).
@@ -50,6 +60,7 @@ def beatsync_v2_enabled() -> bool:
     )
 
 
+# DEPRECATED: flag goes away with the v1/v2 split (AUDIT.md §9d).
 def _warp_enabled() -> bool:
     """Per-beat (Ableton 'Beats'-style) warp gate — OFF by default.
 
@@ -127,6 +138,9 @@ _WARP_MIN_BEATS = 6
 
 
 # === Stage A v2 (FRAGMENTA_BEATSYNC_V2) ====================================
+# DEPRECATED: every symbol in this section is scheduled for relocation into
+# `app/core/loop_quantizer` (see AUDIT.md §9c). Port the logic, then delete
+# the originals here. Do NOT add new callers to anything below.
 # A single hardened core shared by both align entry points. It enforces the
 # locked invariants directly instead of relying on librosa's beat[0] for
 # phase and on end-snap/silence-trim for length:
@@ -409,12 +423,21 @@ def _conform_stretch(audio: np.ndarray, rate: float, sr: int) -> np.ndarray:
     return _time_stretch_multichannel(audio, rate)
 
 
+# DEPRECATED: superseded by app/core/loop_quantizer (see task_1.md / AUDIT.md §9a).
+# Public entry; emits DeprecationWarning at runtime. Scheduled for removal once
+# the new module passes acceptance.
 def align_to_grid(
     input_path: Path,
     target_bpm: float,
     target_bars: int,
     beats_per_bar: int = 4,
 ) -> Path:
+    warnings.warn(
+        "align_to_grid is deprecated and will be removed once "
+        "app/core/loop_quantizer ships (see task_1.md / AUDIT.md §9a).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     audio, sr = sf.read(str(input_path), always_2d=True)
     audio = audio.astype(np.float32, copy=False)
     samples_per_beat = sr * 60.0 / float(target_bpm)
@@ -530,6 +553,9 @@ def align_to_grid(
 
 # --- Phase 7 loop alignment -----------------------------------------------
 
+# DEPRECATED: superseded by app/core/loop_quantizer (see task_1.md / AUDIT.md §9a).
+# Public entry; emits DeprecationWarning at runtime. Scheduled for removal once
+# the new module passes acceptance.
 def align_for_loop(
     audio: np.ndarray,
     sr: int,
@@ -538,6 +564,9 @@ def align_for_loop(
     target_bpm: float,
 ) -> np.ndarray:
     """Align a baseline clip for seamless looping at an exact length.
+
+    DEPRECATED — superseded by ``app/core/loop_quantizer`` (see ``task_1.md`` /
+    ``AUDIT.md`` §9a). Scheduled for removal once the new module ships.
 
     Pipeline (in-memory, no disk I/O):
       1. Detect tempo + beat grid via librosa.
@@ -556,6 +585,12 @@ def align_for_loop(
     if input was 1-D). The caller is expected to wrap-and-inpaint the
     output to smooth the seam — `align_for_loop` does no fade.
     """
+    warnings.warn(
+        "align_for_loop is deprecated and will be removed once "
+        "app/core/loop_quantizer ships (see task_1.md / AUDIT.md §9a).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if audio.ndim == 1:
         audio = audio[:, np.newaxis]
         squeeze_out = True
@@ -645,6 +680,7 @@ def align_for_loop(
 
 # --- helpers ---------------------------------------------------------------
 
+# DEPRECATED: legacy v1 helper; delete with this module (AUDIT.md §9b).
 def _trailing_audio_end(audio: np.ndarray, sr: int) -> int:
     """Return the sample index just past the last audible content.
 
@@ -675,6 +711,7 @@ def _trailing_audio_end(audio: np.ndarray, sr: int) -> int:
     return n
 
 
+# DEPRECATED: legacy v1 helper; delete with this module (AUDIT.md §9b).
 def _snap_to_beat(
     target_samples: int,
     beat_samples: Optional[np.ndarray],
@@ -698,6 +735,7 @@ def _snap_to_beat(
     return fallback
 
 
+# DEPRECATED: superseded by loop_quantizer (AUDIT.md §9b); may be ported if reused.
 def _apply_fade(audio: np.ndarray, duration_sec: float, sr: int, *, fade_in: bool) -> None:
     """In-place equal-power fade on the head (fade_in=True) or tail."""
     n = min(int(duration_sec * sr), audio.shape[0])
@@ -712,6 +750,7 @@ def _apply_fade(audio: np.ndarray, duration_sec: float, sr: int, *, fade_in: boo
         audio[-n:] *= ramp
 
 
+# DEPRECATED: superseded by loop_quantizer (AUDIT.md §9b); may be ported if reused.
 def _equal_power_ramp(n: int, *, fade_in: bool, dtype) -> np.ndarray:
     """Cosine-shaped equal-power fade. Energy at the midpoint is preserved
     when summing fade-out + fade-in of complementary segments, avoiding the
@@ -720,6 +759,7 @@ def _equal_power_ramp(n: int, *, fade_in: bool, dtype) -> np.ndarray:
     return np.sin(t) if fade_in else np.cos(t)
 
 
+# DEPRECATED: legacy v1 helper; delete with this module (AUDIT.md §9b).
 def _best_stretch_rate(
     detected_bpm: float,
     target_bpm: float,
@@ -756,6 +796,7 @@ def _best_stretch_rate(
     return best_rate, best_interp
 
 
+# DEPRECATED: legacy v1 helper; delete with this module (AUDIT.md §9b).
 def _detect_first_onset_sample(mono: np.ndarray, sr: int) -> int:
     """Return the sample index of the first detected onset, or 0 if none found."""
     try:
@@ -773,6 +814,7 @@ def _detect_first_onset_sample(mono: np.ndarray, sr: int) -> int:
     return first
 
 
+# DEPRECATED: superseded by loop_quantizer detector (AUDIT.md §9c); port or replace.
 def _detect_grid(
     mono: np.ndarray,
     sr: int,
@@ -798,6 +840,7 @@ def _detect_grid(
     return bpm, np.asarray(beats, dtype=np.int64)
 
 
+# DEPRECATED: legacy v1 helper; delete with this module (AUDIT.md §9b).
 def _time_stretch_multichannel(audio: np.ndarray, rate: float) -> np.ndarray:
     """Phase-vocoder time stretch, applied per channel and re-stacked."""
     stretched = librosa.effects.time_stretch(audio.T, rate=rate)

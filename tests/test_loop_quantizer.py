@@ -1,0 +1,336 @@
+#!/usr/bin/env python
+"""Phase 1 acceptance tests for ``app.core.loop_quantizer``.
+
+These tests prove the determinism property — the headline of task_1.md:
+*multiple clips processed independently at the same BPM/bars/grid must
+align sample-exactly*. They do **not** yet exercise the DSP-quality
+pieces (real onset detection, segment classification, Rubber Band
+stretch, loop-wrap fold-back) — those land in Phases 2/3/4.
+
+Run::
+
+    python tests/test_loop_quantizer.py
+
+Exit code is non-zero if any assertion fails; CI-safe (no network, no
+external state, no fixtures).
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+# Make the repo root importable when run as a script.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.loop_quantizer import (  # noqa: E402
+    CanonicalGrid,
+    EnergyFluxDetector,
+    canonical_grid,
+    quantize_batch,
+    quantize_to_loop,
+)
+from app.core.loop_quantizer.refine import refine_to_transient  # noqa: E402
+
+
+SAMPLE_RATE = 44100
+BPM = 120.0
+BARS = 4
+GRID = 16
+TIME_SIG = (4, 4)
+TOLERANCE_SAMPLES = 8  # ~0.18 ms at 44.1 kHz
+
+# Total samples for the canonical grid above:
+#   round(4 bars * 4 beats * 60/120 * 44100) = 352800
+EXPECTED_TOTAL_SAMPLES = 352_800
+
+
+# --- synthetic signal helpers ---------------------------------------------
+
+
+def make_click(
+    n_samples: int,
+    positions: np.ndarray,
+    *,
+    decay_ms: float = 2.0,
+    amplitude: float = 0.9,
+    sr: int = SAMPLE_RATE,
+) -> np.ndarray:
+    """Place a short decaying click at each sample in ``positions``.
+
+    Used as ground truth: each click has a sharp rising edge at its
+    position, so a sample-accurate onset detector + refiner should
+    return exactly those positions.
+    """
+    out = np.zeros(n_samples, dtype=np.float32)
+    decay = max(2, int(decay_ms * sr / 1000.0))
+    env = (amplitude * np.exp(-np.arange(decay) / (decay * 0.3))).astype(np.float32)
+    for p in positions:
+        p = int(p)
+        if p < 0 or p >= n_samples:
+            continue
+        end = min(n_samples, p + decay)
+        out[p:end] += env[: end - p]
+    return out
+
+
+# --- the actual tests -----------------------------------------------------
+
+
+def test_canonical_grid_shape_and_endpoints() -> None:
+    cg = canonical_grid(
+        bpm=BPM, bars=BARS, grid=GRID, time_sig=TIME_SIG, sample_rate=SAMPLE_RATE
+    )
+    assert isinstance(cg, CanonicalGrid)
+    assert cg.total_samples == EXPECTED_TOTAL_SAMPLES, (
+        f"total_samples mismatch: {cg.total_samples} != {EXPECTED_TOTAL_SAMPLES}"
+    )
+    assert cg.grid_lines[0] == 0
+    assert cg.grid_lines[-1] == cg.total_samples
+    # Sixteenth grid in 4/4 → 4 divisions per beat → 16 beats → 64 divisions.
+    # grid_lines length = 65 (inclusive of both endpoints).
+    assert cg.grid_lines.size == 65, f"unexpected grid line count {cg.grid_lines.size}"
+    assert cg.beat_samples.size == 17, f"unexpected beat count {cg.beat_samples.size}"
+    # Strict monotonicity.
+    diffs = np.diff(cg.grid_lines)
+    assert np.all(diffs > 0), "grid_lines must be strictly increasing"
+    # Beat positions are every 4 grid lines (sixteenth → quarter).
+    np.testing.assert_array_equal(cg.beat_samples, cg.grid_lines[::4])
+    print("  ✓ canonical_grid shape and endpoints")
+
+
+def test_canonical_grid_deterministic() -> None:
+    cg_a = canonical_grid(bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
+    cg_b = canonical_grid(bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
+    np.testing.assert_array_equal(cg_a.grid_lines, cg_b.grid_lines)
+    np.testing.assert_array_equal(cg_a.beat_samples, cg_b.beat_samples)
+    assert cg_a.total_samples == cg_b.total_samples
+    print("  ✓ canonical_grid is bit-identical across calls")
+
+
+def test_quantize_length_exact() -> None:
+    """Output length must equal canonical total_samples regardless of input."""
+    rng = np.random.default_rng(0)
+    n = SAMPLE_RATE * 9  # 9 s of noise, longer than the 8 s canonical loop
+    noise = (rng.standard_normal(n).astype(np.float32) * 0.1)
+    out = quantize_to_loop(
+        noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+    )
+    assert out.shape[0] == EXPECTED_TOTAL_SAMPLES, (
+        f"length mismatch: {out.shape[0]} != {EXPECTED_TOTAL_SAMPLES}"
+    )
+    assert out.dtype == np.float32
+    print(f"  ✓ length exactness: {out.shape[0]} samples == canonical")
+
+
+def test_quantize_byte_identical_across_runs() -> None:
+    """Same input + params → byte-identical output across two calls."""
+    rng = np.random.default_rng(7)
+    n = SAMPLE_RATE * 9
+    noise = (rng.standard_normal(n).astype(np.float32) * 0.1)
+    a = quantize_to_loop(noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
+    b = quantize_to_loop(noise, bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE)
+    assert np.array_equal(a, b), "quantize_to_loop must be deterministic"
+    print("  ✓ byte-identical determinism (single-clip)")
+
+
+def test_multi_layer_alignment() -> None:
+    """Two layers with deliberately off-grid onsets, batch-quantized:
+
+    * Each output's refined onsets land within TOLERANCE of some canonical
+      grid line.
+    * For grid lines where both layers have a hit, the refined positions
+      match across layers within TOLERANCE.
+
+    This is the no-flamming property: the 4-channel sampler can stack
+    these layers and they'll lock to the same musical positions.
+    """
+    cg = canonical_grid(
+        bpm=BPM, bars=BARS, grid=GRID, time_sig=TIME_SIG, sample_rate=SAMPLE_RATE
+    )
+    grid_lines = np.asarray(cg.grid_lines)
+    beat_samples = np.asarray(cg.beat_samples)
+
+    # Source is slightly longer than canonical so the boundary segment
+    # stays within ratio bounds. 100 ms tail.
+    src_len = cg.total_samples + int(0.1 * SAMPLE_RATE)
+
+    rng = np.random.default_rng(42)
+
+    # Layer 1: kick on every beat (17 hits incl. endpoints, but skip the
+    # closing endpoint to avoid colliding with the boundary anchor).
+    kick_jitter = rng.integers(-220, 221, size=beat_samples.size - 1)
+    kick_positions = beat_samples[:-1] + kick_jitter
+    layer1 = make_click(src_len, kick_positions, decay_ms=3.0)
+
+    # Layer 2: hat on every eighth (every 2 sixteenths).
+    eighth_lines = grid_lines[:-1:2]
+    hat_jitter = rng.integers(-300, 301, size=eighth_lines.size)
+    hat_positions = eighth_lines + hat_jitter
+    layer2 = make_click(src_len, hat_positions, decay_ms=1.5, amplitude=0.6)
+
+    outs = quantize_batch(
+        [layer1, layer2],
+        bpm=BPM,
+        bars=BARS,
+        grid=GRID,
+        time_sig=TIME_SIG,
+        sample_rate=SAMPLE_RATE,
+    )
+    out1, out2 = outs
+    assert out1.shape[0] == cg.total_samples
+    assert out2.shape[0] == cg.total_samples
+
+    refined1 = _detect_and_refine(out1, cg.sample_rate)
+    refined2 = _detect_and_refine(out2, cg.sample_rate)
+    assert refined1.size > 0, "no onsets detected in layer 1 output"
+    assert refined2.size > 0, "no onsets detected in layer 2 output"
+
+    # Every refined onset must be within TOLERANCE of *some* grid line.
+    max_dev1 = _max_distance_to_grid(refined1, grid_lines)
+    max_dev2 = _max_distance_to_grid(refined2, grid_lines)
+    assert max_dev1 <= TOLERANCE_SAMPLES, (
+        f"layer 1 max grid deviation {max_dev1} > tolerance {TOLERANCE_SAMPLES}"
+    )
+    assert max_dev2 <= TOLERANCE_SAMPLES, (
+        f"layer 2 max grid deviation {max_dev2} > tolerance {TOLERANCE_SAMPLES}"
+    )
+
+    # For each grid line that is anchored in BOTH layers, the refined
+    # positions must agree within TOLERANCE.
+    shared_lines, cross_dev = _shared_grid_dev(refined1, refined2, grid_lines)
+    assert shared_lines >= 8, (
+        f"expected ≥8 shared grid lines for assertion, got {shared_lines}"
+    )
+    assert cross_dev <= TOLERANCE_SAMPLES, (
+        f"cross-layer deviation {cross_dev} > tolerance {TOLERANCE_SAMPLES} "
+        f"on {shared_lines} shared grid lines"
+    )
+    print(
+        f"  ✓ multi-layer alignment: {refined1.size}+{refined2.size} onsets, "
+        f"max grid dev={max(max_dev1, max_dev2)} samp, "
+        f"cross-layer dev={cross_dev} samp on {shared_lines} shared lines"
+    )
+
+
+def test_batch_byte_identical() -> None:
+    """``quantize_batch`` must produce byte-identical output across runs
+    given the same inputs.
+    """
+    rng = np.random.default_rng(11)
+    src_len = SAMPLE_RATE * 9
+    a_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
+    b_in = rng.standard_normal(src_len).astype(np.float32) * 0.1
+    run1 = quantize_batch(
+        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+    )
+    run2 = quantize_batch(
+        [a_in, b_in], bpm=BPM, bars=BARS, grid=GRID, sample_rate=SAMPLE_RATE
+    )
+    assert np.array_equal(run1[0], run2[0]), "batch run 1 clip 0 not deterministic"
+    assert np.array_equal(run1[1], run2[1]), "batch run 1 clip 1 not deterministic"
+    print("  ✓ byte-identical determinism (batch)")
+
+
+# --- analysis helpers -----------------------------------------------------
+
+
+def _detect_and_refine(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Detect onsets in ``audio`` and refine to sample accuracy.
+
+    Independent of the quantizer's internal detector so the test
+    measures the OUTPUT'S onset positions, not the input's.
+    """
+    mono = audio.mean(axis=1) if audio.ndim == 2 else audio
+    raw = EnergyFluxDetector()(mono.astype(np.float32), sample_rate)
+    if raw.size == 0:
+        return raw
+    refined = np.fromiter(
+        (refine_to_transient(mono, int(o), sample_rate) for o in raw),
+        dtype=np.int64,
+        count=raw.size,
+    )
+    return np.unique(refined)
+
+
+def _max_distance_to_grid(positions: np.ndarray, grid_lines: np.ndarray) -> int:
+    """Max distance (in samples) from any position to its nearest grid line."""
+    if positions.size == 0:
+        return 0
+    idx = np.searchsorted(grid_lines, positions)
+    idx_l = np.clip(idx - 1, 0, grid_lines.size - 1)
+    idx_r = np.clip(idx, 0, grid_lines.size - 1)
+    left = grid_lines[idx_l]
+    right = grid_lines[idx_r]
+    dist = np.minimum(np.abs(positions - left), np.abs(positions - right))
+    return int(dist.max())
+
+
+def _shared_grid_dev(
+    refined_a: np.ndarray,
+    refined_b: np.ndarray,
+    grid_lines: np.ndarray,
+) -> tuple[int, int]:
+    """For each grid line that has the nearest onset in BOTH refined
+    sets within TOLERANCE, compute |a_pos - b_pos|.
+
+    Returns (shared_count, max_dev).
+    """
+    shared = 0
+    max_dev = 0
+    for line in grid_lines:
+        line = int(line)
+        a_near = _nearest(refined_a, line)
+        b_near = _nearest(refined_b, line)
+        if a_near is None or b_near is None:
+            continue
+        if abs(a_near - line) > TOLERANCE_SAMPLES:
+            continue
+        if abs(b_near - line) > TOLERANCE_SAMPLES:
+            continue
+        shared += 1
+        max_dev = max(max_dev, abs(a_near - b_near))
+    return shared, max_dev
+
+
+def _nearest(positions: np.ndarray, target: int) -> int | None:
+    if positions.size == 0:
+        return None
+    i = int(np.argmin(np.abs(positions - target)))
+    return int(positions[i])
+
+
+# --- driver ---------------------------------------------------------------
+
+
+def main() -> int:
+    tests = [
+        test_canonical_grid_shape_and_endpoints,
+        test_canonical_grid_deterministic,
+        test_quantize_length_exact,
+        test_quantize_byte_identical_across_runs,
+        test_multi_layer_alignment,
+        test_batch_byte_identical,
+    ]
+    print(f"\nloop_quantizer Phase 1 acceptance — {len(tests)} tests\n")
+    t0 = time.time()
+    failures = 0
+    for t in tests:
+        try:
+            t()
+        except AssertionError as exc:
+            print(f"  ✗ {t.__name__}: {exc}")
+            failures += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ✗ {t.__name__}: {type(exc).__name__}: {exc}")
+            failures += 1
+    elapsed = time.time() - t0
+    print(f"\n{len(tests) - failures}/{len(tests)} passed in {elapsed:.2f}s\n")
+    return 0 if failures == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -581,6 +581,8 @@ def generate_audio():
         # click. The stitch pass already gave us a duration-exact loop.
         if do_align and not loop_stitch:
             try:
+                # DEPRECATED call site — rewires to app/core/loop_quantizer
+                # once the new module passes acceptance (AUDIT.md §9a).
                 from app.core.generation.audio_post_process import align_to_grid
                 align_to_grid(
                     output_path,

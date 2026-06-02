@@ -556,6 +556,8 @@ class AudioGenerator:
             return torch.nn.functional.pad(audio, (0, pad))
 
         try:
+            # DEPRECATED call site — rewires to app/core/loop_quantizer once
+            # the new module passes acceptance (AUDIT.md §9a).
             from app.core.generation.audio_post_process import align_for_loop
             # SA3 returns [B, C, T] — pull the first batch into [T, C] for librosa.
             full = audio[0].detach().cpu().numpy().astype(np.float32).T  # [T, C]

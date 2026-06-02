@@ -145,3 +145,4 @@ phd
 tests/*
 !tests/smoke_test_beatsync.py
 !tests/smoke_test_phaselock.mjs
+!tests/test_loop_quantizer.py
