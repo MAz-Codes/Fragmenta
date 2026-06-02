@@ -112,7 +112,7 @@ def quantize_to_loop(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
-    beat_track: bool = False,
+    beat_track: bool = True,
     beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
 ) -> np.ndarray:
     """Quantize one clip to the canonical grid for ``(bpm, bars, grid, …)``.
@@ -192,7 +192,7 @@ def quantize_batch(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
-    beat_track: bool = False,
+    beat_track: bool = True,
     beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
     workers: Optional[int] = None,
 ) -> List[np.ndarray]:
@@ -305,7 +305,7 @@ def _quantize_one(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
-    beat_track: bool = False,
+    beat_track: bool = True,
     beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
 ) -> np.ndarray:
     audio_2d, was_1d = _to_2d(audio)

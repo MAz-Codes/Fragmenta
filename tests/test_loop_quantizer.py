@@ -338,6 +338,7 @@ def test_aubio_multi_layer_alignment() -> None:
         sample_rate=SAMPLE_RATE,
         detector=det,
         tempo_conform=False,  # synthetic burst signals confuse aubio.tempo
+        beat_track=False,     # this test measures the per-onset snap path
     )
     out1, out2 = outs
     assert out1.shape[0] == cg.total_samples

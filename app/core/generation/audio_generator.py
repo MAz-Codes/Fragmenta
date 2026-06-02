@@ -611,9 +611,15 @@ class AudioGenerator:
                 no_tempo_conform = _os.environ.get(
                     "FRAGMENTA_LOOP_QUANTIZER_NO_TEMPO_CONFORM", "0"
                 ).strip().lower() in _truthy
-                beat_track = _os.environ.get(
-                    "FRAGMENTA_LOOP_QUANTIZER_BEAT_TRACK", "0"
+                # Beat-track is the production default — it locks anchors
+                # to the periodic pulse and falls back to hierarchical
+                # onset snap when aubio.tempo fails its BPM/confidence
+                # gates. Opt out with FRAGMENTA_LOOP_QUANTIZER_NO_BEAT_TRACK=1
+                # to measure pure onset behaviour.
+                no_beat_track = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_NO_BEAT_TRACK", "0"
                 ).strip().lower() in _truthy
+                beat_track = not no_beat_track
                 beat_tol = _os.environ.get(
                     "FRAGMENTA_LOOP_QUANTIZER_BEAT_TOLERANCE_MS"
                 )
