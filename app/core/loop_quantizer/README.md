@@ -27,8 +27,47 @@ the active production code until acceptance.
 | 4 | Equal-power tail-head crossfade — `_loop_wrap_crossfade` | ✅ |
 | 4 | Parallel `quantize_batch` (`workers=N`, ThreadPoolExecutor) | ✅ |
 | 4 | Click-free loop-boundary + parallel-determinism tests | ✅ |
-| 5 | Wire into `/api/generate` and Phase 7 loop path | ⏳ |
-| 5 | Full acceptance test suite | ⏳ |
+| 5 | Wired into Performance Bars (flag-gated, default OFF) | ✅ |
+| 5 | `quantize_wav_file` helper + flag-toggle tests | ✅ |
+| 5 | Manual verification on real SA3 output | ⏳ |
+| 5 | Flip `FRAGMENTA_LOOP_QUANTIZER` default to ON | ⏳ |
+| — | Final-step decommission per AUDIT.md §9 | ⏳ (gated) |
+
+### Phase 5 notes
+
+**Scope is locked to Performance-tab Bars mode.** The other two paths —
+Generation tab (any duration mode) and Performance Sec mode — never
+set ``align_bars`` / ``align_bpm`` / ``loop_stitch`` in their request
+payload, so they cannot reach either of the two backend alignment
+seams; the new module is unreachable for them by construction. Do NOT
+add other call sites without re-confirming the scope.
+
+Two seams, both Performance-Bars-exclusive:
+
+  1. ``app/backend/app.py`` `~L583` — branch ``if do_align and not
+     loop_stitch:``. Reached only when the Performance channel is in
+     Bars mode with looping OFF. ``do_align`` requires both
+     ``align_bars`` and ``align_bpm`` from the request JSON.
+  2. ``app/core/generation/audio_generator.py`` ``_align_baseline_for_loop``
+     — reached only from the ``loop_stitch=="inpaint"`` branch in
+     ``generate()``. The frontend sets ``loop_stitch`` only when
+     ``durationMode === 'bars'`` AND ``looping === true``.
+
+**Flag.** ``FRAGMENTA_LOOP_QUANTIZER`` (env var, default OFF).
+``1`` / ``true`` / ``yes`` / ``on`` routes both seams through this
+module; anything else (or unset) falls back to the legacy /
+``FRAGMENTA_BEATSYNC_V2`` path — kept as the safety net per
+``AUDIT.md`` §9 until acceptance. Flag has priority over
+``FRAGMENTA_BEATSYNC_V2`` when both are set.
+
+**Enable for testing:**
+
+```bash
+FRAGMENTA_LOOP_QUANTIZER=1 python start.py
+```
+
+The legacy v2 smoke test (``tests/smoke_test_beatsync.py``) still
+passes with the flag OFF, confirming the fallback path is intact.
 
 ### Phase 4 notes
 

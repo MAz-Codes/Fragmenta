@@ -173,6 +173,39 @@ def _resolve_stretcher(stretcher: object) -> Optional[Stretcher]:
     return stretcher  # type: ignore[return-value]
 
 
+def quantize_wav_file(
+    path,
+    *,
+    bpm: float,
+    bars: int,
+    grid: int = 16,
+    time_sig: Tuple[int, int] = (4, 4),
+    **kwargs,
+):
+    """Convenience: read a WAV, quantize, write it back at the same SR.
+
+    Used by ``app/backend/app.py`` to replace the legacy
+    ``align_to_grid()`` file-roundtrip behaviour without duplicating
+    soundfile I/O at the call site. In-memory callers should use
+    ``quantize_to_loop`` directly to avoid disk hops.
+    """
+    import soundfile as sf  # lazy — only this entry needs the import
+
+    audio, sr = sf.read(str(path), always_2d=True)
+    audio = audio.astype(np.float32, copy=False)
+    out = quantize_to_loop(
+        audio,
+        bpm=bpm,
+        bars=bars,
+        grid=grid,
+        time_sig=time_sig,
+        sample_rate=sr,
+        **kwargs,
+    )
+    sf.write(str(path), out, sr, subtype="PCM_16")
+    return path
+
+
 # --- internals -------------------------------------------------------------
 
 

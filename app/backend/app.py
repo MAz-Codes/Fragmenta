@@ -580,16 +580,33 @@ def generate_audio():
         # shift the seam off its sample-exact location and reintroduce a
         # click. The stitch pass already gave us a duration-exact loop.
         if do_align and not loop_stitch:
+            # SCOPE: this branch is reached ONLY by Performance tab → Bars
+            # mode + looping=false. Generation tab and Performance Sec
+            # mode never set align_bars/align_bpm, so do_align is False
+            # there and this code is unreachable. The loop_quantizer flag
+            # below therefore only affects Performance Bars output.
             try:
-                # DEPRECATED call site — rewires to app/core/loop_quantizer
-                # once the new module passes acceptance (AUDIT.md §9a).
-                from app.core.generation.audio_post_process import align_to_grid
-                align_to_grid(
-                    output_path,
-                    target_bpm=float(align_bpm),
-                    target_bars=int(align_bars),
-                )
-                logger.info(f"Aligned to grid: bars={align_bars}, bpm={align_bpm}")
+                from app.core.loop_quantizer import loop_quantizer_enabled
+                if loop_quantizer_enabled():
+                    from app.core.loop_quantizer import quantize_wav_file
+                    quantize_wav_file(
+                        output_path,
+                        bpm=float(align_bpm),
+                        bars=int(align_bars),
+                    )
+                    logger.info(
+                        f"loop_quantizer aligned: bars={align_bars}, bpm={align_bpm}"
+                    )
+                else:
+                    # DEPRECATED legacy path — kept as safety net per
+                    # AUDIT.md §9 until the new module passes acceptance.
+                    from app.core.generation.audio_post_process import align_to_grid
+                    align_to_grid(
+                        output_path,
+                        target_bpm=float(align_bpm),
+                        target_bars=int(align_bars),
+                    )
+                    logger.info(f"Aligned to grid: bars={align_bars}, bpm={align_bpm}")
             except Exception as exc:
                 # Never fail the request because alignment failed — the user
                 # would rather have the raw clip than an error toast.

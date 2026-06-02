@@ -562,6 +562,63 @@ def test_batch_parallel_matches_sequential() -> None:
     print(f"  ✓ parallel batch byte-identical (4 clips, workers=4 vs workers=1)")
 
 
+# --- Phase 5: runtime integration ------------------------------------------
+
+
+def test_loop_quantizer_flag() -> None:
+    """``FRAGMENTA_LOOP_QUANTIZER`` gates the runtime integration."""
+    import os
+    from app.core.loop_quantizer import loop_quantizer_enabled
+
+    saved = os.environ.get("FRAGMENTA_LOOP_QUANTIZER")
+    cases = [
+        ("0", False), ("1", True), ("true", True), ("True", True),
+        ("yes", True), ("on", True), ("false", False), ("no", False),
+    ]
+    try:
+        os.environ.pop("FRAGMENTA_LOOP_QUANTIZER", None)
+        assert loop_quantizer_enabled() is False, "default must be OFF (unset)"
+        for val, expected in cases:
+            os.environ["FRAGMENTA_LOOP_QUANTIZER"] = val
+            got = loop_quantizer_enabled()
+            assert got is expected, f"value {val!r}: got {got}, expected {expected}"
+    finally:
+        if saved is None:
+            os.environ.pop("FRAGMENTA_LOOP_QUANTIZER", None)
+        else:
+            os.environ["FRAGMENTA_LOOP_QUANTIZER"] = saved
+    print("  ✓ FRAGMENTA_LOOP_QUANTIZER toggles correctly (default OFF)")
+
+
+def test_quantize_wav_file_roundtrip() -> None:
+    """``quantize_wav_file`` reads, quantizes, writes back at the source
+    sample rate. Output WAV has the canonical length.
+    """
+    import os
+    import tempfile
+
+    import soundfile as sf
+    from app.core.loop_quantizer import quantize_wav_file
+
+    rng = np.random.default_rng(31)
+    src_len = SAMPLE_RATE * 9
+    audio = (rng.standard_normal(src_len).astype(np.float32) * 0.1)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        path = tf.name
+    try:
+        sf.write(path, audio, SAMPLE_RATE, subtype="PCM_16")
+        quantize_wav_file(path, bpm=BPM, bars=BARS)
+        out, out_sr = sf.read(path, always_2d=True)
+        assert out_sr == SAMPLE_RATE, f"sample rate changed: {out_sr}"
+        assert out.shape[0] == EXPECTED_TOTAL_SAMPLES, (
+            f"unexpected length: {out.shape[0]} != {EXPECTED_TOTAL_SAMPLES}"
+        )
+    finally:
+        os.unlink(path)
+    print(f"  ✓ quantize_wav_file: WAV in-place roundtrip, {EXPECTED_TOTAL_SAMPLES} samp")
+
+
 def _peak_freq(audio: np.ndarray, sample_rate: int) -> float:
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     window = np.hanning(mono.size).astype(np.float32)
@@ -669,8 +726,10 @@ def main() -> int:
         test_speed_budget,
         test_loop_boundary_clickfree,
         test_batch_parallel_matches_sequential,
+        test_loop_quantizer_flag,
+        test_quantize_wav_file_roundtrip,
     ]
-    print(f"\nloop_quantizer Phase 1–4 acceptance — {len(tests)} tests\n")
+    print(f"\nloop_quantizer Phase 1–5 acceptance — {len(tests)} tests\n")
     t0 = time.time()
     failures = 0
     for t in tests:

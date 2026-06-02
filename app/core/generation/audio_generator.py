@@ -555,18 +555,39 @@ class AudioGenerator:
             pad = target_samples - audio.shape[-1]
             return torch.nn.functional.pad(audio, (0, pad))
 
+        # SCOPE: this method is called ONLY from the loop_stitch=="inpaint"
+        # path in generate(), which is set ONLY by Performance tab → Bars
+        # mode + looping=true. Generation tab and Performance Sec mode
+        # never set loop_stitch, so the loop_quantizer flag below only
+        # affects Performance Bars output.
         try:
-            # DEPRECATED call site — rewires to app/core/loop_quantizer once
-            # the new module passes acceptance (AUDIT.md §9a).
-            from app.core.generation.audio_post_process import align_for_loop
-            # SA3 returns [B, C, T] — pull the first batch into [T, C] for librosa.
+            # SA3 returns [B, C, T] — pull the first batch into [T, C]
+            # for the numpy-domain aligners.
             full = audio[0].detach().cpu().numpy().astype(np.float32).T  # [T, C]
-            aligned = align_for_loop(
-                full,
-                sr=44100,
-                target_samples=target_samples,
-                target_bpm=target_bpm,
-            )
+            from app.core.loop_quantizer import loop_quantizer_enabled
+            if loop_quantizer_enabled():
+                from app.core.loop_quantizer import quantize_to_loop
+                # Recover bars from target_samples; the canonical-grid
+                # formula is invertible for the small integer bar counts
+                # the UI exposes (1–16).
+                target_bars = int(round(
+                    target_samples * float(target_bpm) / (4.0 * 60.0 * 44100)
+                ))
+                aligned = quantize_to_loop(
+                    full,
+                    bpm=float(target_bpm),
+                    bars=target_bars,
+                    sample_rate=44100,
+                )
+            else:
+                # DEPRECATED legacy path — safety net per AUDIT.md §9.
+                from app.core.generation.audio_post_process import align_for_loop
+                aligned = align_for_loop(
+                    full,
+                    sr=44100,
+                    target_samples=target_samples,
+                    target_bpm=target_bpm,
+                )
             # Back to [B=1, C, T]
             result = (
                 torch.from_numpy(np.ascontiguousarray(aligned.T))
@@ -576,7 +597,7 @@ class AudioGenerator:
             )
         except Exception as exc:
             logger.warning(
-                "align_for_loop failed (%s); falling back to plain crop", exc,
+                "Loop-alignment failed (%s); falling back to plain crop", exc,
             )
             return audio[..., :target_samples]
 
