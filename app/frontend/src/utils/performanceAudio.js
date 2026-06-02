@@ -1,5 +1,3 @@
-import { phaseOffsetSec } from './phaseLock.js';
-
 export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
 
 // Stage A renders loops at exactly 44.1 kHz and the sample-exact loop length
@@ -222,7 +220,7 @@ export class ChannelStrip {
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
     }
 
-    play(loop = this.isLooping, startTime = 0, offsetSec = 0) {
+    play(loop = this.isLooping, startTime = 0) {
         if (!this.buffer) return;
         this.stop();
         this.isLooping = loop;
@@ -245,11 +243,8 @@ export class ChannelStrip {
             }
         };
 
-        // offsetSec phase-locks a loop to the global grid: it enters the
-        // buffer at the position matching the current Link/transport beat, so
-        // every clip plays the same loop-position at the same global beat.
-        const offset = (loop && offsetSec > 0) ? offsetSec % this.buffer.duration : 0;
-        src.start(Math.max(0, startTime), offset);
+        // Start from the head of the clip at the scheduled (quantized) time.
+        src.start(Math.max(0, startTime));
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -744,18 +739,15 @@ export class PerformanceEngine {
         return { when: this.ctx.currentTime + secondsUntil, beat: nextBeat, bpm };
     }
 
-    // Deterministic Link-phase -> loop-position map (INV#8/#9). Delegates to
-    // the pure `phaseOffsetSec` (unit-tested in tests/smoke_test_phaselock.mjs).
-    _phaseOffsetSec(buffer, beat, bpm) {
-        return buffer ? phaseOffsetSec(buffer.duration, beat, bpm) : 0;
-    }
-
     playChannel(index, loop) {
         const ch = this.channels[index];
         if (!ch || !ch.buffer) return;
-        const { when, beat, bpm } = this.getNextQuantizedAudioTime();
-        const offset = loop ? this._phaseOffsetSec(ch.buffer, beat, bpm) : 0;
-        ch.play(loop, when, offset);
+        // Clip-launch semantics (like Ableton Session View): start from the
+        // clip's head on the quantized boundary. Phase coherence comes from the
+        // clips being downbeat-anchored + exact-bar-length (Stage A) and
+        // launched on bar boundaries — NOT from entering the buffer mid-way.
+        const { when } = this.getNextQuantizedAudioTime();
+        ch.play(loop, when);
     }
 
     setMasterGain(value) {
@@ -878,15 +870,12 @@ export class PerformanceEngine {
     }
 
     playAll(loop = true) {
-        // One schedule for all channels: same `when` and global `beat`, but
-        // each clip computes its own phase offset from its own loop length —
-        // that is what makes their downbeats coincide (INV#9).
-        const { when, beat, bpm } = this.getNextQuantizedAudioTime();
+        // All channels launch from their head on the same quantized boundary,
+        // so equal-length downbeat-anchored clips line up (INV#9) without
+        // entering mid-buffer.
+        const { when } = this.getNextQuantizedAudioTime();
         this.channels.forEach(ch => {
-            if (ch.buffer) {
-                const offset = loop ? this._phaseOffsetSec(ch.buffer, beat, bpm) : 0;
-                ch.play(loop, when, offset);
-            }
+            if (ch.buffer) ch.play(loop, when);
         });
     }
 
