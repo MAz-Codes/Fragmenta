@@ -74,6 +74,18 @@ DEFAULT_TEMPO_CONFORM_DEADBAND = 0.005   # 0.5 % — below this, skip stretch
 DEFAULT_TEMPO_CONFORM_MIN_RATIO = 0.70   # safe range for the uniform stretch:
 DEFAULT_TEMPO_CONFORM_MAX_RATIO = 1.50   # rates outside are octave errors or
                                           # tempo-detector failures; bail.
+# Beat-track mode: instead of detecting every transient and snapping each
+# to a grid line (most get dropped by the ratio clamp because they're
+# off-tempo), use aubio.tempo to find the periodic PULSE — that produces
+# ~1 anchor per quarter note, all musically meaningful. The tracker has a
+# ~1.5 s warmup (first 3 beats at 120 BPM are missed); we extrapolate the
+# missing early beats backwards from (first_detected_beat - k*period_samples)
+# so the loop downbeat gets anchored too. Beats are then snapped to the
+# nearest QUARTER-note line (metrical_levels <= 4) with a wider tolerance
+# than per-onset snap, since beats are spaced ~500 ms apart at 120 BPM.
+DEFAULT_BEAT_TRACK_TOLERANCE_MS = 80.0
+DEFAULT_BEAT_TRACK_RATIO_MIN = 0.75
+DEFAULT_BEAT_TRACK_RATIO_MAX = 1.33
 # Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
 # when pytsmod is installed (e.g. when measuring pure slice-and-place
 # behaviour). Distinguishable from ``None`` which means "use default".
@@ -100,6 +112,8 @@ def quantize_to_loop(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
+    beat_track: bool = False,
+    beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
 ) -> np.ndarray:
     """Quantize one clip to the canonical grid for ``(bpm, bars, grid, …)``.
 
@@ -153,6 +167,8 @@ def quantize_to_loop(
         hierarchical_tolerance_ms=hierarchical_tolerance_ms,
         tempo_only=tempo_only,
         tempo_conform=tempo_conform,
+        beat_track=beat_track,
+        beat_track_tolerance_ms=beat_track_tolerance_ms,
     )
 
 
@@ -176,6 +192,8 @@ def quantize_batch(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
+    beat_track: bool = False,
+    beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
     workers: Optional[int] = None,
 ) -> List[np.ndarray]:
     """Quantize N clips against a single shared canonical grid.
@@ -214,6 +232,8 @@ def quantize_batch(
             hierarchical_tolerance_ms=hierarchical_tolerance_ms,
             tempo_only=tempo_only,
             tempo_conform=tempo_conform,
+            beat_track=beat_track,
+            beat_track_tolerance_ms=beat_track_tolerance_ms,
         )
 
     n_workers = workers if workers is not None else min(
@@ -285,6 +305,8 @@ def _quantize_one(
     hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
     tempo_only: bool = False,
     tempo_conform: bool = True,
+    beat_track: bool = False,
+    beat_track_tolerance_ms: float = DEFAULT_BEAT_TRACK_TOLERANCE_MS,
 ) -> np.ndarray:
     audio_2d, was_1d = _to_2d(audio)
     src_length = audio_2d.shape[0]
@@ -336,7 +358,55 @@ def _quantize_one(
             out = np.zeros((cg.total_samples, audio_2d.shape[1]), dtype=np.float32)
             return out[:, 0] if was_1d else out
 
-    if tempo_only:
+    if beat_track:
+        # Use aubio.tempo to find PULSE positions instead of every transient.
+        # The tracker locks onto the periodic beat (~1 anchor per quarter
+        # note) and produces musically meaningful pulses, not just loud
+        # events. Missing early beats (warmup gap) get extrapolated
+        # backwards from (first_beat - k * period_samples). aubio.tempo
+        # reports beat times with a phase lag (~5–20 ms behind the actual
+        # rising edge), so we refine each beat to its local energy peak —
+        # same routine used for onsets — before snapping to the grid.
+        beats = _extract_beats(
+            mono, cg.sample_rate, expected_bpm=cg.bpm, bpm_tolerance=0.10,
+        )
+        if beats.size > 0:
+            beats = _refine_all(
+                mono, beats, cg.sample_rate, window_sec=refine_window_sec
+            )
+            tolerance_samp = int(
+                round(beat_track_tolerance_ms * 0.001 * cg.sample_rate)
+            )
+            anchors = _assign_anchors_beats(
+                beats,
+                cg.grid_lines,
+                cg.metrical_levels,
+                src_length=src_length,
+                total_samples=cg.total_samples,
+                ratio_min=DEFAULT_BEAT_TRACK_RATIO_MIN,
+                ratio_max=DEFAULT_BEAT_TRACK_RATIO_MAX,
+                tolerance_samples=tolerance_samp,
+            )
+        else:
+            # aubio.tempo failed the BPM sanity check (locked onto wrong
+            # subdivision, octave-error, or low confidence). Fall back to
+            # hierarchical onset snap using the already-computed ``refined``
+            # array — safer than committing to a confidently-wrong pulse.
+            tolerance_samp = int(
+                round(hierarchical_tolerance_ms * 0.001 * cg.sample_rate)
+            )
+            anchors = _assign_anchors_hierarchical(
+                refined,
+                cg.grid_lines,
+                cg.metrical_levels,
+                src_length=src_length,
+                total_samples=cg.total_samples,
+                ratio_min=ratio_min,
+                ratio_max=ratio_max,
+                tolerance_samples=tolerance_samp,
+                hierarchy=hierarchy,
+            )
+    elif tempo_only:
         # Boundary anchors only — head-trim already happened above, so
         # the first transient is at sample 0; the closing anchor crops/
         # stretches to exact target_samples. v2-style minimum behaviour.
@@ -374,6 +444,153 @@ def _quantize_one(
         fade_samples = int(round(loop_wrap_crossfade_ms * 0.001 * cg.sample_rate))
         _loop_wrap_crossfade(out, fade_samples)
     return out[:, 0] if was_1d else out
+
+
+def _extract_beats(
+    mono: np.ndarray,
+    sample_rate: int,
+    *,
+    expected_bpm: Optional[float] = None,
+    bpm_tolerance: float = 0.10,
+    min_confidence: float = 0.5,
+) -> np.ndarray:
+    """Detect beat positions (in samples) via aubio's periodic-pulse tracker.
+
+    Unlike onset detection, ``aubio.tempo`` infers the underlying pulse and
+    only fires at musically meaningful beat positions — typically one per
+    quarter note. ``get_last()`` returns the causal sample index of each
+    detected beat with ~5 ms accuracy on clean material. The tracker has
+    a ~1.5 s warmup, so the first few beats of a 120 BPM loop are missed;
+    this routine extrapolates them backwards from ``(first_beat - k*period)``
+    so the loop downbeat gets an anchor too.
+
+    ``expected_bpm`` enables a sanity check: if the tracker's BPM
+    estimate disagrees with the target by more than ``bpm_tolerance``
+    (default ±10 %), the result is rejected (returns empty). On dense or
+    polyrhythmic content aubio.tempo can lock onto a wrong subdivision
+    (e.g. 155 BPM on a 120 BPM kick pattern), and using those beats as
+    anchors makes timing worse. Letting the caller fall back to onset
+    detection is safer than committing to a confidently-wrong pulse.
+
+    Returns an empty array if aubio isn't installed, the audio is too
+    short, no beats detected, or the detected BPM fails the sanity check.
+    """
+    try:
+        import aubio  # noqa: WPS433 — optional dep
+    except ImportError:  # pragma: no cover
+        return np.empty(0, dtype=np.int64)
+    if mono.size < 4096:
+        return np.empty(0, dtype=np.int64)
+    try:
+        hop = 512
+        win = 1024
+        tempo = aubio.tempo("default", win, hop, int(sample_rate))
+        mono32 = np.ascontiguousarray(mono, dtype=np.float32)
+        end = mono32.size - hop + 1
+        beats: List[int] = []
+        confidence_sum = 0.0
+        confidence_n = 0
+        for i in range(0, end, hop):
+            if tempo(mono32[i : i + hop]):
+                beats.append(int(tempo.get_last()))
+                confidence_sum += float(tempo.get_confidence())
+                confidence_n += 1
+        bpm = float(tempo.get_bpm())
+    except Exception:  # pragma: no cover
+        return np.empty(0, dtype=np.int64)
+    if not beats or bpm <= 0:
+        return np.empty(0, dtype=np.int64)
+    if expected_bpm is not None and expected_bpm > 0:
+        rel_err = abs(bpm - expected_bpm) / expected_bpm
+        if rel_err > bpm_tolerance:
+            return np.empty(0, dtype=np.int64)
+    mean_conf = confidence_sum / max(1, confidence_n)
+    if mean_conf < min_confidence:
+        return np.empty(0, dtype=np.int64)
+
+    # Extrapolate backwards from beats[0] to cover the warmup gap.
+    period_samples = int(round(60.0 / bpm * sample_rate))
+    first = beats[0]
+    prefix: List[int] = []
+    k = 1
+    while True:
+        cand = first - k * period_samples
+        if cand <= 0:
+            # Include sample 0 if reasonably close to a beat phase.
+            if cand > -period_samples // 4:
+                prefix.append(0)
+            break
+        prefix.append(cand)
+        k += 1
+    prefix.reverse()
+    all_beats = np.asarray(prefix + beats, dtype=np.int64)
+    return np.unique(all_beats)
+
+
+def _assign_anchors_beats(
+    beats: np.ndarray,
+    grid_lines: np.ndarray,
+    metrical_levels: np.ndarray,
+    *,
+    src_length: int,
+    total_samples: int,
+    ratio_min: float,
+    ratio_max: float,
+    tolerance_samples: int,
+) -> List[Tuple[int, int]]:
+    """Snap each detected beat to its nearest QUARTER-note grid line.
+
+    Beats are inherently pulse events (1 per quarter note). Eligible
+    destinations are grid lines whose metrical level is ≤ 4 (quarters and
+    coarser). Same §5 monotonicity + ratio-clamp + boundary anchors as
+    the onset paths, but with a wider tolerance (default ±80 ms) since
+    beats are ~500 ms apart at 120 BPM and a beat tracker's phase error
+    is typically larger than an onset detector's frame error.
+    """
+    anchors: List[Tuple[int, int]] = [(0, 0)]
+    last_src, last_dst = 0, 0
+    n_lines = grid_lines.size
+    last_assignable = n_lines - 2
+
+    eligible = np.where(metrical_levels <= 4)[0]
+    if eligible.size == 0 or beats.size == 0:
+        anchors.append((src_length, total_samples))
+        return anchors
+    eligible_samples = grid_lines[eligible]
+
+    for src in beats:
+        src = int(src)
+        if src <= last_src or src >= src_length:
+            continue
+        j = int(np.argmin(np.abs(eligible_samples - src)))
+        line_idx = int(eligible[j])
+        if abs(int(grid_lines[line_idx]) - src) > tolerance_samples:
+            continue
+        # Monotonicity: bump to next free QUARTER line on collision.
+        while line_idx <= last_assignable and int(grid_lines[line_idx]) <= last_dst:
+            # advance to next eligible (quarter-or-coarser) line
+            next_eligible = eligible[eligible > line_idx]
+            if next_eligible.size == 0:
+                line_idx = last_assignable + 1
+                break
+            line_idx = int(next_eligible[0])
+        if line_idx > last_assignable:
+            break
+        dst = int(grid_lines[line_idx])
+
+        src_seg = src - last_src
+        dst_seg = dst - last_dst
+        if src_seg <= 0 or dst_seg <= 0:
+            continue
+        ratio = dst_seg / src_seg
+        if ratio < ratio_min or ratio > ratio_max:
+            continue
+
+        anchors.append((src, dst))
+        last_src, last_dst = src, dst
+
+    anchors.append((src_length, total_samples))
+    return anchors
 
 
 def _estimate_source_bpm(mono: np.ndarray, sample_rate: int) -> Optional[float]:

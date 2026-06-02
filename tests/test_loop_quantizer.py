@@ -634,6 +634,70 @@ def test_hierarchical_snap_prefers_coarse() -> None:
     )
 
 
+# --- Phase 7: beat-tracking anchors ----------------------------------------
+
+
+def test_beat_track_locks_to_quarter_lines() -> None:
+    """Phase 7: when ``beat_track=True`` the quantizer should land its
+    detected pulses on the QUARTER-note grid lines.
+
+    Fixture: a clean 4-bar @ 120 BPM kick pattern (one strong burst per
+    quarter, 16 events total). aubio.tempo locks onto this within ~1.5 s
+    and produces beat positions at the actual quarter samples. After the
+    beat-track snap, the audio's interior onsets must coincide with the
+    quarter-note grid lines (within ±32 samples / ~0.7 ms).
+    """
+    from app.core.loop_quantizer import AubioDetector
+
+    sr = SAMPLE_RATE
+    cg = canonical_grid(bpm=BPM, bars=BARS, grid=16, sample_rate=sr)
+    beat_samples = np.asarray(cg.beat_samples)
+
+    # Build 4 bars of quarter-note kicks at the exact beat positions but
+    # offset everything by +25 ms so we can prove the snap closes the gap.
+    src_len = cg.total_samples + int(0.2 * sr)
+    audio = np.zeros(src_len, dtype=np.float32)
+    decay = int(0.030 * sr)
+    env = (0.9 * np.exp(-np.arange(decay) / (decay * 0.2))).astype(np.float32)
+    tone = np.sin(np.linspace(0.0, np.pi * 40, decay)).astype(np.float32)
+    kick = env * tone
+    offset = int(0.025 * sr)  # +25 ms past every quarter
+    for q in beat_samples:
+        p = int(q) + offset
+        if 0 <= p < src_len - decay:
+            audio[p : p + decay] += kick
+
+    out = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=16,
+        sample_rate=sr,
+        detector=AubioDetector(),
+        beat_track=True,
+        loop_wrap_crossfade_ms=0.0,
+        tempo_conform=False,  # source is already at target BPM
+    )
+    detected = _detect_and_refine(out, sr)
+    # Count how many of the 16 quarter lines have a detected onset within
+    # ±32 samples (~0.7 ms). With beat-track snap we expect most quarters
+    # to land tightly; without it (default ±30 ms tolerance falls outside
+    # because per-onset snap drops the +25 ms offsets), they don't.
+    hits = 0
+    for q in beat_samples:
+        nearest = _nearest(detected, int(q))
+        if nearest is not None and abs(nearest - int(q)) <= 32:
+            hits += 1
+    assert hits >= 12, (
+        f"beat-track expected ≥12/16 quarter hits, got {hits}; "
+        f"detected={detected.tolist()[:8]}"
+    )
+    print(
+        f"  ✓ beat-track snap: {hits}/16 quarter lines anchored "
+        f"within ±32 samp (source pre-offset +25 ms)"
+    )
+
+
 # --- Phase 5: runtime integration ------------------------------------------
 
 
@@ -802,6 +866,7 @@ def main() -> int:
         test_quantize_wav_file_roundtrip,
         test_metrical_levels_pattern,
         test_hierarchical_snap_prefers_coarse,
+        test_beat_track_locks_to_quarter_lines,
     ]
     print(f"\nloop_quantizer Phase 1–5 acceptance — {len(tests)} tests\n")
     t0 = time.time()

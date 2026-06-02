@@ -611,6 +611,14 @@ class AudioGenerator:
                 no_tempo_conform = _os.environ.get(
                     "FRAGMENTA_LOOP_QUANTIZER_NO_TEMPO_CONFORM", "0"
                 ).strip().lower() in _truthy
+                beat_track = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_BEAT_TRACK", "0"
+                ).strip().lower() in _truthy
+                beat_tol = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_BEAT_TOLERANCE_MS"
+                )
+                if beat_tol is not None:
+                    hier_kwargs["beat_track_tolerance_ms"] = float(beat_tol)
                 aligned = quantize_to_loop(
                     full,
                     bpm=float(target_bpm),
@@ -621,6 +629,7 @@ class AudioGenerator:
                     hierarchical=hierarchical,
                     tempo_only=tempo_only,
                     tempo_conform=not no_tempo_conform,
+                    beat_track=beat_track,
                     **hier_kwargs,
                 )
             else:
