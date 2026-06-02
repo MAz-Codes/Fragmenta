@@ -566,18 +566,62 @@ class AudioGenerator:
             full = audio[0].detach().cpu().numpy().astype(np.float32).T  # [T, C]
             from app.core.loop_quantizer import loop_quantizer_enabled
             if loop_quantizer_enabled():
-                from app.core.loop_quantizer import quantize_to_loop
+                import os as _os
+                from app.core.loop_quantizer import AubioDetector, quantize_to_loop
                 # Recover bars from target_samples; the canonical-grid
                 # formula is invertible for the small integer bar counts
                 # the UI exposes (1–16).
                 target_bars = int(round(
                     target_samples * float(target_bpm) / (4.0 * 60.0 * 44100)
                 ))
+                grid_div = int(_os.environ.get("FRAGMENTA_LOOP_QUANTIZER_GRID", "16"))
+                _truthy = ("1", "true", "yes", "on")
+                hierarchical = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_HIER", "0"
+                ).strip().lower() in _truthy
+                tempo_only = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_TEMPO_ONLY", "0"
+                ).strip().lower() in _truthy
+                onset_thr = _os.environ.get("FRAGMENTA_LOOP_QUANTIZER_ONSET_THRESHOLD")
+                onset_method = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_ONSET_METHOD"
+                )
+                if onset_thr is not None or onset_method is not None:
+                    det_kwargs = {}
+                    if onset_thr is not None:
+                        det_kwargs["threshold"] = float(onset_thr)
+                    if onset_method is not None:
+                        det_kwargs["method"] = onset_method
+                    detector = AubioDetector(**det_kwargs)
+                else:
+                    detector = None
+                hier_tol = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_HIER_TOLERANCE_MS"
+                )
+                hier_kwargs = (
+                    {"hierarchical_tolerance_ms": float(hier_tol)}
+                    if hier_tol is not None else {}
+                )
+                no_stretcher = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_NO_STRETCHER", "0"
+                ).strip().lower() in _truthy
+                if no_stretcher:
+                    from app.core.loop_quantizer import NO_STRETCHER as _NO_STRETCHER
+                    hier_kwargs["stretcher"] = _NO_STRETCHER
+                no_tempo_conform = _os.environ.get(
+                    "FRAGMENTA_LOOP_QUANTIZER_NO_TEMPO_CONFORM", "0"
+                ).strip().lower() in _truthy
                 aligned = quantize_to_loop(
                     full,
                     bpm=float(target_bpm),
                     bars=target_bars,
+                    grid=grid_div,
                     sample_rate=44100,
+                    detector=detector,
+                    hierarchical=hierarchical,
+                    tempo_only=tempo_only,
+                    tempo_conform=not no_tempo_conform,
+                    **hier_kwargs,
                 )
             else:
                 # DEPRECATED legacy path — safety net per AUDIT.md §9.

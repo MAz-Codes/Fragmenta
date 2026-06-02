@@ -56,6 +56,24 @@ DEFAULT_REFINE_WINDOW_SEC = 0.025
 # loop seamlessly. ~5 ms is enough to mask the discontinuity without
 # noticeably smearing the loop boundary. 0 disables.
 DEFAULT_LOOP_WRAP_CROSSFADE_MS = 5.0
+# Hierarchical snap: when enabled, each onset prefers the COARSEST
+# metrical level (quarter > eighth > sixteenth) within the tolerance
+# below. Lets strong beats lock on the quarter even when the finest
+# grid is 16th, instead of snapping to whichever 16th line happens to
+# be closest. 30 ms is generous enough for human drumming variation
+# while still discriminating between adjacent 8ths at 120 BPM (where
+# the 8th period is 250 ms — 12% of one 8th).
+DEFAULT_HIERARCHICAL_TOLERANCE_MS = 30.0
+DEFAULT_HIERARCHY = (4, 8, 16)
+# Global tempo conform: if the source's measured BPM differs from the
+# target by more than the deadband, apply a single uniform WSOLA stretch
+# BEFORE per-onset snapping. This is the v2 recipe — it gets every onset
+# within tolerance of its target grid line so the snap pass actually has
+# something to do, instead of dropping most onsets by the ratio clamp.
+DEFAULT_TEMPO_CONFORM_DEADBAND = 0.005   # 0.5 % — below this, skip stretch
+DEFAULT_TEMPO_CONFORM_MIN_RATIO = 0.70   # safe range for the uniform stretch:
+DEFAULT_TEMPO_CONFORM_MAX_RATIO = 1.50   # rates outside are octave errors or
+                                          # tempo-detector failures; bail.
 # Sentinel: pass this to quantize_*` to opt out of WSOLA stretching even
 # when pytsmod is installed (e.g. when measuring pure slice-and-place
 # behaviour). Distinguishable from ``None`` which means "use default".
@@ -77,6 +95,11 @@ def quantize_to_loop(
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
     flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
     loop_wrap_crossfade_ms: float = DEFAULT_LOOP_WRAP_CROSSFADE_MS,
+    hierarchical: bool = False,
+    hierarchy: Tuple[int, ...] = DEFAULT_HIERARCHY,
+    hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
+    tempo_only: bool = False,
+    tempo_conform: bool = True,
 ) -> np.ndarray:
     """Quantize one clip to the canonical grid for ``(bpm, bars, grid, …)``.
 
@@ -89,6 +112,28 @@ def quantize_to_loop(
     resolves to ``default_stretcher()`` (WSOLA if pytsmod is installed).
     Set ``loop_wrap_crossfade_ms=0`` to disable the tail-head crossfade
     (e.g., when the source is known to loop cleanly already).
+
+    Set ``hierarchical=True`` to enable the coarsest-within-tolerance
+    snap: each refined onset tries to lock to a quarter line first, then
+    an eighth, then a sixteenth — only falling through when out of
+    tolerance. Preserves metrical hierarchy (strong beats stay on
+    quarters even when the finest grid is 16). Default tolerance is
+    ±30 ms; tighten for stricter timing, loosen for laid-back grooves.
+
+    Set ``tempo_only=True`` to skip per-onset snapping entirely — only
+    the head-trim + boundary anchors run, so the loop is just stretched
+    to fit the target length with the first transient at sample 0.
+    This is the v2-style minimum behaviour; useful as a baseline.
+
+    ``tempo_conform`` (default True) applies a single uniform WSOLA
+    stretch BEFORE per-onset snapping when the source's measured BPM
+    differs from the target. Without it, sources that drifted from the
+    target tempo end up with most onsets dropped by the ratio clamp —
+    the snap step has nothing to anchor and the loop falls back to
+    boundary-stretch only. With it, every onset arrives close to its
+    target grid line and the snap actually fires. Disable for the rare
+    cases when source tempo is known to be exact or when you want to
+    measure the snap step in isolation.
     """
     cg = canonical_grid(
         bpm=bpm, bars=bars, grid=grid, time_sig=time_sig, sample_rate=sample_rate
@@ -103,6 +148,11 @@ def quantize_to_loop(
         refine_window_sec=refine_window_sec,
         flatness_threshold=flatness_threshold,
         loop_wrap_crossfade_ms=loop_wrap_crossfade_ms,
+        hierarchical=hierarchical,
+        hierarchy=hierarchy,
+        hierarchical_tolerance_ms=hierarchical_tolerance_ms,
+        tempo_only=tempo_only,
+        tempo_conform=tempo_conform,
     )
 
 
@@ -121,6 +171,11 @@ def quantize_batch(
     refine_window_sec: float = DEFAULT_REFINE_WINDOW_SEC,
     flatness_threshold: float = DEFAULT_FLATNESS_THRESHOLD,
     loop_wrap_crossfade_ms: float = DEFAULT_LOOP_WRAP_CROSSFADE_MS,
+    hierarchical: bool = False,
+    hierarchy: Tuple[int, ...] = DEFAULT_HIERARCHY,
+    hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
+    tempo_only: bool = False,
+    tempo_conform: bool = True,
     workers: Optional[int] = None,
 ) -> List[np.ndarray]:
     """Quantize N clips against a single shared canonical grid.
@@ -154,6 +209,11 @@ def quantize_batch(
             refine_window_sec=refine_window_sec,
             flatness_threshold=flatness_threshold,
             loop_wrap_crossfade_ms=loop_wrap_crossfade_ms,
+            hierarchical=hierarchical,
+            hierarchy=hierarchy,
+            hierarchical_tolerance_ms=hierarchical_tolerance_ms,
+            tempo_only=tempo_only,
+            tempo_conform=tempo_conform,
         )
 
     n_workers = workers if workers is not None else min(
@@ -220,6 +280,11 @@ def _quantize_one(
     refine_window_sec: float,
     flatness_threshold: float,
     loop_wrap_crossfade_ms: float,
+    hierarchical: bool = False,
+    hierarchy: Tuple[int, ...] = DEFAULT_HIERARCHY,
+    hierarchical_tolerance_ms: float = DEFAULT_HIERARCHICAL_TOLERANCE_MS,
+    tempo_only: bool = False,
+    tempo_conform: bool = True,
 ) -> np.ndarray:
     audio_2d, was_1d = _to_2d(audio)
     src_length = audio_2d.shape[0]
@@ -229,6 +294,31 @@ def _quantize_one(
 
     mono = audio_2d.mean(axis=1) if audio_2d.shape[1] > 1 else audio_2d[:, 0]
     det = detector if detector is not None else default_detector()
+
+    # Global tempo conform pre-pass — see v2 recipe. Estimates source BPM
+    # via aubio.tempo (a periodic-pulse tracker, not an onset detector),
+    # then applies a single uniform WSOLA stretch so the snap step has
+    # something to anchor. Without this most onsets fall outside the
+    # ratio clamp and the snap silently degenerates to "stretch only".
+    if tempo_conform and stretcher is not None:
+        source_bpm = _estimate_source_bpm(mono, cg.sample_rate)
+        if source_bpm is not None and source_bpm > 0:
+            rate = float(source_bpm) / float(cg.bpm)
+            if (
+                DEFAULT_TEMPO_CONFORM_MIN_RATIO <= rate <= DEFAULT_TEMPO_CONFORM_MAX_RATIO
+                and abs(rate - 1.0) > DEFAULT_TEMPO_CONFORM_DEADBAND
+            ):
+                stretched = stretcher(audio_2d, rate)
+                if stretched.ndim == 1:
+                    stretched = stretched[:, None]
+                audio_2d = stretched.astype(np.float32, copy=False)
+                src_length = audio_2d.shape[0]
+                mono = (
+                    audio_2d.mean(axis=1)
+                    if audio_2d.shape[1] > 1
+                    else audio_2d[:, 0]
+                )
+
     raw_onsets = np.asarray(det(mono, cg.sample_rate), dtype=np.int64)
     refined = _refine_all(mono, raw_onsets, cg.sample_rate, window_sec=refine_window_sec)
 
@@ -246,14 +336,33 @@ def _quantize_one(
             out = np.zeros((cg.total_samples, audio_2d.shape[1]), dtype=np.float32)
             return out[:, 0] if was_1d else out
 
-    anchors = _assign_anchors(
-        refined,
-        cg.grid_lines,
-        src_length=src_length,
-        total_samples=cg.total_samples,
-        ratio_min=ratio_min,
-        ratio_max=ratio_max,
-    )
+    if tempo_only:
+        # Boundary anchors only — head-trim already happened above, so
+        # the first transient is at sample 0; the closing anchor crops/
+        # stretches to exact target_samples. v2-style minimum behaviour.
+        anchors = [(0, 0), (src_length, cg.total_samples)]
+    elif hierarchical:
+        tolerance_samp = int(round(hierarchical_tolerance_ms * 0.001 * cg.sample_rate))
+        anchors = _assign_anchors_hierarchical(
+            refined,
+            cg.grid_lines,
+            cg.metrical_levels,
+            src_length=src_length,
+            total_samples=cg.total_samples,
+            ratio_min=ratio_min,
+            ratio_max=ratio_max,
+            tolerance_samples=tolerance_samp,
+            hierarchy=hierarchy,
+        )
+    else:
+        anchors = _assign_anchors(
+            refined,
+            cg.grid_lines,
+            src_length=src_length,
+            total_samples=cg.total_samples,
+            ratio_min=ratio_min,
+            ratio_max=ratio_max,
+        )
     out = _warp_segments(
         audio_2d,
         anchors,
@@ -265,6 +374,38 @@ def _quantize_one(
         fade_samples = int(round(loop_wrap_crossfade_ms * 0.001 * cg.sample_rate))
         _loop_wrap_crossfade(out, fade_samples)
     return out[:, 0] if was_1d else out
+
+
+def _estimate_source_bpm(mono: np.ndarray, sample_rate: int) -> Optional[float]:
+    """Estimate the audio's tempo via aubio's periodic-pulse tracker.
+
+    Returns ``None`` if aubio isn't importable, the audio is too short
+    for the tracker, or no stable tempo is detected. Unlike onset
+    detection (which fires on every transient), ``aubio.tempo`` infers
+    the underlying beat rate, which is what we need for global tempo
+    conform — the right knob to ask "how fast is the source playing
+    relative to target" is "beat rate", not "transient frequency".
+    """
+    try:
+        import aubio  # noqa: WPS433 — optional dep
+    except ImportError:  # pragma: no cover
+        return None
+    if mono.size < 4096:
+        return None
+    try:
+        hop = 512
+        win = 1024
+        tempo = aubio.tempo("default", win, hop, int(sample_rate))
+        mono32 = np.ascontiguousarray(mono, dtype=np.float32)
+        end = mono32.size - hop + 1
+        for i in range(0, end, hop):
+            tempo(mono32[i : i + hop])
+        bpm = float(tempo.get_bpm())
+    except Exception:  # pragma: no cover
+        return None
+    if bpm <= 0:
+        return None
+    return bpm
 
 
 def _to_2d(audio: np.ndarray) -> Tuple[np.ndarray, bool]:
@@ -296,6 +437,79 @@ def _refine_all(
     # same sample) and ensure strictly increasing order.
     refined = np.unique(refined)
     return refined
+
+
+def _assign_anchors_hierarchical(
+    refined_onsets: np.ndarray,
+    grid_lines: np.ndarray,
+    metrical_levels: np.ndarray,
+    *,
+    src_length: int,
+    total_samples: int,
+    ratio_min: float,
+    ratio_max: float,
+    tolerance_samples: int,
+    hierarchy: Tuple[int, ...],
+) -> List[Tuple[int, int]]:
+    """Coarsest-within-tolerance anchor assignment.
+
+    For each onset, walk ``hierarchy`` coarsest → finest. At each level,
+    take the nearest grid line whose ``metrical_levels[i] <= level``. If
+    that line is within ``tolerance_samples``, snap there and stop;
+    otherwise try the next level. Onsets that don't fit any level (i.e.
+    are too far from every line of any level in the hierarchy) are left
+    unanchored and ride the surrounding stretch.
+
+    Same §5 monotonicity + ratio-clamp + boundary anchors as
+    ``_assign_anchors``.
+    """
+    anchors: List[Tuple[int, int]] = [(0, 0)]
+    last_src, last_dst = 0, 0
+    n_lines = grid_lines.size
+    last_assignable = n_lines - 2  # reserve last index for closing boundary
+
+    for src in refined_onsets:
+        src = int(src)
+        if src <= last_src or src >= src_length:
+            continue
+
+        # Walk hierarchy: coarsest first. At each level, the eligible
+        # lines are those with metrical_levels <= level.
+        snapped_idx: Optional[int] = None
+        for target_level in hierarchy:
+            eligible = np.where(metrical_levels <= target_level)[0]
+            if eligible.size == 0:
+                continue
+            eligible_samples = grid_lines[eligible]
+            j = int(np.argmin(np.abs(eligible_samples - src)))
+            line_idx = int(eligible[j])
+            if abs(grid_lines[line_idx] - src) <= tolerance_samples:
+                snapped_idx = line_idx
+                break
+
+        if snapped_idx is None:
+            continue  # onset rides the surrounding stretch
+
+        # Monotonicity: bump to next free line (any level) if we'd collide.
+        while snapped_idx <= last_assignable and grid_lines[snapped_idx] <= last_dst:
+            snapped_idx += 1
+        if snapped_idx > last_assignable:
+            break
+        dst = int(grid_lines[snapped_idx])
+
+        src_seg = src - last_src
+        dst_seg = dst - last_dst
+        if src_seg <= 0 or dst_seg <= 0:
+            continue
+        ratio = dst_seg / src_seg
+        if ratio < ratio_min or ratio > ratio_max:
+            continue
+
+        anchors.append((src, dst))
+        last_src, last_dst = src, dst
+
+    anchors.append((src_length, total_samples))
+    return anchors
 
 
 def _assign_anchors(

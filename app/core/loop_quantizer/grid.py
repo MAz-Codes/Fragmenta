@@ -42,6 +42,12 @@ class CanonicalGrid:
     total_samples: int
     grid_lines: np.ndarray
     beat_samples: np.ndarray
+    metrical_levels: np.ndarray  # int32, same length as grid_lines.
+    #   For each grid line: the COARSEST subdivision it belongs to.
+    #   4 = quarter (downbeat / strong beat), 8 = eighth, 16 = sixteenth,
+    #   32 = thirty-second. Used by hierarchical snap to prefer strong
+    #   metrical positions when an onset is within tolerance of multiple
+    #   levels.
 
     @property
     def total_divisions(self) -> int:
@@ -68,8 +74,11 @@ def canonical_grid(
         raise ValueError(f"bpm must be positive, got {bpm}")
     if bars <= 0:
         raise ValueError(f"bars must be positive, got {bars}")
-    if grid not in (8, 16):
-        raise ValueError(f"grid must be 8 or 16 (eighth/sixteenth), got {grid}")
+    if grid not in (4, 8, 16, 32):
+        raise ValueError(
+            f"grid must be one of (4, 8, 16, 32) — quarter / eighth / sixteenth / "
+            f"thirty-second; got {grid}"
+        )
     if sample_rate <= 0:
         raise ValueError(f"sample_rate must be positive, got {sample_rate}")
     beats_per_bar, beat_unit = time_sig
@@ -96,8 +105,22 @@ def canonical_grid(
 
     beat_samples = grid_lines[::divisions_per_beat].copy()
 
+    # Metrical level per line: the COARSEST subdivision the line belongs
+    # to. Walk levels from coarsest to finest; each line's level is the
+    # first one whose stride divides the line's index.
+    metrical_levels = np.full(total_divisions + 1, grid, dtype=np.int32)
+    for level in (4, 8, 16, 32):
+        if level > grid:
+            break
+        stride = grid // level
+        candidate_indices = np.arange(0, total_divisions + 1, stride)
+        # Only overwrite if current level is finer (larger numeric value).
+        mask = metrical_levels[candidate_indices] > level
+        metrical_levels[candidate_indices[mask]] = level
+
     grid_lines.setflags(write=False)
     beat_samples.setflags(write=False)
+    metrical_levels.setflags(write=False)
 
     return CanonicalGrid(
         bpm=float(bpm),
@@ -108,6 +131,7 @@ def canonical_grid(
         total_samples=int(total_samples),
         grid_lines=grid_lines,
         beat_samples=beat_samples,
+        metrical_levels=metrical_levels,
     )
 
 

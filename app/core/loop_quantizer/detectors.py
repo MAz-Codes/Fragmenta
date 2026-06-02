@@ -89,6 +89,12 @@ class EnergyFluxDetector:
         min_gap_frames = max(1, int(round(self.min_gap_sec * sample_rate / self.hop)))
         peaks: list[int] = []
         last = -min_gap_frames
+        # Frame 0 must be a candidate: a click at sample 0 produces a real
+        # flux peak there because we prepend 0 (silence before the buffer).
+        # Skipping it silently drops transients at the buffer head.
+        if flux.size >= 2 and flux[0] >= self.threshold and flux[0] >= flux[1]:
+            peaks.append(0)
+            last = 0
         for i in range(1, flux.size - 1):
             if (
                 flux[i] >= self.threshold

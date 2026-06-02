@@ -197,6 +197,7 @@ def test_multi_layer_alignment() -> None:
         sample_rate=SAMPLE_RATE,
         detector=EnergyFluxDetector(),
         loop_wrap_crossfade_ms=0.0,  # crossfade smears the test's onset reading
+        tempo_conform=False,  # synthetic click trains have no real BPM
     )
     out1, out2 = outs
     assert out1.shape[0] == cg.total_samples
@@ -336,6 +337,7 @@ def test_aubio_multi_layer_alignment() -> None:
         time_sig=TIME_SIG,
         sample_rate=SAMPLE_RATE,
         detector=det,
+        tempo_conform=False,  # synthetic burst signals confuse aubio.tempo
     )
     out1, out2 = outs
     assert out1.shape[0] == cg.total_samples
@@ -562,6 +564,76 @@ def test_batch_parallel_matches_sequential() -> None:
     print(f"  ✓ parallel batch byte-identical (4 clips, workers=4 vs workers=1)")
 
 
+# --- hierarchical metrical snap --------------------------------------------
+
+
+def test_metrical_levels_pattern() -> None:
+    """For grid=16 in 4/4, the level pattern across a beat is
+    [quarter, 16, 8, 16] — quarters at indices 0/4/8/…, eighths halfway
+    between, sixteenths in the remaining slots.
+    """
+    cg = canonical_grid(bpm=BPM, bars=BARS, grid=16, sample_rate=SAMPLE_RATE)
+    levels = cg.metrical_levels
+    # First 8 lines (= 2 beats at grid=16): expected pattern repeats
+    # every 4 indices.
+    expected = np.array([4, 16, 8, 16, 4, 16, 8, 16], dtype=np.int32)
+    np.testing.assert_array_equal(levels[:8], expected)
+    # End-of-loop (index total_divisions) is on a downbeat — should be 4.
+    assert int(levels[-1]) == 4
+    print("  ✓ metrical levels: [4,16,8,16] pattern across each beat")
+
+
+def test_hierarchical_snap_prefers_coarse() -> None:
+    """An interior onset within tolerance of a quarter line must snap to
+    the quarter — NOT to a nearby 16th line that happens to be equally
+    close. Without hierarchy, the snap is purely distance-based and
+    arbitrary.
+
+    Fixture: click at sample 100 (acts as head-trim anchor — drops out at
+    the boundary) + click at beat 3 + 5 ms (the test subject). After
+    head-trim by ~100, the test click is the first INTERIOR onset and
+    must lock to the quarter line at ``beat_samples[3]``.
+    """
+    from app.core.loop_quantizer import EnergyFluxDetector, NO_STRETCHER
+
+    sr = SAMPLE_RATE
+    cg = canonical_grid(bpm=BPM, bars=BARS, grid=16, sample_rate=sr)
+    beat_samples = np.asarray(cg.beat_samples)
+
+    src_len = cg.total_samples + int(0.2 * sr)
+    head_anchor_pos = 100
+    target_beat = int(beat_samples[3])  # beat 3 = sample 66150
+    test_click_pos = target_beat + int(0.005 * sr)  # +5 ms
+    audio = make_click(src_len, np.array([head_anchor_pos, test_click_pos]))
+
+    out = quantize_to_loop(
+        audio,
+        bpm=BPM,
+        bars=BARS,
+        grid=16,
+        sample_rate=sr,
+        detector=EnergyFluxDetector(),
+        stretcher=NO_STRETCHER,
+        hierarchical=True,
+        loop_wrap_crossfade_ms=0.0,
+    )
+    refined = _detect_and_refine(out, sr)
+    interior = refined[refined > 1000]
+    assert interior.size >= 1, (
+        f"no interior onset detected; got {refined.tolist()}"
+    )
+    nearest = int(interior[0])
+    dist_to_quarter = abs(nearest - target_beat)
+    assert dist_to_quarter <= 8, (
+        f"hierarchical snap landed at sample {nearest}, expected near "
+        f"quarter line {target_beat} (dist {dist_to_quarter})"
+    )
+    print(
+        f"  ✓ hierarchical snap: onset at +5 ms past beat 3 locked to "
+        f"quarter (dist {dist_to_quarter} samp)"
+    )
+
+
 # --- Phase 5: runtime integration ------------------------------------------
 
 
@@ -728,6 +800,8 @@ def main() -> int:
         test_batch_parallel_matches_sequential,
         test_loop_quantizer_flag,
         test_quantize_wav_file_roundtrip,
+        test_metrical_levels_pattern,
+        test_hierarchical_snap_prefers_coarse,
     ]
     print(f"\nloop_quantizer Phase 1–5 acceptance — {len(tests)} tests\n")
     t0 = time.time()
