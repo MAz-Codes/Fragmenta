@@ -67,6 +67,15 @@ The following Python packages are distributed with Fragmenta:
 - **Accelerate** - Apache License 2.0 - https://github.com/huggingface/accelerate
 - **PEFT** - Apache License 2.0 - https://github.com/huggingface/peft
 - **Datasets** - Apache License 2.0 - https://github.com/huggingface/datasets
+- **FlashAttention (flash-attn)** - BSD-3-Clause License - Copyright (c) 2022
+  Tri Dao and contributors - https://github.com/Dao-AILab/flash-attention
+  - Required by the `sa3-medium` model. Redistributed in **binary (wheel)**
+    form: pinned upstream Linux wheel, and a Windows wheel built from the
+    same BSD-licensed source (no official PyPI Windows wheel exists). BSD-3
+    permits binary redistribution provided this copyright notice, the license
+    text, and the disclaimer are reproduced — satisfied by this entry and the
+    license/AUTHORS files inside the distributed wheel. This attribution does
+    not imply endorsement of Fragmenta by the flash-attn authors.
 
 ### Audio Processing
 - **librosa** - ISC License - https://github.com/librosa/librosa

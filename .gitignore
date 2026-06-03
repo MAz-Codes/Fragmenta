@@ -147,3 +147,8 @@ tests/*
 !tests/smoke_test_phaselock.mjs
 !tests/test_loop_quantizer.py
 !tests/medium_windows_nofa_sweep.py
+
+# Built/large Python wheels (e.g. the Windows flash-attn build, ~385MB) —
+# host these on a GitHub Release and reference by URL in requirements.txt,
+# never commit them to the repo.
+*.whl
