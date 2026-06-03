@@ -37,14 +37,16 @@ const hardwareLabel = (hw) => ({
 const hostIncompatReason = (hw, env) => {
     if (!env) return null;  // capabilities unknown — don't block
     if (hw === 'cuda+flash-attn') {
-        if (env.platform === 'Windows') {
-            return 'Requires Flash Attention 2, which has no Windows wheels. Use a Small model, or run via Docker on WSL2.';
-        }
         if (!env.cuda_available) {
             return 'Requires an NVIDIA CUDA GPU. Use a Small model — those run on CPU, Apple Silicon, or any GPU.';
         }
+        // Gate on the real capability, not the platform: Windows works once a
+        // matching flash-attn wheel is installed (Blackwell/Ampere + cu12x).
+        // No wheel → guide the user to install one (or use Docker on WSL2).
         if (!env.flash_attn_available) {
-            return 'Requires Flash Attention 2 (flash-attn) — not installed. Install it, or use a Small model.';
+            return env.platform === 'Windows'
+                ? 'Requires Flash Attention 2 (flash-attn). No official Windows wheel — install a matching prebuilt/built wheel for your torch+CUDA, or run via Docker on WSL2.'
+                : 'Requires Flash Attention 2 (flash-attn) — not installed. Install it, or use a Small model.';
         }
     }
     if (hw === 'cuda' && !env.cuda_available) {
