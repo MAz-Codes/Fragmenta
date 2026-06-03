@@ -18,8 +18,10 @@ REM       (torch==2.7.1+cu128).
 REM
 REM  Usage (from the x64 Native Tools prompt, venv active, repo root):
 REM    packaging\windows\build_flash_attn.bat
-REM    packaging\windows\build_flash_attn.bat 2.8.3 12.0 4
-REM      arg1 = flash-attn version   (default 2.8.3, matches the Linux pin)
+REM    packaging\windows\build_flash_attn.bat 2.7.4.post1 12.0 4
+REM      arg1 = flash-attn version   (default 2.7.4.post1 — the version proven
+REM                                   to work on Blackwell/cu128; Linux pins
+REM                                   2.8.3 separately in requirements.txt)
 REM      arg2 = TORCH_CUDA_ARCH_LIST (default 12.0 = Blackwell sm_120 / RTX 50xx;
 REM                                   use 8.0 for Ampere, 8.9 for Ada, etc.)
 REM      arg3 = MAX_JOBS             (default 4; lower to 2 if the build OOMs)
@@ -30,7 +32,7 @@ REM ===========================================================================
 setlocal enabledelayedexpansion
 
 set FA_VERSION=%1
-if "%FA_VERSION%"=="" set FA_VERSION=2.8.3
+if "%FA_VERSION%"=="" set FA_VERSION=2.7.4.post1
 set FA_ARCH=%2
 if "%FA_ARCH%"=="" set FA_ARCH=12.0
 set FA_JOBS=%3
