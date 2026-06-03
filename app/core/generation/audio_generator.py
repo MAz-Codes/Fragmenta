@@ -148,23 +148,50 @@ class AudioGenerator:
         sa3_name, _kind, _max_dur = _MODEL_INFO[model_id]
 
         if model_id in ("sa3-medium", "sa3-medium-base"):
-            if platform.system() == "Windows":
-                raise RuntimeError(
-                    "sa3-medium requires Flash Attention 2, which doesn't have "
-                    "Windows wheels. Use sa3-small-music / sa3-small-sfx, or run "
-                    "Fragmenta via Docker on WSL2."
-                )
+            # Medium normally requires Flash Attention 2 for its long-form (up
+            # to 380s) sliding-window attention. FRAGMENTA_MEDIUM_NO_FLASH=1 is
+            # the Path-B validation switch: it lets medium load WITHOUT
+            # flash_attn and fall back to PyTorch-native attention
+            # (flex_attention -> chunked-halo SDPA -> masked SDPA; see
+            # transformer.apply_attn). Output is math-equivalent, but VRAM is
+            # higher and sampling slower at long durations. Off by default, so
+            # the shipped behaviour is unchanged until the fallback is validated.
+            allow_no_flash = os.environ.get("FRAGMENTA_MEDIUM_NO_FLASH") == "1"
             try:
                 import flash_attn  # noqa: F401
+                have_flash = True
             except ImportError as err:
+                have_flash = False
+                _flash_err = err
+
+            if not have_flash and not allow_no_flash:
+                if platform.system() == "Windows":
+                    raise RuntimeError(
+                        "sa3-medium requires Flash Attention 2, which doesn't "
+                        "have Windows wheels. Use sa3-small-music / sa3-small-sfx, "
+                        "run Fragmenta via Docker on WSL2, or set "
+                        "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
+                        "higher-memory) PyTorch attention fallback."
+                    ) from _flash_err
                 raise RuntimeError(
                     "sa3-medium needs Flash Attention 2 (flash_attn) but the "
-                    f"current install is unusable: {err}.\n"
+                    f"current install is unusable: {_flash_err}.\n"
                     "Pick the wheel matching your torch+ABI+Python+CUDA from\n"
                     "  https://github.com/Dao-AILab/flash-attention/releases\n"
                     "and install with `pip install --no-deps <wheel-url>`. "
-                    "See the note next to flash-attn in requirements.txt for an example."
-                ) from err
+                    "See the note next to flash-attn in requirements.txt for an example.\n"
+                    "Or set FRAGMENTA_MEDIUM_NO_FLASH=1 to use the PyTorch "
+                    "attention fallback."
+                ) from _flash_err
+
+            if not have_flash:
+                logger.warning(
+                    "sa3-medium loading WITHOUT Flash Attention 2 "
+                    "(FRAGMENTA_MEDIUM_NO_FLASH=1). Using the PyTorch-native "
+                    "attention fallback — expect higher VRAM and slower sampling "
+                    "at long durations. Validate memory headroom before "
+                    "generating long-form (up to 380s) clips."
+                )
 
         device = device or _autodetect_device()
         if (
