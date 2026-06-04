@@ -2653,7 +2653,7 @@ function App() {
                     sx={(theme) => ({
                         position: 'fixed',
                         left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
-                        bottom: { xs: theme.spacing(3.5), sm: theme.spacing(4), md: theme.spacing(6) },
+                        bottom: { xs: theme.spacing(5), sm: theme.spacing(6), md: theme.spacing(8) },
                         zIndex: 1350,
                         display: 'flex',
                         flexDirection: 'column',
