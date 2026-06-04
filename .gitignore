@@ -138,16 +138,7 @@ DOCKERHUB.md
 TRAINING.md
 main.py
 debug_binaries.py
-MIDI_AND_LAUNCH_PLAN.md
 phd
-
-# Commit the beat-sync acceptance harness (smoke suite, per W7/Phase 9)
-!tests/
-tests/*
-!tests/smoke_test_beatsync.py
-!tests/smoke_test_phaselock.mjs
-!tests/test_loop_quantizer.py
-!tests/medium_windows_nofa_sweep.py
 
 # Built/large Python wheels (e.g. the Windows flash-attn build, ~385MB) —
 # host these on a GitHub Release and reference by URL in requirements.txt,
