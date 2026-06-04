@@ -390,7 +390,13 @@ export default function PerformanceChannel({
             return trimmed;
         });
 
-        if (i === 0) {
+        // Generating must never disturb playback: a playing channel keeps
+        // looping its current clip while new fragments just pile into the
+        // history list. Only auto-load when the channel has nothing loaded yet
+        // (first-ever fragment) — harmless since nothing is playing — so the
+        // user still gets a ready-to-play clip on a fresh channel. To start a
+        // newly generated fragment, pick it from the list (handleCommitFragment).
+        if (i === 0 && !loaded) {
             await strip.loadBlob(blob);
             setCommittedFragmentId(fragment.id);
             setLoaded(true);
@@ -487,23 +493,37 @@ export default function PerformanceChannel({
         }
     };
 
+    // Choosing a fragment launches it from the beginning. The currently
+    // playing clip (if any) keeps sounding until the launch point: immediately
+    // in seconds mode or when launch quantization is None, otherwise at the
+    // next launch-quantization bar. The buffer is decoded WITHOUT stopping the
+    // live source, so the swap is gapless (the engine schedules the handoff).
     const handleCommitFragment = async (fragmentId) => {
         const fragment = fragments.find((f) => f.id === fragmentId);
-        if (!fragment || committedFragmentId === fragmentId) return;
-        // Stop the live channel before swapping the buffer so we don't get a
-        // glitch in the middle of a loop iteration.
-        try { strip.stop(); } catch { /* not playing */ }
-        onStateChange?.(index, { playing: false });
-        await strip.loadBlob(fragment.blob);
-        setCommittedFragmentId(fragmentId);
-        // Mark loaded so the play button enables. Required for the case where
-        // the channel had hydrated fragments but no committedFragmentId
-        // (preset load, or any flow where the first commit is via this code
-        // path rather than the generate flow that sets loaded itself).
+        if (!fragment) return;
+        const sameFragment = committedFragmentId === fragmentId;
+        // Already looping this exact clip → nothing to (re)launch.
+        if (sameFragment && playing) return;
+
+        // Decode the new clip without cutting the live source; skip the decode
+        // when this fragment's buffer is already loaded.
+        if (!sameFragment) {
+            await strip.loadBufferFromBlob(fragment.blob);
+            setCommittedFragmentId(fragmentId);
+        }
+        // Mark loaded so the play button enables (covers preset/hydrated flows
+        // where the first commit happens here rather than via generate).
         if (!loaded) {
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
         }
+
+        // Launch from the top. Seconds mode is always immediate; bars mode
+        // defers to the engine's launch-quantization (ASAP when quantum=None).
+        const immediate = durationMode === 'seconds';
+        if (engine) engine.relaunchChannel(index, looping, immediate);
+        else strip.playAt(looping, 0);
+        onStateChange?.(index, { playing: true });
         requestAnimationFrame(drawWave);
     };
 

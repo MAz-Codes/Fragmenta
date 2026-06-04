@@ -216,6 +216,14 @@ export class ChannelStrip {
 
     async loadBlob(blob) {
         this.stop();
+        await this.loadBufferFromBlob(blob);
+    }
+
+    // Decode a blob into the channel buffer WITHOUT touching current playback.
+    // Used for gapless, scheduled clip swaps where the live source must keep
+    // sounding until the next launch-quantization boundary. (loadBlob() stops
+    // first; this one deliberately does not.)
+    async loadBufferFromBlob(blob) {
         const arrayBuffer = await blob.arrayBuffer();
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
     }
@@ -245,6 +253,61 @@ export class ChannelStrip {
 
         // Start from the head of the clip at the scheduled (quantized) time.
         src.start(Math.max(0, startTime));
+        this.source = src;
+        this.sourceFade = fadeGain;
+        this.isPlaying = true;
+    }
+
+    // Launch the current buffer from its head at `startTime` (0 = ASAP) WITHOUT
+    // cutting the currently-playing source until that moment. This gives
+    // gapless, grid-aligned clip switching: the live clip keeps sounding right
+    // up to the boundary, then the new one takes over. When `startTime` is ~now
+    // (immediate / no quantization) it degrades to a short 12 ms crossfade,
+    // identical in feel to play() but without the up-front silence.
+    playAt(loop = this.isLooping, startTime = 0) {
+        if (!this.buffer) return;
+        const now = this.ctx.currentTime;
+        const when = startTime > now ? startTime : now;  // 0 / past => now
+        const FADE = 0.012;
+
+        // Hand off any current source: hold its level until just before the
+        // boundary, fade over 12 ms, and stop it right at `when`. No gap.
+        if (this.source) {
+            const oldSrc = this.source;
+            const oldFade = this.sourceFade;
+            const stopAt = Math.max(when, now + FADE);
+            const fadeStart = Math.max(now, stopAt - FADE);
+            try {
+                if (oldFade) {
+                    oldFade.gain.cancelScheduledValues(now);
+                    oldFade.gain.setValueAtTime(oldFade.gain.value, fadeStart);
+                    oldFade.gain.linearRampToValueAtTime(0, stopAt);
+                }
+                oldSrc.stop(stopAt + 0.005);
+            } catch (_) { /* already stopped */ }
+            window.setTimeout(() => {
+                try { oldSrc.disconnect(); } catch (_) { /* ok */ }
+                try { oldFade && oldFade.disconnect(); } catch (_) { /* ok */ }
+            }, Math.ceil((stopAt - now + 0.03) * 1000));
+        }
+
+        // Schedule the new source from the clip head at the boundary.
+        this.isLooping = loop;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.buffer;
+        src.loop = loop;
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        fadeGain.connect(this.hpf);
+        src.onended = () => {
+            if (this.source === src) {
+                this.source = null;
+                this.sourceFade = null;
+                this.isPlaying = false;
+            }
+        };
+        src.start(when);
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -748,6 +811,18 @@ export class PerformanceEngine {
         // launched on bar boundaries — NOT from entering the buffer mid-way.
         const { when } = this.getNextQuantizedAudioTime();
         ch.play(loop, when);
+    }
+
+    // Switch a channel to its (freshly loaded) buffer and launch it from the
+    // top, keeping the current clip playing until the launch point — gapless
+    // clip switching. `immediate` forces an ASAP start (seconds mode); else the
+    // launch aligns to the next launch-quantization boundary (which itself is
+    // ASAP when the quantum is None or no tempo is running).
+    relaunchChannel(index, loop, immediate = false) {
+        const ch = this.channels[index];
+        if (!ch || !ch.buffer) return;
+        const when = immediate ? 0 : this.getNextQuantizedAudioTime().when;
+        ch.playAt(loop, when);
     }
 
     setMasterGain(value) {
