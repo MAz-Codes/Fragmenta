@@ -60,49 +60,17 @@ If you only want to get to know the pipeline, Fragmenta runs on a [Hugging Face 
 
 ## Option 2: Run Locally with Docker
 
-The fastest way to get started locally — no Python installation needed. Use the commands below, then open **http://localhost:5001** in your browser. 
+The fastest way to get started locally — no Python installation needed. Run one of the commands below, then open **http://localhost:5001** in your browser.
 
-### GPU (NVIDIA)
-
-**Linux:**
 ```bash
-docker run -d -p 5001:5001 --gpus all \
-  -v ./models:/app/models \
-  -v ./output:/app/output \
-  -v ./config:/app/config \
-  mazcode/fragmenta:gpu
+# GPU (NVIDIA)
+docker run -d -p 5001:5001 --gpus all -v ./models:/app/models mazcode/fragmenta:gpu
+
+# CPU (Mac / Linux / Windows — slower)
+docker run -d -p 5001:5001 -v ./models:/app/models mazcode/fragmenta:cpu
 ```
 
-**Windows (PowerShell):**
-```powershell
-docker run -d -p 5001:5001 --gpus all `
-  -v ${PWD}/models:/app/models `
-  -v ${PWD}/output:/app/output `
-  -v ${PWD}/config:/app/config `
-  mazcode/fragmenta:gpu
-```
-
-### CPU (Mac / Linux / Windows — no GPU required)
-
-> Audio generation is significantly slower on CPU. The `-v` volume mounts make sure downloaded models and generated audio persist across container restarts.
-
-**Mac / Linux:**
-```bash
-docker run -d -p 5001:5001 \
-  -v ./models:/app/models \
-  -v ./output:/app/output \
-  -v ./config:/app/config \
-  mazcode/fragmenta:cpu
-```
-
-**Windows (PowerShell):**
-```powershell
-docker run -d -p 5001:5001 `
-  -v ${PWD}/models:/app/models `
-  -v ${PWD}/output:/app/output `
-  -v ${PWD}/config:/app/config `
-  mazcode/fragmenta:cpu
-```
+The `-v ./models` mount keeps downloaded models across restarts. `:latest` is the CPU image (safe on any machine); pull `:gpu` for NVIDIA. For the full volume mounts, Windows/PowerShell syntax, environment variables, and a `docker-compose.yml`, see the **[Docker Hub page](https://hub.docker.com/r/mazcode/fragmenta)**.
 
 ---
 
