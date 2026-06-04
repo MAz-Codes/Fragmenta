@@ -36,7 +36,7 @@ import {
     Headphones as CueIcon,
     Volume2 as AudioSetupIcon,
     RotateCcw as RestoreIcon,
-    Download as DownloadIcon,
+    CloudDownload as DownloadIcon,
     Circle as RecordIcon,
 } from 'lucide-react';
 import api from '../api';
@@ -71,7 +71,7 @@ const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record 
 const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
-const MASTER_DB_DEFAULT = -6;
+const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
 const BPM_MAX = 300;

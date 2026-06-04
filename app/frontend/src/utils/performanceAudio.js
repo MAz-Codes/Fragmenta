@@ -1,4 +1,4 @@
-export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
+export const DEFAULT_CHANNEL_GAIN = 1.0; // unity (0 dB)
 
 // Stage A renders loops at exactly 44.1 kHz and the sample-exact loop length
 // (INV#2/#6) is defined at that rate. A default AudioContext adopts the system
@@ -180,13 +180,6 @@ export class ChannelStrip {
         this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
         this._lastUserGain = DEFAULT_CHANNEL_GAIN;
 
-        this.compressor = ctx.createDynamicsCompressor();
-        this.compressor.threshold.value = -16;
-        this.compressor.knee.value = 8;
-        this.compressor.ratio.value = 2.5;
-        this.compressor.attack.value = 0.006;
-        this.compressor.release.value = 0.14;
-
         this.pan = ctx.createStereoPanner();
         this.pan.pan.value = 0;
 
@@ -194,10 +187,13 @@ export class ChannelStrip {
         this.analyser.fftSize = 256;
         this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
 
-        // Dry path — filter chain straight through to the master bus.
+        // Dry path — filter chain straight through to the master bus. Channels
+        // run clean: the only dynamics stage is the master limiter, which
+        // catches the summed peaks. (A per-channel compressor used to sit here
+        // — thr -16, 2.5:1, no makeup gain — quietly costing several dB on
+        // transient material and making the whole app feel quiet.)
         this.filter.connect(this.channelGain);
-        this.channelGain.connect(this.compressor);
-        this.compressor.connect(this.pan);
+        this.channelGain.connect(this.pan);
         this.pan.connect(this.analyser);
         this.analyser.connect(masterBus);
 
@@ -415,7 +411,6 @@ export class ChannelStrip {
             this.delaySend.disconnect();
             this.reverbSend.disconnect();
             this.channelGain.disconnect();
-            this.compressor.disconnect();
             this.pan.disconnect();
             this.analyser.disconnect();
         } catch (_) { /* already disconnected */ }

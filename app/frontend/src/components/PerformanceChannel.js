@@ -45,7 +45,7 @@ const CHANNEL_COLORS = [
 // dB value is converted to linear before reaching the audio graph.
 const GAIN_DB_MIN = -60;
 const GAIN_DB_MAX = 0;
-const GAIN_DB_DEFAULT = -6;
+const GAIN_DB_DEFAULT = 0;
 const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
