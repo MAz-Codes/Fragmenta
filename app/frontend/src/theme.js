@@ -2855,11 +2855,23 @@ export const performancePanelStyles = {
         background: `${PERF_BTN_SHEEN}, ${color}`,
         boxShadow: PERF_BTN_SHADOW,
         transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms',
+        // Own the hover/focus highlight in the button's own color. Without this,
+        // the global MuiIconButton hover (teal rgba(39,159,187,…) + amber icon)
+        // bleeds through and clashes with the transport colors.
         '&:hover': {
+            color: 'rgba(0,0,0,0.88)',
+            backgroundColor: color,
             background: `${PERF_BTN_SHEEN}, ${color}`,
             filter: 'brightness(1.05)',
             transform: 'translateY(-1px)',
             boxShadow: PERF_BTN_SHADOW_HOVER,
+        },
+        '&.Mui-focusVisible': {
+            color: 'rgba(0,0,0,0.88)',
+            backgroundColor: color,
+            background: `${PERF_BTN_SHEEN}, ${color}`,
+            outline: 'none',
+            boxShadow: `${PERF_BTN_SHADOW_HOVER}, 0 0 0 2px rgba(0,0,0,0.20)`,
         },
         '&.Mui-disabled': {
             color: 'rgba(255,255,255,0.26)',

@@ -67,7 +67,7 @@ const MASTER_COLOR = '#35C2D4';
 // Transport colors (original): Play uses the master cyan, Stop the error red,
 // Record its own red — kept as icon-only buttons.
 const RECORD_COLOR = '#E5484D';   // record red
-const STOP_COLOR = '#E26B5E';     // error red
+const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
 const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
