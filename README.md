@@ -15,18 +15,18 @@
 
 </div>
 
-Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA training, generation, audio editing, and live performance capabilities — powered by **Stable Audio 3**.
+Fragmenta brings GenAI audio generation to musicians, offering intuitive dataset creation, LoRA training, generation, audio editing, and live performance capabilities — powered by **Stable Audio 3**.
 
 > **Compatibility:** The previous Stable Audio Open engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
 
-Fragmenta is an open-source pipeline for bringing personalised GenAI audio into a musical workflow — no coding or machine-learning knowledge required. It is built for experimental music and sonic arts, not high-fidelity commercial production, reflecting the artist-first approach to AI in my [PhD research](https://www.misaghazimi.com).
+Fragmenta is an open-source pipeline for bringing personalised text-to audio GenAI into a meaningful musical workflow — no coding is required. It is mainly built for experimental music and sonic arts in mind. Fragmenta reflects the parasitic, small-data, model-bending and artist-first approaches to AI that are fundamental to my [PhD research](https://www.misaghazimi.com).
 
 ---
 
 ## Features
 
-- **Desktop app** with a lightweight `pywebview` window and a pre-built React frontend — no Node.js or npm required
-- **Docker images** for GPU and CPU — run as a web app on any machine
+- **Desktop app** with a lightweight `pywebview` window and a pre-built React frontend.
+- **Docker images** for GPU and CPU — run as a web app on any machine.
 - **Bulk auto-annotation** — generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
 - **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision — trains directly on a Dataset Workbench project
 - **LoRA adapters** — train DoRA/BoRA/-XS adapters on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
@@ -147,7 +147,7 @@ Pick a project from the Dataset Workbench, choose an **adapter type** (`dora-row
 
 ### 3. Generate Audio
 
-Use base or fine-tuned models to generate audio from text prompts (1–11 s for the small model, 1–47 s for the 1.0 model). If you've trained a LoRA, a LoRA picker appears when you select a compatible base model — pick one and dial in a **multiplier** (0–2×) to control how strongly the adapter biases the output.
+Use base or fine-tuned models to generate audio from text prompts — up to 120 s on the Small models, 380 s on Medium. If you've trained a LoRA, a LoRA picker appears when you select a compatible base model — pick one and dial in a **multiplier** (0–2×) to control how strongly the adapter biases the output.
 
 **Settings:**
 - **CFG scale** — how closely the model follows your prompt (higher = stricter)
