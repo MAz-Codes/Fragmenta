@@ -17,9 +17,9 @@
 
 Fragmenta brings GenAI audio generation to musicians, offering intuitive LoRA training, generation, audio editing, and live performance capabilities — powered by **Stable Audio 3**.
 
-> **Version 0.2.0 runs Stable Audio 3 only.** The previous Stable Audio Open engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. SA3 LoRAs are not compatible with previous version.
+> **Compatibility:** The previous Stable Audio Open engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
 
-This is not commercial software for creating high-fidelity songs or samples. Fragmenta is an open-source pipeline created to facilitate the integration of personalised GenAI technology within the musical workflow for musicians and composers — no coding or machine learning knowledge required. It is therefore more suitable for experimental music and sonic arts applications. This approach corresponds to my [Phd Research](https://www.misaghazimi.com) philosophy that seeks artist-first approaches in AI technology.
+Fragmenta is an open-source pipeline for bringing personalised GenAI audio into a musical workflow — no coding or machine-learning knowledge required. It is built for experimental music and sonic arts, not high-fidelity commercial production, reflecting the artist-first approach to AI in my [PhD research](https://www.misaghazimi.com).
 
 ---
 
@@ -34,14 +34,7 @@ This is not commercial software for creating high-fidelity songs or samples. Fra
 - **Audio editing (Edit tab)** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation
 - **Seamless loops** — bars-mode clips are tempo-locked and the loop seam is smoothed by inpainting, not a crossfade
 - **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
-- **Performance Mode** — a 4-channel sampler designed for live performance:
-  - Independent channel processing (gain, pan, low-pass filter, delay, reverb)
-  - Master output with peak metering (dBFS)
-  - **Bars-mode generation** — request clips by bar count; output is beat-aligned and tempo-locked to the master BPM
-  - **Launch quantization** with an internal beat clock (works standalone or in sync with **Ableton Link**)
-  - **Persistent session** — every panel setting survives page reloads and app restarts
-  - **Named presets** — save and recall full panel snapshots
-  - **MIDI learn** — assign any hardware control to any UI element; mappings persist
+- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, low-pass, delay, reverb), master dBFS metering, bars-mode tempo-locked generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance-mode))
 - **Real-time GPU memory monitoring**
 
 ![Interface](app/frontend/public/interface.png)
@@ -171,7 +164,7 @@ If you have a folder of audio files without text descriptions, the **Bulk Annota
 
 **User-defined vocabulary (Rich tier):** customize the CLAP tagger with your own terms for results tailored to your style.
 
-Once annotation finishes, results appear in an editable table — review and tweak any prompt before saving. Choose **Copy files into data/** to move everything into the dataset folder, or **Leave files in place** to reference their original paths.
+Once annotation finishes, results appear in an editable table — review and tweak any prompt before saving, then commit with the same copy-or-reference choice as above.
 
 ### 2. Train Model
 
