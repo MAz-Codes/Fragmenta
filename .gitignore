@@ -116,7 +116,7 @@ build/fragmenta.spec
 build/windows_source/
 distribution
 distribution.md
-packaging
+#packaging/ 
 
 # ===== Local-only directories (never committed) =====
 scripts
@@ -144,3 +144,6 @@ phd
 # host these on a GitHub Release and reference by URL in requirements.txt,
 # never commit them to the repo.
 *.whl
+
+# Desktop packaging build output
+packaging/build/
