@@ -1,181 +1,128 @@
 # Third-Party Software Notices and Attributions
 
-Fragmenta uses third-party software and libraries. This document provides the required notices and attribution information for these dependencies.
+Fragmenta is licensed under the **GNU Affero General Public License v3.0** (see [`LICENSE`](LICENSE)). It bundles, depends on, and (at runtime) downloads third-party software and models. This document provides the required notices and attribution.
+
+Two categories matter for licensing:
+
+- **Redistributed** — shipped inside this repository and/or the Docker images (vendored code, the pre-built frontend, the flash-attn wheels, and the Python packages baked into the images).
+- **Downloaded at runtime** — the model weights. These are **not** redistributed by Fragmenta; you download them yourself from Hugging Face and accept their license at that point.
 
 ---
 
-## Included Third-Party Code
+## Included Third-Party Code (redistributed)
 
-### 1. Stable Audio Tools
-- **Source**: https://github.com/Stability-AI/stable-audio-tools
-- **Copyright**: Copyright (c) 2023 Stability AI
+### Stable Audio 3 (vendored)
+- **Source**: https://github.com/Stability-AI/stable-audio-3
+- **Copyright**: Copyright (c) 2026 Stability AI
 - **License**: MIT License
-- **Location**: `vendor/stable-audio-tools/`
-- **Modifications**: Minor modifications for integration with Fragmenta
+- **Location**: `vendor/stable-audio-3/` (pinned snapshot — see `vendor/stable-audio-3/UPSTREAM.md`)
+- **Modifications**: Minor changes for integration with Fragmenta (CPU/MPS device gating, packaging).
 
-The MIT License text can be found in `vendor/stable-audio-tools/LICENSE`.
+The MIT License text is in [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio-3/LICENSE).
 
-Stable Audio Tools itself includes code from the following projects (see `vendor/stable-audio-tools/LICENSES/`):
+### FlashAttention (flash-attn) — binary redistribution
+- **Source**: https://github.com/Dao-AILab/flash-attention
+- **Copyright**: Copyright (c) 2022, Tri Dao and contributors
+- **License**: BSD-3-Clause
+- **Form**: Redistributed as **binary wheels** referenced from `requirements.txt` — the pinned upstream Linux wheel, plus a Windows wheel built from the same BSD-licensed source (no official PyPI Windows wheel exists). Required by the `sa3-medium` model.
 
-#### 1.1 ADP (Audio Diffusion PyTorch)
-- **Copyright**: Copyright (c) 2022 archinet.ai
-- **License**: MIT License
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_ADP.txt`
+BSD-3-Clause permits binary redistribution provided the copyright notice, license text, and disclaimer are reproduced — satisfied by this entry and the license/AUTHORS files inside each wheel. This attribution does not imply endorsement of Fragmenta by the flash-attn authors.
 
-#### 1.2 AEIOU
-- **Copyright**: Copyright (c) 2022 AEIOU team
-- **License**: MIT License
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_AEIOU.txt`
+---
 
-#### 1.3 Auraloss
-- **Copyright**: Copyright (c) Christian Steinmetz
-- **License**: Apache License 2.0
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_AURALOSS.txt`
+## Model Weights (downloaded at runtime — NOT redistributed)
 
-#### 1.4 Descript Audio Codec
-- **Copyright**: Copyright (c) Descript
-- **License**: MIT License
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_DESCRIPT.txt`
+Fragmenta orchestrates the download and use of the following models. They are fetched from Hugging Face under the user's own account, and the user accepts each model's license at download time. Fragmenta does **not** ship these weights.
 
-#### 1.5 Meta AudioCraft
-- **Copyright**: Copyright (c) Meta Platforms, Inc.
-- **License**: MIT License
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_META.txt`
+### Stable Audio 3 model family — Stability AI Community License
+- **Models**: `stabilityai/stable-audio-3-small-music`, `-small-sfx`, `-medium`, and the matching `-base` checkpoints; `stabilityai/SAME-S` and `stabilityai/SAME-L` (autoencoders).
+- **License**: **Stability AI Community License** — https://stability.ai/community-license-agreement
+- **Bundled text encoder**: these checkpoints include a T5Gemma text encoder redistributed under the **Gemma Terms of Use** (https://ai.google.dev/gemma/terms), including the Section 3.2 use restrictions.
 
-#### 1.6 NVIDIA NeMo
-- **Copyright**: Copyright (c) NVIDIA Corporation
-- **License**: Apache License 2.0
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_NVIDIA.txt`
+Required attribution (per the Community License):
 
-#### 1.7 x-transformers
-- **Copyright**: Copyright (c) Phil Wang
-- **License**: MIT License
-- **License File**: `vendor/stable-audio-tools/LICENSES/LICENSE_XTRANSFORMERS.txt`
+> "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
+
+**Powered by Stability AI** ([stability.ai](https://stability.ai)).
+
+Notes on the Community License obligations:
+- Use is permitted for individuals/organizations with **up to USD $1,000,000** in annual revenue; above that threshold an Enterprise license from Stability AI is required.
+- Use must comply with Stability AI's Acceptable Use Policy.
+- **LoRA adapters trained in Fragmenta** (on the `*-base` checkpoints) are *Derivative Works* under the same Community License. If you distribute one, distribute it under that license, retain the attribution notice above, and do **not** brand it with Stability AI names/marks (e.g. "Stable Audio 3").
+
+### LAION-CLAP tagger (Rich auto-annotation)
+- **Checkpoint**: `lukewys/laion_clap` — `music_audioset_epoch_15_esc_90.14.pt`
+- **License**: **CC0-1.0** (public-domain dedication) — https://github.com/LAION-AI/CLAP
+- At construction, LAION-CLAP also fetches text-encoder snapshots (`roberta-base`, `bert-base-uncased`, `facebook/bart-base`) from Hugging Face. These are downloaded at runtime, not redistributed.
 
 ---
 
 ## Python Dependencies
 
-The following Python packages are distributed with Fragmenta:
+Installed from PyPI and baked into the Docker images. All licenses below are GPL/AGPL-compatible. See each package's distribution for full license text.
 
-### Deep Learning Frameworks
-- **PyTorch** - BSD-3-Clause License - https://pytorch.org/
-- **TorchVision** - BSD License - https://github.com/pytorch/vision
-- **TorchAudio** - BSD-2-Clause License - https://github.com/pytorch/audio
-- **Transformers** - Apache License 2.0 - https://github.com/huggingface/transformers
-- **Diffusers** - Apache License 2.0 - https://github.com/huggingface/diffusers
-- **Accelerate** - Apache License 2.0 - https://github.com/huggingface/accelerate
-- **PEFT** - Apache License 2.0 - https://github.com/huggingface/peft
-- **Datasets** - Apache License 2.0 - https://github.com/huggingface/datasets
-- **FlashAttention (flash-attn)** - BSD-3-Clause License - Copyright (c) 2022
-  Tri Dao and contributors - https://github.com/Dao-AILab/flash-attention
-  - Required by the `sa3-medium` model. Redistributed in **binary (wheel)**
-    form: pinned upstream Linux wheel, and a Windows wheel built from the
-    same BSD-licensed source (no official PyPI Windows wheel exists). BSD-3
-    permits binary redistribution provided this copyright notice, the license
-    text, and the disclaimer are reproduced — satisfied by this entry and the
-    license/AUTHORS files inside the distributed wheel. This attribution does
-    not imply endorsement of Fragmenta by the flash-attn authors.
-
-### Audio Processing
-- **librosa** - ISC License - https://github.com/librosa/librosa
-- **soundfile** - BSD-3-Clause License - https://github.com/bastibe/python-soundfile
-- **scipy** - BSD-3-Clause License - https://github.com/scipy/scipy
-
-### Web Framework & API
-- **Flask** - BSD-3-Clause License - https://github.com/pallets/flask
-- **Flask-CORS** - MIT License - https://github.com/corydolphin/flask-cors
-- **FastAPI** - MIT License - https://github.com/tiangolo/fastapi
-- **uvicorn** - BSD-3-Clause License - https://github.com/encode/uvicorn
-- **requests** - Apache License 2.0 - https://github.com/psf/requests
-
-### User Interface
-- **pywebview** - BSD License - https://github.com/r0x0r/pywebview
-
-### Utilities
-- **numpy** - BSD License - https://numpy.org/
-- **matplotlib** - PSF-based License - https://matplotlib.org/
-- **plotly** - MIT License - https://github.com/plotly/plotly.py
-- **tqdm** - MIT/MPL-2.0 License - https://github.com/tqdm/tqdm
-- **psutil** - BSD-3-Clause License - https://github.com/giampaolo/psutil
-- **wandb** - MIT License - https://github.com/wandb/wandb
-- **omegaconf** - BSD-3-Clause License - https://github.com/omry/omegaconf
-- **click** - BSD-3-Clause License - https://github.com/pallets/click
-- **python-dotenv** - BSD-3-Clause License - https://github.com/theskumar/python-dotenv
-- **Pillow** - PIL License (PIL/Pillow License) - https://github.com/python-pillow/Pillow
-- **huggingface-hub** - Apache License 2.0 - https://github.com/huggingface/huggingface_hub
-
-### Development Tools
-- **pytest** - MIT License - https://github.com/pytest-dev/pytest
-- **black** - MIT License - https://github.com/psf/black
-- **isort** - MIT License - https://github.com/PyCQA/isort
-- **flake8** - MIT License - https://github.com/PyCQA/flake8
+| Package | License |
+|---|---|
+| torch, torchvision | BSD-3-Clause |
+| torchaudio | BSD-2-Clause |
+| transformers, huggingface-hub, safetensors, accelerate | Apache-2.0 |
+| pytorch-lightning | Apache-2.0 |
+| ftfy | Apache-2.0 |
+| requests | Apache-2.0 |
+| Flask | BSD-3-Clause |
+| Flask-CORS | MIT |
+| einops, einops-exts | MIT |
+| torchlibrosa | MIT |
+| braceexpand | MIT |
+| python-rtmidi | MIT |
+| setuptools | MIT |
+| dill | BSD-3-Clause |
+| soundfile | BSD-3-Clause |
+| scipy | BSD-3-Clause |
+| numpy | BSD-3-Clause |
+| pandas | BSD-3-Clause |
+| h5py | BSD-3-Clause |
+| webdataset | BSD-3-Clause |
+| psutil | BSD-3-Clause |
+| omegaconf | BSD-3-Clause |
+| click | BSD-3-Clause |
+| python-dotenv | BSD-3-Clause |
+| pywebview | BSD-3-Clause |
+| numba | BSD-2-Clause |
+| librosa | ISC |
+| tqdm | MPL-2.0 AND MIT |
+| matplotlib | Matplotlib License (PSF-based, BSD-style) |
+| Pillow | HPND (PIL/MIT-CMU) |
+| wget | Public Domain |
+| Pycairo *(Linux)* | LGPL-2.1-only OR MPL-1.1 |
+| PyGObject *(Linux)* | LGPL-2.1-or-later |
+| flash-attn | BSD-3-Clause (see above) |
 
 ---
 
-## JavaScript/React Dependencies
+## JavaScript / Frontend Dependencies
 
-The following npm packages are included in the React frontend:
+Bundled into the pre-built React app shipped at `app/frontend/build/`.
 
-### Core Framework
-- **react** (^18.2.0) - MIT License - https://github.com/facebook/react
-- **react-dom** (^18.2.0) - MIT License - https://github.com/facebook/react
-- **react-scripts** (5.0.1) - MIT License - https://github.com/facebook/create-react-app
-
-### UI Components & Styling
-- **@mui/material** (^5.14.0) - MIT License - https://github.com/mui/material-ui
-- **@mui/icons-material** (^5.14.0) - MIT License - https://github.com/mui/material-ui
-- **@emotion/react** (^11.11.0) - MIT License - https://github.com/emotion-js/emotion
-- **@emotion/styled** (^11.11.0) - MIT License - https://github.com/emotion-js/emotion
-
-### Utilities & Components
-- **axios** (^1.6.0) - MIT License - https://github.com/axios/axios
-- **react-dropzone** (^14.2.3) - MIT License - https://github.com/react-dropzone/react-dropzone
-- **react-player** (^2.13.0) - MIT License - https://github.com/cookpete/react-player
-- **recharts** (^2.8.0) - MIT License - https://github.com/recharts/recharts
-
----
-
-## Additional Notices
-
-### Flash-Attention (Optional Dependency)
-- **flash-attn** - BSD-3-Clause License - https://github.com/Dao-AILab/flash-attention
-- Note: This is an optional dependency for performance optimization. The application functions without it.
-
-### Desktop Windowing Note
-Fragmenta uses pywebview as a lightweight native window wrapper for the local web interface.
-
-### Stable Audio Models
-
-Fragmenta uses pre-trained Stable Audio Open models from Stability AI. These models are governed by the **Stability AI Community License Agreement** — the full text is in [`vendor/STABLE_AUDIO.md`](vendor/STABLE_AUDIO.md).
-
-Required attribution (per the SACL):
-
-> "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
-
-Users must accept the model license terms independently when downloading the models through Fragmenta:
-- https://huggingface.co/stabilityai/stable-audio-open-1.0
-- https://huggingface.co/stabilityai/stable-audio-open-small
-
-**Powered by Stability AI** ([stability.ai](https://stability.ai)).
+| Package | License |
+|---|---|
+| react, react-dom | MIT |
+| @mui/material | MIT |
+| @emotion/react, @emotion/styled | MIT |
+| lucide-react | ISC |
+| vite, @vitejs/plugin-react *(build only)* | MIT |
 
 ---
 
 ## License Texts
 
-Full license texts for all dependencies can be obtained from their respective repositories or package distributions. For licenses of included code (stable-audio-tools), see the `vendor/stable-audio-tools/LICENSES/` directory.
+- **This project**: [`LICENSE`](LICENSE) (AGPL-3.0).
+- **Vendored Stable Audio 3 code**: [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio-3/LICENSE) (MIT).
+- **Stable Audio 3 weights**: Stability AI Community License — https://stability.ai/community-license-agreement
+- **Python / npm packages**: see each package's metadata or upstream repository.
 
 ---
 
-## How to View Full License Information
+**Last Updated**: 2026-06-05
 
-- **This project's license**: See `LICENSE` file in the root directory
-- **Stable Audio Tools licenses**: See `vendor/stable-audio-tools/LICENSE` and `vendor/stable-audio-tools/LICENSES/`
-- **Python package licenses**: Visit the URLs provided above or check package metadata
-- **npm package licenses**: Visit the URLs provided above or run `npm list --depth=0` in `app/frontend/`
-
----
-
-**Last Updated**: October 22, 2025
-
-For questions about licensing, please contact the Fragmenta project maintainers or open an issue on the project repository.
+For licensing questions, open an issue on the project repository or contact the maintainer.
