@@ -252,17 +252,29 @@ function App() {
     };
 
     const deleteFragment = async (fragment) => {
-        if (!fragment?.filename) return;
-        try {
-            await api.delete(`/api/fragments/${encodeURIComponent(fragment.filename)}`);
+        // Drop from the in-memory list + revoke any session blob URL so we
+        // don't leak object URLs after removal.
+        const dropFromList = () => {
             setGeneratedFragments(prev => prev.filter(f => f.id !== fragment.id));
-            // Best-effort revoke of blob URLs created during this session so
-            // we don't leak object URLs after delete.
             if (fragment.audioUrl?.startsWith('blob:')) {
                 try { URL.revokeObjectURL(fragment.audioUrl); } catch { /* ignore */ }
             }
+        };
+        // No on-disk file recorded — nothing for the backend to delete, just
+        // remove the row.
+        if (!fragment?.filename) { dropFromList(); return; }
+        try {
+            await api.delete(`/api/fragments/${encodeURIComponent(fragment.filename)}`);
+            dropFromList();
         } catch (err) {
-            console.error('Delete fragment failed:', err);
+            // 404 = the WAV is already gone (stale list). That's the user's
+            // intent anyway, so still clear the row instead of leaving a stuck
+            // entry. Only keep it on genuine failures (500 / network).
+            if (err?.response?.status === 404) {
+                dropFromList();
+            } else {
+                console.error('Delete fragment failed:', err);
+            }
         }
     };
 
