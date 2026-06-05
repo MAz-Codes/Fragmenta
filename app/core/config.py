@@ -68,7 +68,7 @@ class ProjectConfig:
         fine_tuned_dir = Path(fine_tuned_override) if fine_tuned_override else self.user_data_dir / "models" / "fine_tuned"
 
         # Scratch area for browser folder uploads (/api/upload-folder). The
-        # SA2-era "data" dataset directory is gone in 0.2.0 — datasets are now
+        # SA2-era "data" dataset directory is gone in 1.0.0 — datasets are now
         # Dataset Workbench projects under projects/.
         uploads_override = os.environ.get("FRAGMENTA_UPLOADS_DIR")
         uploads_dir = Path(uploads_override) if uploads_override else self.user_data_dir / "uploads"

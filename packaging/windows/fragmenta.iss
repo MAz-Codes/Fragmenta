@@ -5,7 +5,7 @@
 ; installer that needs no admin rights.
 ;
 ; Build (from repo root, after assemble.py + pyinstaller):
-;   iscc /DAppVersion=0.2.0 packaging\windows\fragmenta.iss
+;   iscc /DAppVersion=1.0.0 packaging\windows\fragmenta.iss
 ;
 ; Output: packaging\build\Fragmenta-<version>-Setup.exe
 

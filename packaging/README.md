@@ -57,7 +57,7 @@ python -c "from PIL import Image; Image.open('app/frontend/public/fragmenta_icon
 :: 2. payload + launcher + installer
 python packaging\assemble.py --target windows-x64 --out packaging\build\payload
 pyinstaller packaging\windows\launcher.spec --distpath packaging\build\win --workpath packaging\build\_pyi
-iscc /DAppVersion=0.2.0 packaging\windows\fragmenta.iss   :: -> packaging\build\Fragmenta-<ver>-Setup.exe
+iscc /DAppVersion=1.0.0 packaging\windows\fragmenta.iss   :: -> packaging\build\Fragmenta-<ver>-Setup.exe
 ```
 
 ```bash

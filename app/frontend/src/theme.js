@@ -1,7 +1,7 @@
 import { createTheme, responsiveFontSizes } from '@mui/material/styles';
 
 /* =====================================================================
- * Fragmenta 0.2.0 theme — Arcade (dark) × Paper (light)
+ * Fragmenta 1.0.0 theme — Arcade (dark) × Paper (light)
  *
  *   Dark mode is modelled on Output Arcade's aesthetic: warm-tinted near
  *   black, amber/gold primary accent with a thin-outlined "pad" language,

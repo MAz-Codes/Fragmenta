@@ -230,7 +230,7 @@ def start_training():
             return jsonify({
                 'error': (
                     f"baseModel '{base_model}' is not a valid LoRA target. "
-                    f"Pick one of: {_SA3_LORA_BASES}. SA2 models are gone in 0.2.0; "
+                    f"Pick one of: {_SA3_LORA_BASES}. SA2 models are gone in 1.0.0; "
                     f"post-trained SA3 checkpoints (no -base suffix) can't be used "
                     f"as a training base."
                 )
@@ -357,7 +357,7 @@ def generate_audio():
         if model_id not in _SA3_MODEL_IDS:
             return jsonify(APIResponse.error(
                 f"'{model_id}' is not a SA3 model. The SA2/SAO engine was "
-                f"removed in 0.2.0 (see v0.1.x-legacy tag for legacy use). "
+                f"removed in 1.0.0 (see v0.1.x-legacy tag for legacy use). "
                 f"Pick one of: {sorted(_SA3_MODEL_IDS)}.",
                 status_code=400)), 400
 
