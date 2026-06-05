@@ -42,7 +42,27 @@ import venv
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-VENV_PATH = PROJECT_ROOT / "venv"
+
+
+def _user_data_dir() -> Path:
+    """Writable per-user data dir for packaged builds.
+
+    MUST stay in sync with ``app/core/config.py``'s ``user_data_dir`` so the
+    venv we build here lands in the same place models/output/logs go at runtime.
+    """
+    if sys.platform == "win32":
+        return Path(os.environ["APPDATA"]) / "FragmentaDesktop"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
+    return Path.home() / ".local" / "share" / "FragmentaDesktop"
+
+
+# Packaged mode: the native launcher sets FRAGMENTA_PACKAGED=1 and invokes us
+# with the bundled standalone Python 3.11. The bundle (PROJECT_ROOT) is
+# read-only after install/sign, so the venv must live in the writable user-data
+# dir rather than next to the code. Source/dev runs keep venv/ beside the repo.
+PACKAGED = os.environ.get("FRAGMENTA_PACKAGED") == "1"
+VENV_PATH = (_user_data_dir() / "venv") if PACKAGED else (PROJECT_ROOT / "venv")
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 WHEELS_DIR = PROJECT_ROOT / "utils" / "vendor" / "wheels"
 STAMP_PATH = VENV_PATH / ".fragmenta-install-stamp"
@@ -88,11 +108,15 @@ def require_py311_host() -> None:
     through, stop with a clear message rather than producing a broken venv.
     """
     if sys.version_info[:2] != (3, 11):
-        fail(
-            f"this installer must run under Python 3.11 "
-            f"(got {sys.version_info.major}.{sys.version_info.minor}). "
+        hint = (
+            "the bundled Python looks wrong — reinstall Fragmenta."
+            if PACKAGED else
             "Install 3.11 from https://www.python.org/downloads/release/python-3119/ "
             "and run the launcher again."
+        )
+        fail(
+            f"this installer must run under Python 3.11 "
+            f"(got {sys.version_info.major}.{sys.version_info.minor}). " + hint
         )
 
 
@@ -105,6 +129,9 @@ def ensure_venv() -> Path:
         log("existing venv is not Python 3.11 — recreating…")
         shutil.rmtree(VENV_PATH, ignore_errors=True)
     log(f"creating virtual environment at {VENV_PATH} …")
+    # In packaged mode VENV_PATH is under the user-data dir, which may not exist
+    # yet on first run; make sure the parent is there before EnvBuilder runs.
+    VENV_PATH.parent.mkdir(parents=True, exist_ok=True)
     venv.EnvBuilder(with_pip=True, clear=False).create(str(VENV_PATH))
     return venv_python()
 

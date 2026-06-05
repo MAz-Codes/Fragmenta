@@ -5,23 +5,45 @@ from typing import Dict, Any, Optional
 import json
 
 
+def _default_user_data_dir() -> Path:
+    """Writable per-user data dir for packaged builds.
+
+    MUST stay in sync with ``install.py``'s ``_user_data_dir`` so the venv,
+    models, output and logs all resolve to the same place.
+    """
+    if sys.platform == "win32":
+        return Path(os.environ["APPDATA"]) / "FragmentaDesktop"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
+    return Path.home() / ".local" / "share" / "FragmentaDesktop"
+
+
 class ProjectConfig:
 
     def __init__(self, project_root: Optional[Path] = None) -> None:
-        if getattr(sys, 'frozen', False):
-            self.frozen = True
-            # PyInstaller unpacks the bundle to sys._MEIPASS; writable data lives elsewhere.
-            self.project_root = Path(sys._MEIPASS)
+        frozen = bool(getattr(sys, 'frozen', False))
+        # "Packaged" = shipped desktop build. Two shapes resolve here:
+        #   * PyInstaller-frozen process (sys.frozen) — code at sys._MEIPASS.
+        #   * The bootstrapper launcher: start.py runs under the venv's normal
+        #     Python (NOT frozen), so the native launcher sets FRAGMENTA_PACKAGED=1
+        #     to flag that the code sits in a read-only bundle and data must go
+        #     to the writable user-data dir.
+        packaged = frozen or os.environ.get("FRAGMENTA_PACKAGED") == "1"
 
-            if sys.platform == "win32":
-                self.user_data_dir = Path(os.environ["APPDATA"]) / "FragmentaDesktop"
-            elif sys.platform == "darwin":
-                self.user_data_dir = Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
+        if packaged:
+            self.frozen = frozen
+            if frozen:
+                # PyInstaller unpacks the bundle to sys._MEIPASS.
+                self.project_root = Path(sys._MEIPASS)
             else:
-                self.user_data_dir = Path.home() / ".local" / "share" / "FragmentaDesktop"
+                # Read-only bundle: this file is app/core/config.py, so the code
+                # root (holding app/, vendor/, requirements.txt) is three up —
+                # …/Resources on macOS, the install dir on Windows.
+                self.project_root = Path(__file__).resolve().parent.parent.parent
 
+            self.user_data_dir = _default_user_data_dir()
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Running in frozen mode. Project root: {self.project_root}")
+            print(f"Running packaged (frozen={frozen}). Project root: {self.project_root}")
             print(f"User data directory: {self.user_data_dir}")
 
         else:
@@ -64,7 +86,9 @@ class ProjectConfig:
             "backend": self.project_root / "app" / "backend",
             "frontend": self.project_root / "app" / "frontend",
             "stable_audio_3": self.project_root / "vendor" / "stable-audio-3",
-            "venv": self.project_root / "venv",
+            # venv lives with the writable data (== project_root in source mode,
+            # the user-data dir in a packaged build).
+            "venv": self.user_data_dir / "venv",
         }
 
         self._ensure_directories()
