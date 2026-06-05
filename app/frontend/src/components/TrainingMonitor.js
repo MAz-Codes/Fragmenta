@@ -131,7 +131,7 @@ export default function TrainingMonitor({
                 )}
             </Grid>
 
-            {lossPoints.length > 1 && (
+            {lossPoints.length > 0 && (
                 <Box sx={trainingMonitorStyles.lossSection}>
                     <Typography variant="body2" color="textSecondary" gutterBottom>
                         <strong>Loss History</strong>
@@ -147,6 +147,19 @@ export default function TrainingMonitor({
                         LoRA diffusion loss is noisy by design — each step samples
                         a random noise level. Judge the result with your ears, not
                         only with this chart.
+                    </Typography>
+                </Box>
+            )}
+
+            {lossPoints.length === 0 && (trainingStatus?.is_training || status === 'training') && (
+                <Box sx={trainingMonitorStyles.lossSection}>
+                    <Typography variant="body2" color="textSecondary" gutterBottom>
+                        <strong>Loss History</strong>
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                        Warming up — loss is logged periodically, so the first point
+                        appears a little into the run (around step 50). The curve fills
+                        in as training proceeds.
                     </Typography>
                 </Box>
             )}
