@@ -120,6 +120,26 @@ def require_py311_host() -> None:
         )
 
 
+def _macos_link_libpython(venv_path: Path) -> None:
+    """Make ``libpython3.11.dylib`` resolvable from the venv interpreter (macOS).
+
+    Our bundled standalone CPython loads libpython via
+    ``@executable_path/../lib/libpython3.11.dylib``. ``venv`` places the
+    interpreter at ``venv/bin/python3.11``, so dyld resolves that to
+    ``venv/lib/libpython3.11.dylib`` — which doesn't exist — and the venv
+    interpreter aborts (SIGABRT) the moment it's launched, including the
+    ``ensurepip`` step inside ``EnvBuilder.create``. Drop a symlink into the
+    venv's ``lib/`` pointing at the bundled dylib so the relative load resolves.
+    """
+    if sys.platform != "darwin":
+        return
+    src = Path(sys.base_prefix) / "lib" / "libpython3.11.dylib"
+    dst = venv_path / "lib" / "libpython3.11.dylib"
+    if src.exists() and not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.symlink_to(src)
+
+
 def ensure_venv() -> Path:
     """Create the venv if missing; recreate it if it's the wrong Python."""
     py = venv_python()
@@ -132,7 +152,15 @@ def ensure_venv() -> Path:
     # In packaged mode VENV_PATH is under the user-data dir, which may not exist
     # yet on first run; make sure the parent is there before EnvBuilder runs.
     VENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    venv.EnvBuilder(with_pip=True, clear=False).create(str(VENV_PATH))
+    # Two-step build: create the structure WITHOUT pip first. ensurepip would
+    # launch the venv interpreter, which on macOS can't load libpython until we
+    # link it (see _macos_link_libpython); doing it inline would SIGABRT.
+    venv.EnvBuilder(with_pip=False, clear=False).create(str(VENV_PATH))
+    _macos_link_libpython(VENV_PATH)
+    # Now the venv interpreter can launch — bootstrap pip ourselves.
+    subprocess.check_call(
+        [str(venv_python()), "-m", "ensurepip", "--upgrade", "--default-pip"]
+    )
     return venv_python()
 
 
