@@ -223,7 +223,14 @@ class _ClapTagger:
 
             import huggingface_hub.constants as _hhc
             prev_offline_attr = _hhc.HF_HUB_OFFLINE
+            prev_cache_attr = _hhc.HF_HUB_CACHE
             _hhc.HF_HUB_OFFLINE = True
+            # HF_HUB_CACHE is captured at import time too (same reason as
+            # HF_HUB_OFFLINE), so the env vars above don't actually redirect it.
+            # Patch the constant directly — otherwise transformers falls back to
+            # the default ~/.cache/huggingface, which may hold only the tokenizer
+            # (not config.json / weights) and then fails in offline mode.
+            _hhc.HF_HUB_CACHE = str(hub_dir)
             try:
                 import laion_clap  # noqa: E402 — must follow the offline patch
                 import torch
@@ -231,6 +238,7 @@ class _ClapTagger:
                 model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
             finally:
                 _hhc.HF_HUB_OFFLINE = prev_offline_attr
+                _hhc.HF_HUB_CACHE = prev_cache_attr
                 for k, v in prev_env.items():
                     if v is None:
                         os.environ.pop(k, None)
