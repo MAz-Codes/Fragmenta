@@ -92,7 +92,7 @@ def fetch(target: str, dest: Path) -> Path:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Fetch standalone CPython 3.11")
     ap.add_argument("--target", default=None, help="macos-arm64 | windows-x64 (default: auto)")
-    ap.add_argument("--dest", required=True, type=Path, help="destination dir (becomes python-3.11/)")
+    ap.add_argument("--dest", type=Path, help="destination dir (becomes python-3.11/); required unless --url-only")
     ap.add_argument("--url-only", action="store_true", help="print the asset URL and exit")
     args = ap.parse_args()
 
@@ -100,6 +100,8 @@ def main() -> None:
     if args.url_only:
         print(asset_url(target))
         return
+    if args.dest is None:
+        ap.error("--dest is required (unless --url-only)")
     fetch(target, args.dest)
 
 
