@@ -36,7 +36,6 @@ Fragmenta is an open-source app for bringing personalised text-to-audio GenAI in
 - **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance-mode))
 - **Real-time GPU memory monitoring**
 
-![Interface](app/frontend/public/interface.png)
 
 ---
 
