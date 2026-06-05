@@ -1689,13 +1689,11 @@ def free_gpu_memory():
                 nvidia_total_gb = total_memory
                 nvidia_free_gb = total_memory
 
-            # PyTorch sometimes reports 0 for externally-allocated memory; fall back to nvidia-smi.
-            if allocated_memory > 0:
-                final_allocated = allocated_memory
-                final_free = free_memory
-            else:
-                final_allocated = nvidia_used_gb
-                final_free = nvidia_free_gb
+            # Report device-wide usage (every process), not just this one.
+            # torch.cuda.memory_allocated() can't see a training/generation
+            # subprocess, so always use the nvidia-smi device totals above.
+            final_allocated = nvidia_used_gb
+            final_free = nvidia_free_gb
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
@@ -1986,41 +1984,31 @@ def get_gpu_memory_status():
                 0).total_memory / (1024**3)
 
             torch.cuda.synchronize()
+            # Per-process figures (this Flask backend only) — kept for detail.
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
-            free_memory = total_memory - allocated_memory
 
-            nvidia_used_gb = 0
-            nvidia_total_gb = total_memory
-            nvidia_free_gb = total_memory
+            # Device-wide usage across ALL processes via the CUDA driver.
+            # torch.cuda.memory_*() only sees THIS process, so it misses a
+            # training/generation subprocess running elsewhere — which is why the
+            # indicator read near-empty during training. mem_get_info() reports
+            # the driver's true device free/total, covering every process.
+            device_free_gb, device_total_gb = (
+                b / (1024**3) for b in torch.cuda.mem_get_info(0))
+            device_used_gb = device_total_gb - device_free_gb
 
-            # PyTorch reports 0 when memory is held by other processes; ask nvidia-smi instead.
-            if allocated_memory == 0:
-                try:
-                    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
-                                            capture_output=True, text=True, timeout=5)
-                    if result.stdout.strip():
-                        used_mb, total_mb = result.stdout.strip().split(', ')
-                        nvidia_used_gb = float(used_mb) / 1024
-                        nvidia_total_gb = float(total_mb) / 1024
-                        nvidia_free_gb = nvidia_total_gb - nvidia_used_gb
-                except Exception as e:
-                    if "Could not get nvidia-smi info" not in str(e):
-                        print(f"GPU Memory Error: {e}")
+            nvidia_used_gb = device_used_gb
+            nvidia_total_gb = device_total_gb
+            nvidia_free_gb = device_free_gb
 
             cuda_capability = torch.cuda.get_device_capability(0)
             device_name = torch.cuda.get_device_name(0)
 
-            if allocated_memory > 0:
-                final_allocated = allocated_memory
-                final_cached = cached_memory
-                final_free = free_memory
-                memory_source = "PyTorch"
-            else:
-                final_allocated = nvidia_used_gb
-                final_cached = cached_memory
-                final_free = nvidia_free_gb
-                memory_source = "nvidia-smi"
+            # Report device-wide numbers so the indicator reflects every process.
+            final_allocated = device_used_gb
+            final_cached = cached_memory
+            final_free = device_free_gb
+            memory_source = "cuda-driver"
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
