@@ -153,16 +153,37 @@ def _pick_duration(p95_clip_sec: Optional[float], base_model: Optional[str]) -> 
     return float(max(5, min(model_max, suggested)))
 
 
-def _pick_batch_size(bucket: str, vram_gb: Optional[float]) -> int:
-    """SA3 examples all use batch 1. Only go higher on roomy hardware + big data.
+def _pick_batch_size(bucket: str, vram_gb: Optional[float],
+                     base_model: Optional[str] = None) -> int:
+    """Batch size trades VRAM throughput against gradient-update frequency.
 
-    24 GB threshold for batch 2 leaves enough headroom for medium-base + bf16
-    activations across two samples. Going beyond batch 2 hits diminishing
-    returns and risks OOM mid-run.
+    For small datasets batch 1 is deliberate, not a VRAM limit: more optimizer
+    updates per pass, which matters more than throughput for personalization
+    (SA3's own examples all use batch 1, and tiny sets want the noisier updates).
+    We only scale up once the dataset is large enough to benefit, and within the
+    model's *real* per-sample cost — the small bases are cheap (~0.6 GB/sample on
+    top of a ~2.5 GB base), the medium base is not (~6.5 GB + heavy bf16
+    activations per sample), so they get very different VRAM floors.
     """
-    if vram_gb is None or vram_gb < 24:
+    # Tiny/small datasets: keep frequent updates regardless of spare VRAM.
+    if bucket in ("tiny", "small"):
         return 1
-    if bucket in ("medium", "large"):
+
+    is_small = base_model is None or "small" in base_model
+
+    if not is_small:
+        # medium-base: only step up on workstation-class cards.
+        if vram_gb is not None and vram_gb >= 24 and bucket in ("medium", "large"):
+            return 2
+        return 1
+
+    # small bases: per-sample cost is low, so dataset size drives this with a
+    # modest VRAM floor rather than the medium-calibrated 24 GB gate.
+    if vram_gb is None:
+        return 2  # unknown VRAM but dataset is 100+; 2 is safe on a small base
+    if bucket == "large" and vram_gb >= 12:
+        return 4
+    if vram_gb >= 8:
         return 2
     return 1
 
@@ -188,7 +209,7 @@ def _heuristic(
     steps = _STEPS_BY_BUCKET[bucket]
     adapter, constrained = _pick_adapter(base_model, vram_gb)
     duration = _pick_duration(dur_stats.get("p95"), base_model)
-    batch = _pick_batch_size(bucket, vram_gb)
+    batch = _pick_batch_size(bucket, vram_gb, base_model)
 
     # Mild dropout for tiny datasets only — extra regularization where overfit
     # is most likely. SA3 default is 0.0; we deviate intentionally.
