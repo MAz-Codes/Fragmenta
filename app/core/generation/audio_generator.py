@@ -434,6 +434,18 @@ class AudioGenerator:
         gen_duration = duration
         total_steps_logical = effective_steps
 
+        # The vendored generate() defaults sample_size=5292032 (=120s) and
+        # _adapt_sample_size CLAMPS the seconds_total-derived length to it. Since
+        # we never passed sample_size, every model — including medium — was
+        # capped at 120s, so medium's advertised 380s never materialised. Pass
+        # the model's native sample_size as the ceiling so _adapt sizes output to
+        # the requested duration (plus its 6s padding) within the real maximum.
+        try:
+            native_sample_size = int(self.model.model_config.get("sample_size"))
+        except Exception:
+            native_sample_size = 0
+        sample_size_ceiling = max(native_sample_size, target_samples)
+
         if self._stop_requested:                  # one more check before the heavy call
             raise GenerationStopped()
 
@@ -452,6 +464,7 @@ class AudioGenerator:
             prompt=prompt,
             negative_prompt=negative_prompt or None,
             duration=gen_duration,
+            sample_size=sample_size_ceiling,
             steps=effective_steps,
             cfg_scale=effective_cfg,
             seed=int(seed),

@@ -602,8 +602,16 @@ class Attention(nn.Module):
              heads_per_kv_head = self.num_heads // self.kv_heads
              k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
 
-        flash_attn_available = flash_attn_func is not None
-        flash_attn_varlen_available = flash_attn_varlen_func is not None and index_first_axis is not None
+        # flash-attn kernels are CUDA-only. When flash_attn is installed (e.g. an
+        # NVIDIA box) but generation is forced onto CPU/MPS, the tensors aren't on
+        # a CUDA device and calling flash_attn crashes with
+        # "flash_attn::_flash_attn_varlen_forward ... not implemented for CPU".
+        # Gate on device so CPU/MPS falls through to the SDPA cascade below.
+        on_cuda = q.is_cuda
+        flash_attn_available = flash_attn_func is not None and on_cuda
+        flash_attn_varlen_available = (
+            flash_attn_varlen_func is not None and index_first_axis is not None and on_cuda
+        )
 
         if causal and (flex_attention_block_mask is not None or flex_attention_score_mod is not None):
             flex_attention_block_mask = None
