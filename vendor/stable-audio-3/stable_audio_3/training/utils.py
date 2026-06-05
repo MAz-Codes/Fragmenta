@@ -2,7 +2,10 @@ from pytorch_lightning.loggers import WandbLogger, CometLogger
 from ..interface.aeiou import pca_point_cloud
 
 import math
-import wandb
+try:
+    import wandb
+except ImportError: 
+    wandb = None
 import torch
 import torch.nn.functional as F
 import os
