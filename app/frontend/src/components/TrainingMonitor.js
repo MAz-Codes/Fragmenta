@@ -144,9 +144,8 @@ export default function TrainingMonitor({
                         color="textSecondary"
                         sx={trainingMonitorStyles.lossDisclaimer}
                     >
-                        LoRA diffusion loss is noisy by design — each step samples
-                        a random noise level. Judge the result with your ears, not
-                        only with this chart.
+                        LoRA diffusion loss is noisy by design. Judge the result
+                        with your ears, not only with this chart.
                     </Typography>
                 </Box>
             )}
