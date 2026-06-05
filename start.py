@@ -10,7 +10,16 @@ import webbrowser
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent
-BACKEND_URL = "http://127.0.0.1:5001"
+# Backend endpoint. The port is finalised at launch by configure_backend_endpoint():
+# the conventional 5001 when free, otherwise an OS-assigned free port. We bind
+# loopback on a *confirmed-free* port to avoid the silent "dark window" failure
+# when something else already holds 5001 (a dev server, an IDE helper, a
+# Tailscale-forwarded port): binding 0.0.0.0:5001 with SO_REUSEADDR would
+# "succeed" yet lose all loopback traffic to the more-specific binder, and the
+# old fixed-port probe would mistake that squatter for our own backend.
+BACKEND_HOST = "127.0.0.1"
+BACKEND_PORT = 5001
+BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
 HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
@@ -30,6 +39,34 @@ DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
 
+def _pick_backend_port(preferred: int = 5001) -> int:
+    """Return a free loopback TCP port: ``preferred`` if available, else one
+    the OS assigns. Bound to 127.0.0.1 so we only ever claim the loopback
+    address the window actually connects to."""
+    for candidate in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            try:
+                probe.bind((BACKEND_HOST, candidate))
+                return probe.getsockname()[1]
+            except OSError:
+                continue
+    raise RuntimeError("no free TCP port available for the Fragmenta backend")
+
+
+def configure_backend_endpoint() -> None:
+    """Finalise the backend port (and the URLs derived from it) before launch.
+
+    Prefers 5001 for continuity, but transparently moves to a free port when
+    it's taken so a busy 5001 no longer yields a blank window. Safe to call
+    once at startup; subsequent helpers read the updated module globals."""
+    global BACKEND_PORT, BACKEND_URL, HEALTH_ENDPOINT
+    BACKEND_PORT = _pick_backend_port(BACKEND_PORT)
+    BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
+    HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
+    if BACKEND_PORT != 5001:
+        print(f"Port 5001 is busy; using {BACKEND_URL} instead.")
+
+
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
     """Wait until the Flask backend becomes reachable."""
     deadline = time.time() + timeout_seconds
@@ -44,14 +81,18 @@ def wait_for_backend(timeout_seconds: int = 60) -> bool:
     return False
 
 def backend_process_running() -> bool:
-    """Return True if something is already listening on backend port."""
+    """Return True if something is already listening on the backend port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
-        return sock.connect_ex(("127.0.0.1", 5001)) == 0
+        return sock.connect_ex((BACKEND_HOST, BACKEND_PORT)) == 0
 
 def start_backend_subprocess() -> subprocess.Popen:
     env = os.environ.copy()
     env.setdefault("FRAGMENTA_LOG_LEVEL", "INFO")
+    # Pin the backend to the loopback host/port we resolved (not the backend's
+    # 0.0.0.0:5001 default) so the window and the server agree on the address.
+    env["FLASK_HOST"] = BACKEND_HOST
+    env["FLASK_PORT"] = str(BACKEND_PORT)
     return subprocess.Popen(
         [sys.executable, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
@@ -505,6 +546,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # Resolve the backend port before any mode starts the server or opens a
+    # window, so all three paths agree on a single, confirmed-free endpoint.
+    configure_backend_endpoint()
     if args.browser:
         return run_browser_mode()
     # Default window engine per OS:
