@@ -67,6 +67,13 @@ def configure_backend_endpoint() -> None:
         print(f"Port 5001 is busy; using {BACKEND_URL} instead.")
 
 
+def announce_ui_ready() -> None:
+    """Tell the native launcher's first-run splash that the backend is healthy
+    and the window is about to appear, so it can dismiss the progress UI. Harmless
+    when launched without the splash (it's just a line on stdout)."""
+    print("__FRAGMENTA_UI_READY__", flush=True)
+
+
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
     """Wait until the Flask backend becomes reachable."""
     deadline = time.time() + timeout_seconds
@@ -107,6 +114,7 @@ def run_browser_mode() -> int:
             if not wait_for_backend():
                 print("Backend failed to start in time.")
                 return 1
+        announce_ui_ready()
 
         webbrowser.open(BACKEND_URL)
         print(f"Fragmenta is running at {BACKEND_URL}")
@@ -201,6 +209,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             if not wait_for_backend():
                 print("Backend failed to start in time.")
                 return 1
+        announce_ui_ready()
 
         if sys.platform == "linux":
             ensure_desktop_entry()
@@ -491,6 +500,7 @@ def run_pywebview_mode() -> int:
             if not wait_for_backend():
                 print("Backend failed to start in time.")
                 return 1
+        announce_ui_ready()
 
         try:
             window = webview.create_window(

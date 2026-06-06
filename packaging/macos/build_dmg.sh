@@ -33,6 +33,14 @@ echo "==> Fragmenta $VERSION — macOS arm64 build"
 python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$PAYLOAD"
 
 # 2. Freeze the launcher into an .app skeleton.
+# The launcher's first-run progress splash uses Tkinter; PyInstaller bundles it
+# only if the build Python can import it. Fail loudly here rather than silently
+# shipping a launcher whose splash no-ops.
+python3 -c "import tkinter" 2>/dev/null || {
+    echo "ERROR: the build Python lacks Tkinter — the first-run splash would be missing." >&2
+    echo "       Install it (e.g. 'brew install python-tk') and rebuild." >&2
+    exit 1
+}
 python3 -m pip install --quiet --upgrade pyinstaller
 rm -rf "$APP" "$DIST/fragmenta.app" build/launcher *.spec
 pyinstaller --noconfirm --windowed --name fragmenta \
