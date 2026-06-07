@@ -10,13 +10,6 @@ import webbrowser
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent
-# Backend endpoint. The port is finalised at launch by configure_backend_endpoint():
-# the conventional 5001 when free, otherwise an OS-assigned free port. We bind
-# loopback on a *confirmed-free* port to avoid the silent "dark window" failure
-# when something else already holds 5001 (a dev server, an IDE helper, a
-# Tailscale-forwarded port): binding 0.0.0.0:5001 with SO_REUSEADDR would
-# "succeed" yet lose all loopback traffic to the more-specific binder, and the
-# old fixed-port probe would mistake that squatter for our own backend.
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 5001
 BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
@@ -24,9 +17,6 @@ HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
 
-# --- macOS "About Fragmenta" panel -------------------------------------------
-# Text shown in the standard About panel (Apple menu → About Fragmenta). Edit
-# freely. Version is read from the repo VERSION file, with a fallback.
 try:
     ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
 except Exception:
@@ -85,11 +75,6 @@ def announce_ui_ready() -> None:
     and the window is about to appear, so it can dismiss the progress UI. Harmless
     when launched without the splash (it's just a line on stdout)."""
     print("__FRAGMENTA_UI_READY__", flush=True)
-    # In a packaged build the launcher shows a first-run splash that dismisses on
-    # the sentinel above. Yield briefly so it can tear down its Tk window while
-    # this process is still frontmost — once we open the app window and take
-    # focus, macOS App Nap throttles the launcher's timers and the dismiss can
-    # stall, leaving the splash frozen on top of the app. Skipped in dev runs.
     if os.environ.get("FRAGMENTA_PACKAGED") == "1":
         time.sleep(0.6)
 
@@ -116,8 +101,6 @@ def backend_process_running() -> bool:
 def start_backend_subprocess() -> subprocess.Popen:
     env = os.environ.copy()
     env.setdefault("FRAGMENTA_LOG_LEVEL", "INFO")
-    # Pin the backend to the loopback host/port we resolved (not the backend's
-    # 0.0.0.0:5001 default) so the window and the server agree on the address.
     env["FLASK_HOST"] = BACKEND_HOST
     env["FLASK_PORT"] = str(BACKEND_PORT)
     return subprocess.Popen(
@@ -177,12 +160,10 @@ def _chromium_install_paths() -> list[str]:
             rf"{pf}\BraveSoftware\Brave-Browser\Application\brave.exe",
             rf"{pfx86}\BraveSoftware\Brave-Browser\Application\brave.exe",
         ]
-    return []  # Linux resolves via PATH (below)
+    return []
 
 
 def find_chromium() -> str | None:
-    # 1) PATH names — primarily Linux, but also mac/win if a browser is on PATH.
-    #    Skip snap-confined browsers (they misbehave in --app mode).
     for name in CHROMIUM_CANDIDATES:
         path = shutil.which(name)
         if not path:
@@ -195,7 +176,6 @@ def find_chromium() -> str | None:
         ):
             continue
         return path
-    # 2) Absolute install locations (macOS / Windows, where Chrome isn't on PATH).
     for candidate in _chromium_install_paths():
         if candidate and os.path.isfile(candidate):
             return candidate
@@ -241,14 +221,10 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             "--window-size=1400,850",
             "--no-first-run",
             "--no-default-browser-check",
-            # Quiet the browser's own console spam (Chromium INFO/WARNING/ERROR,
-            # e.g. Brave's P3A telemetry). FATAL-only.
             "--log-level=3",
             "--disable-logging",
         ]
         if sys.platform == "linux":
-            # X11/Wayland WM class so the launcher/taskbar group under Fragmenta.
-            # macOS/Windows ignore (or warn about) it, so it's Linux-only.
             launch_args_base.insert(2, f"--class={APP_WM_CLASS}")
 
         attempts = [
@@ -262,11 +238,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             ("default profile", launch_args_base),
         ]
 
-        # Silence the browser subprocess entirely — both Chromium's own logging
-        # and library spam printed straight to stderr (e.g. the Mesa
-        # "MESA-LOADER: failed to open dri ... Permission denied" GL fallback
-        # notice) flow through here. Our Python backend logs from a separate
-        # process and is unaffected.
         quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
         last_exit_code = 1
         for index, (label, args) in enumerate(attempts):
@@ -361,9 +332,6 @@ def _macos_set_app_metadata() -> None:
         return
     try:
         from Foundation import NSBundle, NSProcessInfo
-        # Dock / Cmd-Tab / Force-Quit name. For a non-.app process (we run under
-        # the venv's python) this is what the Dock actually labels the app, so set
-        # it explicitly — the CFBundleName patch alone leaves it reading "Python".
         try:
             NSProcessInfo.processInfo().setProcessName_("Fragmenta")
         except Exception:
@@ -393,9 +361,6 @@ def _macos_set_webview_app_name() -> None:
         if getattr(_cocoa, "info", None) is not None:
             _cocoa.info["CFBundleName"] = "Fragmenta"
             _cocoa.info["CFBundleDisplayName"] = "Fragmenta"
-            # Standard "About Fragmenta" panel fields (edit via the ABOUT_* consts).
-            # Only CFBundleShortVersionString — setting CFBundleVersion too would
-            # add a duplicate "(1.0.0)" build number after the version.
             _cocoa.info["CFBundleShortVersionString"] = ABOUT_VERSION
             _cocoa.info["NSHumanReadableCopyright"] = ABOUT_COPYRIGHT
             try:
@@ -404,7 +369,7 @@ def _macos_set_webview_app_name() -> None:
                     ABOUT_CREDITS
                 )
             except Exception:
-                pass  # Credits is optional; name/version/copyright still show.
+                pass
     except Exception as exc:
         print(f"Could not set webview app name: {exc}")
 
@@ -440,11 +405,8 @@ def _linux_set_app_metadata() -> None:
         import gi
         gi.require_version("Gtk", "3.0")
         from gi.repository import GLib, Gtk
-        # WM_CLASS res_name (first string).
         GLib.set_prgname(APP_WM_CLASS)
         GLib.set_application_name("Fragmenta")
-        # WM_CLASS res_class (second string) — what GNOME/KDE compare against
-        # StartupWMClass when resolving a window to a .desktop entry.
         try:
             gi.require_version("Gdk", "3.0")
             from gi.repository import Gdk
@@ -520,10 +482,6 @@ def _windows_apply_window_icon() -> None:
 
 
 def run_pywebview_mode() -> int:
-    # macOS: patch CFBundleName BEFORE importing webview. pywebview's Cocoa backend
-    # reads the bundle's CFBundleName and creates the NSApplication at *import*
-    # time, and that name (else the interpreter's, i.e. "Python") becomes the
-    # Dock / menu-bar / Cmd-Tab app name. Patching after the import is too late.
     _macos_set_app_metadata()
     try:
         import webview
@@ -621,22 +579,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    # Resolve the backend port before any mode starts the server or opens a
-    # window, so all three paths agree on a single, confirmed-free endpoint.
     configure_backend_endpoint()
     if args.browser:
         return run_browser_mode()
-    # Default window engine per OS:
-    #   macOS/Windows → the native pywebview window (WKWebView/WebView2),
-    #     branded (Fragmenta icon + name) and rendering reliably.
-    #   Linux → Chromium --app mode. WebKitGTK frequently renders the app as a
-    #     blank/dark window (the page loads but never paints), so the native
-    #     window isn't dependable here; a real Chromium engine is. Falls back
-    #     to pywebview if no usable (non-snap) Chromium/Brave is found.
-    # `--chromium` forces Chromium mode on any OS; `--browser` opens the system
-    # browser. MIDI is native (rtmidi); core audio + master recording work in
-    # every engine. The only thing the OS WebViews lack on mac/linux is setSinkId
-    # (routing the cue to a *separate* output device).
     prefer_chromium = args.chromium or sys.platform == "linux"
     if prefer_chromium:
         chromium_path = find_chromium()

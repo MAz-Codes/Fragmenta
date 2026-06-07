@@ -1,9 +1,4 @@
 #!/bin/bash
-# Fragmenta launcher (macOS — double-clickable .command).
-#
-# Thin by design: acquires Python 3.11 (via Homebrew if needed), then hands
-# off to install.py, which owns the venv + dependency setup and is idempotent
-# (relaunch with an unchanged requirements.txt is near-instant). See install.py.
 
 echo "Fragmenta Desktop"
 echo "================================="
@@ -46,8 +41,6 @@ fi
 echo "Using Python 3.11 via: $PYTHON_CMD ($($PYTHON_CMD --version))"
 echo ""
 
-# Hand off: install.py creates/validates the venv, installs deps only if
-# requirements.txt changed, verifies, and launches the app.
 "$PYTHON_CMD" "$PROJECT_ROOT/install.py" --launch
 STATUS=$?
 if [ "$STATUS" != "0" ]; then

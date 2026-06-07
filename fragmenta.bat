@@ -10,11 +10,6 @@ set "PROJECT_ROOT=%~dp0"
 if "%PROJECT_ROOT:~-1%"=="\" set "PROJECT_ROOT=%PROJECT_ROOT:~0,-1%"
 echo Project root: %PROJECT_ROOT%
 
-REM ---------------------------------------------------------------------------
-REM  Locate Python 3.11. Thin by design: this launcher only finds Python; the
-REM  venv + dependency setup lives in install.py (idempotent — a relaunch with
-REM  an unchanged requirements.txt is near-instant instead of reinstalling).
-REM ---------------------------------------------------------------------------
 set "PY_LAUNCHER="
 
 where py >nul 2>&1
@@ -51,8 +46,6 @@ goto :end_fail
 echo Using Python 3.11 via: %PY_LAUNCHER%
 for /f "delims=" %%v in ('%PY_LAUNCHER% --version 2^>^&1') do echo Detected: %%v
 
-REM Hand off: install.py creates/validates the venv, installs deps only if
-REM requirements.txt changed, verifies, and launches the app.
 %PY_LAUNCHER% "%PROJECT_ROOT%\install.py" --launch
 set "RUN_RESULT=%ERRORLEVEL%"
 if not "%RUN_RESULT%"=="0" (

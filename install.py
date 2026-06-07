@@ -57,18 +57,11 @@ def _user_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "FragmentaDesktop"
 
 
-# Packaged mode: the native launcher sets FRAGMENTA_PACKAGED=1 and invokes us
-# with the bundled standalone Python 3.11. The bundle (PROJECT_ROOT) is
-# read-only after install/sign, so the venv must live in the writable user-data
-# dir rather than next to the code. Source/dev runs keep venv/ beside the repo.
 PACKAGED = os.environ.get("FRAGMENTA_PACKAGED") == "1"
 VENV_PATH = (_user_data_dir() / "venv") if PACKAGED else (PROJECT_ROOT / "venv")
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 WHEELS_DIR = PROJECT_ROOT / "utils" / "vendor" / "wheels"
 STAMP_PATH = VENV_PATH / ".fragmenta-install-stamp"
-# laion-clap is installed with --no-deps (its numpy<2 pin conflicts with SA3's
-# numpy>=2.2.6, but it works fine at runtime on numpy 2.x). Bumping this string
-# forces a reinstall via the stamp, same as editing requirements.txt.
 LAION_CLAP_SPEC = "laion-clap>=1.1.6"
 
 
@@ -149,15 +142,9 @@ def ensure_venv() -> Path:
         log("existing venv is not Python 3.11 — recreating…")
         shutil.rmtree(VENV_PATH, ignore_errors=True)
     log(f"creating virtual environment at {VENV_PATH} …")
-    # In packaged mode VENV_PATH is under the user-data dir, which may not exist
-    # yet on first run; make sure the parent is there before EnvBuilder runs.
     VENV_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Two-step build: create the structure WITHOUT pip first. ensurepip would
-    # launch the venv interpreter, which on macOS can't load libpython until we
-    # link it (see _macos_link_libpython); doing it inline would SIGABRT.
     venv.EnvBuilder(with_pip=False, clear=False).create(str(VENV_PATH))
     _macos_link_libpython(VENV_PATH)
-    # Now the venv interpreter can launch — bootstrap pip ourselves.
     subprocess.check_call(
         [str(venv_python()), "-m", "ensurepip", "--upgrade", "--default-pip"]
     )
@@ -207,8 +194,6 @@ def install_dependencies(py: Path, force: bool = False) -> None:
         install_args += ["--find-links", str(WHEELS_DIR)]
     pip(py, *install_args)
 
-    # laion-clap with --no-deps (see LAION_CLAP_SPEC note). Non-fatal: the
-    # auto-annotator's Rich tier degrades without it, everything else works.
     log("installing laion-clap (auto-annotator) with --no-deps…")
     rc = subprocess.run([str(py), "-m", "pip", "install", LAION_CLAP_SPEC, "--no-deps"]).returncode
     if rc != 0:

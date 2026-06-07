@@ -47,6 +47,5 @@ pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
 flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl ; sys_platform == 'linux'
-# Windows: no official PyPI wheel. My own build from upstream BSD-3 source
-# (2.7.4.post1, cp311, cu128/sm_120 — Blackwell+). Required for sa3-medium.
+# Windows: no official flash-attn wheel. My own build from upstream BSD-3 source.
 flash-attn @ https://github.com/MAz-Codes/Fragmenta/releases/download/flash-attn-win-v2.7.4.post1/flash_attn-2.7.4.post1-cp311-cp311-win_amd64.whl ; sys_platform == 'win32'

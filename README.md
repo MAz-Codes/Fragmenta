@@ -11,16 +11,14 @@
 
 ![Header Image](app/frontend/public/fragmenta.png)
 
-**Open-source text-to-audio LoRA training, generation, editing and performance for musicians.**
+**Bend the latent space with your own sound: the complete open-source text-to-audio pipeline for musicians.**
 
 </div>
 
-Fragmenta offers the complete text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and a novel live performance capability, all powered by **Stable Audio 3**.
+Fragmenta is an open-source app that brings the complete generative AI text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and live performance. After the initial installation, the app runs fully offline, and your data never leaves your device.
 
+Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragmenta is designed for all musicians, and especially for experimental music and sonic arts practitioners, giving them the ability to shape the latent space with their own audio and musical data, no coding required. It reflects the small-data, model-bending, and artist-first approaches to AI that are central to my [PhD research](https://www.misaghazimi.com). 
 > **Compatibility:** The beta version's engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
-
-Fragmenta is an open-source app for bringing personalised text-to-audio GenAI into a meaningful musical workflow with no coding required. It is built mainly with experimental music and sonic arts in mind. Fragmenta reflects the parasitic, small-data, model-bending and artist-first approaches to AI that are fundamental to my [PhD research](https://www.misaghazimi.com).
-
 ---
 
 ## Features
@@ -63,11 +61,13 @@ The fastest way to get started locally — no Python installation needed. Run on
 
 ```bash
 # GPU (NVIDIA)
-docker run -d -p 5001:5001 --gpus all -v ./models:/app/models mazcode/fragmenta:gpu
+docker run -d -p 5001:5001 --gpus all -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:gpu
 
 # CPU (Mac / Linux / Windows — slower)
-docker run -d -p 5001:5001 -v ./models:/app/models mazcode/fragmenta:cpu
+docker run -d -p 5001:5001 -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:cpu
 ```
+
+Generated clips are saved inside the container at `/app/output`; the `-v ./output:/app/output` mount mirrors them to an `output/` folder next to where you run the command. You can also **download** any clip directly from the Generated Fragments panel in the app.
 
 For the full volume mounts, Windows/PowerShell syntax, environment variables, and a `docker-compose.yml`, see the **[Docker Hub page](https://hub.docker.com/r/mazcode/fragmenta)**.
 
@@ -75,7 +75,9 @@ For the full volume mounts, Windows/PowerShell syntax, environment variables, an
 
 ## Option 3: Run the App Locally
 
-> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma)+ only** — it uses bf16 on the Metal/MPS backend; **Intel Macs are not supported** (and the macOS installer is Apple-Silicon-only).
+> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer), Intel Macs are not supported**.
+
+Open your **Terminal** or **PowerShell** and paste the following:
 
 ```bash
 git clone https://github.com/MAz-Codes/fragmenta.git
@@ -91,6 +93,8 @@ Run the installer for your platform:
 | **Windows** | `./fragmenta.bat` |
 
 The installer verifies Python 3.11 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster — re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
+
+
 
 ---
 
@@ -258,6 +262,7 @@ fragmenta/
 | Flash-Attention won't install | Small models run without it; **Medium requires it** (NVIDIA GPU). On Windows, install the prebuilt wheel provided with the project |
 | GPU memory issues | Use the **Free GPU** button in the header, or reduce batch size |
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
+| Multi-channel audio in Performance mode (macOS) | The native macOS window can't route audio to separate output devices. Open Fragmenta in your browser instead: [http://localhost:5001](http://localhost:5001) |
 | Import errors | Verify Python 3.11 is installed — newer versions are not supported. [Download Python 3.11.9](https://www.python.org/downloads/release/python-3119/). If you previously ran the installer with the wrong Python version, delete the `venv/` folder and rerun. |
 
 ---

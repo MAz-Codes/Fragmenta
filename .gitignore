@@ -118,6 +118,14 @@ distribution
 distribution.md
 packaging/
 
+# ===== keep IR and manifest =====
+!app/frontend/build/ir/
+!app/frontend/build/ir/*.wav
+!app/frontend/public/ir/
+!app/frontend/public/ir/*.wav
+!app/frontend/build/manifest.json
+!app/frontend/public/manifest.json
+
 # ===== Local-only directories (never committed) =====
 scripts
 !vendor/stable-audio-3/scripts/
@@ -129,20 +137,9 @@ docker/
 
 # ===== Local planning / scratch docs =====
 redesign
-DATASET_PREP_REDESIGN.md
-SIMPLIFICATION_PLAN.md
-SA3_COMPLETION_PLAN.md
-SA3_INTEGRATION_PLAN.md
-MIDI_AND_LAUNCH_PLAN.md
-DOCKERHUB.md
-TRAINING.md
 main.py
 debug_binaries.py
 phd
-
-# Built/large Python wheels (e.g. the Windows flash-attn build, ~385MB) —
-# host these on a GitHub Release and reference by URL in requirements.txt,
-# never commit them to the repo.
 *.whl
 
 # Desktop packaging build output

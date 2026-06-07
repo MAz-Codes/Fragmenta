@@ -124,6 +124,17 @@ function App() {
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
+    // Web/Docker deployments have no host desktop: there's no folder to open
+    // and no OS file manager to reveal in. We swap those affordances for an
+    // in-browser download instead. Sourced from GET /api/environment.
+    const [isDocker, setIsDocker] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/api/environment')
+            .then((res) => { if (!cancelled) setIsDocker(Boolean(res.data?.docker)); })
+            .catch(() => { /* default to desktop behaviour */ });
+        return () => { cancelled = true; };
+    }, []);
     const [colorMode, setColorMode] = useState(() => {
         if (typeof window === 'undefined') {
             return 'dark';
@@ -1167,7 +1178,13 @@ function App() {
         try {
             const response = await api.post('/api/open-output-folder');
             if (!response.data.success) {
-                setProcessingStatus(`Open output folder error: ${response.data.error || 'Unknown error'}`);
+                // In the web/Docker build there's no desktop folder to open; the
+                // backend returns a friendly explanation rather than an error.
+                if (response.data.headless && response.data.message) {
+                    setProcessingStatus(response.data.message);
+                } else {
+                    setProcessingStatus(`Open output folder error: ${response.data.error || 'Unknown error'}`);
+                }
             }
         } catch (error) {
             setProcessingStatus(`Open output folder error: ${error.response?.data?.error || error.message}`);
@@ -2486,6 +2503,7 @@ function App() {
                                                     fragments={generatedFragments}
                                                     onDelete={deleteFragment}
                                                     onClearAll={clearAllFragments}
+                                                    isDocker={isDocker}
                                                 />
                                             </Box>
                                         </Box>
@@ -2628,12 +2646,14 @@ function App() {
                             <ListItemIcon><CloudDownloadIcon size={18} /></ListItemIcon>
                             <ListItemText>Get Models</ListItemText>
                         </MenuItem>
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
-                        >
-                            <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
-                            <ListItemText>Outputs</ListItemText>
-                        </MenuItem>
+                        {!isDocker && (
+                            <MenuItem
+                                onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
+                            >
+                                <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
+                                <ListItemText>Outputs</ListItemText>
+                            </MenuItem>
+                        )}
                         <MenuItem
                             onClick={() => { setDockMenuAnchor(null); setShowFreeGPUDialog(true); }}
                             disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
@@ -2723,18 +2743,20 @@ function App() {
                         </Typography>
                     </Box>
 
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Open outputs folder"
-                            onClick={handleOpenOutputFolder}
-                            sx={appStyles.dockIconButton}
-                        >
-                            <FolderOpenIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            Outputs
-                        </Typography>
-                    </Box>
+                    {!isDocker && (
+                        <Box sx={appStyles.dockItem}>
+                            <IconButton
+                                aria-label="Open outputs folder"
+                                onClick={handleOpenOutputFolder}
+                                sx={appStyles.dockIconButton}
+                            >
+                                <FolderOpenIcon size={18} />
+                            </IconButton>
+                            <Typography className="dock-label" sx={appStyles.dockLabel}>
+                                Outputs
+                            </Typography>
+                        </Box>
+                    )}
 
                     <Box sx={appStyles.dockItem}>
                         <IconButton

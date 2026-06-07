@@ -1788,6 +1788,22 @@ _last_memory_warning_time = 0
 _memory_warning_interval = 30
 
 
+def _is_headless() -> bool:
+    """True when there's no desktop to open a file manager on — i.e. the
+    Docker/web deployment or a Linux box with no display server. In that case
+    "open folder" / "reveal in file manager" can't work (and would point at the
+    *server's* filesystem, not the remote user's), so callers should degrade to
+    an informational message instead of shelling out to xdg-open and crashing.
+    """
+    import platform as _platform
+    if os.environ.get('FRAGMENTA_DOCKER', '0') == '1':
+        return True
+    if _platform.system() == 'Linux' and not (
+            os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
+        return True
+    return False
+
+
 @app.route('/api/open-output-folder', methods=['POST'])
 def open_output_folder():
     try:
@@ -1799,6 +1815,20 @@ def open_output_folder():
         # working directory, which would open (or create) the wrong folder.
         output_path = get_config().get_path("output")
         output_path.mkdir(parents=True, exist_ok=True)
+
+        # Web/Docker: no display server to open a file manager on, and the path
+        # is on the server anyway. Tell the user where files live instead.
+        if _is_headless():
+            return jsonify({
+                "success": False,
+                "headless": True,
+                "message": (
+                    "Opening a folder isn't available in the web/Docker version "
+                    "— files are saved on the server at "
+                    f"{output_path.absolute()} (the mounted output volume). "
+                    "Download generated clips from the Fragments window."
+                ),
+            })
 
         system = platform.system()
         if system == "Windows":
@@ -1845,6 +1875,17 @@ def reveal_fragment():
     if not target.exists():
         return jsonify(APIResponse.error(
             f"Fragment not found on disk: {filename}", status_code=404)), 404
+
+    # Web/Docker: no file manager to reveal in (the file is on the server).
+    if _is_headless():
+        return jsonify({
+            "success": False,
+            "headless": True,
+            "message": (
+                "Revealing files isn't available in the web/Docker version — "
+                "use the download button to save this clip locally."
+            ),
+        })
 
     try:
         system = platform.system()
