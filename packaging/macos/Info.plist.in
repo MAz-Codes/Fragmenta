@@ -24,8 +24,12 @@
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <!-- Not a background agent: show in Dock. -->
+    <!-- The visible app window is opened by a child process (start.py), which
+         provides the real (branded) Dock icon. This launcher only shows the
+         first-run splash, then stays alive headless to drain the child's output
+         pipe — so it must NOT add a second, windowless Dock icon. Run it as a UI
+         agent: no Dock presence of its own. -->
     <key>LSUIElement</key>
-    <false/>
+    <true/>
 </dict>
 </plist>

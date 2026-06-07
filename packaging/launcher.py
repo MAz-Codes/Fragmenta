@@ -194,6 +194,9 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     try:
         root.attributes("-topmost", True)
+        # The launcher runs as a UI agent (LSUIElement) so it adds no Dock icon,
+        # but agent windows don't auto-come-to-front — lift it explicitly.
+        root.lift()
     except Exception:
         pass
 
