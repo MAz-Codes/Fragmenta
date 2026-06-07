@@ -33,17 +33,26 @@ echo "==> Fragmenta $VERSION — macOS arm64 build"
 python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$PAYLOAD"
 
 # 2. Freeze the launcher into an .app skeleton.
-# The launcher's first-run progress splash uses Tkinter; PyInstaller bundles it
-# only if the build Python can import it. Fail loudly here rather than silently
-# shipping a launcher whose splash no-ops.
-python3 -c "import tkinter" 2>/dev/null || {
-    echo "ERROR: the build Python lacks Tkinter — the first-run splash would be missing." >&2
-    echo "       Install it (e.g. 'brew install python-tk') and rebuild." >&2
+# The launcher's first-run progress splash uses Tkinter. Rather than depend on
+# the build machine's system Python shipping Tk (it usually doesn't — hence the
+# old 'brew install python-tk' requirement), we freeze with the SAME standalone
+# CPython we ship: python-build-standalone bundles _tkinter + Tcl/Tk, so
+# PyInstaller picks up the splash for free and the build needs nothing
+# preinstalled. PyInstaller lives in a throwaway venv built from that interpreter
+# so the shipped payload Python stays pristine (no PyInstaller riding along).
+PBS_PY="$PAYLOAD/python-3.11/bin/python3.11"
+BUILD_VENV="$DIST/_buildvenv"
+"$PBS_PY" -c "import tkinter" 2>/dev/null || {
+    echo "ERROR: the bundled standalone Python lacks Tkinter — the first-run splash" >&2
+    echo "       would be missing. Bump PBS_RELEASE in packaging/python_standalone.py" >&2
+    echo "       to a build that ships Tcl/Tk and rebuild." >&2
     exit 1
 }
-python3 -m pip install --quiet --upgrade pyinstaller
+rm -rf "$BUILD_VENV"
+"$PBS_PY" -m venv "$BUILD_VENV"
+"$BUILD_VENV/bin/python" -m pip install --quiet --upgrade pip pyinstaller
 rm -rf "$APP" "$DIST/fragmenta.app" build/launcher *.spec
-pyinstaller --noconfirm --windowed --name fragmenta \
+"$BUILD_VENV/bin/python" -m PyInstaller --noconfirm --windowed --name fragmenta \
     --distpath "$DIST" --workpath "$DIST/_pyi" --specpath "$DIST/_pyi" \
     packaging/launcher.py
 mv "$DIST/fragmenta.app" "$APP"
