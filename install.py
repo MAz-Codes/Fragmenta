@@ -239,19 +239,7 @@ def verify(py: Path) -> None:
 def launch(py: Path) -> "None":
     log("starting Fragmenta…")
     os.chdir(PROJECT_ROOT)
-    start = str(PROJECT_ROOT / "start.py")
-    # Pass the real interpreter path explicitly: on macOS we launch with a custom
-    # argv[0] (below), under which sys.executable can fail to resolve — start.py
-    # uses FRAGMENTA_PY (not sys.executable) to spawn the backend.
-    env = {**os.environ, "FRAGMENTA_PY": str(py)}
-    if sys.platform == "darwin":
-        # The app window runs in this child (no .app bundle of its own), so macOS
-        # labels it by its process name — which defaults to the interpreter's, i.e.
-        # "Python". Set argv[0] at exec time (before any AppKit code reads the name)
-        # so the Dock / menu bar / Cmd-Tab show "Fragmenta". args[0] is argv[0];
-        # `executable` is the real interpreter that runs.
-        sys.exit(subprocess.run(["Fragmenta", start], executable=str(py), env=env).returncode)
-    sys.exit(subprocess.run([str(py), start], env=env).returncode)
+    sys.exit(subprocess.run([str(py), str(PROJECT_ROOT / "start.py")]).returncode)
 
 
 def main() -> None:

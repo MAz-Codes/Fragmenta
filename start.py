@@ -107,12 +107,8 @@ def start_backend_subprocess() -> subprocess.Popen:
     # 0.0.0.0:5001 default) so the window and the server agree on the address.
     env["FLASK_HOST"] = BACKEND_HOST
     env["FLASK_PORT"] = str(BACKEND_PORT)
-    # Prefer the interpreter install.py handed us: when packaged on macOS this
-    # process is launched with a custom argv[0] ("Fragmenta") under which
-    # sys.executable can be empty/unreliable. Falls back to sys.executable in dev.
-    python = os.environ.get("FRAGMENTA_PY") or sys.executable
     return subprocess.Popen(
-        [python, "-m", "app.backend.app"],
+        [sys.executable, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
         env=env,
     )
@@ -479,6 +475,11 @@ def _windows_apply_window_icon() -> None:
 
 
 def run_pywebview_mode() -> int:
+    # macOS: patch CFBundleName BEFORE importing webview. pywebview's Cocoa backend
+    # reads the bundle's CFBundleName and creates the NSApplication at *import*
+    # time, and that name (else the interpreter's, i.e. "Python") becomes the
+    # Dock / menu-bar / Cmd-Tab app name. Patching after the import is too late.
+    _macos_set_app_metadata()
     try:
         import webview
     except ImportError:
@@ -487,7 +488,6 @@ def run_pywebview_mode() -> int:
 
     _windows_set_app_id()
     _linux_set_app_metadata()
-    _macos_set_app_metadata()
 
     if sys.platform == "linux":
         deps_ok, deps_error = check_linux_webview_deps()
