@@ -107,8 +107,12 @@ def start_backend_subprocess() -> subprocess.Popen:
     # 0.0.0.0:5001 default) so the window and the server agree on the address.
     env["FLASK_HOST"] = BACKEND_HOST
     env["FLASK_PORT"] = str(BACKEND_PORT)
+    # Prefer the interpreter install.py handed us: when packaged on macOS this
+    # process is launched with a custom argv[0] ("Fragmenta") under which
+    # sys.executable can be empty/unreliable. Falls back to sys.executable in dev.
+    python = os.environ.get("FRAGMENTA_PY") or sys.executable
     return subprocess.Popen(
-        [sys.executable, "-m", "app.backend.app"],
+        [python, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
         env=env,
     )
