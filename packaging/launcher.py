@@ -233,6 +233,17 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
         state["done"] = True
         state["result"] = result
         _dbg(f"splash dismissing ({result[0]})")
+        # Take the window off-screen and flush that to the window server *while the
+        # event loop is still spinning* (we're inside a mainloop() callback, and
+        # start.py keeps us frontmost for ~0.6s here). A bare root.destroy() leaves
+        # a ghost on macOS: mainloop() returns and the process immediately blocks
+        # in proc.wait() with no run loop left to clear the pixels, so the dead
+        # splash stays frozen on screen. withdraw()+update() removes it now.
+        try:
+            root.withdraw()
+            root.update()
+        except tk.TclError:
+            pass
         try:
             root.destroy()
         except tk.TclError:
