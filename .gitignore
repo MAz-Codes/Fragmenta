@@ -118,6 +118,14 @@ distribution
 distribution.md
 packaging/
 
+# ===== keep IR and manifest =====
+!app/frontend/build/ir/
+!app/frontend/build/ir/*.wav
+!app/frontend/public/ir/
+!app/frontend/public/ir/*.wav
+!app/frontend/build/manifest.json
+!app/frontend/public/manifest.json
+
 # ===== Local-only directories (never committed) =====
 scripts
 !vendor/stable-audio-3/scripts/
@@ -132,7 +140,6 @@ redesign
 main.py
 debug_binaries.py
 phd
-
 *.whl
 
 # Desktop packaging build output
