@@ -31,7 +31,7 @@ try:
     ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
 except Exception:
     ABOUT_VERSION = "1.0.0"
-ABOUT_COPYRIGHT = "© 2026 Misagh Azimi"
+ABOUT_COPYRIGHT = "© 2026 Misagh Azimi · www.misaghazimi.com"
 ABOUT_CREDITS = (
     "Local-first text-to-audio: prepare datasets, train, generate and perform "
     "with diffusion models.\n\nMade by the composer and researcher Misagh Azimi."
@@ -394,8 +394,9 @@ def _macos_set_webview_app_name() -> None:
             _cocoa.info["CFBundleName"] = "Fragmenta"
             _cocoa.info["CFBundleDisplayName"] = "Fragmenta"
             # Standard "About Fragmenta" panel fields (edit via the ABOUT_* consts).
+            # Only CFBundleShortVersionString — setting CFBundleVersion too would
+            # add a duplicate "(1.0.0)" build number after the version.
             _cocoa.info["CFBundleShortVersionString"] = ABOUT_VERSION
-            _cocoa.info["CFBundleVersion"] = ABOUT_VERSION
             _cocoa.info["NSHumanReadableCopyright"] = ABOUT_COPYRIGHT
             try:
                 from AppKit import NSAttributedString
