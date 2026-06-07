@@ -123,6 +123,38 @@ def _echo(line: str) -> None:
         pass
 
 
+def _macos_hide_dock_icon() -> None:
+    """Drop this launcher's Dock icon. It's marked LSUIElement (UI agent) in the
+    .app Info.plist, but Tk's macOS startup forces the process to a 'regular'
+    (Dock-showing) activation policy, re-adding the icon. Override it back to
+    'accessory' at runtime so only the real app window's (child) process shows in
+    the Dock. stdlib-only via ctypes + the Obj-C runtime; best-effort (any failure
+    just leaves the icon — never crashes)."""
+    if sys.platform != "darwin":
+        return
+    try:
+        import ctypes
+
+        objc = ctypes.CDLL("/usr/lib/libobjc.dylib")
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        msg = objc.objc_msgSend
+
+        # app = [NSApplication sharedApplication]   (id)
+        msg.restype = ctypes.c_void_p
+        msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        app = msg(objc.objc_getClass(b"NSApplication"),
+                  objc.sel_registerName(b"sharedApplication"))
+        # [app setActivationPolicy:NSApplicationActivationPolicyAccessory(=1)] (BOOL)
+        msg.restype = ctypes.c_bool
+        msg.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+        msg(app, objc.sel_registerName(b"setActivationPolicy:"), 1)
+    except Exception as exc:
+        _dbg(f"could not set accessory policy: {exc}")
+
+
 def _dbg(msg: str) -> None:
     """Diagnostic line to stderr (visible when launched from a terminal, e.g.
     .../Contents/MacOS/fragmenta). No-ops in a Finder-launched --windowed build
@@ -194,9 +226,13 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
     root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
     try:
         root.attributes("-topmost", True)
-        # The launcher runs as a UI agent (LSUIElement) so it adds no Dock icon,
-        # but agent windows don't auto-come-to-front — lift it explicitly.
+        # The launcher should add no Dock icon (the real app window is a separate
+        # process). Tk forces a Dock-showing policy at startup, so override it back
+        # to accessory now and again shortly after the window maps (Tk can
+        # re-assert it on show). Agent windows don't auto-front, so lift() too.
         root.lift()
+        _macos_hide_dock_icon()
+        root.after(200, _macos_hide_dock_icon)
     except Exception:
         pass
 

@@ -347,11 +347,19 @@ def _macos_set_app_metadata() -> None:
     if sys.platform != "darwin":
         return
     try:
-        from Foundation import NSBundle
+        from Foundation import NSBundle, NSProcessInfo
+        # Dock / Cmd-Tab / Force-Quit name. For a non-.app process (we run under
+        # the venv's python) this is what the Dock actually labels the app, so set
+        # it explicitly — the CFBundleName patch alone leaves it reading "Python".
+        try:
+            NSProcessInfo.processInfo().setProcessName_("Fragmenta")
+        except Exception:
+            pass
         bundle = NSBundle.mainBundle()
         info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
         if info is not None:
             info["CFBundleName"] = "Fragmenta"
+            info["CFBundleDisplayName"] = "Fragmenta"
     except Exception as exc:
         print(f"Could not set macOS app name: {exc}")
 
