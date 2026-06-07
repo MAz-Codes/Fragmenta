@@ -11,16 +11,14 @@
 
 ![Header Image](app/frontend/public/fragmenta.png)
 
-**Open-source text-to-audio LoRA training, generation, editing and performance for musicians.**
+**Bend the latent space with your own sound: the complete open-source text-to-audio pipeline for musicians.**
 
 </div>
 
-Fragmenta offers the complete text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and a live performance capability.
+Fragmenta is an open-source app that brings the complete generative AI text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and live performance. After the initial installation, the app runs fully offline, and your data never leaves your device.
 
+Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragmenta is designed for all musicians, and especially for experimental music and sonic arts practitioners, giving them the ability to shape the latent space with their own audio and musical data, no coding required. It reflects the small-data, model-bending, and artist-first approaches to AI that are central to my [PhD research](https://www.misaghazimi.com). 
 > **Compatibility:** The beta version's engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
-
-Fragmenta is an open-source app for bringing personalised text-to-audio GenAI into a meaningful musical workflow with no coding required. It is built mainly with experimental music and sonic arts in mind. Fragmenta reflects the parasitic, small-data, model-bending and artist-first approaches to AI that are fundamental to my [PhD research](https://www.misaghazimi.com).
-
 ---
 
 ## Features
