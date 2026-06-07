@@ -72,6 +72,13 @@ def announce_ui_ready() -> None:
     and the window is about to appear, so it can dismiss the progress UI. Harmless
     when launched without the splash (it's just a line on stdout)."""
     print("__FRAGMENTA_UI_READY__", flush=True)
+    # In a packaged build the launcher shows a first-run splash that dismisses on
+    # the sentinel above. Yield briefly so it can tear down its Tk window while
+    # this process is still frontmost — once we open the app window and take
+    # focus, macOS App Nap throttles the launcher's timers and the dismiss can
+    # stall, leaving the splash frozen on top of the app. Skipped in dev runs.
+    if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+        time.sleep(0.6)
 
 
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
