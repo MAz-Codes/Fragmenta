@@ -15,7 +15,7 @@
 
 </div>
 
-Fragmenta offers the complete text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and a novel live performance capability, all powered by **Stable Audio 3**.
+Fragmenta offers the complete text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and a live performance capability.
 
 > **Compatibility:** The beta version's engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
 
@@ -93,6 +93,8 @@ Run the installer for your platform:
 | **Windows** | `./fragmenta.bat` |
 
 The installer verifies Python 3.11 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster — re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
+
+
 
 ---
 
@@ -260,6 +262,7 @@ fragmenta/
 | Flash-Attention won't install | Small models run without it; **Medium requires it** (NVIDIA GPU). On Windows, install the prebuilt wheel provided with the project |
 | GPU memory issues | Use the **Free GPU** button in the header, or reduce batch size |
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
+| Multi-channel audio in Performance mode (macOS) | The native macOS window can't route audio to separate output devices. Open Fragmenta in your browser instead: [http://localhost:5001](http://localhost:5001) |
 | Import errors | Verify Python 3.11 is installed — newer versions are not supported. [Download Python 3.11.9](https://www.python.org/downloads/release/python-3119/). If you previously ran the installer with the wrong Python version, delete the `venv/` folder and rerun. |
 
 ---
