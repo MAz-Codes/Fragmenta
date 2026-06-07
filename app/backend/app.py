@@ -2913,4 +2913,7 @@ if __name__ == '__main__':
     # start.py, not a hot-reload dev loop. The reloader would fork a second
     # process that re-imports the module (re-running init and doubling backend
     # processes); we don't want that here.
-    app.run(debug=True, host=host, port=port, threaded=True, use_reloader=False)
+    # debug defaults OFF: shipped builds must not expose Werkzeug's interactive
+    # debugger / verbose tracebacks. Opt in for local dev with FRAGMENTA_DEBUG=true.
+    flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
+    app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)

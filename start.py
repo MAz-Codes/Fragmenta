@@ -24,6 +24,19 @@ HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
 
+# --- macOS "About Fragmenta" panel -------------------------------------------
+# Text shown in the standard About panel (Apple menu → About Fragmenta). Edit
+# freely. Version is read from the repo VERSION file, with a fallback.
+try:
+    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
+except Exception:
+    ABOUT_VERSION = "1.0.0"
+ABOUT_COPYRIGHT = "© 2026 Misagh Azimi · www.misaghazimi.com"
+ABOUT_CREDITS = (
+    "Local-first text-to-audio: prepare datasets, train, generate and perform "
+    "with diffusion models.\n\nMade by the composer and researcher Misagh Azimi."
+)
+
 WINDOWS_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta.ico"
 WINDOWS_APP_ID = "Fragmenta.Desktop.1"
 WINDOWS_WINDOW_TITLE = "Fragmenta"
@@ -72,6 +85,13 @@ def announce_ui_ready() -> None:
     and the window is about to appear, so it can dismiss the progress UI. Harmless
     when launched without the splash (it's just a line on stdout)."""
     print("__FRAGMENTA_UI_READY__", flush=True)
+    # In a packaged build the launcher shows a first-run splash that dismisses on
+    # the sentinel above. Yield briefly so it can tear down its Tk window while
+    # this process is still frontmost — once we open the app window and take
+    # focus, macOS App Nap throttles the launcher's timers and the dismiss can
+    # stall, leaving the splash frozen on top of the app. Skipped in dev runs.
+    if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+        time.sleep(0.6)
 
 
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
@@ -340,13 +360,53 @@ def _macos_set_app_metadata() -> None:
     if sys.platform != "darwin":
         return
     try:
-        from Foundation import NSBundle
+        from Foundation import NSBundle, NSProcessInfo
+        # Dock / Cmd-Tab / Force-Quit name. For a non-.app process (we run under
+        # the venv's python) this is what the Dock actually labels the app, so set
+        # it explicitly — the CFBundleName patch alone leaves it reading "Python".
+        try:
+            NSProcessInfo.processInfo().setProcessName_("Fragmenta")
+        except Exception:
+            pass
         bundle = NSBundle.mainBundle()
         info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
         if info is not None:
             info["CFBundleName"] = "Fragmenta"
+            info["CFBundleDisplayName"] = "Fragmenta"
     except Exception as exc:
         print(f"Could not set macOS app name: {exc}")
+
+
+def _macos_set_webview_app_name() -> None:
+    """Put "Fragmenta" in the macOS menu bar.
+
+    pywebview's Cocoa backend builds the application menu (the bold app menu and
+    its About/Hide/Quit items) from its module-level ``info`` dict, which it reads
+    from the process bundle at import. Our interpreter is bundle-less, so that
+    dict has no CFBundleName and the app menu shows no name. pywebview already
+    mutates this same dict at import, so it's writable — inject the name into it
+    before the menu is built (it's created lazily when the window first focuses)."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from webview.platforms import cocoa as _cocoa
+        if getattr(_cocoa, "info", None) is not None:
+            _cocoa.info["CFBundleName"] = "Fragmenta"
+            _cocoa.info["CFBundleDisplayName"] = "Fragmenta"
+            # Standard "About Fragmenta" panel fields (edit via the ABOUT_* consts).
+            # Only CFBundleShortVersionString — setting CFBundleVersion too would
+            # add a duplicate "(1.0.0)" build number after the version.
+            _cocoa.info["CFBundleShortVersionString"] = ABOUT_VERSION
+            _cocoa.info["NSHumanReadableCopyright"] = ABOUT_COPYRIGHT
+            try:
+                from AppKit import NSAttributedString
+                _cocoa.info["Credits"] = NSAttributedString.alloc().initWithString_(
+                    ABOUT_CREDITS
+                )
+            except Exception:
+                pass  # Credits is optional; name/version/copyright still show.
+    except Exception as exc:
+        print(f"Could not set webview app name: {exc}")
 
 
 def _macos_apply_dock_icon() -> None:
@@ -460,15 +520,20 @@ def _windows_apply_window_icon() -> None:
 
 
 def run_pywebview_mode() -> int:
+    # macOS: patch CFBundleName BEFORE importing webview. pywebview's Cocoa backend
+    # reads the bundle's CFBundleName and creates the NSApplication at *import*
+    # time, and that name (else the interpreter's, i.e. "Python") becomes the
+    # Dock / menu-bar / Cmd-Tab app name. Patching after the import is too late.
+    _macos_set_app_metadata()
     try:
         import webview
     except ImportError:
         print("pywebview is unavailable; falling back to browser mode.")
         return run_browser_mode()
 
+    _macos_set_webview_app_name()
     _windows_set_app_id()
     _linux_set_app_metadata()
-    _macos_set_app_metadata()
 
     if sys.platform == "linux":
         deps_ok, deps_error = check_linux_webview_deps()
