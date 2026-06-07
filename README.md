@@ -75,7 +75,7 @@ For the full volume mounts, Windows/PowerShell syntax, environment variables, an
 
 ## Option 3: Run the App Locally
 
-> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On **Apple Silicon**, macOS 14 (Sonoma) or newer is required (Fragmenta uses bf16 on the Metal/MPS backend).
+> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma)+ only** — it uses bf16 on the Metal/MPS backend; **Intel Macs are not supported** (and the macOS installer is Apple-Silicon-only).
 
 ```bash
 git clone https://github.com/MAz-Codes/fragmenta.git

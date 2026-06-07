@@ -1,7 +1,10 @@
 # PyInstaller spec — freezes packaging/launcher.py into fragmenta.exe (onedir).
 #
-# Build from the repo root:
-#   pyinstaller packaging/windows/launcher.spec --distpath packaging/build/win
+# Build from the repo root via packaging/windows/build_exe.ps1, which freezes
+# with the bundled standalone Python (it ships Tkinter, so the launcher's
+# first-run splash is captured) rather than the build box's Python. Equivalent
+# manual call, run under that interpreter's venv:
+#   <payload>/python-3.11/python.exe -m PyInstaller packaging/windows/launcher.spec --distpath packaging/build/win
 #
 # Produces packaging/build/win/fragmenta/fragmenta.exe (+ _internal/). The Inno
 # Setup script then bundles that folder together with the assembled payload

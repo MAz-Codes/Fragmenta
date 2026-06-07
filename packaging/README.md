@@ -33,6 +33,7 @@ keying off `FRAGMENTA_PACKAGED`.
 | `assemble.py` | Build the staged **payload** (app code via `git archive` + standalone Python). |
 | `macos/build_dmg.sh` | `.app` + sign + notarize + `.dmg`. |
 | `macos/Info.plist.in`, `macos/entitlements.plist` | App metadata; hardened-runtime entitlements (needed for unsigned pip dylibs). |
+| `windows/build_exe.ps1` | Assemble → freeze → Inno Setup, end to end. |
 | `windows/launcher.spec` | PyInstaller spec → `fragmenta.exe`. |
 | `windows/fragmenta.iss` | Inno Setup per-user installer (+ WebView2 check). |
 | `../VERSION` | Single source of truth for the version. |
@@ -50,15 +51,17 @@ changes on the build machine first (`git pull` the repo there).
 bash packaging/macos/build_dmg.sh            # -> packaging/build/Fragmenta-<ver>-macOS-arm64.dmg
 ```
 
-```bat
-:: Windows (in a dev shell; needs Inno Setup, and pyinstaller + pillow installed):
-:: 1. app icon (PyInstaller needs the .ico at build time)
-python -c "from PIL import Image; Image.open('app/frontend/public/fragmenta_icon_1024.png').save('app/frontend/public/fragmenta.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
-:: 2. payload + launcher + installer
-python packaging\assemble.py --target windows-x64 --out packaging\build\payload
-pyinstaller packaging\windows\launcher.spec --distpath packaging\build\win --workpath packaging\build\_pyi
-iscc /DAppVersion=1.0.0 packaging\windows\fragmenta.iss   :: -> packaging\build\Fragmenta-<ver>-Setup.exe
+```powershell
+# Windows (PowerShell; needs git + Inno Setup with iscc on PATH):
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_exe.ps1
+# -> packaging\build\Fragmenta-<ver>-Setup.exe
 ```
+
+The script assembles the payload, generates the `.ico`, freezes the launcher,
+and runs Inno Setup. Like the macOS build it freezes with the **bundled
+standalone Python** (which ships Tkinter) via a throwaway venv, so the first-run
+splash is captured without the build box needing Tk — and PyInstaller never rides
+along in the shipped payload Python.
 
 ```bash
 # Inspect the payload only (any OS, no Python download):
