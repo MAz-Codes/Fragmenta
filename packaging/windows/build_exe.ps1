@@ -34,10 +34,10 @@ Set-Location $REPO
 # 1. Assemble the payload (app code + standalone Python).
 python packaging\assemble.py --target windows-x64 --out $PAYLOAD
 
-# 2. App icon (PyInstaller needs the .ico at build time).
-python -c "from PIL import Image; Image.open('app/frontend/public/fragmenta_icon_1024.png').save('app/frontend/public/fragmenta.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
-
-# 3. Freeze the launcher with the bundled standalone Python (ships Tkinter).
+# 2. Build tooling in a throwaway venv built from the SAME standalone CPython we
+# ship (it bundles Tkinter, so PyInstaller captures the splash). Keeping the
+# tools here means the build box needs no preinstalled PyInstaller/Pillow and the
+# shipped payload Python stays pristine.
 $PbsPy     = Join-Path $PAYLOAD "python-3.11\python.exe"
 $BuildVenv = Join-Path $DIST "_buildvenv"
 & $PbsPy -c "import tkinter" 2>$null
@@ -51,10 +51,16 @@ if (Test-Path $BuildVenv) { Remove-Item -Recurse -Force $BuildVenv }
 & $PbsPy -m venv $BuildVenv
 $VenvPy = Join-Path $BuildVenv "Scripts\python.exe"
 & $VenvPy -m pip install --quiet --upgrade pip pyinstaller pillow
+
+# 3. App icon (PyInstaller needs the .ico at build time) — via the venv's Pillow,
+# so the build box itself needs nothing preinstalled.
+& $VenvPy -c "from PIL import Image; Image.open('app/frontend/public/fragmenta_icon_1024.png').save('app/frontend/public/fragmenta.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+
+# 4. Freeze the launcher with the bundled standalone Python (ships Tkinter).
 if (Test-Path $WIN) { Remove-Item -Recurse -Force $WIN }
 & $VenvPy -m PyInstaller packaging\windows\launcher.spec `
     --distpath $WIN --workpath (Join-Path $DIST "_pyi")
 
-# 4. Inno Setup installer.
+# 5. Inno Setup installer.
 iscc /DAppVersion=$VERSION packaging\windows\fragmenta.iss
 Write-Host "==> done: $DIST\Fragmenta-$VERSION-Setup.exe"
