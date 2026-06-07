@@ -1,11 +1,4 @@
 #!/bin/bash
-# Fragmenta launcher (Linux / generic Unix).
-#
-# Thin by design: this script only acquires Python 3.11 and the OS-level
-# runtime libraries pywebview needs, then hands off to install.py — which
-# owns the venv + dependency setup and is idempotent (a relaunch with an
-# unchanged requirements.txt is near-instant; it no longer reinstalls
-# everything every time). See install.py for the actual logic.
 
 echo "Fragmenta Desktop"
 echo "==================="
@@ -107,6 +100,4 @@ fi
 
 [ "$(uname -s)" = "Linux" ] && install_linux_webview_deps
 
-# Hand off: install.py creates/validates the venv, installs deps only if
-# requirements.txt changed, verifies, and launches the app.
 exec "$PYTHON_CMD" "$PROJECT_ROOT/install.py" --launch
