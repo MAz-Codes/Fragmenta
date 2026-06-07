@@ -24,6 +24,19 @@ HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
 APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
 
+# --- macOS "About Fragmenta" panel -------------------------------------------
+# Text shown in the standard About panel (Apple menu → About Fragmenta). Edit
+# freely. Version is read from the repo VERSION file, with a fallback.
+try:
+    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
+except Exception:
+    ABOUT_VERSION = "1.0.0"
+ABOUT_COPYRIGHT = "© 2026 Misagh Azimi"
+ABOUT_CREDITS = (
+    "Local-first text-to-audio: prepare datasets, train, generate and perform "
+    "with diffusion models.\n\nMade by the composer and researcher Misagh Azimi."
+)
+
 WINDOWS_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta.ico"
 WINDOWS_APP_ID = "Fragmenta.Desktop.1"
 WINDOWS_WINDOW_TITLE = "Fragmenta"
@@ -380,6 +393,17 @@ def _macos_set_webview_app_name() -> None:
         if getattr(_cocoa, "info", None) is not None:
             _cocoa.info["CFBundleName"] = "Fragmenta"
             _cocoa.info["CFBundleDisplayName"] = "Fragmenta"
+            # Standard "About Fragmenta" panel fields (edit via the ABOUT_* consts).
+            _cocoa.info["CFBundleShortVersionString"] = ABOUT_VERSION
+            _cocoa.info["CFBundleVersion"] = ABOUT_VERSION
+            _cocoa.info["NSHumanReadableCopyright"] = ABOUT_COPYRIGHT
+            try:
+                from AppKit import NSAttributedString
+                _cocoa.info["Credits"] = NSAttributedString.alloc().initWithString_(
+                    ABOUT_CREDITS
+                )
+            except Exception:
+                pass  # Credits is optional; name/version/copyright still show.
     except Exception as exc:
         print(f"Could not set webview app name: {exc}")
 
