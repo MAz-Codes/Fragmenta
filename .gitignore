@@ -116,7 +116,7 @@ build/fragmenta.spec
 build/windows_source/
 distribution
 distribution.md
-#packaging/ 
+packaging/
 
 # ===== Local-only directories (never committed) =====
 scripts
