@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel } from '@mui/material';
+import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel, Stack } from '@mui/material';
 import { welcomePageStyles } from '../theme';
+import { APP_VERSION } from '../version';
 
 export default function WelcomePage({ open, onClose }) {
     const [titleVisible, setTitleVisible] = useState(false);
@@ -48,53 +49,41 @@ export default function WelcomePage({ open, onClose }) {
                 </Fade>
 
                 <Fade in={textVisible} timeout={1000}>
-                    <Box>
-                        <Typography
-                            variant="overline"
-                            sx={welcomePageStyles.overline}
-                        >
-                            An End-to-End Pipeline to Fine-Tune and Use Text-to-Audio Models.
-                        </Typography>
+                    <Stack alignItems="center">
+                        <Stack alignItems="center">
+                            <Typography variant="body3" color="text.secondary">
+                                ©2025-2026 Misagh Azimi
+                            </Typography>
+                            <Typography variant="body3" color="text.secondary">
+                                Version {APP_VERSION}
+                            </Typography>
 
-
-                        <Typography
-                            variant="body2"
-                            sx={welcomePageStyles.footer}
-                        >
-                            @2025-2026 Misagh Azimi
-                        </Typography>
-                        <Typography
-                            variant="body2"
-                            sx={welcomePageStyles.version}
-                        >
-                            Version 0.1.1
-                        </Typography>
-                        <Button
-                            variant="contained"
-                            onClick={() => onClose(dontShowAgain)}
-                            sx={welcomePageStyles.ctaButton}
-                        >
-                            Get Started
-                        </Button>
-                        <Box sx={{ mt: 1.5 }}>
+                        </Stack>
+                        <Box mt={5}>
+                            <Button
+                                variant="contained"
+                                onClick={() => onClose(dontShowAgain)}
+                            >
+                                Get Started
+                            </Button>
+                        </Box>
+                        <Box mt={6}>
                             <FormControlLabel
                                 control={
                                     <Checkbox
                                         checked={dontShowAgain}
                                         onChange={(e) => setDontShowAgain(e.target.checked)}
                                         size="small"
-                                        sx={{ color: 'text.secondary' }}
                                     />
                                 }
                                 label={
-                                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                    <Typography variant="caption" color="text.secondary">
                                         Don't show this again
                                     </Typography>
                                 }
                             />
                         </Box>
-
-                    </Box>
+                    </Stack>
                 </Fade>
             </Box>
         </Backdrop>

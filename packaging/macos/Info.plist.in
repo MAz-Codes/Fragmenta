@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Substituted by build_dmg.sh: @@VERSION@@ -> VERSION file. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Fragmenta</string>
+    <key>CFBundleDisplayName</key>
+    <string>Fragmenta</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.misaghazimi.fragmenta</string>
+    <key>CFBundleVersion</key>
+    <string>@@VERSION@@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@@VERSION@@</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>fragmenta</string>
+    <key>CFBundleIconFile</key>
+    <string>fragmenta.icns</string>
+    <!-- Apple Silicon + MPS bf16 needs macOS 14 (Sonoma). -->
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Not a background agent: show in Dock. -->
+    <key>LSUIElement</key>
+    <false/>
+</dict>
+</plist>

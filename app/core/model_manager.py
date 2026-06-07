@@ -1,478 +1,669 @@
-import os
-import json
-import shutil
-from pathlib import Path
-from typing import Dict, List, Optional, Callable
-from datetime import datetime
-import requests
-from huggingface_hub import snapshot_download, hf_hub_download
-import hashlib
+"""Checkpoint Manager — SA3 catalog, HF downloads, license + auth.
 
+Phase 2a in SA3_INTEGRATION_PLAN.md. Replaces the SA2-era SAO catalog.
+Eight downloadable artifacts (3 post-trained + 3 base + 2 autoencoders);
+each is fetched via `huggingface_hub.snapshot_download` with cooperative
+cancel + progress reporting.
+
+The Phase 2b frontend (CheckpointManagerWindow.js) consumes the JSON shapes
+returned by the `/api/checkpoints/*` endpoints in `app/backend/app.py`.
+"""
+import json
+import os
+import shutil
+import threading
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+from huggingface_hub import get_token, snapshot_download, whoami
+from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
+
+
+# --- Catalog ------------------------------------------------------------------
+
+# Approximate sizes; the frontend can refine these by hitting
+# `huggingface_hub.HfApi().model_info(repo_id)` lazily. Numbers come from the
+# HF model cards (paragraph parameter counts × bytes/param, rounded).
+_SA3_CATALOG: Dict[str, Dict[str, Any]] = {
+    # --- Generation models (post-trained) ----------------------------------
+    "sa3-small-music": {
+        "user_visible": True,
+        "kind": "post-trained",
+        "name": "Small - Music",
+        "sa3_name": "small-music",
+        "repo": "stabilityai/stable-audio-3-small-music",
+        "size_bytes": 2_270_000_000,
+        "hardware": "cpu",                       # CPU / MPS / CUDA all work
+        "max_duration_sec": 120,
+        "description": "Fast distilled music generation. Locked to 8 steps, cfg 1.0.",
+    },
+    "sa3-small-sfx": {
+        "user_visible": True,
+        "kind": "post-trained",
+        "name": "Small - SFX",
+        "sa3_name": "small-sfx",
+        "repo": "stabilityai/stable-audio-3-small-sfx",
+        "size_bytes": 2_270_000_000,
+        "hardware": "cpu",
+        "max_duration_sec": 120,
+        "description": "Fast distilled SFX/foley generation. Locked to 8 steps, cfg 1.0.",
+    },
+    "sa3-medium": {
+        "user_visible": True,
+        "kind": "post-trained",
+        "name": "Medium",
+        "sa3_name": "medium",
+        "repo": "stabilityai/stable-audio-3-medium",
+        "size_bytes": 9_220_000_000,
+        "hardware": "cuda+flash-attn",
+        "max_duration_sec": 380,
+        "description": "Fast distilled hi-fi generation, up to 380s. Locked to 8 steps, cfg 1.0.",
+    },
+    # --- Base checkpoints (full artist control) ----------------------------
+    # These are the CFG-aware pre-distillation models. Slower (~50 steps,
+    # cfg ~7), but the user controls cfg_scale, steps, and the inference
+    # trajectory. Also the canonical targets for LoRA training.
+    "sa3-small-music-base": {
+        "user_visible": True,
+        "kind": "base",
+        "name": "Small - Music (Base)",
+        "sa3_name": "small-music-base",
+        "repo": "stabilityai/stable-audio-3-small-music-base",
+        "size_bytes": 2_270_000_000,
+        "hardware": "cpu",
+        "max_duration_sec": 120,
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
+    },
+    "sa3-small-sfx-base": {
+        "user_visible": True,
+        "kind": "base",
+        "name": "Small - SFX (Base)",
+        "sa3_name": "small-sfx-base",
+        "repo": "stabilityai/stable-audio-3-small-sfx-base",
+        "size_bytes": 2_270_000_000,
+        "hardware": "cpu",
+        "max_duration_sec": 120,
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
+    },
+    "sa3-medium-base": {
+        "user_visible": True,
+        "kind": "base",
+        "name": "Medium (Base)",
+        "sa3_name": "medium-base",
+        "repo": "stabilityai/stable-audio-3-medium-base",
+        "size_bytes": 9_220_000_000,
+        "hardware": "cuda+flash-attn",
+        "max_duration_sec": 380,
+        "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
+    },
+    # Standalone autoencoders: the AE is bundled INSIDE each DiT repo
+    # already (StableAudioModel.from_pretrained loads it from there), so
+    # we don't surface SAME-S / SAME-L in the manager. They remain
+    # downloadable via /api/checkpoints?include=all for advanced uses
+    # (autoencoder-only workflows, pre-encoding datasets for training).
+    "sa3-same-s": {
+        "user_visible": False,
+        "kind": "autoencoder",
+        "name": "SAME-S",
+        "sa3_name": "same-s",
+        "repo": "stabilityai/SAME-S",
+        "size_bytes": 530_000_000,
+        "hardware": "cpu",
+        "description": "Standalone autoencoder (266M). Already bundled with the small-* DiTs.",
+    },
+    "sa3-same-l": {
+        "user_visible": False,
+        "kind": "autoencoder",
+        "name": "SAME-L",
+        "sa3_name": "same-l",
+        "repo": "stabilityai/SAME-L",
+        "size_bytes": 3_400_000_000,
+        "hardware": "cuda",
+        "description": "Standalone autoencoder (1.7B). Already bundled with medium.",
+    },
+    # --- Auto-annotation tools ---------------------------------------------
+    # Single-file HF download, lives under <models_pretrained>/clap/.
+    # `is_model_downloaded` and `_run_download` special-case kind=="tagger".
+    "clap-music": {
+        "user_visible": True,
+        "kind": "tagger",
+        "name": "LAION-CLAP (music)",
+        "sa3_name": "clap-music",
+        "repo": "lukewys/laion_clap",
+        "filename": "music_audioset_epoch_15_esc_90.14.pt",
+        # ~2.35 GB .pt + ~1.4 GB of text-encoder snapshots (roberta-base,
+        # bert-base-uncased, facebook/bart-base) that laion_clap loads at
+        # construction. download_clap_checkpoint pulls all of them.
+        "size_bytes": 3_800_000_000,
+        "hardware": "cpu",
+        "description": (
+            "Zero-shot tagger used by the dataset prep's rich-tier annotation. "
+            "Scores each clip against your genre / mood / instrument vocabulary."
+        ),
+    },
+}
+
+# --- Job state for in-flight downloads ----------------------------------------
+
+@dataclass
+class _DownloadJob:
+    """In-memory record of one download attempt."""
+    job_id: str
+    model_id: str
+    status: str = "queued"             # queued | running | complete | failed | cancelled
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    error: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    _cancel_flag: threading.Event = field(default_factory=threading.Event)
+    _thread: Optional[threading.Thread] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "model_id": self.model_id,
+            "status": self.status,
+            "downloaded_bytes": self.downloaded_bytes,
+            "total_bytes": self.total_bytes,
+            "error": self.error,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+        }
+
+
+class _DownloadCancelled(Exception):
+    """Raised inside the tqdm hook when a job's cancel flag fires."""
+
+
+# --- ModelManager -------------------------------------------------------------
 
 class ModelManager:
+    """Owns the SA3 catalog and the on-disk pretrained directory."""
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
         self.config = config
-        self.models_dir = config.get_path("models_pretrained")
+        self.models_dir: Path = config.get_path("models_pretrained")
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
-        # Use fragmenta-models repo on HF Spaces, Stability AI models elsewhere
-        use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
+        # Project-wide policy: every HF download lands inside
+        # <app>/models/pretrained/. SA3 generation + training uses
+        # <pretrained>/sa3/hub/; CLAP text deps use <pretrained>/clap/hub/.
+        # Both are HF cache layout so snapshot_download / hf_hub_download /
+        # from_pretrained resolve there transparently.
+        self.hub_dir: Path = self.models_dir / "sa3" / "hub"
+        self.hub_dir.mkdir(exist_ok=True, parents=True)
+        # Hard-force the resolution vars — never let an external env leak
+        # downloads into ~/.cache/huggingface or anywhere else outside the
+        # app folder. Covers huggingface_hub (current + legacy name) and
+        # transformers (which still consults TRANSFORMERS_CACHE).
+        os.environ["HF_HUB_CACHE"] = str(self.hub_dir)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(self.hub_dir)
+        os.environ["TRANSFORMERS_CACHE"] = str(self.hub_dir)
 
-        if use_custom_repo:
-            models_repo = 'MazCodes/fragmenta-models'
-            small_file = 'stable-audio-open-small-model.safetensors'
-            large_file = 'stable-audio-open-model.safetensors'
-        else:
-            models_repo_small = 'stabilityai/stable-audio-open-small'
-            models_repo_large = 'stabilityai/stable-audio-open-1.0'
-            small_file = 'model.safetensors'
-            large_file = 'model.safetensors'
-
-        self.available_models = {
-            'stable-audio-open-small': {
-                'name': 'Stable Audio Open Small',
-                'repo': models_repo if use_custom_repo else models_repo_small,
-                'files': [small_file],
-                'size': '2.1 GB',
-                'description': 'Fast generation, good quality, lower memory usage',
-                'best_for': 'Beginners, quick experiments, limited GPU',
-                'license': 'Stability AI License',
-                'checksum': 'sha256:abc123...'
-            },
-            'stable-audio-open-1.0': {
-                'name': 'Stable Audio Open 1.0',
-                'repo': models_repo if use_custom_repo else models_repo_large,
-                'files': [large_file],
-                'size': '8.2 GB',
-                'description': 'Highest quality, more detailed audio',
-                'best_for': 'Professional use, high-end GPUs',
-                'license': 'Stability AI License',
-                'checksum': 'sha256:def456...'
-            }
+        # available_models is exposed for backwards compat with the existing
+        # /api/models/available endpoint. New code should use get_catalog().
+        self.available_models: Dict[str, Dict] = {
+            mid: dict(meta) for mid, meta in _SA3_CATALOG.items()
         }
 
-        self.terms_file = Path("config/terms_accepted.json")
-        self.terms_file.parent.mkdir(exist_ok=True)
+        self._jobs: Dict[str, _DownloadJob] = {}
+        self._jobs_lock = threading.Lock()
 
-    def get_available_models(self) -> List[Dict]:
+    # --- Catalog --------------------------------------------------------------
 
-        models = []
+    def get_catalog(self, include_hidden: bool = False) -> List[Dict[str, Any]]:
+        """Checkpoint Manager catalog with per-item state.
 
-        for model_id, info in self.available_models.items():
-            is_downloaded = self.is_model_downloaded(model_id)
+        Default returns only user-visible entries (the three generation
+        models). `include_hidden=True` also returns base + standalone-AE
+        entries — used by the Phase 5 training subprocess to ensure the
+        right base variant is on disk before kicking train_lora.py.
+        """
+        return [
+            self._catalog_entry(mid)
+            for mid, info in _SA3_CATALOG.items()
+            if include_hidden or info.get("user_visible")
+        ]
 
-            downloaded_size = None
-            if is_downloaded:
-                if model_id == 'stable-audio-open-small':
-                    model_file = self.models_dir / 'stable-audio-open-small-model.safetensors'
-                    downloaded_size = self._get_file_size(
-                        model_file) if model_file.exists() else None
-                elif model_id == 'stable-audio-open-1.0':
-                    model_file = self.models_dir / 'stable-audio-open-model.safetensors'
-                    downloaded_size = self._get_file_size(
-                        model_file) if model_file.exists() else None
-                else:
-                    model_path = self.models_dir / model_id
-                    downloaded_size = self._get_downloaded_size(
-                        model_path) if model_path.exists() else None
+    def _catalog_entry(self, model_id: str) -> Dict[str, Any]:
+        info = _SA3_CATALOG[model_id]
+        downloaded = self.is_model_downloaded(model_id)
+        bytes_total = 0
+        if downloaded:
+            for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id)):
+                if d.exists():
+                    bytes_total += self._dir_size(d)
 
-            models.append({
-                'id': model_id,
-                'name': info['name'],
-                'size': info['size'],
-                'description': info['description'],
-                'best_for': info['best_for'],
-                'license': info['license'],
-                'downloaded': is_downloaded,
-                'downloaded_size': downloaded_size,
-                'terms_accepted': self.is_terms_accepted(model_id)
-            })
+        # Surface the most recent in-flight job for this model so the
+        # frontend can resume the progress bar after the Checkpoint Manager
+        # dialog is closed and reopened. The job lives on the backend; only
+        # the polling died with the dismissed UI.
+        active_job = None
+        with self._jobs_lock:
+            in_flight = [
+                j for j in self._jobs.values()
+                if j.model_id == model_id and j.status in ("queued", "running")
+            ]
+            if in_flight:
+                in_flight.sort(key=lambda j: j.started_at or "", reverse=True)
+                active_job = in_flight[0].to_dict()
 
-        return models
+        return {
+            "id": model_id,
+            "kind": info.get("kind"),
+            "name": info["name"],
+            "sa3_name": info["sa3_name"],
+            "repo": info["repo"],
+            "size_bytes": info["size_bytes"],
+            "hardware": info["hardware"],
+            "max_duration_sec": info.get("max_duration_sec"),
+            "description": info["description"],
+            "user_visible": info.get("user_visible", False),
+            "downloaded": downloaded,
+            "downloaded_bytes": bytes_total,
+            "active_job": active_job,
+        }
 
-    def _get_file_size(self, file_path: Path) -> str:
-
-        if not file_path.exists() or not file_path.is_file():
-            return "0 B"
-
-        size = file_path.stat().st_size
-        return self._bytes_to_human(size)
-
-    def _get_downloaded_size(self, model_path: Path) -> str:
-
-        if not model_path.exists():
-            return "0 B"
-
-        total_size = 0
-        for file_path in model_path.rglob("*"):
-            if file_path.is_file():
-                total_size += file_path.stat().st_size
-
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if total_size < 1024.0:
-                return f"{total_size:.1f} {unit}"
-            total_size /= 1024.0
-        return f"{total_size:.1f} TB"
-
-    def get_model_info(self, model_id: str) -> Optional[Dict]:
-
-        if model_id not in self.available_models:
+    def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:
+        if model_id not in _SA3_CATALOG:
             return None
+        return self._catalog_entry(model_id)
 
-        info = self.available_models[model_id].copy()
-        info['id'] = model_id
-        info['downloaded'] = self.is_model_downloaded(model_id)
-        info['terms_accepted'] = self.is_terms_accepted(model_id)
+    # --- Filesystem layout ----------------------------------------------------
 
-        return info
+    def _hub_cache_dir_for(self, model_id: str) -> Path:
+        """HF-cache-shaped directory inside the app folder."""
+        info = _SA3_CATALOG.get(model_id)
+        if info is None:
+            return self.hub_dir / "_unknown"
+        safe = "models--" + info["repo"].replace("/", "--")
+        return self.hub_dir / safe
+
+    def _legacy_flat_dir_for(self, model_id: str) -> Path:
+        """Pre-unification per-model dir. Read-only fallback for migration."""
+        return self.models_dir / "sa3" / model_id
+
+    def _local_dir_for(self, model_id: str) -> Path:
+        """Public: returns the canonical (HF cache) directory for a model."""
+        return self._hub_cache_dir_for(model_id)
 
     def is_model_downloaded(self, model_id: str) -> bool:
-
-        if model_id == 'stable-audio-open-small':
-            model_file = self.models_dir / 'stable-audio-open-small-model.safetensors'
-            return model_file.exists() and model_file.is_file()
-        elif model_id == 'stable-audio-open-1.0':
-            model_file = self.models_dir / 'stable-audio-open-model.safetensors'
-            return model_file.exists() and model_file.is_file()
-        else:
-            model_path = self.models_dir / model_id
-            if model_path.exists() and model_path.is_dir():
-                return any(model_path.iterdir())
-            pattern = f"*{model_id}*.safetensors"
-            matching_files = list(self.models_dir.glob(pattern))
-            return len(matching_files) > 0
-
-    def is_terms_accepted(self, model_id: str) -> bool:
-
-        if not self.terms_file.exists():
+        if model_id not in _SA3_CATALOG:
             return False
+        info = _SA3_CATALOG[model_id]
+        if info.get("kind") == "tagger":
+            # Single-file artifacts live in <models_pretrained>/<group>/<filename>.
+            # auto_annotator owns the exact path for CLAP, so we delegate.
+            from app.backend.data.auto_annotator import clap_checkpoint_available
+            return clap_checkpoint_available(self.models_dir)
+        # Canonical: HF cache layout under <app>/models/pretrained/sa3/hub/.
+        # Look for the *top-level* model.safetensors only — NOT recursive —
+        # because a sibling repo may have only its conditioner subfolder
+        # downloaded (e.g. via the eager T5Gemma companion fetch when the
+        # user installed the matching *-base), and that doesn't make the
+        # post-trained model "downloaded".
+        main_present = False
+        hub = self._hub_cache_dir_for(model_id)
+        if hub.is_dir():
+            snaps = hub / "snapshots"
+            if snaps.is_dir():
+                for sub in snaps.iterdir():
+                    if any(sub.glob("*.safetensors")):
+                        main_present = True
+                        break
+        if not main_present:
+            # Fallback: legacy flat layout (predates the unification). Counts
+            # as downloaded for inference purposes; trainer will re-stage into
+            # hub.
+            legacy = self._legacy_flat_dir_for(model_id)
+            if legacy.is_dir() and any(legacy.glob("*.safetensors")):
+                main_present = True
+        if not main_present:
+            return False
+
+        # Base models need a T5Gemma conditioner that lives in a subfolder
+        # of the *post-trained sibling* repo. "Installed" must mean "ready
+        # to train / generate" — without the companion the first run blocks
+        # for 30s+ on an HF fetch.
+        return self._is_companion_present(model_id)
+
+    def _is_companion_present(self, model_id: str) -> bool:
+        from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+        sibling = SA3_T5GEMMA_SIBLINGS.get(model_id)
+        if not sibling:
+            return True  # nothing to check (post-trained / autoencoder / tagger)
+        sib_repo, sib_subfolder = sibling
+        safe = "models--" + sib_repo.replace("/", "--")
+        sib_hub = self.hub_dir / safe
+        snaps = sib_hub / "snapshots"
+        if not snaps.is_dir():
+            return False
+        for sub in snaps.iterdir():
+            if (sub / sib_subfolder).is_dir():
+                # Any non-empty file presence is good enough — the eager
+                # fetch always pulls the tokenizer + config + safetensors.
+                if any((sub / sib_subfolder).iterdir()):
+                    return True
+        return False
+
+    # --- HF auth --------------------------------------------------------------
+
+    @staticmethod
+    def hf_auth_status() -> Dict[str, Any]:
+        token = get_token()
+        if not token:
+            return {"signed_in": False, "username": None}
+        try:
+            user = whoami(token=token)
+            return {"signed_in": True, "username": user.get("name") or user.get("fullname")}
+        except Exception as err:
+            return {"signed_in": False, "username": None, "error": str(err)}
+
+    # --- Downloads ------------------------------------------------------------
+
+    def start_download(
+        self,
+        model_id: str,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Spawn a background download job. Returns the job descriptor."""
+        if model_id not in _SA3_CATALOG:
+            return {"error": f"Unknown checkpoint: {model_id}"}
+
+        job = _DownloadJob(
+            job_id=str(uuid.uuid4()),
+            model_id=model_id,
+            total_bytes=_SA3_CATALOG[model_id]["size_bytes"],
+        )
+        with self._jobs_lock:
+            self._jobs[job.job_id] = job
+
+        thread = threading.Thread(
+            target=self._run_download,
+            args=(job, progress_callback),
+            daemon=True,
+            name=f"sa3-download:{model_id}",
+        )
+        job._thread = thread
+        thread.start()
+        return job.to_dict()
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+        return job.to_dict() if job else None
+
+    def list_jobs(self) -> List[Dict[str, Any]]:
+        with self._jobs_lock:
+            return [j.to_dict() for j in self._jobs.values()]
+
+    def cancel_job(self, job_id: str) -> bool:
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+        if not job:
+            return False
+        if job.status not in ("queued", "running"):
+            return False
+        job._cancel_flag.set()
+        return True
+
+    def _run_download(
+        self,
+        job: _DownloadJob,
+        progress_callback: Optional[Callable[[int, str], None]],
+    ) -> None:
+        info = _SA3_CATALOG[job.model_id]
+        job.status = "running"
+        job.started_at = datetime.now().isoformat()
+
+        # Tagger kind (e.g. CLAP) is a .pt file plus auxiliary HF snapshots
+        # living outside the sa3/hub layout. Multi-phase: 1 hf_hub_download
+        # for the audio .pt, then N sequential snapshot_downloads for the
+        # text encoders. Each spawns its own tqdm bars, so we use the
+        # cumulative hook to accumulate bytes across phases, and a phase_cb
+        # to prefix the message with which step the user is on.
+        if info.get("kind") == "tagger":
+            try:
+                from app.backend.data.auto_annotator import download_clap_checkpoint
+                if progress_callback:
+                    progress_callback(0, f"Downloading {info['name']}…")
+                # Pin total to the catalog estimate so the % stays anchored
+                # even before tqdm reports any file's size.
+                job.total_bytes = info["size_bytes"]
+                current_phase = {"label": ""}
+
+                def phase_cb(idx: int, total: int, label: str) -> None:
+                    current_phase["label"] = f"[{idx}/{total}] {label}"
+                    if progress_callback:
+                        pct = (int(job.downloaded_bytes / job.total_bytes * 100)
+                               if job.total_bytes else 0)
+                        progress_callback(pct, current_phase["label"])
+
+                with _cumulative_tqdm_hook(job, progress_callback, current_phase):
+                    download_clap_checkpoint(self.models_dir, phase_cb=phase_cb)
+                job.downloaded_bytes = job.total_bytes
+                job.status = "complete"
+                job.finished_at = datetime.now().isoformat()
+                if progress_callback:
+                    progress_callback(100, f"Downloaded {info['name']}")
+            except _DownloadCancelled:
+                job.status = "cancelled"
+                job.error = "Cancelled by user"
+                job.finished_at = datetime.now().isoformat()
+            except Exception as err:
+                job.status = "failed"
+                job.error = f"{type(err).__name__}: {err}"
+                job.finished_at = datetime.now().isoformat()
+            return
+
+        cache_dir = self._hub_cache_dir_for(job.model_id).parent  # = self.hub_dir
+        cache_dir.mkdir(exist_ok=True, parents=True)
+        target = self._hub_cache_dir_for(job.model_id)
+
+        token = get_token()
 
         try:
-            with open(self.terms_file, 'r') as f:
-                terms_data = json.load(f)
-            return terms_data.get(model_id, {}).get('accepted', False)
-        except:
-            return False
+            with _tqdm_progress_hook(job, progress_callback):
+                # Write into hub/ in HF cache layout. snapshot_download in
+                # hf-hub 1.x populates `<cache_dir>/models--<org>--<name>/`
+                # with the blobs/refs/snapshots structure that
+                # hf_hub_download() and StableAudioModel.from_pretrained()
+                # both consume.
+                snapshot_download(
+                    repo_id=info["repo"],
+                    cache_dir=str(cache_dir),
+                    token=token,
+                    allow_patterns=[
+                        "*.safetensors", "*.json", "*.txt", "*.model",
+                        "tokenizer*", "*.tiktoken",
+                    ],
+                )
 
-    def accept_terms(self, model_id: str) -> bool:
-
-        if model_id not in self.available_models:
-            return False
-
-        terms_data = {}
-        if self.terms_file.exists():
-            try:
-                with open(self.terms_file, 'r') as f:
-                    terms_data = json.load(f)
-            except:
-                terms_data = {}
-
-        terms_data[model_id] = {
-            'accepted': True,
-            'accepted_at': datetime.now().isoformat(),
-            'model_name': self.available_models[model_id]['name'],
-            'license': self.available_models[model_id]['license']
-        }
-
-        try:
-            with open(self.terms_file, 'w') as f:
-                json.dump(terms_data, f, indent=2)
-            return True
-        except Exception as e:
-            print(f"Error saving terms acceptance: {e}")
-            return False
-
-    def download_model(self, model_id: str, progress_callback: Optional[Callable] = None) -> bool:
-
-        if model_id not in self.available_models:
-            return False
-
-        if not self.is_terms_accepted(model_id):
-            print(f"Terms not accepted for {model_id}")
-            self.accept_terms(model_id)
-            print(f"Automatically accepted terms for {model_id}")
-
-        model_info = self.available_models[model_id]
-        target_dir = self.models_dir
-        target_dir.mkdir(exist_ok=True, parents=True)
-
-        try:
-            print(f"Downloading {model_info['name']} to {target_dir}")
-
-            if progress_callback:
-                progress_callback(
-                    0, f"Starting download of {model_info['name']}...")
-
-            from huggingface_hub import HfApi
-            api = HfApi()
-
-            try:
-                user = api.whoami()
-                print(f"Authenticated as: {user}")
-                if progress_callback:
-                    progress_callback(10, "Authentication verified...")
-            except Exception as auth_error:
-                print(f"Not authenticated with Hugging Face: {auth_error}")
-                if progress_callback:
-                    progress_callback(0, "Authentication required...")
-                print("To download models, you need to:")
-                print(
-                    "1. Visit https://huggingface.co/stabilityai/stable-audio-open-small")
-                print("2. Accept the terms and conditions")
-                print("3. Log in to your Hugging Face account")
-                print(
-                    "4. Get your access token from https://huggingface.co/settings/tokens")
-                print("5. Use the in-app Hugging Face login dialog")
-                if progress_callback:
-                    progress_callback(0, "Please authenticate in the app first")
-                return False
-
-            if progress_callback:
-                progress_callback(20, "Starting file download...")
-
-            try:
-                from huggingface_hub import hf_hub_download
-                import shutil
-                from tqdm import tqdm
-                import sys
-
-                class TqdmToCallback:
-                    def __init__(self, callback, file_index, total_files):
-                        self.callback = callback
-                        self.file_index = file_index
-                        self.total_files = total_files
-                        self.last_percent = 0
-
-                    def __call__(self, t):
-                        def inner(bytes_amount=1):
-                            if t.total:
-                                file_progress = (t.n / t.total)
-                                overall_progress = (self.file_index + file_progress) / self.total_files
-                                percent = 20 + int(overall_progress * 70)
-
-                                if percent != self.last_percent:
-                                    self.last_percent = percent
-                                    downloaded_mb = t.n / (1024 * 1024)
-                                    total_mb = t.total / (1024 * 1024)
-                                    if self.callback:
-                                        self.callback(
-                                            percent,
-                                            f"Downloading: {downloaded_mb:.1f}MB / {total_mb:.1f}MB"
-                                        )
-                        return inner
-
-                downloaded_files = []
-                total_files = len(model_info['files'])
-
-                for i, file_pattern in enumerate(model_info['files']):
+                # Companion fetch: base models reference their T5Gemma
+                # conditioner in a subfolder of the *post-trained sibling*
+                # repo. Without it the training subprocess crashes at
+                # AutoTokenizer.from_pretrained, and inference can't build
+                # the conditioner either. Pull it eagerly so "Installed"
+                # actually means "ready to use".
+                from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+                sibling = SA3_T5GEMMA_SIBLINGS.get(job.model_id)
+                if sibling:
+                    sib_repo, sib_subfolder = sibling
                     if progress_callback:
                         progress_callback(
-                            20 + int((i / total_files) * 70), 
-                            f"Starting download of {file_pattern}..."
+                            min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
+                            f"Fetching T5Gemma conditioner from {sib_repo}…",
                         )
-
-                    try:
-                        if file_pattern == 'model.safetensors':
-                            if model_id == 'stable-audio-open-small':
-                                final_filename = 'stable-audio-open-small-model.safetensors'
-                            elif model_id == 'stable-audio-open-1.0':
-                                final_filename = 'stable-audio-open-model.safetensors'
-                            else:
-                                final_filename = f"{model_id}-model.safetensors"
-                        else:
-                            final_filename = f"{model_id}-{file_pattern}"
-
-                        tqdm_callback = TqdmToCallback(progress_callback, i, total_files)
-
-                        # hf_hub_download drives its own tqdm — monkey-patch its init/update so we
-                        # forward byte progress to progress_callback without a second progress bar.
-                        original_tqdm_init = tqdm.__init__
-
-                        def patched_tqdm_init(self, *args, **kwargs):
-                            original_tqdm_init(self, *args, **kwargs)
-                            original_update = self.update
-                            def new_update(n=1):
-                                result = original_update(n)
-                                if progress_callback and self.total:
-                                    file_progress = (self.n / self.total)
-                                    overall_progress = (i + file_progress) / total_files
-                                    percent = 20 + int(overall_progress * 70)
-                                    downloaded_mb = self.n / (1024 * 1024)
-                                    total_mb = self.total / (1024 * 1024)
-                                    progress_callback(
-                                        percent, 
-                                        f"Downloading: {downloaded_mb:.1f}MB / {total_mb:.1f}MB"
-                                    )
-                                return result
-                            self.update = new_update
-                        
-                        tqdm.__init__ = patched_tqdm_init
-
-                        try:
-                            downloaded_file = hf_hub_download(
-                                repo_id=model_info['repo'],
-                                filename=file_pattern,
-                                resume_download=True
-                            )
-                        finally:
-                            tqdm.__init__ = original_tqdm_init
-
-                        downloaded_path = Path(downloaded_file)
-                        final_path = target_dir / final_filename
-
-                        final_path.parent.mkdir(parents=True, exist_ok=True)
-
-                        shutil.copy2(str(downloaded_path), str(final_path))
-                        print(f"Saved as {final_filename}")
-
-                        downloaded_files.append(str(final_path))
-
-                        if progress_callback:
-                            progress_callback(
-                                20 + int(((i + 1) / total_files) * 70), 
-                                f"Completed {file_pattern}"
-                            )
-
-                    except Exception as file_error:
-                        print(
-                            f"Failed to download {file_pattern}: {file_error}")
-                        if progress_callback:
-                            progress_callback(
-                                0, f"Failed to download {file_pattern}")
-                        continue
-
-                print(f"Downloaded {len(downloaded_files)} files")
-
-                if progress_callback:
-                    progress_callback(
-                        95, "Download completed, verifying files...")
-
-            except Exception as download_error:
-                print(f"Error during download: {download_error}")
-                if progress_callback:
-                    progress_callback(
-                        0, f"Download failed: {str(download_error)}")
-                return False
-
+                    snapshot_download(
+                        repo_id=sib_repo,
+                        cache_dir=str(cache_dir),
+                        token=token,
+                        allow_patterns=[f"{sib_subfolder}/*"],
+                    )
+            job.status = "complete"
+            job.downloaded_bytes = self._dir_size(target)
             if progress_callback:
-                progress_callback(95, "Verifying download...")
+                progress_callback(100, f"Downloaded {info['name']}")
+        except _DownloadCancelled:
+            job.status = "cancelled"
+            job.error = "Cancelled by user"
+            shutil.rmtree(target, ignore_errors=True)
+        except GatedRepoError as err:
+            job.status = "failed"
+            job.error = f"hf_auth_required: {err}"
+        except RepositoryNotFoundError as err:
+            job.status = "failed"
+            job.error = f"Repository not found: {err}"
+        except Exception as err:
+            job.status = "failed"
+            job.error = str(err)
+        finally:
+            job.finished_at = datetime.now().isoformat()
 
-            expected_files = []
-            if model_id == 'stable-audio-open-small':
-                expected_files.append(
-                    'stable-audio-open-small-model.safetensors')
-            elif model_id == 'stable-audio-open-1.0':
-                expected_files.append('stable-audio-open-model.safetensors')
-            else:
-                expected_files.append(f"{model_id}-model.safetensors")
-
-            files_exist = any((target_dir / expected_file).exists()
-                              for expected_file in expected_files)
-
-            if files_exist:
-                if progress_callback:
-                    progress_callback(100, "Download complete!")
-                print(f"Successfully downloaded {model_info['name']}")
-                return True
-            else:
-                if progress_callback:
-                    progress_callback(0, "Download verification failed")
-                print(f"Expected files not found: {expected_files}")
-                return False
-
-        except Exception as e:
-            print(f"Error downloading {model_info['name']}: {e}")
-            if progress_callback:
-                progress_callback(0, f"Error: {str(e)}")
-
-            if "403" in str(e) and "gated repositories" in str(e).lower():
-                print("Token permission issue detected!")
-                print(
-                    "Your Hugging Face token needs 'Read access to public gated repositories'")
-                print("Please:")
-                print("1. Go to https://huggingface.co/settings/tokens")
-                print("2. Edit your token or create a new one")
-                print("3. Enable 'Read access to public gated repositories'")
-                print("4. Try the download again")
-            elif "401" in str(e) or "restricted" in str(e).lower():
-                print("This model requires Hugging Face authentication.")
-                print("Please visit the model page and accept terms first:")
-                print(f"https://huggingface.co/{model_info['repo']}")
-            return False
+    # --- Delete ---------------------------------------------------------------
 
     def delete_model(self, model_id: str) -> bool:
-
-        deleted_something = False
-
-        if model_id == 'stable-audio-open-small':
-            model_file = self.models_dir / 'stable-audio-open-small-model.safetensors'
-            config_file = self.models_dir / 'stable-audio-open-small-config.json'
-        elif model_id == 'stable-audio-open-1.0':
-            model_file = self.models_dir / 'stable-audio-open-model.safetensors'
-            config_file = self.models_dir / 'stable-audio-open-1.0-config.json'
-        else:
-            model_file = self.models_dir / f"{model_id}-model.safetensors"
-            config_file = self.models_dir / f"{model_id}-config.json"
-
-        for file_path in [model_file, config_file]:
-            if file_path.exists():
-                try:
-                    file_path.unlink()
-                    print(f"Deleted {file_path.name}")
-                    deleted_something = True
-                except Exception as e:
-                    print(f"Error deleting {file_path.name}: {e}")
-
-        model_path = self.models_dir / model_id
-        if model_path.exists() and model_path.is_dir():
-            try:
-                shutil.rmtree(model_path)
-                print(f"Deleted {model_id} directory")
-                deleted_something = True
-            except Exception as e:
-                print(f"Error deleting {model_id} directory: {e}")
-
-        if deleted_something:
-            print(f"Deleted {model_id}")
-            return True
-        else:
-            print(f"No files found for {model_id}")
+        if model_id not in _SA3_CATALOG:
             return False
+        # Remove both the canonical hub copy and the legacy flat copy if
+        # they exist. Either being present is enough to consider the
+        # model "downloaded", so both must be cleaned for the row to
+        # flip back to "Get".
+        hub = self._hub_cache_dir_for(model_id)
+        legacy = self._legacy_flat_dir_for(model_id)
+        any_existed = hub.exists() or legacy.exists()
+        if hub.exists():
+            shutil.rmtree(hub, ignore_errors=True)
+        if legacy.exists():
+            shutil.rmtree(legacy, ignore_errors=True)
+        return any_existed and not (hub.exists() or legacy.exists())
 
-    def get_download_progress(self, model_id: str) -> Dict:
+    # --- Storage --------------------------------------------------------------
 
+    def get_storage_info(self) -> Dict[str, Any]:
+        per_model: List[Dict[str, Any]] = []
+        total_used = 0
+        for mid in _SA3_CATALOG:
+            bytes_ = 0
+            for d in (self._hub_cache_dir_for(mid), self._legacy_flat_dir_for(mid)):
+                if d.exists():
+                    bytes_ += self._dir_size(d)
+            per_model.append({
+                "id": mid,
+                "downloaded": self.is_model_downloaded(mid),
+                "bytes": bytes_,
+            })
+            total_used += bytes_
         return {
-            'model_id': model_id,
-            'downloaded': self.is_model_downloaded(model_id),
-            'size': self.available_models.get(model_id, {}).get('size', 'Unknown')
+            "total_used_bytes": total_used,
+            "total_free_bytes": shutil.disk_usage(self.models_dir).free,
+            "per_model": per_model,
         }
 
-    def get_storage_info(self) -> Dict:
+    # --- Helpers --------------------------------------------------------------
 
-        total_size = 0
-        model_count = 0
+    @staticmethod
+    def _dir_size(path: Path) -> int:
+        if not path.exists():
+            return 0
+        return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
-        if self.models_dir.exists():
-            for model_id in self.available_models.keys():
-                if self.is_model_downloaded(model_id):
-                    model_count += 1
+# --- tqdm hook ----------------------------------------------------------------
 
-            for file_path in self.models_dir.rglob("*"):
-                if file_path.is_file():
-                    total_size += file_path.stat().st_size
+import contextlib
 
-        return {
-            'total_size_bytes': total_size,
-            'total_size_human': self._bytes_to_human(total_size),
-            'model_count': model_count,
-            'models_dir': str(self.models_dir)
-        }
+@contextlib.contextmanager
+def _tqdm_progress_hook(
+    job: _DownloadJob,
+    progress_callback: Optional[Callable[[int, str], None]],
+):
+    """Monkey-patch tqdm so snapshot_download updates flow into the job state.
 
-    def _bytes_to_human(self, bytes_value: int) -> str:
+    `snapshot_download` doesn't expose a progress callback. tqdm is its
+    internal progress bar — we wrap `update` to update job state and raise
+    `_DownloadCancelled` when the job's cancel flag fires.
+    """
+    from tqdm.auto import tqdm
+    original_init = tqdm.__init__
 
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if bytes_value < 1024.0:
-                return f"{bytes_value:.1f} {unit}"
-            bytes_value /= 1024.0
-        return f"{bytes_value:.1f} TB"
+    def patched_init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        original_update = self.update
+
+        def new_update(n: int = 1) -> Any:
+            if job._cancel_flag.is_set():
+                raise _DownloadCancelled()
+            result = original_update(n)
+            if self.total:
+                job.downloaded_bytes = max(job.downloaded_bytes, self.n)
+                if job.total_bytes < self.total:
+                    job.total_bytes = self.total
+                if progress_callback:
+                    pct = int(self.n / self.total * 100) if self.total else 0
+                    mb_done = self.n / (1024 * 1024)
+                    mb_total = self.total / (1024 * 1024)
+                    progress_callback(pct, f"Downloading: {mb_done:.1f}MB / {mb_total:.1f}MB")
+            return result
+
+        self.update = new_update  # type: ignore[method-assign]
+
+    tqdm.__init__ = patched_init  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        tqdm.__init__ = original_init  # type: ignore[method-assign]
+
+
+@contextlib.contextmanager
+def _cumulative_tqdm_hook(
+    job: _DownloadJob,
+    progress_callback: Optional[Callable[[int, str], None]],
+    current_phase: Dict[str, str],
+):
+    """Like _tqdm_progress_hook, but sums bytes across sequential bars.
+
+    Each tqdm bar reports `self.n` cumulative within ITS file. The single-bar
+    hook uses max() which freezes the UI when a fresh bar starts smaller than
+    the previous bar's total. Here we track the previous `self.n` per bar id
+    and add only the delta to job.downloaded_bytes — so progress climbs
+    monotonically across all phases.
+    """
+    from tqdm.auto import tqdm
+    original_init = tqdm.__init__
+    prev_n: Dict[int, int] = {}
+
+    def patched_init(self, *args: Any, **kwargs: Any) -> None:
+        original_init(self, *args, **kwargs)
+        original_update = self.update
+        prev_n[id(self)] = 0
+
+        def new_update(n: int = 1) -> Any:
+            if job._cancel_flag.is_set():
+                raise _DownloadCancelled()
+            result = original_update(n)
+            prev = prev_n.get(id(self), 0)
+            delta = self.n - prev
+            prev_n[id(self)] = self.n
+            if delta > 0:
+                job.downloaded_bytes += delta
+                if progress_callback and job.total_bytes:
+                    pct = min(int(job.downloaded_bytes / job.total_bytes * 100), 99)
+                    mb_done = job.downloaded_bytes / (1024 * 1024)
+                    mb_total = job.total_bytes / (1024 * 1024)
+                    label = current_phase.get("label", "")
+                    msg = (f"{label} · {mb_done:.0f} MB / {mb_total:.0f} MB"
+                           if label else f"{mb_done:.0f} MB / {mb_total:.0f} MB")
+                    progress_callback(pct, msg)
+            return result
+
+        self.update = new_update  # type: ignore[method-assign]
+
+    tqdm.__init__ = patched_init  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        tqdm.__init__ = original_init  # type: ignore[method-assign]

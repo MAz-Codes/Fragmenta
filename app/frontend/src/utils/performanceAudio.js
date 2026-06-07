@@ -1,10 +1,32 @@
-export const DEFAULT_CHANNEL_GAIN = Math.pow(10, -6 / 20); // ≈ 0.5012
+export const DEFAULT_CHANNEL_GAIN = 1.0; // unity (0 dB)
+
+// Stage A renders loops at exactly 44.1 kHz and the sample-exact loop length
+// (INV#2/#6) is defined at that rate. A default AudioContext adopts the system
+// rate (often 48 kHz), which makes decodeAudioData resample our 44.1 kHz WAVs —
+// silently changing the loop's sample count and smearing the seam. Pinning the
+// context to 44.1 kHz keeps our buffers un-resampled inside Web Audio (the OS
+// may still resample at the device, but that's outside the loop math).
+export const ENGINE_SAMPLE_RATE = 44100;
 
 let sharedCtx = null;
 
 export function getAudioContext() {
     if (!sharedCtx) {
-        sharedCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        try {
+            sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
+        } catch (_) {
+            // Some browsers/hosts reject a forced rate — fall back to default
+            // and accept the resample rather than failing to produce audio.
+            sharedCtx = new Ctor();
+        }
+        if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
+            console.warn(
+                `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
+                `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
+                `sample-exact loop length is not guaranteed on this host.`
+            );
+        }
     }
     if (sharedCtx.state === 'suspended') {
         sharedCtx.resume();
@@ -18,6 +40,23 @@ export const IMPULSE_RESPONSES = [
     { id: 'narrow', name: 'Narrow Space',  file: 'Narrow Bumpy Space.wav' },
 ];
 const DEFAULT_IR_ID = 'hall';
+
+// Master delay divisions, in fractions of a beat (quarter note = 1 beat).
+// Tempo-synced via PerformanceEngine.setBpm — the actual delay-time seconds
+// are recomputed whenever BPM changes so the echo always lands on the grid.
+// Dotted = 1.5×, Triplet = 2/3×.
+export const MASTER_DELAY_DIVISIONS = [
+    { id: '1/4',   label: '1/4',   beats: 1 },
+    { id: '1/8',   label: '1/8',   beats: 0.5 },
+    { id: '1/16',  label: '1/16',  beats: 0.25 },
+    { id: '1/4D',  label: '1/4 ·', beats: 1.5 },
+    { id: '1/8D',  label: '1/8 ·', beats: 0.75 },
+    { id: '1/16D', label: '1/16 ·', beats: 0.375 },
+    { id: '1/4T',  label: '1/4 T', beats: 2 / 3 },
+    { id: '1/8T',  label: '1/8 T', beats: 1 / 3 },
+    { id: '1/16T', label: '1/16 T', beats: 1 / 6 },
+];
+const DEFAULT_DELAY_DIVISION_ID = '1/4';
 
 const irBufferCache = new Map();
 let irLoadPromise = null;
@@ -99,45 +138,47 @@ function getImpulse(ctx, duration = 2.8, decaySeconds = 1.6, damping = 0.55) {
 }
 
 export class ChannelStrip {
-    constructor(masterBus) {
+    constructor(masterBus, masterDelayInput, masterReverbInput) {
         const ctx = getAudioContext();
         this.ctx = ctx;
         this.buffer = null;
         this.source = null;
+        this.sourceFade = null;  // per-source fade gain — see stop() for why
         this.isPlaying = false;
         this.isLooping = false;
         this.isMuted = false;
         this.isSoloed = false;
+
+        // High-pass and low-pass in series — together they act as a bipolar
+        // "DJ filter" knob. At rest (bypass) the HPF sits at 20 Hz and the
+        // LPF at 20 kHz so neither shapes audible content. The channel knob
+        // drives only one side at a time depending on its sign.
+        this.hpf = ctx.createBiquadFilter();
+        this.hpf.type = 'highpass';
+        this.hpf.frequency.value = 20;
+        this.hpf.Q.value = 0.7;
 
         this.filter = ctx.createBiquadFilter();
         this.filter.type = 'lowpass';
         this.filter.frequency.value = 18000;
         this.filter.Q.value = 0.7;
 
-        this.dryGain = ctx.createGain();
-        this.dryGain.gain.value = 1.0;
-        this.delayNode = ctx.createDelay(2.0);
-        this.delayNode.delayTime.value = 0.25;
-        this.delayFeedback = ctx.createGain();
-        this.delayFeedback.gain.value = 0.42;
-        this.delayWet = ctx.createGain();
-        this.delayWet.gain.value = 0.0;
+        // Source → hpf → lpf → rest. Source connection happens in play()
+        // so we only wire the static portion of the chain here.
+        this.hpf.connect(this.filter);
 
-        this.reverbNode = ctx.createConvolver();
-        this.reverbNode.buffer = getImpulse(ctx);
-        this.reverbWet = ctx.createGain();
-        this.reverbWet.gain.value = 0.0;
+        // Channel DLY/REV knobs control send amounts (0..1) into the shared
+        // master delay and reverb — no more local FX nodes per channel. The
+        // master FX run always-on; each channel's contribution to the wet
+        // bus is determined by its send level.
+        this.delaySend = ctx.createGain();
+        this.delaySend.gain.value = 0;
+        this.reverbSend = ctx.createGain();
+        this.reverbSend.gain.value = 0;
 
         this.channelGain = ctx.createGain();
         this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
         this._lastUserGain = DEFAULT_CHANNEL_GAIN;
-
-        this.compressor = ctx.createDynamicsCompressor();
-        this.compressor.threshold.value = -16;
-        this.compressor.knee.value = 8;
-        this.compressor.ratio.value = 2.5;
-        this.compressor.attack.value = 0.006;
-        this.compressor.release.value = 0.14;
 
         this.pan = ctx.createStereoPanner();
         this.pan.pan.value = 0;
@@ -146,27 +187,39 @@ export class ChannelStrip {
         this.analyser.fftSize = 256;
         this.analyserData = new Uint8Array(this.analyser.frequencyBinCount);
 
-        this.filter.connect(this.dryGain);
-        this.dryGain.connect(this.channelGain);
-
-        this.filter.connect(this.delayNode);
-        this.delayNode.connect(this.delayFeedback);
-        this.delayFeedback.connect(this.delayNode);
-        this.delayNode.connect(this.delayWet);
-        this.delayWet.connect(this.channelGain);
-
-        this.filter.connect(this.reverbNode);
-        this.reverbNode.connect(this.reverbWet);
-        this.reverbWet.connect(this.channelGain);
-
-        this.channelGain.connect(this.compressor);
-        this.compressor.connect(this.pan);
+        // Dry path — filter chain straight through to the master bus. Channels
+        // run clean: the only dynamics stage is the master limiter, which
+        // catches the summed peaks. (A per-channel compressor used to sit here
+        // — thr -16, 2.5:1, no makeup gain — quietly costing several dB on
+        // transient material and making the whole app feel quiet.)
+        this.filter.connect(this.channelGain);
+        this.channelGain.connect(this.pan);
         this.pan.connect(this.analyser);
         this.analyser.connect(masterBus);
+
+        // Post-fader sends — tap from `pan` so the channel fader, mute, and
+        // pan position all affect what reaches the master FX. Mute the
+        // channel and the reverb tail / echoes die too.
+        if (masterDelayInput) {
+            this.pan.connect(this.delaySend);
+            this.delaySend.connect(masterDelayInput);
+        }
+        if (masterReverbInput) {
+            this.pan.connect(this.reverbSend);
+            this.reverbSend.connect(masterReverbInput);
+        }
     }
 
     async loadBlob(blob) {
         this.stop();
+        await this.loadBufferFromBlob(blob);
+    }
+
+    // Decode a blob into the channel buffer WITHOUT touching current playback.
+    // Used for gapless, scheduled clip swaps where the live source must keep
+    // sounding until the next launch-quantization boundary. (loadBlob() stops
+    // first; this one deliberately does not.)
+    async loadBufferFromBlob(blob) {
         const arrayBuffer = await blob.arrayBuffer();
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
     }
@@ -178,43 +231,123 @@ export class ChannelStrip {
         const src = this.ctx.createBufferSource();
         src.buffer = this.buffer;
         src.loop = loop;
-        src.connect(this.filter);
+        // Per-source gain so we can fade-out without touching the user's
+        // channelGain. Cancels the click that would otherwise happen when
+        // stop() truncates a non-zero sample.
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        // Source enters at the head of the filter chain (hpf → lpf → …).
+        fadeGain.connect(this.hpf);
         src.onended = () => {
             if (this.source === src) {
                 this.source = null;
+                this.sourceFade = null;
                 this.isPlaying = false;
             }
         };
 
+        // Start from the head of the clip at the scheduled (quantized) time.
         src.start(Math.max(0, startTime));
         this.source = src;
+        this.sourceFade = fadeGain;
+        this.isPlaying = true;
+    }
+
+    // Launch the current buffer from its head at `startTime` (0 = ASAP) WITHOUT
+    // cutting the currently-playing source until that moment. This gives
+    // gapless, grid-aligned clip switching: the live clip keeps sounding right
+    // up to the boundary, then the new one takes over. When `startTime` is ~now
+    // (immediate / no quantization) it degrades to a short 12 ms crossfade,
+    // identical in feel to play() but without the up-front silence.
+    playAt(loop = this.isLooping, startTime = 0) {
+        if (!this.buffer) return;
+        const now = this.ctx.currentTime;
+        const when = startTime > now ? startTime : now;  // 0 / past => now
+        const FADE = 0.012;
+
+        // Hand off any current source: hold its level until just before the
+        // boundary, fade over 12 ms, and stop it right at `when`. No gap.
+        if (this.source) {
+            const oldSrc = this.source;
+            const oldFade = this.sourceFade;
+            const stopAt = Math.max(when, now + FADE);
+            const fadeStart = Math.max(now, stopAt - FADE);
+            try {
+                if (oldFade) {
+                    oldFade.gain.cancelScheduledValues(now);
+                    oldFade.gain.setValueAtTime(oldFade.gain.value, fadeStart);
+                    oldFade.gain.linearRampToValueAtTime(0, stopAt);
+                }
+                oldSrc.stop(stopAt + 0.005);
+            } catch (_) { /* already stopped */ }
+            window.setTimeout(() => {
+                try { oldSrc.disconnect(); } catch (_) { /* ok */ }
+                try { oldFade && oldFade.disconnect(); } catch (_) { /* ok */ }
+            }, Math.ceil((stopAt - now + 0.03) * 1000));
+        }
+
+        // Schedule the new source from the clip head at the boundary.
+        this.isLooping = loop;
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.buffer;
+        src.loop = loop;
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        fadeGain.connect(this.hpf);
+        src.onended = () => {
+            if (this.source === src) {
+                this.source = null;
+                this.sourceFade = null;
+                this.isPlaying = false;
+            }
+        };
+        src.start(when);
+        this.source = src;
+        this.sourceFade = fadeGain;
         this.isPlaying = true;
     }
 
     stop() {
         if (this.source) {
-            try { this.source.stop(0); } catch (_) { /* already stopped */ }
-            this.source.disconnect();
+            const src = this.source;
+            const fade = this.sourceFade;
+            const now = this.ctx.currentTime;
+            // 12ms gain ramp masks the click from cutting a buffer
+            // mid-cycle. The source is scheduled to actually stop just
+            // after the ramp finishes; disconnect happens on the next
+            // tick after that so we don't truncate the tail ourselves.
+            const FADE = 0.012;
+            try {
+                if (fade) {
+                    fade.gain.cancelScheduledValues(now);
+                    fade.gain.setValueAtTime(fade.gain.value, now);
+                    fade.gain.linearRampToValueAtTime(0, now + FADE);
+                }
+                src.stop(now + FADE + 0.005);
+            } catch (_) { /* already stopped */ }
+            // Detach the nodes after the tail finishes — otherwise we'd
+            // cut the fade short and reintroduce the click.
+            window.setTimeout(() => {
+                try { src.disconnect(); } catch (_) { /* ok */ }
+                try { fade && fade.disconnect(); } catch (_) { /* ok */ }
+            }, Math.ceil((FADE + 0.02) * 1000));
             this.source = null;
+            this.sourceFade = null;
         }
         this.isPlaying = false;
     }
 
     setGain(value) { this.channelGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
     setFilter(hz) { this.filter.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
-    setDelayMix(value) { this.delayWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
-    setReverbMix(value) { this.reverbWet.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
+    setHighpass(hz) { this.hpf.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.01); }
+    // setDelayMix / setReverbMix drive the post-fader send levels into the
+    // shared master delay and reverb. Knob range stays 0..1 — same numeric
+    // contract as the old local-FX path, just routed differently.
+    setDelayMix(value) { this.delaySend.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02); }
+    setReverbMix(value) { this.reverbSend.gain.setTargetAtTime(value, this.ctx.currentTime, 0.05); }
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
-    setImpulseResponse(buffer) {
-        if (buffer) this.reverbNode.buffer = buffer;
-    }
-    setDelayTimeForBpm(bpm) {
-        const safeBpm = Math.max(1, bpm);
-        const eighthSec = Math.min(30 / safeBpm, 2.0);
-        this.delayNode.delayTime.setTargetAtTime(
-            eighthSec, this.ctx.currentTime, 0.04
-        );
-    }
     setLoop(value) {
         this.isLooping = value;
         if (this.source) this.source.loop = value;
@@ -248,43 +381,121 @@ export class ChannelStrip {
         const h = canvas.height;
         ctx2d.clearRect(0, 0, w, h);
         const data = this.buffer.getChannelData(0);
-        const step = Math.max(1, Math.floor(data.length / w));
-        ctx2d.strokeStyle = color || '#35C2D4';
-        ctx2d.lineWidth = 1;
-        ctx2d.beginPath();
-        for (let i = 0; i < w; i++) {
+        // Fixed low resolution (80 buckets) rendered as bars — matches the
+        // dataset-page and Generated-Fragments waveforms.
+        const PEAK_COUNT = 80;
+        const bucket = Math.max(1, Math.floor(data.length / PEAK_COUNT));
+        const xStep = w / PEAK_COUNT;
+        const barW = Math.max(1, xStep - 1);
+        ctx2d.fillStyle = color || '#279FBB';
+        for (let i = 0; i < PEAK_COUNT; i++) {
             let min = 1.0, max = -1.0;
-            const start = i * step;
-            const end = Math.min(data.length, start + step);
+            const start = i * bucket;
+            const end = Math.min(data.length, start + bucket);
             for (let j = start; j < end; j++) {
                 const v = data[j];
                 if (v < min) min = v;
                 if (v > max) max = v;
             }
-            const yMin = (1 + min) * 0.5 * h;
-            const yMax = (1 + max) * 0.5 * h;
-            ctx2d.moveTo(i + 0.5, yMin);
-            ctx2d.lineTo(i + 0.5, yMax);
+            const yA = (1 + min) * 0.5 * h;
+            const yB = (1 + max) * 0.5 * h;
+            ctx2d.fillRect(i * xStep, yA, barW, Math.max(1, yB - yA));
         }
-        ctx2d.stroke();
     }
 
     dispose() {
         this.stop();
         try {
+            this.hpf.disconnect();
             this.filter.disconnect();
-            this.dryGain.disconnect();
-            this.delayNode.disconnect();
-            this.delayFeedback.disconnect();
-            this.delayWet.disconnect();
-            this.reverbNode.disconnect();
-            this.reverbWet.disconnect();
+            this.delaySend.disconnect();
+            this.reverbSend.disconnect();
             this.channelGain.disconnect();
-            this.compressor.disconnect();
             this.pan.disconnect();
             this.analyser.disconnect();
         } catch (_) { /* already disconnected */ }
     }
+}
+
+// AudioWorklet processor source for master capture. Loaded as an inline
+// blob module (no separate served file). It accumulates the input's L/R
+// Float32 blocks and flushes them to the main thread on a 'stop' message.
+// Chosen over the deprecated ScriptProcessorNode, whose onaudioprocess does
+// not fire reliably in the WebKitGTK / Chromium-app webviews.
+const REC_WORKLET_SRC = `
+class FragmentaRecorder extends AudioWorkletProcessor {
+    constructor() {
+        super();
+        this._l = [];
+        this._r = [];
+        this._on = true;
+        this.port.onmessage = (e) => {
+            if (e.data === 'stop') {
+                this._on = false;
+                this.port.postMessage({ type: 'data', left: this._l, right: this._r });
+                this._l = [];
+                this._r = [];
+            }
+        };
+    }
+    process(inputs) {
+        const input = inputs[0];
+        if (this._on && input && input.length > 0) {
+            const l = input[0];
+            const r = input.length > 1 ? input[1] : input[0];
+            if (l && l.length) this._l.push(new Float32Array(l));
+            if (r && r.length) this._r.push(new Float32Array(r));
+        }
+        return true;
+    }
+}
+registerProcessor('fragmenta-recorder', FragmentaRecorder);
+`;
+
+// Concatenate an array of Float32 chunks into one contiguous buffer.
+function flattenFloat32(chunks) {
+    let total = 0;
+    for (const c of chunks) total += c.length;
+    const out = new Float32Array(total);
+    let offset = 0;
+    for (const c of chunks) { out.set(c, offset); offset += c.length; }
+    return out;
+}
+
+// Encode interleaved 16-bit PCM stereo into a RIFF/WAVE Blob. Mirrors the
+// backend's PCM_16 WAV convention so performance captures match generated
+// fragments.
+function encodeWavStereo(left, right, sampleRate) {
+    const numFrames = left.length;
+    const numChannels = 2;
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataSize = numFrames * blockAlign;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
+    const writeStr = (off, s) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);                 // PCM fmt chunk size
+    view.setUint16(20, 1, true);                  // audio format = PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 8 * bytesPerSample, true);
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+    let off = 44;
+    const clamp = (x) => (x < -1 ? -1 : x > 1 ? 1 : x);
+    for (let i = 0; i < numFrames; i++) {
+        view.setInt16(off, clamp(left[i]) * 0x7fff, true); off += 2;
+        view.setInt16(off, clamp(right[i]) * 0x7fff, true); off += 2;
+    }
+    return new Blob([view], { type: 'audio/wav' });
 }
 
 export class PerformanceEngine {
@@ -303,7 +514,32 @@ export class PerformanceEngine {
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 1024;
         this.masterAnalyserData = new Uint8Array(this.masterAnalyser.frequencyBinCount);
+
+        // Master FX — always-on shared delay and reverb. The wet level on
+        // the bus is governed entirely by how much each ChannelStrip sends
+        // into them via its post-fader DLY/REV send (no master wet gain).
+        // masterBus carries the dry sum; the FX outputs join it at the
+        // limiter.
+        this.masterDelay = ctx.createDelay(4.0);
+        this.masterDelay.delayTime.value = 0.5;          // 1/4 at 120 BPM
+        this.masterDelayFeedback = ctx.createGain();
+        this.masterDelayFeedback.gain.value = 0.4;
+
+        this.masterReverb = ctx.createConvolver();
+        this.masterReverb.buffer = getImpulse(ctx);
+
+        this.masterDelayDivisionId = DEFAULT_DELAY_DIVISION_ID;
+        this.currentMasterImpulseId = DEFAULT_IR_ID;
+
+        // Dry: masterBus → limiter. Wet: channel sends → master FX → limiter.
         this.masterBus.connect(this.masterLimiter);
+
+        this.masterDelay.connect(this.masterDelayFeedback);
+        this.masterDelayFeedback.connect(this.masterDelay);
+        this.masterDelay.connect(this.masterLimiter);
+
+        this.masterReverb.connect(this.masterLimiter);
+
         this.masterLimiter.connect(this.masterAnalyser);
 
         // Stage 2 multichannel routing. The stereo master bus is split into
@@ -317,7 +553,9 @@ export class PerformanceEngine {
         this.currentMainPair = 0;
         this._buildOutputGraph();
 
-        this.channels = Array.from({ length: channelCount }, () => new ChannelStrip(this.masterBus));
+        this.channels = Array.from({ length: channelCount }, () =>
+            new ChannelStrip(this.masterBus, this.masterDelay, this.masterReverb)
+        );
 
 
         this.linkSnapshot = null;
@@ -333,18 +571,42 @@ export class PerformanceEngine {
             bpm: 120,
         };
 
-        this.currentImpulseId = DEFAULT_IR_ID;
         loadImpulseResponses(ctx).then(() => {
-            const buf = getImpulseResponseBuffer(this.currentImpulseId);
-            if (buf) this.channels.forEach(ch => ch.setImpulseResponse(buf));
+            const masterBuf = getImpulseResponseBuffer(this.currentMasterImpulseId);
+            if (masterBuf) this.masterReverb.buffer = masterBuf;
         });
+
+        // Apply the default master delay division once the transport has its
+        // bpm — keeps the initial 0.5s default in sync with the real BPM
+        // (could be != 120 if the session restored a different tempo).
+        this._applyMasterDelayTime();
     }
 
-    setImpulseResponse(id) {
+    _applyMasterDelayTime() {
+        const div = MASTER_DELAY_DIVISIONS.find(d => d.id === this.masterDelayDivisionId);
+        if (!div) return;
+        const bpm = this.internalTransport?.bpm || 120;
+        const seconds = (60 / Math.max(bpm, 1)) * div.beats;
+        // The Delay node was created with maxDelayTime=4.0, so cap at that.
+        const clamped = Math.min(seconds, 4.0);
+        this.masterDelay.delayTime.setTargetAtTime(clamped, this.ctx.currentTime, 0.02);
+    }
+
+    setMasterDelayDivision(id) {
+        if (!MASTER_DELAY_DIVISIONS.some(d => d.id === id)) return false;
+        this.masterDelayDivisionId = id;
+        this._applyMasterDelayTime();
+        return true;
+    }
+
+    setMasterReverbIR(id) {
+        if (!IMPULSE_RESPONSES.some(ir => ir.id === id)) return false;
+        this.currentMasterImpulseId = id;
         const buf = getImpulseResponseBuffer(id);
-        if (!buf) return false;
-        this.currentImpulseId = id;
-        this.channels.forEach(ch => ch.setImpulseResponse(buf));
+        if (buf) this.masterReverb.buffer = buf;
+        // If buf is null the IR catalog hasn't finished loading yet — the
+        // constructor's loadImpulseResponses().then() will apply the right
+        // buffer once it's cached, reading the updated id from this.
         return true;
     }
 
@@ -454,13 +716,6 @@ export class PerformanceEngine {
         this._wireMainPair(pairIdx);
     }
 
-    setChannelImpulseResponse(channelIndex, id) {
-        const buf = getImpulseResponseBuffer(id);
-        if (!buf || !this.channels[channelIndex]) return false;
-        this.channels[channelIndex].setImpulseResponse(buf);
-        return true;
-    }
-
     setBpm(bpm) {
         const safe = Number(bpm);
         if (Number.isFinite(safe) && safe > 0) {
@@ -475,7 +730,9 @@ export class PerformanceEngine {
             tr.originAudioTime = now;
             tr.bpm = safe;
         }
-        this.channels.forEach(ch => ch.setDelayTimeForBpm(bpm));
+        // Master delay follows the grid — recompute its seconds based on
+        // the current division whenever BPM changes.
+        this._applyMasterDelayTime();
     }
 
     setLinkSnapshot(snapshot) {
@@ -487,52 +744,80 @@ export class PerformanceEngine {
         this.launchQuantum = Number.isFinite(v) && v > 0 ? v : 0;
     }
 
+    // Returns { when, beat, bpm }: the AudioContext time to start (0 = ASAP),
+    // the GLOBAL beat at that instant, and the tempo. `beat`+`bpm` let the
+    // caller phase-lock each clip to the global grid (INV#8). Back-compat:
+    // callers that only need `when` read the `.when` field.
     getNextQuantizedAudioTime() {
         const quantum = this.launchQuantum;
-        if (!quantum) return 0;
+        const snap = this.linkSnapshot;
 
-        // First-launch shortcut: if nothing is currently playing, fire
-        // immediately and (re)anchor the internal transport at "now". This
-        // matches Live's Session View — the user pressed Play, they expect
-        // audio, not silence until the next bar. Subsequent launches see at
-        // least one channel playing and quantize as normal. Link's clock is
-        // external so we leave its snapshot alone.
+        // Current global beat + tempo from Link if running, else the internal
+        // transport. Both extrapolate to "now".
+        let currentBeat = 0;
+        let bpm = 0;
+        if (snap && snap.bpm) {
+            bpm = snap.bpm;
+            currentBeat = snap.beat + ((performance.now() - snap.capturedAt) / 1000) * (bpm / 60);
+        } else {
+            const tr = this.internalTransport;
+            if (tr.bpm) {
+                bpm = tr.bpm;
+                currentBeat = tr.anchorBeat + (this.ctx.currentTime - tr.originAudioTime) * (bpm / 60);
+            }
+        }
+
+        // First-launch handling. When slaved to Link with a quantum set, even
+        // the FIRST clip waits for the shared downbeat (true slave behaviour —
+        // Fragmenta drops in on Ableton's bar like any Link peer): fall through
+        // to the quantize block. Standalone or quantum=None keeps the Live
+        // Session-View instant-fire feel and anchors the internal transport.
         const anythingPlaying = this.channels.some(c => c.isPlaying);
-        if (!anythingPlaying) {
-            if (!this.linkSnapshot) {
+        if (!anythingPlaying && !(snap && snap.bpm && quantum)) {
+            if (!snap) {
                 this.internalTransport.originAudioTime = this.ctx.currentTime;
                 this.internalTransport.anchorBeat = 0;
+                currentBeat = 0;
+                bpm = this.internalTransport.bpm || bpm;
             }
-            return 0;
+            return { when: 0, beat: currentBeat, bpm };
         }
 
-        // Prefer the Link snapshot when active so the app stays in phase with
-        // external peers. Falls through to the internal transport when Link
-        // isn't running so 'Q' still works standalone.
-        const snap = this.linkSnapshot;
-        if (snap && snap.bpm) {
-            const elapsedSec = (performance.now() - snap.capturedAt) / 1000;
-            const currentBeat = snap.beat + elapsedSec * (snap.bpm / 60);
-            let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
-            if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
-            const secondsUntil = (nextBeat - currentBeat) * 60 / snap.bpm;
-            return this.ctx.currentTime + secondsUntil;
+        // No quantum (None) -> start ASAP, but still report the live beat so
+        // the clip phase-locks to the grid.
+        if (!quantum || !bpm) {
+            return { when: 0, beat: currentBeat, bpm };
         }
 
-        const tr = this.internalTransport;
-        if (!tr.bpm) return 0;
-        const elapsedSec = this.ctx.currentTime - tr.originAudioTime;
-        const currentBeat = tr.anchorBeat + elapsedSec * (tr.bpm / 60);
+        // Quantize to the next quantum boundary; the global beat there is
+        // exactly nextBeat.
         let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
         if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
-        const secondsUntil = (nextBeat - currentBeat) * 60 / tr.bpm;
-        return this.ctx.currentTime + secondsUntil;
+        const secondsUntil = (nextBeat - currentBeat) * 60 / bpm;
+        return { when: this.ctx.currentTime + secondsUntil, beat: nextBeat, bpm };
     }
 
     playChannel(index, loop) {
         const ch = this.channels[index];
         if (!ch || !ch.buffer) return;
-        ch.play(loop, this.getNextQuantizedAudioTime());
+        // Clip-launch semantics (like Ableton Session View): start from the
+        // clip's head on the quantized boundary. Phase coherence comes from the
+        // clips being downbeat-anchored + exact-bar-length (Stage A) and
+        // launched on bar boundaries — NOT from entering the buffer mid-way.
+        const { when } = this.getNextQuantizedAudioTime();
+        ch.play(loop, when);
+    }
+
+    // Switch a channel to its (freshly loaded) buffer and launch it from the
+    // top, keeping the current clip playing until the launch point — gapless
+    // clip switching. `immediate` forces an ASAP start (seconds mode); else the
+    // launch aligns to the next launch-quantization boundary (which itself is
+    // ASAP when the quantum is None or no tempo is running).
+    relaunchChannel(index, loop, immediate = false) {
+        const ch = this.channels[index];
+        if (!ch || !ch.buffer) return;
+        const when = immediate ? 0 : this.getNextQuantizedAudioTime().when;
+        ch.playAt(loop, when);
     }
 
     setMasterGain(value) {
@@ -547,6 +832,96 @@ export class PerformanceEngine {
             if (v > peak) peak = v;
         }
         return peak;
+    }
+
+    isRecording() {
+        return Boolean(this._recNode);
+    }
+
+    // Lazily register the inline recorder worklet module (once per context).
+    async _ensureRecorderWorklet() {
+        if (this._recWorkletLoaded) return;
+        if (!this.ctx.audioWorklet) {
+            throw new Error('AudioWorklet is not supported in this environment.');
+        }
+        const blob = new Blob([REC_WORKLET_SRC], { type: 'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        try {
+            await this.ctx.audioWorklet.addModule(url);
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+        this._recWorkletLoaded = true;
+    }
+
+    /**
+     * Begin capturing the post-limiter master output to memory. Taps
+     * masterAnalyser (the final master sum, after FX + limiter) into an
+     * AudioWorkletNode routed through a muted sink, so the capture path
+     * never re-monitors audio. Async because the worklet module loads on
+     * first use. Returns false if a recording is already in progress.
+     */
+    async startRecording() {
+        if (this._recNode) return false;
+        const ctx = this.ctx;
+        if (ctx.state === 'suspended') await ctx.resume().catch(() => { /* ok */ });
+        await this._ensureRecorderWorklet();
+
+        const node = new AudioWorkletNode(ctx, 'fragmenta-recorder', {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [2],
+        });
+        const sink = ctx.createGain();
+        sink.gain.value = 0;
+        this._recSampleRate = ctx.sampleRate;
+
+        this.masterAnalyser.connect(node);
+        node.connect(sink);
+        sink.connect(ctx.destination);
+
+        this._recNode = node;
+        this._recSink = sink;
+        return true;
+    }
+
+    /**
+     * Stop capturing and encode the buffered PCM to a stereo WAV Blob.
+     * Resolves to { blob, durationSec } or null if nothing was captured /
+     * no recording was active.
+     */
+    stopRecording() {
+        if (!this._recNode) return Promise.resolve(null);
+        const node = this._recNode;
+        const sink = this._recSink;
+        const sampleRate = this._recSampleRate;
+        this._recNode = null;
+        this._recSink = null;
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const finish = (chunksL, chunksR) => {
+                if (settled) return;
+                settled = true;
+                try { this.masterAnalyser.disconnect(node); } catch (_) { /* ok */ }
+                try { node.disconnect(); } catch (_) { /* ok */ }
+                try { sink.disconnect(); } catch (_) { /* ok */ }
+                const left = flattenFloat32(chunksL || []);
+                const right = flattenFloat32(chunksR || []);
+                if (left.length === 0) { resolve(null); return; }
+                resolve({
+                    blob: encodeWavStereo(left, right, sampleRate),
+                    durationSec: left.length / sampleRate,
+                });
+            };
+            node.port.onmessage = (e) => {
+                if (e.data && e.data.type === 'data') finish(e.data.left, e.data.right);
+            };
+            // Safety net: if the worklet never replies, resolve empty rather
+            // than hang the stop action.
+            setTimeout(() => finish([], []), 1500);
+            node.port.postMessage('stop');
+        });
     }
 
     refreshMuteSolo() {
@@ -565,8 +940,13 @@ export class PerformanceEngine {
     }
 
     playAll(loop = true) {
-        const startTime = this.getNextQuantizedAudioTime();
-        this.channels.forEach(ch => { if (ch.buffer) ch.play(loop, startTime); });
+        // All channels launch from their head on the same quantized boundary,
+        // so equal-length downbeat-anchored clips line up (INV#9) without
+        // entering mid-buffer.
+        const { when } = this.getNextQuantizedAudioTime();
+        this.channels.forEach(ch => {
+            if (ch.buffer) ch.play(loop, when);
+        });
     }
 
     stopAll() {
@@ -575,8 +955,19 @@ export class PerformanceEngine {
 
     dispose() {
         this.channels.forEach(ch => ch.dispose());
-        try { this.masterBus.disconnect(); } catch (_) { /* already disconnected */ }
-        try { this.masterLimiter.disconnect(); } catch (_) { /* already disconnected */ }
-        try { this.masterAnalyser.disconnect(); } catch (_) { /* already disconnected */ }
+        const tryDisconnect = (node) => {
+            try { node?.disconnect(); } catch (_) { /* already disconnected */ }
+        };
+        // Drop any in-flight capture without trying to encode it.
+        tryDisconnect(this._recNode);
+        tryDisconnect(this._recSink);
+        this._recNode = null;
+        this._recSink = null;
+        tryDisconnect(this.masterBus);
+        tryDisconnect(this.masterDelay);
+        tryDisconnect(this.masterDelayFeedback);
+        tryDisconnect(this.masterReverb);
+        tryDisconnect(this.masterLimiter);
+        tryDisconnect(this.masterAnalyser);
     }
 }

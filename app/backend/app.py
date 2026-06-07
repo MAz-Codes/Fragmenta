@@ -3,19 +3,21 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
-from app.core.training.fine_tuner import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
-from app.backend.data.simple_audio_processor import SimpleAudioProcessor
+from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
 import os
+import re
+import random
+import queue
 from pathlib import Path
 import sys
 import threading
 import time
 import json
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from werkzeug.serving import WSGIRequestHandler
 
 sys.path.append(os.path.abspath(
@@ -46,6 +48,10 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 CORS(app,
      resources={r"/api/*": {"origins": "*"}},
      supports_credentials=True,
+     # /api/generate returns the WAV as the body, so the canonical on-disk
+     # filename (and resolved seed) ride back in custom headers. They must be
+     # whitelisted here or the browser hides them from axios cross-origin.
+     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 
@@ -60,7 +66,6 @@ def request_entity_too_large(error):
 DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 
 config = None
-audio_processor = None
 generator = None
 model_manager = None
 _components_initialised = False
@@ -121,7 +126,7 @@ def _resolve_finetuned_config_path(model_dir: Path, config) -> str:
 
 
 def _ensure_components():
-    global config, audio_processor, generator, model_manager
+    global config, generator, model_manager
     global _components_initialised, _init_error
 
     if _components_initialised:
@@ -132,9 +137,6 @@ def _ensure_components():
     try:
         logger.info("Initializing Backend API components (lazy)…")
         config = get_config()
-        audio_processor = SimpleAudioProcessor(
-            model_config_path=config.get_path("models_config") / "model_config.json"
-        )
         generator = AudioGenerator(config)
 
         from app.core.model_manager import ModelManager
@@ -193,112 +195,9 @@ def serve_static_files(path):
     return response
 
 
-@app.route('/api/process-files', methods=['POST'])
-def process_files():
-    try:
-        content_length = request.content_length
-        if content_length:
-            print(f"Upload request size: {content_length / (1024*1024):.2f} MB")
-        else:
-            print("Upload request size: Unknown")
-        
-        max_size = app.config.get('MAX_CONTENT_LENGTH', 1000 * 1024 * 1024)
-        if content_length and content_length > max_size:
-            return jsonify({
-                'error': f'Upload too large: {content_length / (1024*1024):.2f} MB exceeds {max_size / (1024*1024):.0f} MB limit',
-                'max_size_mb': max_size // (1024*1024)
-            }), 413
 
-        config = get_config()
-        data_dir = config.get_path("data")
-        data_dir.mkdir(exist_ok=True, parents=True)
 
-        files_and_prompts = []
-        for key in request.files:
-            if key.startswith('file_'):
-                index = key.split('_')[1]
-                prompt_key = f'prompt_{index}'
-
-                if prompt_key in request.form:
-                    file_obj = request.files[key]
-                    prompt = request.form[prompt_key]
-
-                    if file_obj and prompt and prompt.strip():
-                        files_and_prompts.append((file_obj, prompt.strip()))
-
-        if not files_and_prompts:
-            return jsonify({'error': 'No files uploaded or no prompts provided'}), 400
-
-        target_length = int(request.form.get('target_length', 30))
-        sample_rate = int(request.form.get('sample_rate', 44100))
-        channels = int(request.form.get('channels', 2))
-
-        saved_files = []
-        prompts_data = []
-
-        for file_obj, prompt in files_and_prompts:
-            try:
-                file_path = data_dir / file_obj.filename
-                file_obj.save(file_path)
-                saved_files.append(file_obj.filename)
-
-                prompts_data.append((file_obj.filename, prompt))
-
-            except Exception as e:
-                print(f"Error saving {file_obj.filename}: {e}")
-                continue
-
-        chunks_preview_data = []
-        for filename, prompt in prompts_data:
-            chunks_preview_data.append([filename, filename, prompt, "original"])
-
-        # Merge into existing metadata instead of overwriting, so repeated
-        # uploads accumulate into one dataset.
-        json_path = Path(config.get_metadata_json_path())
-        existing_metadata = []
-
-        if json_path.exists():
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    import json
-                    existing_metadata = json.load(f)
-            except Exception as e:
-                print(f"Warning: Could not load existing metadata: {e}")
-                existing_metadata = []
-        
-        existing_files = {item['file_name']: item for item in existing_metadata}
-        
-        for filename, prompt in prompts_data:
-            existing_files[filename] = {
-                "file_name": filename,
-                "prompt": prompt,
-                "path": str(data_dir / filename)
-            }
-        
-        # Convert back to list and save
-        final_metadata = list(existing_files.values())
-        
-        with open(json_path, 'w', encoding='utf-8') as f:
-            import json
-            json.dump(final_metadata, f, indent=2)
-
-        try:
-            config.update_dataset_config()
-        except Exception as exc:
-            print(f"Warning: failed to refresh dataset-config.json: {exc}")
-
-        return jsonify({
-            'message': f'Files saved successfully! {len(saved_files)} original files saved to data folder',
-            'saved_files': saved_files,
-            'processed_count': len(saved_files),
-            'chunks_preview': chunks_preview_data,
-            'data_folder': str(data_dir),
-            'metadata_json': str(json_path),
-            'approach': 'original_files_only'
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+_SA3_LORA_BASES = ['sa3-small-music-base', 'sa3-small-sfx-base', 'sa3-medium-base']
 
 
 @app.route('/api/start-training', methods=['POST'])
@@ -308,78 +207,83 @@ def start_training():
         if training_config is None:
             raise ValueError("No training configuration provided")
 
-        print("\n" + "="*80)
-        print("API TRAINING REQUEST RECEIVED")
-        print("="*80)
-        print(f"RECEIVED CONFIG FROM FRONTEND:")
-        print(f"   - Mode: {training_config.get('mode', 'full')}")
-        print(f"   - Model Name: {training_config.get('modelName', 'untitled')}")
-        print(f"   - Base Model: {training_config.get('baseModel', 'NOT SET')}")
-        print(f"   - Epochs: {training_config.get('epochs', 'NOT SET')}")
-        print(f"   - Checkpoint Steps: {training_config.get('checkpointSteps', 'NOT SET')}")
-        print(f"   - Batch Size: {training_config.get('batchSize', 'NOT SET')}")
-        print(f"   - Learning Rate: {training_config.get('learningRate', 'NOT SET')}")
-        if training_config.get('mode') == 'lora':
-            print(f"   - LoRA rank: {training_config.get('loraRank', 16)}")
-            print(f"   - LoRA alpha: {training_config.get('loraAlpha', 16)}")
-            print(f"   - LoRA dropout: {training_config.get('loraDropout', 0)}")
-        else:
-            print(f"   - Save Wrapped Checkpoint: {training_config.get('saveWrappedCheckpoint', False)}")
+        # Required fields.
+        required_fields = ['modelName', 'baseModel', 'projectName']
+        missing = [f for f in required_fields if not training_config.get(f)]
+        if missing:
+            return jsonify({'error': f"Missing required fields: {missing}"}), 400
 
-        required_fields = ['modelName', 'baseModel']
-        missing_fields = [field for field in required_fields if field not in training_config]
-        if missing_fields:
-            error_msg = f"Missing required fields: {missing_fields}"
-            print(f"API ERROR: {error_msg}")
-            return jsonify({'error': error_msg}), 400
+        # Project must exist on disk (Dataset Workbench created it).
+        from app.backend.data.projects import project_path
+        proj_dir = project_path(training_config['projectName'])
+        if not proj_dir.exists():
+            return jsonify({
+                'error': f"Project not found: {training_config['projectName']}. "
+                         "Create or load it in the Dataset tab first.",
+            }), 400
 
-        valid_models = ['stable-audio-open-small', 'stable-audio-open-1.0']
+        # SA3 base validation. LoRA training requires a CFG-aware *-base
+        # checkpoint; the post-trained / distilled checkpoints have had
+        # the gradient signal LoRAs target collapsed away.
         base_model = training_config.get('baseModel')
-        if base_model not in valid_models:
-            error_msg = f"Invalid base model '{base_model}'. Must be one of: {valid_models}"
-            print(f"API ERROR: {error_msg}")
-            return jsonify({'error': error_msg}), 400
+        if base_model not in _SA3_LORA_BASES:
+            return jsonify({
+                'error': (
+                    f"baseModel '{base_model}' is not a valid LoRA target. "
+                    f"Pick one of: {_SA3_LORA_BASES}. SA2 models are gone in 1.0.0; "
+                    f"post-trained SA3 checkpoints (no -base suffix) can't be used "
+                    f"as a training base."
+                )
+            }), 400
 
-        # Mode validation: 'full' (existing SAO fine-tune) or 'lora' (LoRAW).
-        mode = training_config.get('mode', 'full')
-        if mode not in ('full', 'lora'):
-            return jsonify({'error': f"Invalid mode '{mode}'. Must be 'full' or 'lora'."}), 400
-        training_config['mode'] = mode
+        # Same-name collision check. If a previous run for this modelName
+        # already wrote checkpoints, refuse unless the caller passes
+        # overwrite=true. Stops a re-train from quietly co-mingling with
+        # stale artifacts from the previous run.
+        if not training_config.get('overwrite'):
+            from app.core.training.sa3_trainer import SA3Trainer
+            existing = SA3Trainer.existing_run_info(training_config['modelName'])
+            if existing:
+                return jsonify({
+                    'error': 'run_exists',
+                    'code': 'run_exists',
+                    'message': (
+                        f"A run named “{existing['run_name']}” already exists "
+                        f"with {existing['checkpoint_count']} checkpoint(s). "
+                        "Confirm overwrite to replace it."
+                    ),
+                    **existing,
+                }), 409
 
-        if 'epochs' not in training_config:
-            training_config['epochs'] = 30
-            print(f"   Setting default epochs: 30")
-        if 'checkpointSteps' not in training_config:
-            training_config['checkpointSteps'] = 50
-            print(f"   Setting default checkpointSteps: 50")
-        if 'batchSize' not in training_config:
-            training_config['batchSize'] = 1
-            print(f"   Setting default batch size: 1")
-        if 'learningRate' not in training_config:
-            training_config['learningRate'] = 1e-4
-            print(f"   Setting default learning rate: 1e-4")
-        if 'saveWrappedCheckpoint' not in training_config:
-            training_config['saveWrappedCheckpoint'] = False
-            print(f"   Setting default saveWrappedCheckpoint: False")
-        if 'precision' not in training_config or not training_config['precision']:
-            training_config['precision'] = 'auto'
-            print(f"   Setting default precision: auto")
-        # LoRA-specific defaults
-        if mode == 'lora':
-            training_config.setdefault('loraRank', 16)
-            training_config.setdefault('loraAlpha', training_config['loraRank'])
-            training_config.setdefault('loraDropout', 0)
-            training_config.setdefault('loraMultiplier', 1.0)
+        # SA3-aligned defaults. Phase 5 ships LoRA-only — no `mode` switch.
+        training_config['mode'] = 'lora'
+        training_config.setdefault('steps', 5000)
+        training_config.setdefault('checkpointSteps', 500)
+        training_config.setdefault('batchSize', 1)
+        training_config.setdefault('learningRate', 1e-4)
+        # Window defaults to the base model's native length (medium ≈380s,
+        # small ≈120s); sa3_trainer clamps to the same ceiling.
+        training_config.setdefault(
+            'duration',
+            380.0 if 'medium' in str(training_config.get('baseModel', '')) else 120.0,
+        )
+        training_config.setdefault('precision', 'bf16')
+        training_config.setdefault('loraRank', 16)
+        training_config.setdefault('loraAlpha', training_config['loraRank'])
+        training_config.setdefault('loraDropout', 0.0)
+        training_config.setdefault('adapterType', 'dora-rows')
+        # Random seed by default: the UI sends seed=null when "Random" is on.
+        # Roll a concrete seed here so it's recorded (training_metadata.json +
+        # status) and the run stays reproducible if the user liked the result.
+        if training_config.get('seed') is None:
+            training_config['seed'] = random.randint(0, 2**31 - 1)
 
-        print(f"\nVALIDATED CONFIG:")
-        print(f"   - Model Name: {training_config['modelName']}")
-        print(f"   - Base Model: {training_config['baseModel']}")
-        print(f"   - Epochs: {training_config['epochs']}")
-        print(f"   - Checkpoint Steps: {training_config['checkpointSteps']}")
-        print(f"   - Batch Size: {training_config['batchSize']}")
-        print(f"   - Learning Rate: {training_config['learningRate']}")
-        print(f"   - Save Wrapped Checkpoint: {training_config['saveWrappedCheckpoint']}")
-        print(f"   - Precision: {training_config['precision']}")
+        logger.info(
+            f"Training request: base={base_model}, name={training_config['modelName']}, "
+            f"rank={training_config['loraRank']}, adapter={training_config['adapterType']}, "
+            f"steps={training_config['steps']}, batch={training_config['batchSize']}, "
+            f"lr={training_config['learningRate']}"
+        )
 
         result = start_training_func(training_config)
 
@@ -398,8 +302,44 @@ def start_training():
         return jsonify({'error': error_msg}), 500
 
 
+_SA3_MODEL_IDS = {
+    "sa3-small-music", "sa3-small-sfx", "sa3-medium",
+    "sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base",
+}
+
+
 @app.route('/api/generate', methods=['POST'])
 def generate_audio():
+    """SA3 inference. Phase 3 + Phase 7 of SA3_INTEGRATION_PLAN.md.
+
+    Schema:
+        {
+            "model_id":           "sa3-small-music",   # required, SA3 IDs only
+            "prompt":             "techno kick",
+            "duration":           5.0,
+            "steps":              8,                    # optional; default by model
+            "cfg_scale":          1.0,                  # optional; default by model
+            "seed":               -1,
+            "negative_prompt":    null,
+            "batch_size":         1,
+            "align_bars":         null,                 # bars-mode passthrough
+            "align_bpm":          null,
+            "chunked_decode":     null,
+            "loras":              [{"path":"…","strength":1.0}, …],
+            "init_audio_path":    null,                 # audio-to-audio source
+            "init_noise_level":   1.0,
+            "inpaint_audio_path": null,                 # inpainting source
+            "inpaint_starts":     [4.0],                # list or single float
+            "inpaint_ends":       [8.0],
+            "loop_stitch":        null                  # "inpaint" | "crossfade" | null
+        }
+
+    `loop_stitch`, `align_bars`, and `align_bpm` are accepted for API
+    compatibility but currently ignored — raw model output is returned
+    for all modes. The post-processing pipeline (grid alignment, head-
+    trim, seam-smoothing inpaint) was removed after listening tests
+    showed it degraded every prompt class.
+    """
     if not request.json:
         return jsonify(APIResponse.error("No JSON data provided", status_code=400)), 400
 
@@ -407,26 +347,56 @@ def generate_audio():
     try:
         prompt = Validator.string(
             data.get('prompt', ''), 'prompt', min_length=1, max_length=500)
+
+        # Legacy callers send model_name; new callers send model_id. Honour either.
+        model_id = (data.get('model_id') or data.get('model_name') or '').strip()
+        if not model_id:
+            return jsonify(APIResponse.error(
+                "model_id is required (e.g. 'sa3-small-music').",
+                status_code=400)), 400
+        if model_id not in _SA3_MODEL_IDS:
+            return jsonify(APIResponse.error(
+                f"'{model_id}' is not a SA3 model. The SA2/SAO engine was "
+                f"removed in 1.0.0 (see v0.1.x-legacy tag for legacy use). "
+                f"Pick one of: {sorted(_SA3_MODEL_IDS)}.",
+                status_code=400)), 400
+
         duration = Validator.number(
-            data.get('duration', 10.0), 'duration', min_value=1, max_value=60)
-        cfg_scale = Validator.number(
-            data.get('cfg_scale', 7.0), 'cfg_scale', min_value=0.1, max_value=20.0)
-        steps = Validator.number(
-            data.get('steps', 250), 'steps', min_value=1, max_value=500, integer_only=True)
+            data.get('duration', 10.0), 'duration', min_value=1, max_value=380)
         seed = Validator.number(
-            data.get('seed', -1), 'seed', min_value=-1, max_value=2**32 - 1, integer_only=True)
-        batch_index = Validator.number(
-            data.get('batch_index', 1), 'batch_index', min_value=1, max_value=10, integer_only=True)
-        batch_total = Validator.number(
-            data.get('batch_total', 1), 'batch_total', min_value=1, max_value=10, integer_only=True)
-        model_name = data.get('model_name', data.get('model', 'default'))
-        model_path = data.get('model_path')
-        unwrapped_model_path = data.get('unwrapped_model_path')
-        lora_path = data.get('lora_path') or None
-        lora_multiplier = Validator.number(
-            data.get('lora_multiplier', 1.0), 'lora_multiplier',
-            min_value=0.0, max_value=2.0,
-        )
+            data.get('seed', -1), 'seed',
+            min_value=-1, max_value=2**32 - 1, integer_only=True)
+        # Resolve a random request (-1) to a concrete seed up front, so the
+        # actual seed used is reproducible AND recorded in the sidecar — an
+        # unresolved -1 would leave the fragment with no usable seed info.
+        seed = random.randint(0, 2**32 - 1) if (seed is None or int(seed) < 0) else int(seed)
+        # `/api/generate` returns exactly one WAV (single-file response), and
+        # the engine's _finalize writes one clip. Batching is done client-side
+        # — the UI loops this endpoint with distinct seeds (see App.js
+        # batchCount / PerformancePanel generateForChannel). So a server-side
+        # batch_size>1 would silently drop all but the first member; reject it
+        # with a clear message instead of failing quietly.
+        batch_size = Validator.number(
+            data.get('batch_size', 1), 'batch_size',
+            min_value=1, max_value=1, integer_only=True)
+
+        steps_raw = data.get('steps')
+        # 250 matches the frontend slider max. Past ~80–100 the marginal
+        # quality gain from more steps is negligible on SA3 base models —
+        # the cap is a sanity boundary, not a recommendation.
+        steps = Validator.number(
+            steps_raw, 'steps', min_value=1, max_value=250, integer_only=True
+        ) if steps_raw is not None else None
+
+        cfg_raw = data.get('cfg_scale')
+        cfg_scale = Validator.number(
+            cfg_raw, 'cfg_scale', min_value=0.1, max_value=20.0
+        ) if cfg_raw is not None else None
+
+        negative_prompt_raw = data.get('negative_prompt')
+        negative_prompt = Validator.string(
+            negative_prompt_raw, 'negative_prompt', min_length=0, max_length=500
+        ) if negative_prompt_raw else None
 
         align_bars_raw = data.get('align_bars')
         align_bpm_raw = data.get('align_bpm')
@@ -438,196 +408,230 @@ def generate_audio():
         ) if align_bpm_raw is not None else None
         do_align = align_bars is not None and align_bpm is not None
 
+        chunked_decode = data.get('chunked_decode')  # tri-state: True / False / None
+
+        # Phase 7: audio-to-audio + inpainting --------------------------
+        def _resolve_src(p):
+            if not p:
+                return None
+            ap = Path(str(p))
+            if not ap.is_absolute():
+                ap = config.project_root / ap
+            if not ap.exists():
+                raise FileNotFoundError(f"Source audio not found: {p}")
+            return str(ap)
+
+        try:
+            init_audio_path = _resolve_src(data.get('init_audio_path'))
+            inpaint_audio_path = _resolve_src(data.get('inpaint_audio_path'))
+        except FileNotFoundError as e:
+            return jsonify(APIResponse.error(str(e), status_code=400)), 400
+
+        init_noise_level = Validator.number(
+            data.get('init_noise_level', 1.0), 'init_noise_level',
+            min_value=0.0, max_value=1.0,
+        )
+
+        def _normalize_seconds(raw):
+            if raw is None:
+                return None
+            if isinstance(raw, (int, float)):
+                return [float(raw)]
+            if isinstance(raw, list):
+                return [float(x) for x in raw]
+            raise ValueError("must be a number or list of numbers")
+        try:
+            inpaint_starts = _normalize_seconds(data.get('inpaint_starts'))
+            inpaint_ends = _normalize_seconds(data.get('inpaint_ends'))
+        except (TypeError, ValueError) as e:
+            return jsonify(APIResponse.error(
+                f"inpaint_starts/inpaint_ends invalid: {e}", status_code=400)), 400
+        if (inpaint_starts is None) != (inpaint_ends is None):
+            return jsonify(APIResponse.error(
+                "inpaint_starts and inpaint_ends must both be set or both omitted.",
+                status_code=400)), 400
+        if inpaint_starts and inpaint_ends and len(inpaint_starts) != len(inpaint_ends):
+            return jsonify(APIResponse.error(
+                "inpaint_starts and inpaint_ends must be the same length.",
+                status_code=400)), 400
+
+        # Phase 7: seamless looping. Bars/BPM are required so the seam-
+        # smoothing pass knows how much audio to regenerate at the join.
+        loop_stitch = data.get('loop_stitch')
+        if loop_stitch is not None:
+            if loop_stitch not in ("inpaint", "crossfade"):
+                return jsonify(APIResponse.error(
+                    f"loop_stitch must be 'inpaint', 'crossfade', or null; got {loop_stitch!r}.",
+                    status_code=400)), 400
+            if not do_align:
+                return jsonify(APIResponse.error(
+                    "loop_stitch requires align_bars and align_bpm "
+                    "(seamless loops are tempo-aware).",
+                    status_code=400)), 400
+            if loop_stitch == "inpaint" and inpaint_audio_path:
+                return jsonify(APIResponse.error(
+                    "loop_stitch='inpaint' is incompatible with inpaint_audio_path "
+                    "(the loop algorithm itself uses inpainting as a second pass).",
+                    status_code=400)), 400
+
+        # LoRA stack: list of { path, strength }. Validate each entry.
+        loras_raw = data.get('loras') or []
+        if not isinstance(loras_raw, list):
+            return jsonify(APIResponse.error(
+                "loras must be an array of {path, strength} entries.",
+                status_code=400)), 400
+        loras = []
+        for i, item in enumerate(loras_raw):
+            if not isinstance(item, dict) or 'path' not in item:
+                return jsonify(APIResponse.error(
+                    f"loras[{i}] missing 'path'.", status_code=400)), 400
+            lora_path = str(item['path']).strip()
+            if not lora_path:
+                continue
+            strength = float(item.get('strength', 1.0))
+            strength = max(-2.0, min(2.0, strength))
+            # Resolve relative paths against the project root.
+            lora_abs = Path(lora_path)
+            if not lora_abs.is_absolute():
+                lora_abs = config.project_root / lora_abs
+            if not lora_abs.exists():
+                return jsonify(APIResponse.error(
+                    f"LoRA not found: {lora_path}", status_code=400)), 400
+            # Compatibility gate (Phase 4 contract #5): a LoRA's embedded
+            # base_model must share a backbone with the active model. A
+            # `*-base` LoRA also runs on its distilled sibling (same
+            # architecture, differ only in CFG state), so compare with a
+            # trailing `-base` stripped from both sides. Unknown/missing
+            # base metadata is allowed through (legacy LoRAs) rather than
+            # blocking generation on a metadata gap.
+            try:
+                from safetensors import safe_open
+                with safe_open(str(lora_abs), framework="pt") as _f:
+                    _lora_meta = _f.metadata() or {}
+            except Exception:
+                _lora_meta = {}
+            _lora_base = _lora_meta.get('base_model') or _lora_meta.get('base_model_id')
+            if _lora_base and str(_lora_base).startswith('sa3-'):
+                _strip = lambda m: m[:-5] if m.endswith('-base') else m
+                if _strip(str(_lora_base)) != _strip(model_id):
+                    return jsonify(APIResponse.error(
+                        f"LoRA base mismatch: '{Path(lora_path).name}' was trained "
+                        f"against {_lora_base}, which is incompatible with {model_id}.",
+                        status_code=400,
+                        details={'error_code': 'lora_base_mismatch',
+                                 'lora_id': lora_path,
+                                 'expected': model_id,
+                                 'actual': _lora_base})), 400
+            loras.append({'path': str(lora_abs), 'strength': strength})
+
     except ValidationError as e:
         field = e.details.get('field', 'unknown') if e.details else 'unknown'
         logger.warning(f"/api/generate validation failed on '{field}': {e}")
         return jsonify(APIResponse.validation_error({field: [str(e)]})), 400
 
-    logger.info(f"Audio generation request received")
-    logger.debug(f"Request details: prompt='{prompt[:50]}...', duration={duration}s, model={model_name}")
-    if DEBUG_MODE:
-        logger.debug(f"Model paths: model_path={model_path}, unwrapped_model_path={unwrapped_model_path}")
+    logger.info(
+        f"Audio generation request: model={model_id} duration={duration}s "
+        f"prompt='{prompt[:50]}{'…' if len(prompt) > 50 else ''}'"
+    )
 
-    def determine_model_config(model_name, model_path, unwrapped_model_path):
-        config_file = None
-        model_file_path = None
-
-        # Priority: unwrapped_model_path > model_path > base model.
-        if unwrapped_model_path:
-            model_file_path = Path(unwrapped_model_path)
-            if not model_file_path.exists():
-                raise ModelNotFoundError(
-                    f"unwrapped_model:{model_name}", str(model_file_path))
-            logger.debug(f"Using unwrapped model: {model_file_path}")
-
-        elif model_path:
-            model_file_path = Path(model_path)
-            if not model_file_path.exists():
-                raise ModelNotFoundError(
-                    f"model_path:{model_name}", str(model_file_path))
-            logger.debug(f"Using model path: {model_file_path}")
-
-        # Small and full models use different configs; pick by file size when the name is ambiguous.
-        if model_file_path:
-            file_size_gb = model_file_path.stat().st_size / (1024**3)
-            config_file = "model_config_small.json" if file_size_gb < 2.0 else "model_config.json"
-            logger.debug(
-                f"Model file size: {file_size_gb:.2f} GB, using {'small' if file_size_gb < 2.0 else 'large'} config")
-
-        elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
-            config_file = "model_config_small.json" if 'small' in model_name else "model_config.json"
-            logger.debug(f"Using base model config for {model_name}")
-        else:
-            logger.warning(f"No config determined for model: {model_name}")
-            config_file = "model_config_small.json"
-
-        return config_file, model_file_path
-
-    config_file, determined_model_path = determine_model_config(
-        model_name, model_path, unwrapped_model_path)
-    logger.info(f"Starting generation with config: {config_file}")
-
-    # In bars mode we need a little extra audio so the post-processor can
-    # onset-trim and tempo-warp without running short of the requested length.
-    # The generator caps duration to model.sample_size internally, so this
-    # never overshoots the model's natural length.
-    ALIGN_HEADROOM_SECONDS = 1.5
-    if do_align:
-        duration = duration + ALIGN_HEADROOM_SECONDS
-        logger.debug(
-            f"Bars-mode alignment requested: bars={align_bars}, bpm={align_bpm}; "
-            f"requesting {duration:.2f}s with headroom"
-        )
-
-    # Resolve LoRA: read the lora_config section out of the adjacent
-    # training_metadata.json so the inference wrapper knows the rank/alpha/etc.
-    lora_kwargs = {}
-    if lora_path:
-        lora_p = Path(lora_path)
-        if not lora_p.is_absolute():
-            lora_p = config.project_root / lora_p
-        if not lora_p.exists():
-            return jsonify(APIResponse.error(
-                f"LoRA file not found: {lora_p}", status_code=400)), 400
-        metadata_path = None
-        for ancestor in [lora_p.parent, *lora_p.parents]:
-            candidate = ancestor / "training_metadata.json"
-            if candidate.exists():
-                metadata_path = candidate
-                break
-            if ancestor == config.project_root:
-                break
-        if metadata_path is None:
-            return jsonify(APIResponse.error(
-                f"No training_metadata.json found near {lora_p}", status_code=400)), 400
-        try:
-            metadata = json.loads(metadata_path.read_text())
-        except Exception as exc:
-            return jsonify(APIResponse.error(
-                f"Failed to read LoRA metadata at {metadata_path}: {exc}",
-                status_code=400)), 400
-        if metadata.get("mode") != "lora":
-            return jsonify(APIResponse.error(
-                f"{metadata_path} is not a LoRA training metadata file",
-                status_code=400)), 400
-        lora_kwargs = {
-            "lora_path": str(lora_p),
-            "lora_config": metadata.get("lora_config", {}),
-            "lora_multiplier": float(lora_multiplier),
-        }
-        logger.info(
-            f"LoRA selected: {lora_p.name} (rank={lora_kwargs['lora_config'].get('rank')}, "
-            f"multiplier={lora_multiplier})"
-        )
+    # Variable-length lets us ask SA3 for exactly the bars-mode target duration
+    # up front — no time-stretch needed in the common path. Headroom gives the
+    # post-processor room for head-trim + drift correction without running short.
+    # Proportional (8% of target, clamped to [0.5s, 2.0s]) so fast tempos don't
+    # Bars-mode alignment was removed; deliver raw model output at the
+    # requested duration. No headroom is needed because we no longer
+    # head-trim or stretch the result.
+    effective_duration = duration
 
     try:
-        if determined_model_path and determined_model_path.exists():
-            output_path = generator.generate_audio(
-                prompt,
-                unwrapped_model_path=unwrapped_model_path if unwrapped_model_path else None,
-                model_path=determined_model_path if not unwrapped_model_path else None,
-                config_file=config_file,
-                duration=duration,
-                cfg_scale=cfg_scale,
-                steps=steps,
-                seed=seed,
-                batch_index=batch_index,
-                batch_total=batch_total,
-                loop_mode=do_align,
-                **lora_kwargs,
-            )
-        elif model_name in ['stable-audio-open-small', 'stable-audio-open-1.0']:
-            model_file_mapping = {
-                'stable-audio-open-small': 'stable-audio-open-small-model.safetensors',
-                'stable-audio-open-1.0': 'stable-audio-open-model.safetensors'
-            }
-            model_file_name = model_file_mapping.get(
-                model_name, f"{model_name}-model.safetensors")
-            model_file_path = config.project_root / \
-                "models" / "pretrained" / model_file_name
-
-            if not model_file_path.exists():
-                raise ModelNotFoundError(model_name, str(model_file_path))
-
-            output_path = generator.generate_audio(
-                prompt,
-                model_path=model_file_path,
-                config_file=config_file,
-                duration=duration,
-                cfg_scale=cfg_scale,
-                steps=steps,
-                seed=seed,
-                batch_index=batch_index,
-                batch_total=batch_total,
-                loop_mode=do_align,
-                **lora_kwargs,
-            )
-        elif model_name and model_name != 'default':
-            fine_tuned_path = config.get_path("models_fine_tuned") / model_name
-            if not fine_tuned_path.exists():
-                raise ModelNotFoundError(model_name, str(fine_tuned_path))
-
-            output_path = generator.generate_audio(
-                prompt, fine_tuned_path, duration=duration,
-                cfg_scale=cfg_scale, steps=steps, seed=seed,
-                batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align, **lora_kwargs)
-        else:
-            logger.debug("Using default model")
-            output_path = generator.generate_audio(
-                prompt, duration=duration, cfg_scale=cfg_scale, steps=steps,
-                seed=seed, batch_index=batch_index, batch_total=batch_total,
-                loop_mode=do_align, **lora_kwargs)
+        output_path = generator.generate_audio(
+            prompt,
+            model_id=model_id,
+            duration=float(effective_duration),
+            steps=int(steps) if steps is not None else None,
+            cfg_scale=float(cfg_scale) if cfg_scale is not None else None,
+            seed=int(seed),
+            negative_prompt=negative_prompt,
+            batch_size=int(batch_size),
+            chunked_decode=chunked_decode,
+            loop_mode=do_align,
+            loras=loras,
+            init_audio_path=init_audio_path,
+            init_noise_level=float(init_noise_level),
+            inpaint_audio_path=inpaint_audio_path,
+            inpaint_starts=inpaint_starts,
+            inpaint_ends=inpaint_ends,
+            loop_stitch=loop_stitch,
+            loop_bars=int(align_bars) if (loop_stitch and align_bars) else None,
+            loop_bpm=float(align_bpm) if (loop_stitch and align_bpm) else None,
+        )
 
         if not output_path.exists():
-            raise GenerationError(prompt, model_name, "Generated audio file not found")
+            raise GenerationError(prompt, model_id, "Generated audio file not found")
 
-        if do_align:
-            try:
-                from app.core.generation.audio_post_process import align_to_grid
-                align_to_grid(
-                    output_path,
-                    target_bpm=float(align_bpm),
-                    target_bars=int(align_bars),
-                )
-                logger.info(
-                    f"Aligned to grid: bars={align_bars}, bpm={align_bpm}"
-                )
-            except Exception as exc:
-                # Never fail the request because alignment failed — the user
-                # would rather have the raw clip than an error toast.
-                logger.warning(f"Grid alignment skipped after error: {exc}")
+        # Grid alignment and seamless-loop stitching were removed after
+        # user A/B testing showed every post-processing variant degraded
+        # the model output. We now serve raw SA3 audio for all modes.
 
-        logger.info(f"Audio generation completed: {output_path.name} ({output_path.stat().st_size} bytes)")
-        return send_file(
+        logger.info(
+            f"Audio generation completed: {output_path.name} "
+            f"({output_path.stat().st_size} bytes)"
+        )
+
+        # Sidecar metadata — lets the frontend restore the "Generated
+        # Fragments" panel across page reloads. Failure to write is non-
+        # fatal (the WAV is the only mandatory artifact).
+        sidecar_path = output_path.with_suffix(output_path.suffix + ".json")
+        try:
+            edit_mode = None
+            if init_audio_path:
+                edit_mode = 'style'
+            elif inpaint_audio_path:
+                edit_mode = 'inpaint/extend'
+            sidecar = {
+                "filename": output_path.name,
+                "created_at": time.time(),
+                "prompt": prompt,
+                "model_id": model_id,
+                "duration": float(duration),
+                "seed": int(seed),
+                "negative_prompt": negative_prompt,
+                "cfg_scale": float(cfg_scale) if cfg_scale is not None else None,
+                "steps": int(steps) if steps is not None else None,
+                "batch_size": int(batch_size),
+                "align_bars": int(align_bars) if align_bars else None,
+                "align_bpm": float(align_bpm) if align_bpm else None,
+                "loop_stitch": loop_stitch,
+                "loras": loras or [],
+                "init_audio_path": init_audio_path,
+                "init_noise_level": float(init_noise_level) if init_audio_path else None,
+                "inpaint_audio_path": inpaint_audio_path,
+                "inpaint_starts": list(inpaint_starts) if inpaint_starts else None,
+                "inpaint_ends": list(inpaint_ends) if inpaint_ends else None,
+                "edit_mode": edit_mode,
+            }
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar, f, indent=2)
+        except Exception as exc:
+            logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
+
+        resp = send_file(
             str(output_path),
             mimetype='audio/wav',
             as_attachment=True,
-            download_name='generated_audio.wav'
+            download_name=output_path.name,
         )
+        # Backend is the single source of truth for the on-disk name. The
+        # frontend used to invent its own filename, which never matched what
+        # _finalize wrote — so reveal-in-folder and delete both 404'd on
+        # freshly generated fragments. Hand the real name (and resolved seed)
+        # back so the UI's fragment.filename always points at a real file.
+        resp.headers['X-Fragment-Filename'] = output_path.name
+        resp.headers['X-Fragment-Seed'] = str(int(seed))
+        return resp
 
     except (ModelNotFoundError, GenerationError, ValidationError) as e:
-        logger.error(f"Generation error: {str(e)}")
+        logger.error(f"Generation error: {e}")
         return jsonify(APIResponse.error(str(e), status_code=400)), 400
     except Exception as e:
         from app.core.generation.audio_generator import GenerationStopped
@@ -635,162 +639,524 @@ def generate_audio():
             logger.info("Generation stopped by user request")
             return jsonify({'stopped': True, 'message': 'Generation stopped'}), 499
         logger.exception("Unexpected error during audio generation")
-        return jsonify(APIResponse.error(f"Unexpected error: {str(e)}", status_code=500)), 500
+        return jsonify(APIResponse.error(f"Unexpected error: {e}", status_code=500)), 500
 
 
 @app.route('/api/loras', methods=['GET'])
 def list_loras():
-    """Enumerate all trained LoRAs under models/fine_tuned/.
+    """Enumerate SA3 LoRAs under models/fine_tuned/<run>/checkpoints/.
 
-    For each model directory that has a `training_metadata.json` with
-    `mode == "lora"`, returns the metadata plus the latest checkpoint file
-    (.ckpt) discovered under the dir. LoRAW writes the LoRA state_dict via
-    pl.callbacks.ModelCheckpoint, so the exact filename depends on
-    Lightning's pattern and the (disabled) wandb logger's run id — we just
-    glob for *.ckpt and return them sorted by mtime.
+    SA3 LoRAs are .safetensors files with config (rank, adapter_type,
+    base_model, etc.) embedded in the safetensors metadata header.
+    `train_lora.py` from vendor/stable-audio-3/scripts/ writes one per
+    checkpoint step. We surface every step so the user can A/B-test
+    checkpoints inside a single run.
+
+    Lightning .ckpt files from prior runs get lazily converted to
+    .safetensors on demand so the picker can see them.
+
+    Query:
+        base_model (optional) — filter to LoRAs compatible with this base
+            (e.g. ?base_model=sa3-small-music or ?base_model=sa3-small-music-base).
+            A small-music LoRA is compatible with both small-music and
+            small-music-base (same backbone, different CFG distillation
+            state); the matcher strips a trailing `-base` from both sides
+            before comparing.
     """
+    requested_base = (request.args.get('base_model') or '').strip()
+
+    def _base_root(model_id: str) -> str:
+        """Strip the `-base` suffix so LoRAs trained against `*-base` filter
+        as compatible with their post-trained sibling (same architecture)."""
+        if not model_id:
+            return ''
+        return model_id[:-5] if model_id.endswith('-base') else model_id
+
+    requested_root = _base_root(requested_base)
+
     try:
         config = get_config()
         fine_tuned_dir = config.get_path("models_fine_tuned")
-        loras = []
+        # Grouping: one entry per LoRA *run* (modelName), with `all_checkpoints`
+        # listing every snapshot oldest→latest. `path` defaults to the latest
+        # checkpoint so picking the LoRA without changing the sub-picker uses
+        # the final state of training.
+        loras_by_name: Dict[str, Dict[str, Any]] = {}
         if fine_tuned_dir.exists():
-            for model_dir in sorted(fine_tuned_dir.iterdir()):
-                if not model_dir.is_dir():
+            try:
+                from safetensors import safe_open
+            except ImportError:
+                return jsonify({"loras": []})
+
+            # Lazy migration: any run dir that still has Lightning .ckpt
+            # files (from a training run that completed before the
+            # auto-convert step landed) gets a one-time conversion here so
+            # the picker can see it. Cheap: no-op if .safetensors already
+            # exists for each .ckpt.
+            from app.core.training.sa3_lora_runner import convert_run_checkpoints_to_safetensors
+
+            for run_dir in sorted(fine_tuned_dir.iterdir()):
+                if not run_dir.is_dir():
                     continue
-                metadata_path = model_dir / "training_metadata.json"
-                if not metadata_path.exists():
-                    continue
-                try:
-                    metadata = json.loads(metadata_path.read_text())
-                except Exception:
-                    continue
-                if metadata.get("mode") != "lora":
-                    continue
-                ckpt_files = sorted(
-                    model_dir.rglob("*.ckpt"),
-                    key=lambda p: p.stat().st_mtime,
-                )
+                ckpt_dir = run_dir / "checkpoints"
+                if ckpt_dir.is_dir() and any(ckpt_dir.glob("*.ckpt")):
+                    # Read the run's base_model from its training_metadata.json
+                    # so the converted .safetensors carries the right tag.
+                    meta_path = run_dir / "training_metadata.json"
+                    base_model = None
+                    model_name = run_dir.name
+                    if meta_path.exists():
+                        try:
+                            rm = json.loads(meta_path.read_text())
+                            base_model = rm.get("base_model")
+                            model_name = rm.get("model_name") or model_name
+                        except Exception:
+                            pass
+                    if base_model:
+                        try:
+                            convert_run_checkpoints_to_safetensors(
+                                run_dir, base_model=base_model, model_name=model_name,
+                            )
+                        except Exception as conv_err:
+                            logger.warning("Could not auto-convert %s: %s", run_dir.name, conv_err)
+
+                # SA3 checkpoints live under <run>/checkpoints/. Fall back
+                # to the run dir itself for runs that don't follow that
+                # convention.
+                search_dirs = [run_dir / "checkpoints", run_dir]
+                ckpt_files = []
+                for d in search_dirs:
+                    if d.is_dir():
+                        ckpt_files = sorted(
+                            d.glob("*.safetensors"),
+                            key=lambda p: p.stat().st_mtime,
+                        )
+                        if ckpt_files:
+                            break
                 if not ckpt_files:
                     continue
-                latest = ckpt_files[-1]
-                lora_cfg = metadata.get("lora_config", {})
-                loras.append({
-                    "name": model_dir.name,
-                    "path": str(latest),
-                    "base_model": metadata.get("base_model"),
-                    "rank": lora_cfg.get("rank"),
-                    "alpha": lora_cfg.get("alpha"),
-                    "all_checkpoints": [str(p) for p in ckpt_files],
-                })
+
+                for ckpt in ckpt_files:
+                    try:
+                        with safe_open(str(ckpt), framework="pt") as f:
+                            meta = f.metadata() or {}
+                    except Exception:
+                        meta = {}
+                    # SA3 canonically nests rank/alpha/adapter_type inside a
+                    # `lora_config` JSON metadata key (see save_lora_safetensors
+                    # in vendor/.../models/lora/utils.py). Parse it so the
+                    # picker can surface those values; fall back to top-level
+                    # for forward-compat with any future shape.
+                    lora_config = {}
+                    if meta.get("lora_config"):
+                        try:
+                            lora_config = json.loads(meta["lora_config"])
+                        except Exception:
+                            lora_config = {}
+
+                    # `train_lora.py` doesn't embed base_model itself — we add
+                    # it during the .ckpt→.safetensors conversion step.
+                    # Fall back to training_metadata.json for legacy runs.
+                    base_model = meta.get("base_model") or meta.get("base_model_id")
+                    if not base_model:
+                        run_meta_path = run_dir / "training_metadata.json"
+                        if run_meta_path.exists():
+                            try:
+                                rm = json.loads(run_meta_path.read_text())
+                                base_model = rm.get("base_model")
+                            except Exception:
+                                pass
+                    if not base_model or not str(base_model).startswith("sa3-"):
+                        continue  # not a SA3 LoRA
+
+                    # Filter by requested base if the caller specified one.
+                    # Treat `sa3-small-music` and `sa3-small-music-base` as
+                    # compatible: same backbone, only differ in CFG state.
+                    if requested_root and _base_root(base_model) != requested_root:
+                        continue
+
+                    rel_path = str(ckpt.relative_to(config.project_root))
+                    rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
+                    alpha = _safe_int(
+                        lora_config.get("alpha")
+                        or meta.get("lora_alpha")
+                        or meta.get("alpha")
+                    )
+                    adapter_type = (
+                        lora_config.get("adapter_type")
+                        or meta.get("adapter_type")
+                        or "lora"
+                    )
+
+                    entry = loras_by_name.get(run_dir.name)
+                    if entry is None:
+                        entry = {
+                            "id": run_dir.name,
+                            "name": run_dir.name,
+                            "base_model": base_model,
+                            "rank": rank,
+                            "alpha": alpha,
+                            "adapter_type": adapter_type,
+                            "all_checkpoints": [],
+                        }
+                        loras_by_name[run_dir.name] = entry
+
+                    entry["all_checkpoints"].append({
+                        "path": rel_path,
+                        "checkpoint": ckpt.stem,
+                        "size_bytes": ckpt.stat().st_size,
+                        "mtime": ckpt.stat().st_mtime,
+                    })
+
+        # Finalize each LoRA entry — sort checkpoints by training step
+        # extracted from the filename (Lightning writes "epoch=X-step=Y.ckpt"
+        # which converts to "epoch=X-step=Y.safetensors"). mtime is unreliable
+        # because the lazy .ckpt→.safetensors converter can rewrite files in
+        # alphabetical (not training-step) order.
+        import re as _re
+        _step_pat = _re.compile(r"step=(\d+)")
+
+        def _step_of(checkpoint_stem: str) -> int:
+            m = _step_pat.search(checkpoint_stem)
+            return int(m.group(1)) if m else -1
+
+        loras = []
+        for entry in loras_by_name.values():
+            ckpts = sorted(entry["all_checkpoints"], key=lambda c: _step_of(c["checkpoint"]))
+            entry["all_checkpoints"] = [c["path"] for c in ckpts]
+            latest = ckpts[-1]
+            entry["path"] = latest["path"]
+            entry["checkpoint"] = latest["checkpoint"]
+            entry["size_bytes"] = latest["size_bytes"]
+            entry["mtime"] = latest["mtime"]
+            loras.append(entry)
+        loras.sort(key=lambda e: e["mtime"], reverse=True)
+
         return jsonify({"loras": loras})
     except Exception as e:
         logger.exception("Failed to enumerate LoRAs")
         return jsonify(APIResponse.error(f"Failed to list LoRAs: {e}", status_code=500)), 500
 
 
-@app.route('/api/status', methods=['GET'])
-def get_status():
-    _log_api_call('status')
+def _safe_int(v):
     try:
-        config = get_config()
-        data_dir = config.get_path("data")
-        metadata_json = Path(config.get_metadata_json_path())
-        custom_metadata = Path(config.get_custom_metadata_path())
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
 
+
+@app.route('/api/audio/upload', methods=['POST'])
+def upload_source_audio():
+    """Accept a user-uploaded audio file to use as init_audio / inpaint_audio.
+
+    Stores under <output>/uploads/<timestamp>_<safe-name> so the file is
+    inside the project tree. Returns {path, name} where `path` is relative
+    to project_root so /api/generate can resolve it.
+    """
+    if 'file' not in request.files:
+        return jsonify(APIResponse.error("No file provided.", status_code=400)), 400
+    fileobj = request.files['file']
+    if not fileobj.filename:
+        return jsonify(APIResponse.error("Empty filename.", status_code=400)), 400
+
+    name = Path(fileobj.filename).name
+    # Strip path components + restrict to known extensions.
+    ext = Path(name).suffix.lower()
+    if ext not in {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".opus"}:
+        return jsonify(APIResponse.error(
+            f"Unsupported audio format '{ext}'. Use wav/mp3/flac/m4a/ogg/opus.",
+            status_code=400)), 400
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(name).stem)[:60] or "upload"
+
+    cfg = get_config()
+    uploads_dir = cfg.get_path("output") / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    dest = uploads_dir / f"{ts}_{safe}{ext}"
+    fileobj.save(str(dest))
+
+    rel = dest.relative_to(cfg.project_root)
+    return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
+
+
+@app.route('/api/performance/recording', methods=['POST'])
+def save_performance_recording():
+    """Persist a master-bus performance capture (WAV) to the output folder.
+
+    Accepts multipart: `file` (audio/wav) + `name` (user-supplied label) and
+    an optional `duration` (seconds). Sanitizes the name, ensures a unique
+    `.wav` filename, and writes a sidecar so the capture lists cleanly in the
+    Fragments window alongside generated audio.
+    """
+    if 'file' not in request.files:
+        return jsonify(APIResponse.error("No recording file provided.", status_code=400)), 400
+    fileobj = request.files['file']
+    if not fileobj.filename:
+        return jsonify(APIResponse.error("Empty recording.", status_code=400)), 400
+
+    raw_name = (request.form.get('name') or '').strip()
+    safe = re.sub(r"[^a-zA-Z0-9._ -]", "_", raw_name).strip().replace(" ", "_")[:80]
+    if not safe:
+        safe = time.strftime("performance_%Y%m%d_%H%M%S")
+
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = output_dir / f"{safe}.wav"
+    # Don't clobber an existing capture — bump a numeric suffix until free.
+    counter = 2
+    while dest.exists():
+        dest = output_dir / f"{safe}_{counter}.wav"
+        counter += 1
+    fileobj.save(str(dest))
+
+    try:
+        duration = float(request.form["duration"]) if request.form.get("duration") else None
+    except (TypeError, ValueError):
+        duration = None
+
+    # Sidecar so /api/fragments shows a friendly label instead of parsing the
+    # bare filename. Mirrors the generation sidecar schema.
+    sidecar = {
+        "filename": dest.name,
+        "created_at": time.time(),
+        "prompt": raw_name or dest.stem,
+        "model_id": "",
+        "duration": duration,
+        "seed": None,
+        "cfg_scale": None,
+        "steps": None,
+        "source": "performance",
+    }
+    try:
+        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2))
+    except Exception as exc:
+        logger.warning(f"Failed to write recording sidecar for {dest.name}: {exc}")
+
+    return jsonify({
+        "filename": dest.name,
+        "size_bytes": dest.stat().st_size,
+        "duration": duration,
+    })
+
+
+@app.route('/api/fragments', methods=['GET'])
+def list_fragments():
+    """List previously-generated audio fragments (latest first).
+
+    Returns the union of:
+      • Generations with a sidecar JSON (full metadata: prompt, seed, etc.)
+      • Orphan WAVs in output/ (no sidecar — happens for clips made by
+        older versions of Fragmenta; metadata is recovered from the
+        filename + mtime).
+
+    Query: ?limit=<int>  (default 100, capped at 500)
+    """
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    try:
+        limit = max(1, min(500, int(request.args.get('limit', 100))))
+    except (TypeError, ValueError):
+        limit = 100
+
+    if not output_dir.exists():
+        return jsonify({"fragments": []})
+
+    fragments = []
+    seen_wavs = set()
+
+    # Sidecared generations
+    for sidecar_path in output_dir.glob("*.wav.json"):
         try:
-            import torchaudio
-        except ImportError:
-            torchaudio = None
+            with open(sidecar_path) as f:
+                meta = json.load(f)
+            wav_name = meta.get("filename") or sidecar_path.name[:-len(".json")]
+            wav_path = output_dir / wav_name
+            if not wav_path.exists():
+                continue  # sidecar without its WAV — skip silently
+            seen_wavs.add(wav_name)
+            meta["filename"] = wav_name
+            meta["size_bytes"] = wav_path.stat().st_size
+            fragments.append(meta)
+        except Exception as exc:
+            logger.warning(f"Failed to read fragment sidecar {sidecar_path}: {exc}")
+
+    # Orphan WAVs (no sidecar) — recover what we can.
+    # Filename format from _finalize: <ts>_<model_id>_<slugified_prompt>.wav
+    for wav_path in output_dir.glob("*.wav"):
+        if wav_path.name in seen_wavs:
+            continue
         try:
-            import soundfile as sf
-        except ImportError:
-            sf = None
+            stem = wav_path.stem
+            parts = stem.split("_")
+            # Try to parse "YYYYMMDD_HHMMSS" as the first two tokens.
+            created_at = wav_path.stat().st_mtime
+            model_id = ""
+            prompt = stem
+            if len(parts) >= 2:
+                try:
+                    created_at = time.mktime(
+                        time.strptime(f"{parts[0]}_{parts[1]}", "%Y%m%d_%H%M%S")
+                    )
+                    rest = "_".join(parts[2:])
+                    # rest = "<model_id>_<slugified_prompt>". model_id is
+                    # contiguous hyphenated; we use the longest known prefix
+                    # by matching against SA3 model ids in _MODEL_INFO.
+                    rest_low = rest.lower()
+                    for mid in sorted(_SA3_MODEL_IDS, key=len, reverse=True):
+                        if rest_low.startswith(mid):
+                            model_id = mid
+                            prompt = rest[len(mid):].lstrip("_").replace("_", " ")
+                            break
+                    else:
+                        prompt = rest.replace("_", " ")
+                except ValueError:
+                    pass
+            fragments.append({
+                "filename": wav_path.name,
+                "created_at": created_at,
+                "prompt": prompt or "(unknown)",
+                "model_id": model_id,
+                "duration": None,
+                "seed": None,
+                "cfg_scale": None,
+                "steps": None,
+                "size_bytes": wav_path.stat().st_size,
+                "_orphan": True,
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to list orphan fragment {wav_path}: {exc}")
 
-        def _duration(path: Path) -> float:
-            import warnings
+    fragments.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+    return jsonify({"fragments": fragments[:limit]})
+
+
+@app.route('/api/fragments/<path:filename>', methods=['GET'])
+def serve_fragment(filename):
+    """Serve a WAV from output/ by name. Path traversal is rejected."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+    if not filename.endswith(".wav"):
+        return jsonify(APIResponse.error("Only .wav files are served.", status_code=400)), 400
+    cfg = get_config()
+    full = cfg.get_path("output") / filename
+    if not full.exists() or not full.is_file():
+        return jsonify(APIResponse.error("File not found.", status_code=404)), 404
+    return send_file(str(full), mimetype="audio/wav")
+
+
+@app.route('/api/fragments/<path:filename>', methods=['DELETE'])
+def delete_fragment(filename):
+    """Delete a single fragment (WAV + its sidecar JSON) from output/."""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+    if not filename.endswith(".wav"):
+        return jsonify(APIResponse.error("Only .wav files are deletable.", status_code=400)), 400
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    wav_path = output_dir / filename
+    sidecar_path = output_dir / f"{filename}.json"
+    if not wav_path.exists():
+        return jsonify(APIResponse.error("File not found.", status_code=404)), 404
+    removed = []
+    try:
+        wav_path.unlink()
+        removed.append(wav_path.name)
+        if sidecar_path.exists():
+            sidecar_path.unlink()
+            removed.append(sidecar_path.name)
+    except Exception as exc:
+        logger.error(f"Failed to delete fragment {filename}: {exc}")
+        return jsonify(APIResponse.error(f"Delete failed: {exc}", status_code=500)), 500
+    logger.info(f"Deleted fragment: {', '.join(removed)}")
+    return jsonify({"deleted": removed})
+
+
+@app.route('/api/fragments', methods=['DELETE'])
+def clear_fragments():
+    """Delete EVERY .wav + .wav.json directly under output/.
+
+    Does NOT recurse — uploaded source clips live under output/uploads/
+    and are intentionally left alone (they may still be referenced by
+    in-flight Edit-mode work, and the user uploaded them deliberately).
+    """
+    cfg = get_config()
+    output_dir = cfg.get_path("output")
+    if not output_dir.exists():
+        return jsonify({"deleted": 0})
+    removed = 0
+    errors = []
+    for pattern in ("*.wav", "*.wav.json"):
+        for p in output_dir.glob(pattern):
+            if not p.is_file():
+                continue
             try:
-                with warnings.catch_warnings():
-                    # /api/status polls every few seconds; without this, every
-                    # torchaudio.info call spams pages of deprecation noise.
-                    warnings.simplefilter("ignore")
-                    if torchaudio is not None:
-                        info = torchaudio.info(str(path))
-                        return info.num_frames / info.sample_rate
-                    if sf is not None:
-                        f = sf.SoundFile(str(path))
-                        return len(f) / f.samplerate
+                p.unlink()
+                removed += 1
             except Exception as exc:
-                print(f"Error reading {path}: {exc}")
-            return 0.0
+                errors.append(f"{p.name}: {exc}")
+    if errors:
+        logger.warning(f"clear_fragments: removed {removed}, errors: {errors}")
+    else:
+        logger.info(f"clear_fragments: removed {removed} file(s)")
+    return jsonify({"deleted": removed, "errors": errors})
 
-        # Prefer metadata.json as the source of truth for "the dataset" — it spans
-        # files that may live outside data/ (e.g. CSV import with copy_files=false).
-        # Fall back to scanning data/ if metadata is absent.
-        file_names = []
-        total_duration = 0.0
-        if metadata_json.exists():
-            try:
-                with open(metadata_json, 'r', encoding='utf-8') as f:
-                    entries = json.load(f) or []
-            except Exception as exc:
-                print(f"Could not read metadata.json: {exc}")
-                entries = []
-            for item in entries:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get('file_name')
-                if not name:
-                    continue
-                file_names.append(name)
-                # Files are staged into data/ (copy or symlink) at commit time, so
-                # resolve by basename rather than trusting the stored `path` field
-                # (legacy entries may use an incorrect prefix).
-                p = data_dir / name
-                if not p.exists():
-                    stored = item.get('path') or ''
-                    candidate = Path(stored)
-                    if not candidate.is_absolute():
-                        candidate = config.project_root / stored
-                    if candidate.is_file():
-                        p = candidate
-                if p.is_file():
-                    total_duration += _duration(p)
-        else:
-            audio_files = list(data_dir.glob("*.wav")) + \
-                list(data_dir.glob("*.mp3")) + list(data_dir.glob("*.flac"))
-            for audio_file in audio_files:
-                total_duration += _duration(audio_file)
-            file_names = [f.name for f in audio_files]
 
-        status_response = {
-            'status': 'running',
-            'raw_files': len(file_names),
-            'processed_segments': len(file_names),
-            'raw_file_names': file_names[:10],
-            'total_duration': total_duration,
-            'has_metadata_json': metadata_json.exists(),
-            'has_custom_metadata': custom_metadata.exists(),
-            'trained_models': len(list(config.get_path("models_fine_tuned").glob("*"))) if config.get_path("models_fine_tuned").exists() else 0,
-            'training': get_training_status()
-        }
+@app.route('/api/lora-strength', methods=['POST'])
+def update_lora_strength():
+    """Live-update a loaded LoRA's strength without regenerating.
 
-        return jsonify(status_response)
+    Performance Mode uses this when the user drags a strength slider —
+    the next generate() picks up the new value, but the model itself
+    doesn't need to be reloaded. Returns 409 if no LoRAs are loaded yet
+    or the index is out of range.
+    """
+    data = request.json or {}
+    try:
+        index = int(data.get('index', -1))
+        strength = float(data.get('strength', 1.0))
+    except (TypeError, ValueError):
+        return jsonify(APIResponse.error("index and strength are required.", status_code=400)), 400
+
+    try:
+        if not getattr(generator, 'model', None):
+            return jsonify(APIResponse.error("No model loaded.", status_code=409)), 409
+        ok = generator.set_lora_strength(index, strength)
+        if not ok:
+            return jsonify(APIResponse.error(
+                f"LoRA index {index} not loaded.", status_code=409)), 409
+        return jsonify({'success': True, 'index': index, 'strength': strength})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.exception("set_lora_strength failed")
+        return jsonify(APIResponse.error(str(e), status_code=500)), 500
 
 
 @app.route('/api/training/suggest-hyperparams', methods=['GET'])
 def training_suggest_hyperparams():
     """Heuristic hyperparameter suggester for the Training tab's Suggest button.
 
-    Query: mode=lora|full (default lora).
-    Returns: {ok, stats, config, rationale} — see hyperparam_suggester.suggest.
+    Query:
+        project_name (required) — Dataset Workbench project to analyse
+        base_model  (optional) — picked SA3 base, e.g. sa3-medium-base. Used to
+                                  pick a -XS adapter when VRAM is tight and to
+                                  emit base-model-aware warnings.
+    Returns: {ok, stats, config, rationale, warnings} — see hyperparam_suggester.suggest.
     """
     try:
+        from app.backend.data.projects import project_path
         from app.core.training.hyperparam_suggester import suggest
-        mode = request.args.get('mode', 'lora')
-        config = get_config()
-        result = suggest(config.get_path('data'), mode=mode)
+        project_name = request.args.get('project_name', '').strip()
+        base_model = request.args.get('base_model', '').strip() or None
+        if not project_name:
+            return jsonify({'ok': False, 'error': "project_name is required."}), 400
+        proj_dir = project_path(project_name)
+        if not proj_dir.exists():
+            return jsonify({
+                'ok': False,
+                'error': f"Project not found: {project_name}",
+            }), 404
+        result = suggest(proj_dir, base_model=base_model)
         return jsonify(result)
     except Exception as exc:
         logger.exception("hyperparam suggestion failed")
@@ -889,20 +1255,6 @@ def get_models():
                 latest_config = max(
                     config_files, key=lambda x: x.stat().st_mtime) if config_files else None
 
-                unwrapped_dir = model_dir / "unwrapped"
-                unwrapped_models = []
-                if unwrapped_dir.exists():
-                    for unwrapped_file in unwrapped_dir.glob("*.safetensors"):
-                        unwrapped_models.append({
-                            'name': unwrapped_file.stem,
-                            'path': str(unwrapped_file.relative_to(config.project_root)),
-                            'size_mb': round(unwrapped_file.stat().st_size / (1024 * 1024), 1),
-                            'created': unwrapped_file.stat().st_mtime
-                        })
-
-                    unwrapped_models.sort(
-                        key=lambda x: x['created'], reverse=True)
-
                 # Resolve the architecture config + base-model identity for
                 # this fine-tuned model. Order: per-run copy in the model
                 # folder, then training_metadata breadcrumb, then legacy
@@ -918,7 +1270,6 @@ def get_models():
                     'config_path': resolved['config_path'],
                     'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,
-                    'unwrapped_models': unwrapped_models,
                     'created': model_dir.stat().st_mtime if model_dir.exists() else None
                 })
 
@@ -927,128 +1278,125 @@ def get_models():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/available', methods=['GET'])
-def get_available_models():
+# ============================================================================
+# Checkpoint Manager — SA3 catalog endpoints (Phase 2a of SA3_INTEGRATION_PLAN)
+# ============================================================================
+
+@app.route('/api/checkpoints', methods=['GET'])
+def list_checkpoints():
     try:
-        models = model_manager.get_available_models()
-        return jsonify({'models': models})
+        # ?include=all → also returns base + standalone AE entries (training
+        # subprocess uses this; the manager UI relies on the default).
+        include_hidden = request.args.get('include') == 'all'
+        return jsonify({
+            'checkpoints': model_manager.get_catalog(include_hidden=include_hidden),
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/<model_id>/info', methods=['GET'])
-def get_model_info(model_id):
+@app.route('/api/checkpoints/storage', methods=['GET'])
+def checkpoints_storage():
     try:
-        model_info = model_manager.get_model_info(model_id)
-        if not model_info:
-            return jsonify({'error': 'Model not found'}), 404
-        return jsonify(model_info)
+        return jsonify(model_manager.get_storage_info())
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/<model_id>/accept-terms', methods=['POST'])
-def accept_model_terms(model_id):
+@app.route('/api/checkpoints/<model_id>', methods=['GET'])
+def get_checkpoint(model_id):
     try:
-        success = model_manager.accept_terms(model_id)
-        if success:
-            return jsonify({'success': True, 'message': f'Terms accepted for {model_id}'})
-        else:
-            return jsonify({'error': 'Failed to accept terms'}), 400
+        info = model_manager.get_model_info(model_id)
+        if not info:
+            return jsonify({'error': 'Unknown checkpoint'}), 404
+        return jsonify(info)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/<model_id>/download', methods=['POST'])
-def download_model(model_id):
+@app.route('/api/checkpoints/<model_id>/download', methods=['POST'])
+def start_checkpoint_download(model_id):
     try:
-        if not model_manager.is_terms_accepted(model_id):
-            return jsonify({'error': 'Terms not accepted for this model'}), 400
-
-        success = model_manager.download_model(model_id)
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'Model {model_id} downloaded successfully'
-            })
-        else:
-            return jsonify({'error': f'Failed to download {model_id}'}), 500
+        result = model_manager.start_download(model_id)
+        # _DownloadJob.to_dict() always includes the "error" key (None when
+        # ok); use a truthy check so a successful job doesn't 400.
+        if result.get('error'):
+            return jsonify(result), 400
+        return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/hf-login', methods=['POST'])
-def hf_login():
+@app.route('/api/checkpoints/<model_id>/cancel-download', methods=['POST'])
+def cancel_checkpoint_download(model_id):
     try:
-        data = request.json
-        token = data.get('token')
+        # Cancel every in-flight job for this checkpoint (usually one).
+        jobs = [j for j in model_manager.list_jobs()
+                if j['model_id'] == model_id and j['status'] in ('queued', 'running')]
+        cancelled = [j['job_id'] for j in jobs if model_manager.cancel_job(j['job_id'])]
+        return jsonify({'cancelled': cancelled})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/<model_id>', methods=['DELETE'])
+def delete_checkpoint_download(model_id):
+    try:
+        if model_manager.delete_model(model_id):
+            return jsonify({'success': True})
+        return jsonify({'error': 'Nothing to delete'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/checkpoints/jobs/<job_id>', methods=['GET'])
+def get_checkpoint_job(job_id):
+    try:
+        job = model_manager.get_job(job_id)
+        if not job:
+            return jsonify({'error': 'Unknown job'}), 404
+        return jsonify(job)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# --- HuggingFace auth -------------------------------------------------------
+
+@app.route('/api/hf-auth/status', methods=['GET'])
+def hf_auth_status():
+    try:
+        return jsonify(model_manager.hf_auth_status())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/hf-auth', methods=['POST'])
+def hf_auth_login():
+    try:
+        data = request.json or {}
+        token = (data.get('token') or '').strip()
         if not token:
             return jsonify({'error': 'Token is required'}), 400
-            
         import huggingface_hub
         try:
             huggingface_hub.login(token=token, add_to_git_credential=False)
-            user_info = huggingface_hub.whoami(token=token)
-            return jsonify({'success': True, 'user': user_info.get('name', 'User')})
+            info = huggingface_hub.whoami(token=token)
+            return jsonify({
+                'success': True,
+                'username': info.get('name') or info.get('fullname'),
+            })
         except Exception as e:
-            return jsonify({'error': f'Invalid token or connection error: {str(e)}'}), 401
+            return jsonify({'error': f'Invalid token: {e}'}), 401
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/base-models/status', methods=['GET'])
-def get_base_models_status():
+@app.route('/api/hf-auth', methods=['DELETE'])
+def hf_auth_logout():
     try:
-        import os
-        from pathlib import Path
-
-        base_models = {
-            'stable-audio-open-1.0': {
-                'name': 'Stable Audio Open 1.0',
-                'path': 'models/pretrained',
-                'file': 'stable-audio-open-model.safetensors',
-                'downloaded': False
-            },
-            'stable-audio-open-small': {
-                'name': 'Stable Audio Open Small',
-                'path': 'models/pretrained',
-                'file': 'stable-audio-open-small-model.safetensors',
-                'downloaded': False
-            }
-        }
-
-        for model_id, info in base_models.items():
-            model_dir = Path(info['path'])
-            model_file = model_dir / info['file']
-
-            if model_file.exists() and model_file.is_file():
-                info['downloaded'] = True
-            else:
-                # Legacy layout: model stored in a subdirectory.
-                old_path = model_dir / model_id
-                if old_path.exists() and old_path.is_dir():
-                    has_files = any([
-                        (old_path / 'model.safetensors').exists(),
-                        (old_path / 'pytorch_model.bin').exists(),
-                        (old_path / 'model.ckpt').exists(),
-                        len(list(old_path.glob('*.safetensors'))) > 0,
-                        len(list(old_path.glob('*.bin'))) > 0
-                    ])
-                    info['downloaded'] = has_files
-        
-        return jsonify({'base_models': base_models})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/models/<model_id>/delete', methods=['DELETE'])
-def delete_model(model_id):
-    try:
-        success = model_manager.delete_model(model_id)
-        if success:
-            return jsonify({'success': True, 'message': f'Model {model_id} deleted'})
-        else:
-            return jsonify({'error': f'Failed to delete {model_id}'}), 400
+        import huggingface_hub
+        huggingface_hub.logout()
+        return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1174,208 +1522,19 @@ def delete_fine_tuned_model(model_name):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/models/storage', methods=['GET'])
-def get_model_storage():
-    try:
-        storage_info = model_manager.get_storage_info()
-        return jsonify(storage_info)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+@app.route('/api/generation-progress', methods=['GET'])
+def get_generation_progress_route():
+    """Live progress for the in-flight `/api/generate` call.
 
+    Returns the same dict as audio_generator.get_generation_progress():
+        is_generating, phase ("idle"|"loading"|"sampling"|"decoding"|
+        "complete"|"failed"), step, total_steps, progress (0-100),
+        batch_index, batch_total, started_at, ended_at, error.
 
-@app.route('/api/start-fresh', methods=['POST'])
-def start_fresh():
-    try:
-        config = get_config()
-        data_dir = config.get_path("data")
-        config_dir = config.get_path("models_config")
-
-        data_files_deleted = 0
-        if data_dir.exists():
-            # iterdir() (vs glob("*")) catches dotfiles too — e.g. the
-            # hyperparam suggester's .duration_cache.json, which should
-            # absolutely be wiped on Fresh Start.
-            for file_path in data_dir.iterdir():
-                if file_path.is_file() and not file_path.name.endswith('.py'):
-                    file_path.unlink()
-                    data_files_deleted += 1
-
-        config_files_deleted = 0
-        if config_dir.exists():
-            for file_path in config_dir.glob("custom_metadata.py"):
-                if file_path.is_file():
-                    file_path.unlink()
-                    config_files_deleted += 1
-
-        labels_reset = False
-        user_labels_path = _annotator_labels_user_path()
-        if user_labels_path.exists():
-            user_labels_path.unlink()
-            labels_reset = True
-
-        data_dir.mkdir(exist_ok=True, parents=True)
-
-        return jsonify({
-            'message': f'Fresh start completed! Deleted {data_files_deleted} data files and {config_files_deleted} config metadata files.',
-            'data_files_deleted': data_files_deleted,
-            'config_files_deleted': config_files_deleted,
-            'annotator_labels_reset': labels_reset
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/unwrap-model', methods=['POST'])
-def unwrap_model():
-    try:
-        data = request.json
-        model_config = data.get('model_config')
-        ckpt_path = data.get('ckpt_path')
-        name = data.get('name', 'model_unwrap')
-
-        if not model_config or not ckpt_path:
-            return jsonify({'error': 'model_config and ckpt_path are required'}), 400
-
-        import subprocess
-        from pathlib import Path
-
-        config = get_config()
-        repo_root = config.project_root
-
-        model_config_path = repo_root / \
-            model_config if not Path(
-                model_config).is_absolute() else Path(model_config)
-        ckpt_path_resolved = repo_root / \
-            ckpt_path if not Path(ckpt_path).is_absolute() else Path(ckpt_path)
-
-        if not model_config_path.exists():
-            return jsonify({'error': f'Model config not found: {model_config_path}'}), 400
-        if not ckpt_path_resolved.exists():
-            return jsonify({'error': f'Checkpoint not found: {ckpt_path_resolved}'}), 400
-
-        model_dir = ckpt_path_resolved.parent
-        unwrapped_dir = model_dir / "unwrapped"
-        unwrapped_dir.mkdir(exist_ok=True)
-
-        cmd = [
-            sys.executable, 'unwrap_model.py',
-            '--model-config', str(model_config_path),
-            '--ckpt-path', str(ckpt_path_resolved),
-            '--name', name,
-            '--use-safetensors'
-        ]
-
-        # unwrap_model.py writes next to its CWD, so run from vendor/stable-audio-tools/.
-        stable_audio_dir = repo_root / "vendor" / "stable-audio-tools"
-
-        proc = subprocess.run(cmd, cwd=stable_audio_dir,
-                              capture_output=True, text=True)
-
-        if proc.returncode == 0:
-
-            import glob
-            pattern = str(stable_audio_dir / f"{name}*.safetensors")
-            created_files = glob.glob(pattern)
-
-            moved_files = []
-            for created_file in created_files:
-                created_path = Path(created_file)
-                target_path = unwrapped_dir / created_path.name
-
-                try:
-                    created_path.rename(target_path)
-                    moved_files.append(str(target_path))
-                    print(f"Moved {created_path.name} to {target_path}")
-                except Exception as e:
-                    print(f"Error moving {created_path}: {e}")
-
-            unwrapped_files = list(unwrapped_dir.glob("*.safetensors"))
-
-            return jsonify({
-                'status': 'success',
-                'output': proc.stdout,
-                'unwrapped_path': moved_files[0] if moved_files else None,
-                'unwrapped_files': [str(f) for f in unwrapped_files],
-                'moved_files': moved_files
-            })
-        else:
-            return jsonify({'status': 'error', 'error': proc.stderr, 'output': proc.stdout}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/delete-checkpoint', methods=['POST'])
-def delete_checkpoint():
-    try:
-        data = request.json
-        checkpoint_path = data.get('checkpoint_path')
-
-        if not checkpoint_path:
-            return jsonify({'error': 'checkpoint_path is required'}), 400
-
-        config = get_config()
-        repo_root = config.project_root
-
-        ckpt_path_resolved = repo_root / \
-            checkpoint_path if not Path(
-                checkpoint_path).is_absolute() else Path(checkpoint_path)
-
-        if not ckpt_path_resolved.exists():
-            return jsonify({'error': f'Checkpoint file not found: {ckpt_path_resolved}'}), 404
-
-        # Restrict deletion to .ckpt to avoid accidental loss of unwrapped models.
-        if not ckpt_path_resolved.suffix == '.ckpt':
-            return jsonify({'error': f'Only .ckpt files can be deleted: {ckpt_path_resolved}'}), 400
-
-        try:
-            ckpt_path_resolved.unlink()
-            return jsonify({
-                'status': 'success',
-                'message': f'Checkpoint deleted successfully',
-                'deleted_file': str(ckpt_path_resolved.name)
-            })
-        except Exception as e:
-            return jsonify({'error': f'Failed to delete checkpoint: {str(e)}'}), 500
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/delete-wrapped-checkpoint', methods=['POST'])
-def delete_wrapped_checkpoint():
-    try:
-        data = request.json
-        model_name = data.get('model_name')
-
-        if not model_name:
-            return jsonify({'error': 'model_name is required'}), 400
-
-        config = get_config()
-        models_dir = config.get_path("models_fine_tuned")
-        model_dir = models_dir / model_name
-
-        if not model_dir.exists():
-            return jsonify({'error': f'Model directory not found: {model_dir}'}), 404
-
-        deleted_files = []
-        for ckpt_file in model_dir.glob("*.ckpt"):
-            try:
-                ckpt_file.unlink()
-                deleted_files.append(str(ckpt_file.name))
-            except Exception as e:
-                return jsonify({'error': f'Failed to delete {ckpt_file.name}: {str(e)}'}), 500
-
-        if not deleted_files:
-            return jsonify({'message': 'No wrapped checkpoint files found to delete'})
-
-        return jsonify({
-            'status': 'success',
-            'message': f'Deleted {len(deleted_files)} wrapped checkpoint file(s)',
-            'deleted_files': deleted_files
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    Cheap (just a dict copy under a lock); safe to poll at ~200ms.
+    """
+    from app.core.generation.audio_generator import get_generation_progress
+    return jsonify(get_generation_progress())
 
 
 @app.route('/api/stop-generation', methods=['POST'])
@@ -1530,13 +1689,11 @@ def free_gpu_memory():
                 nvidia_total_gb = total_memory
                 nvidia_free_gb = total_memory
 
-            # PyTorch sometimes reports 0 for externally-allocated memory; fall back to nvidia-smi.
-            if allocated_memory > 0:
-                final_allocated = allocated_memory
-                final_free = free_memory
-            else:
-                final_allocated = nvidia_used_gb
-                final_free = nvidia_free_gb
+            # Report device-wide usage (every process), not just this one.
+            # torch.cuda.memory_allocated() can't see a training/generation
+            # subprocess, so always use the nvidia-smi device totals above.
+            final_allocated = nvidia_used_gb
+            final_free = nvidia_free_gb
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
@@ -1636,10 +1793,13 @@ def open_output_folder():
     try:
         import subprocess
         import platform
-        
-        output_path = Path("output")
-        output_path.mkdir(exist_ok=True)
-        
+
+        # Use the configured output dir, not Path("output") relative to the
+        # process cwd — the launcher may start the backend from a different
+        # working directory, which would open (or create) the wrong folder.
+        output_path = get_config().get_path("output")
+        output_path.mkdir(parents=True, exist_ok=True)
+
         system = platform.system()
         if system == "Windows":
             subprocess.run(["explorer", str(output_path.absolute())])
@@ -1647,11 +1807,79 @@ def open_output_folder():
             subprocess.run(["open", str(output_path.absolute())])
         else:  # Linux
             subprocess.run(["xdg-open", str(output_path.absolute())])
-            
+
         return jsonify({"success": True, "message": "Output folder opened"})
     except Exception as e:
         logger.error(f"Error opening output folder: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/reveal-fragment', methods=['POST'])
+def reveal_fragment():
+    """Reveal a single generated fragment in the OS file manager, with the
+    file itself selected/highlighted where the platform supports it.
+
+    Body: { "filename": "20260601_120000_sa3-small-music_kick.wav" }
+
+    Platform behaviour:
+      * Windows : explorer /select,<file>   → folder opens, file highlighted
+      * macOS   : open -R <file>            → Finder opens, file highlighted
+      * Linux   : org.freedesktop.FileManager1 ShowItems (D-Bus) highlights
+                  the file in Nautilus/Dolphin/etc.; falls back to
+                  `xdg-open <dir>` (opens the folder, no highlight) when no
+                  FileManager1 provider is on the bus.
+    """
+    import subprocess
+    import platform
+
+    data = request.json or {}
+    filename = str(data.get('filename', '')).strip()
+    if not filename:
+        return jsonify(APIResponse.error("filename is required.", status_code=400)), 400
+    # Guard against path traversal — fragments live flat in the output dir.
+    if '/' in filename or '\\' in filename or filename.startswith('.'):
+        return jsonify(APIResponse.error("Invalid filename.", status_code=400)), 400
+
+    output_dir = get_config().get_path("output")
+    target = output_dir / filename
+    if not target.exists():
+        return jsonify(APIResponse.error(
+            f"Fragment not found on disk: {filename}", status_code=404)), 404
+
+    try:
+        system = platform.system()
+        abs_path = str(target.absolute())
+        if system == "Windows":
+            # /select needs the path glued to the flag (no space after comma).
+            subprocess.run(["explorer", f"/select,{abs_path}"])
+        elif system == "Darwin":
+            subprocess.run(["open", "-R", abs_path])
+        else:  # Linux
+            revealed = False
+            try:
+                subprocess.run(
+                    ["dbus-send", "--session", "--print-reply",
+                     "--dest=org.freedesktop.FileManager1",
+                     "--type=method_call",
+                     "/org/freedesktop/FileManager1",
+                     "org.freedesktop.FileManager1.ShowItems",
+                     f"array:string:file://{abs_path}",
+                     "string:"],
+                    check=True,
+                    timeout=5,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                revealed = True
+            except Exception:
+                revealed = False
+            if not revealed:
+                # No FileManager1 provider — open the containing folder.
+                subprocess.run(["xdg-open", str(output_dir.absolute())])
+        return jsonify({"success": True, "message": "Fragment revealed"})
+    except Exception as e:
+        logger.error(f"Error revealing fragment {filename}: {e}")
+        return jsonify(APIResponse.error(str(e), status_code=500)), 500
 
 @app.route('/api/open-documentation', methods=['POST'])
 def open_documentation():
@@ -1736,50 +1964,6 @@ def get_license_info():
             "error": str(e)
         }), 500
 
-@app.route('/api/models-status', methods=['GET'])
-def get_models_status():
-    try:
-        required_models = ['stable-audio-open-small', 'stable-audio-open-1.0']
-        downloaded_models = [
-            model_id for model_id in required_models if model_manager.is_model_downloaded(model_id)
-        ]
-        models_exist = len(downloaded_models) > 0
-        models_message = (
-            "Required base models are available."
-            if models_exist
-            else "No required base model is downloaded yet."
-        )
-
-        hf_authenticated = False
-        try:
-            from huggingface_hub import HfApi
-            HfApi().whoami()
-            hf_authenticated = True
-        except Exception:
-            hf_authenticated = False
-
-        should_show = (not models_exist) and (not hf_authenticated)
-        auth_reason = (
-            "Hugging Face authentication is required to download gated models."
-            if should_show
-            else "Authentication already available or models already downloaded."
-        )
-        
-        return jsonify({
-            "models_exist": models_exist,
-            "models_message": models_message,
-            "should_show_auth_dialog": should_show,
-            "auth_reason": auth_reason
-        })
-    except Exception as e:
-        logger.error(f"Error checking models status: {e}")
-        return jsonify({
-            "error": str(e),
-            "models_exist": False,
-            "should_show_auth_dialog": True,
-            "auth_reason": f"Error checking models: {str(e)}"
-        }), 500
-
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
     _log_api_call('gpu_memory_status')
@@ -1800,41 +1984,31 @@ def get_gpu_memory_status():
                 0).total_memory / (1024**3)
 
             torch.cuda.synchronize()
+            # Per-process figures (this Flask backend only) — kept for detail.
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
-            free_memory = total_memory - allocated_memory
 
-            nvidia_used_gb = 0
-            nvidia_total_gb = total_memory
-            nvidia_free_gb = total_memory
+            # Device-wide usage across ALL processes via the CUDA driver.
+            # torch.cuda.memory_*() only sees THIS process, so it misses a
+            # training/generation subprocess running elsewhere — which is why the
+            # indicator read near-empty during training. mem_get_info() reports
+            # the driver's true device free/total, covering every process.
+            device_free_gb, device_total_gb = (
+                b / (1024**3) for b in torch.cuda.mem_get_info(0))
+            device_used_gb = device_total_gb - device_free_gb
 
-            # PyTorch reports 0 when memory is held by other processes; ask nvidia-smi instead.
-            if allocated_memory == 0:
-                try:
-                    result = subprocess.run(['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
-                                            capture_output=True, text=True, timeout=1)
-                    if result.stdout.strip():
-                        used_mb, total_mb = result.stdout.strip().split(', ')
-                        nvidia_used_gb = float(used_mb) / 1024
-                        nvidia_total_gb = float(total_mb) / 1024
-                        nvidia_free_gb = nvidia_total_gb - nvidia_used_gb
-                except Exception as e:
-                    if "Could not get nvidia-smi info" not in str(e):
-                        print(f"GPU Memory Error: {e}")
+            nvidia_used_gb = device_used_gb
+            nvidia_total_gb = device_total_gb
+            nvidia_free_gb = device_free_gb
 
             cuda_capability = torch.cuda.get_device_capability(0)
             device_name = torch.cuda.get_device_name(0)
 
-            if allocated_memory > 0:
-                final_allocated = allocated_memory
-                final_cached = cached_memory
-                final_free = free_memory
-                memory_source = "PyTorch"
-            else:
-                final_allocated = nvidia_used_gb
-                final_cached = cached_memory
-                final_free = nvidia_free_gb
-                memory_source = "nvidia-smi"
+            # Report device-wide numbers so the indicator reflects every process.
+            final_allocated = device_used_gb
+            final_cached = cached_memory
+            final_free = device_free_gb
+            memory_source = "cuda-driver"
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
@@ -1876,23 +2050,6 @@ def get_gpu_memory_status():
         print(f"Error getting GPU memory status: {e}")
         return jsonify({'error': str(e)}), 500
 
-
-_annotate_job_lock = threading.Lock()
-_annotate_job = {
-    'state': 'idle',   # idle | running | done | error
-    'current': 0,
-    'total': 0,
-    'current_file': '',
-    'tier': None,
-    'folder': None,
-    'results': [],
-    'error': None,
-}
-_clap_download_job = {
-    'state': 'idle',   # idle | running | done | error
-    'message': '',
-    'error': None,
-}
 
 
 def _annotator_labels_default_path():
@@ -1974,8 +2131,28 @@ def _clap_ckpt_path():
 
 @app.route('/api/environment', methods=['GET'])
 def environment():
+    # Host capability flags so the Checkpoint Manager can grey out models this
+    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2; no Windows
+    # wheels). Mirrors the gate in audio_generator._ensure_model.
+    import platform as _platform
+    cuda = mps = flash = False
+    try:
+        import torch
+        cuda = bool(torch.cuda.is_available())
+        mps = bool(getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available())
+    except Exception:
+        pass
+    try:
+        import flash_attn  # noqa: F401
+        flash = True
+    except Exception:
+        flash = False
     return jsonify({
         'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
+        'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
+        'cuda_available': cuda,
+        'mps_available': mps,
+        'flash_attn_available': flash,
     })
 
 
@@ -1997,7 +2174,7 @@ def upload_folder():
     folder_name = first_rel.split('/', 1)[0] if '/' in first_rel else 'folder'
     safe_folder = ''.join(c for c in folder_name if c.isalnum() or c in '-_') or 'folder'
 
-    staging_root = get_config().get_path('data') / 'uploads'
+    staging_root = get_config().get_path('uploads')
     staging_root.mkdir(parents=True, exist_ok=True)
     target_dir = staging_root / f"{int(time.time())}-{safe_folder}"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -2082,438 +2259,636 @@ def pick_folder():
     return jsonify({'path': chosen})
 
 
-@app.route('/api/bulk-annotate/status', methods=['GET'])
-def bulk_annotate_status():
-    from app.backend.data.auto_annotator import clap_checkpoint_available
-    with _annotate_job_lock:
-        snapshot = {k: v for k, v in _annotate_job.items() if k != 'results'}
-        snapshot['result_count'] = len(_annotate_job['results'])
-    snapshot['clap_available'] = clap_checkpoint_available(get_config().get_path('models_pretrained'))
-    snapshot['clap_download'] = dict(_clap_download_job)
-    return jsonify(snapshot)
+
+# --- SA3 sidecar-native dataset prep -----------------------------------------
+# Projects are folders under <user_data_dir>/projects/<name>/. Editing happens
+# against an in-memory session per loaded project; persistence is explicit via
+# Save (writes .draft.json) and Commit (writes .txt sidecars + marks audio
+# committed). See DATASET_PREP_REDESIGN.md.
+
+_project_annotate_jobs: Dict[str, dict] = {}
+_project_annotate_jobs_lock = threading.Lock()
 
 
-@app.route('/api/bulk-annotate/results', methods=['GET'])
-def bulk_annotate_results():
-    with _annotate_job_lock:
-        return jsonify({'results': list(_annotate_job['results']), 'state': _annotate_job['state']})
+def _get_project_annotate_job(project_name: str) -> dict:
+    with _project_annotate_jobs_lock:
+        job = _project_annotate_jobs.get(project_name)
+        if job is None:
+            job = {
+                'state': 'idle',
+                'current': 0,
+                'total': 0,
+                'current_file': '',
+                'tier': None,
+                'annotated': 0,
+                'skipped_existing': 0,
+                'errors': 0,
+                'error': None,
+                'started_at': None,
+                'finished_at': None,
+                'cancelled': False,
+            }
+            _project_annotate_jobs[project_name] = job
+        return job
 
 
-@app.route('/api/bulk-annotate', methods=['POST'])
-def bulk_annotate():
+@app.route('/api/projects', methods=['GET'])
+def list_projects_route():
+    from app.backend.data.projects import list_projects
+    try:
+        return jsonify({'projects': list_projects()})
+    except Exception as exc:
+        logger.exception("Failed to list projects")
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects', methods=['POST'])
+def create_project_route():
+    from app.backend.data.projects import create_project, sanitize_project_name
     payload = request.json or {}
-    folder = payload.get('folder_path', '').strip()
-    tier = payload.get('tier', 'basic')
-    if tier not in ('basic', 'rich'):
-        return jsonify({'error': f"Invalid tier: {tier}"}), 400
+    raw_name = payload.get('name', '')
+    try:
+        name = sanitize_project_name(raw_name)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    try:
+        project = create_project(name)
+    except FileExistsError as exc:
+        return jsonify({'error': str(exc)}), 409
+    except Exception as exc:
+        logger.exception("Failed to create project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify(project), 201
+
+
+@app.route('/api/projects/<name>', methods=['GET'])
+def get_project_route(name):
+    from app.backend.data.projects import get_project
+    try:
+        return jsonify(get_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to get project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/template', methods=['PATCH'])
+def patch_project_template_route(name):
+    """Update the project's annotation-template preset.
+
+    Body: { "preset": "music" | "instrument" | "sfx" }
+    """
+    from app.backend.data.projects import update_project_template_preset
+    payload = request.json or {}
+    if 'preset' not in payload:
+        return jsonify({'error': 'preset is required'}), 400
+    try:
+        return jsonify(update_project_template_preset(name, payload['preset']))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to update template preset for %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/health', methods=['GET'])
+def project_health_route(name):
+    """Per-clip health checks. Returns counts + file lists the UI can route
+    into the existing selection model."""
+    from app.backend.data.projects import compute_health
+    try:
+        short_th = float(request.args.get('short_threshold_sec', 1.0))
+    except (TypeError, ValueError):
+        short_th = 1.0
+    try:
+        return jsonify(compute_health(name, short_th))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Health check failed for %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>', methods=['DELETE'])
+def delete_project_route(name):
+    """Nuke the project folder + drop the in-memory session. Irreversible."""
+    from app.backend.data.projects import delete_project
+    try:
+        delete_project(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to delete project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'name': name, 'deleted': True})
+
+
+@app.route('/api/projects/<name>/ingest', methods=['POST'])
+def ingest_into_project_route(name):
+    """Body: { folder_path: string, mode: "copy" | "symlink" }"""
+    from app.backend.data.projects import ingest_folder, INGEST_MODES, get_project
+    payload = request.json or {}
+    folder = (payload.get('folder_path') or '').strip()
+    mode = payload.get('mode', 'copy')
+    if mode not in INGEST_MODES:
+        return jsonify({'error': f'Invalid ingest mode: {mode}'}), 400
     if not folder:
         return jsonify({'error': 'folder_path is required'}), 400
-
     folder_path = Path(folder).expanduser()
-    if not folder_path.exists() or not folder_path.is_dir():
-        return jsonify({'error': f'Folder not found: {folder_path}'}), 400
-
-    from app.backend.data.auto_annotator import (
-        annotate_folder, load_label_sets, clap_checkpoint_available,
-    )
-
-    if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
-        return jsonify({'error': 'CLAP checkpoint not downloaded yet.'}), 409
-
-    with _annotate_job_lock:
-        if _annotate_job['state'] == 'running':
-            return jsonify({'error': 'An annotation job is already running.'}), 409
-        _annotate_job.update({
-            'state': 'running', 'current': 0, 'total': 0, 'current_file': '',
-            'tier': tier, 'folder': str(folder_path), 'results': [], 'error': None,
-        })
-
-    labels = load_label_sets(_annotator_labels_path())
-
-    def progress_cb(i, total, name):
-        with _annotate_job_lock:
-            _annotate_job['current'] = i
-            _annotate_job['total'] = total
-            _annotate_job['current_file'] = name
-
-    def runner():
-        try:
-            results = annotate_folder(
-                folder_path, tier=tier, label_sets=labels,
-                clap_ckpt_path=_clap_ckpt_path() if tier == 'rich' else None,
-                progress_cb=progress_cb,
-            )
-            with _annotate_job_lock:
-                _annotate_job['results'] = results
-                _annotate_job['state'] = 'done'
-        except Exception as exc:
-            logger.exception("Bulk annotation failed")
-            with _annotate_job_lock:
-                _annotate_job['state'] = 'error'
-                _annotate_job['error'] = str(exc)
-
-    threading.Thread(target=runner, daemon=True).start()
-    return jsonify({'message': 'Annotation started', 'tier': tier, 'folder': str(folder_path)})
-
-
-@app.route('/api/bulk-annotate/commit', methods=['POST'])
-def bulk_annotate_commit():
-    """Merge user-reviewed annotation results into metadata.json.
-
-    Body: { entries: [{ file_name, prompt, path }, ...], copy_files: bool }
-    """
-    payload = request.json or {}
-    entries = payload.get('entries') or []
-    copy_files = bool(payload.get('copy_files', True))
-    if not entries:
-        return jsonify({'error': 'No entries to commit.'}), 400
-
-    config = get_config()
-    data_dir = config.get_path('data')
-    data_dir.mkdir(exist_ok=True, parents=True)
-
-    json_path = Path(config.get_metadata_json_path())
-    existing_metadata = []
-    if json_path.exists():
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                existing_metadata = json.load(f)
-        except Exception as exc:
-            logger.warning("Could not load existing metadata: %s", exc)
-            existing_metadata = []
-    existing_files = {item['file_name']: item for item in existing_metadata}
-
-    committed = 0
-    for entry in entries:
-        file_name = entry.get('file_name')
-        prompt = (entry.get('prompt') or '').strip()
-        src_path = entry.get('path')
-        if not file_name or not prompt or not src_path:
-            continue
-
-        src = Path(src_path)
-        if not src.exists():
-            logger.warning("Source missing for %s: %s", file_name, src)
-            continue
-
-        if src.parent.resolve() != data_dir.resolve():
-            dst = data_dir / file_name
-            try:
-                _stage_into_data_dir(src, dst, copy_files=copy_files)
-            except Exception as exc:
-                logger.warning("Stage failed for %s: %s", src, exc)
-                continue
-
-        stored_path = str(data_dir / file_name)
-
-        existing_files[file_name] = {
-            'file_name': file_name,
-            'prompt': prompt,
-            'path': stored_path,
-        }
-        committed += 1
-
-    final_metadata = list(existing_files.values())
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(final_metadata, f, indent=2)
-
     try:
-        config.update_dataset_config()
+        result = ingest_folder(name, folder_path, mode)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
     except Exception as exc:
-        logger.warning("Failed to refresh dataset-config.json: %s", exc)
-
-    return jsonify({
-        'message': f'Committed {committed} annotations.',
-        'committed': committed,
-        'metadata_json': str(json_path),
-    })
-
-
-def _stage_into_data_dir(src: Path, dst: Path, copy_files: bool) -> str:
-    """Place an audio file into the data dir so the trainer's scan picks it up.
-
-    Trainer reads `dataset-config.json` -> a single `audio_dir` path (data/),
-    so files referenced only by absolute paths in metadata.json are invisible.
-    Copying duplicates disk; symlinking is the cheap alternative.
-
-    Returns 'copy' | 'symlink' to describe what was done.
-    """
-    import shutil
-
-    if dst.is_symlink() or dst.exists():
-        try:
-            dst.unlink()
-        except IsADirectoryError:
-            shutil.rmtree(dst)
-
-    if not copy_files:
-        try:
-            dst.symlink_to(src.resolve())
-            return 'symlink'
-        except (OSError, NotImplementedError) as exc:
-            # Windows without developer mode disallows symlinks; fall back.
-            logger.info("Symlink failed for %s, falling back to copy: %s", src, exc)
-
-    shutil.copy2(src, dst)
-    return 'copy'
+        logger.exception("Ingest failed for project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    logger.info(
+        "Ingest into project=%s mode=%s added=%d (copied=%d symlinked=%d skipped=%d)",
+        name, mode, result['added'], result['copied'], result['symlinked'], result['skipped'],
+    )
+    return jsonify({**result, 'project': get_project(name)})
 
 
-@app.route('/api/import-csv/preview', methods=['POST'])
-def import_csv_preview():
-    """Parse a CSV upload + audio folder, return rows with conflict status.
-
-    Form fields:
-      - csv: file upload (text/csv) with at least file_name, prompt columns
-      - audio_folder: server-side path to a folder containing the audio files
-    """
-    import csv as _csv
-    from io import StringIO
-
-    csv_file = request.files.get('csv')
-    audio_folder = (request.form.get('audio_folder') or '').strip()
-
-    if not csv_file:
-        return jsonify({'error': 'CSV file is required.'}), 400
-    if not audio_folder:
-        return jsonify({'error': 'Audio folder path is required.'}), 400
-
-    audio_dir = Path(audio_folder).expanduser()
-    if not audio_dir.exists() or not audio_dir.is_dir():
-        return jsonify({'error': f'Audio folder does not exist: {audio_folder}'}), 400
-    audio_dir_resolved = audio_dir.resolve()
-
+@app.route('/api/projects/<name>/clip/<path:file_name>', methods=['PATCH'])
+def patch_clip_route(name, file_name):
+    """In-memory prompt edit. Persists only on Save or Commit."""
+    from app.backend.data.projects import update_clip_prompt
+    payload = request.json or {}
+    if 'prompt' not in payload:
+        return jsonify({'error': 'prompt is required'}), 400
     try:
-        text = csv_file.read().decode('utf-8-sig')
-    except UnicodeDecodeError:
-        return jsonify({'error': 'CSV must be UTF-8 encoded.'}), 400
-
-    reader = _csv.DictReader(StringIO(text))
-    fieldnames = reader.fieldnames or []
-    if 'file_name' not in fieldnames or 'prompt' not in fieldnames:
-        return jsonify({
-            'error': "CSV must include 'file_name' and 'prompt' columns.",
-            'found_columns': fieldnames,
-        }), 400
-
-    config = get_config()
-    json_path = Path(config.get_metadata_json_path())
-    existing_files = set()
-    if json_path.exists():
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                existing = json.load(f)
-            existing_files = {item['file_name'] for item in existing if isinstance(item, dict)}
-        except Exception as exc:
-            logger.warning("Could not load existing metadata: %s", exc)
-
-    rows = []
-    seen_keys = set()
-    for line_no, raw in enumerate(reader, start=2):
-        file_name_csv = (raw.get('file_name') or '').strip()
-        prompt = (raw.get('prompt') or '').strip()
-        if not file_name_csv and not prompt:
-            continue
-
-        row_errors = []
-        if not file_name_csv:
-            row_errors.append('missing file_name')
-        if not prompt:
-            row_errors.append('missing prompt')
-
-        src_path = None
-        audio_found = False
-        if file_name_csv:
-            rel = file_name_csv.replace('\\', '/').lstrip('/')
-            if '..' in rel.split('/'):
-                row_errors.append('file_name contains ".."')
-            else:
-                candidate = (audio_dir / rel).resolve()
-                try:
-                    candidate.relative_to(audio_dir_resolved)
-                    if candidate.is_file():
-                        src_path = str(candidate)
-                        audio_found = True
-                    else:
-                        row_errors.append('audio file not found in folder')
-                except ValueError:
-                    row_errors.append('file_name resolves outside audio folder')
-
-        key_name = Path(file_name_csv).name if file_name_csv else ''
-        duplicate_in_csv = key_name and key_name in seen_keys
-        if duplicate_in_csv:
-            row_errors.append('duplicate file_name within this CSV')
-        if key_name:
-            seen_keys.add(key_name)
-
-        rows.append({
-            'line': line_no,
-            'file_name': key_name,
-            'csv_path': file_name_csv,
-            'prompt': prompt,
-            'src_path': src_path,
-            'audio_found': audio_found,
-            'conflict': bool(key_name) and key_name in existing_files,
-            'errors': row_errors,
-        })
-
-    return jsonify({
-        'rows': rows,
-        'total': len(rows),
-        'conflicts': sum(1 for r in rows if r['conflict']),
-        'missing_audio': sum(1 for r in rows if not r['audio_found']),
-        'existing_count': len(existing_files),
-    })
+        clip = update_clip_prompt(name, file_name, payload['prompt'])
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to update clip %s in project %s", file_name, name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify(clip)
 
 
-@app.route('/api/import-csv/commit', methods=['POST'])
-def import_csv_commit():
-    """Merge reviewed CSV import entries into metadata.json with a conflict policy.
+@app.route('/api/projects/<name>/clip/<path:file_name>', methods=['DELETE'])
+def delete_clip_route(name, file_name):
+    """Immediate delete — cannot be discarded back."""
+    from app.backend.data.projects import delete_clip, get_project
+    try:
+        delete_clip(name, file_name)
+    except Exception as exc:
+        logger.exception("Failed to delete clip %s in project %s", file_name, name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'name': name, 'file_name': file_name, 'deleted': True, 'project': get_project(name)})
+
+
+@app.route('/api/projects/<name>/clip/<path:file_name>/audio', methods=['GET'])
+def clip_audio_route(name, file_name):
+    """Stream raw audio bytes for a clip. Range requests work via send_file."""
+    from app.backend.data.projects import get_session_handle
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    with session.lock:
+        clip = session.clips.get(file_name)
+        if clip is None:
+            return jsonify({'error': f"Clip not found: {file_name}"}), 404
+        audio_path = Path(clip.path)
+    if not audio_path.exists():
+        return jsonify({'error': 'Audio file missing on disk'}), 404
+    return send_file(str(audio_path), conditional=True)
+
+
+@app.route('/api/projects/<name>/clip/<path:file_name>/slice', methods=['POST'])
+def clip_slice_route(name, file_name):
+    """Split one clip into N children. Body: { target_duration, overlap_sec, strategy }."""
+    from app.backend.data.projects import slice_clip
+    from app.backend.data.slicing import VALID_STRATEGIES
+    payload = request.json or {}
+    try:
+        target = float(payload.get('target_duration', 0))
+        overlap = float(payload.get('overlap_sec', 0))
+        strategy = str(payload.get('strategy', 'hard')).lower()
+    except (TypeError, ValueError):
+        return jsonify({'error': 'target_duration / overlap_sec must be numeric'}), 400
+    if target <= 0 or target > 600:
+        return jsonify({'error': 'target_duration must be in (0, 600]'}), 400
+    if overlap < 0 or overlap >= target:
+        return jsonify({'error': 'overlap_sec must be >= 0 and < target_duration'}), 400
+    if strategy not in VALID_STRATEGIES:
+        return jsonify({'error': f"strategy must be one of {VALID_STRATEGIES}"}), 400
+    try:
+        result = slice_clip(name, file_name, target, overlap, strategy)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Slice failed for %s/%s", name, file_name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify(result)
+
+
+@app.route('/api/projects/<name>/clip/<path:file_name>/peaks', methods=['GET'])
+def clip_peaks_route(name, file_name):
+    """Return waveform peaks + duration JSON for a clip. Cached per session."""
+    from app.backend.data.projects import get_session_handle, get_or_compute_peaks
+    try:
+        n = int(request.args.get('n', 200))
+    except (TypeError, ValueError):
+        n = 200
+    n = max(20, min(n, 500))
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    with session.lock:
+        clip = session.clips.get(file_name)
+        if clip is None:
+            return jsonify({'error': f"Clip not found: {file_name}"}), 404
+        audio_path = Path(clip.path)
+    if not audio_path.exists():
+        return jsonify({'error': 'Audio file missing on disk'}), 404
+    try:
+        peaks, duration = get_or_compute_peaks(session, file_name, audio_path, n)
+    except Exception as exc:
+        logger.exception("Peak computation failed for %s/%s", name, file_name)
+        return jsonify({'error': f'Peak computation failed: {exc}'}), 500
+    return jsonify({'peaks': peaks, 'duration': duration})
+
+
+@app.route('/api/projects/<name>/save', methods=['POST'])
+def save_project_route(name):
+    """Persist in-memory diffs as a hidden draft (not the SA3 sidecars)."""
+    from app.backend.data.projects import save_project
+    try:
+        return jsonify(save_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to save project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/commit', methods=['POST'])
+def commit_project_route(name):
+    """Flush in-memory state to .txt sidecars; overwrites the previous commit."""
+    from app.backend.data.projects import commit_project
+    try:
+        return jsonify(commit_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to commit project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/discard', methods=['POST'])
+def discard_project_route(name):
+    """Drop uncommitted state and delete audio files added since the last commit."""
+    from app.backend.data.projects import discard_project
+    try:
+        return jsonify(discard_project(name))
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to discard project %s", name)
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/projects/<name>/annotate', methods=['POST'])
+def annotate_project_route(name):
+    """Kick off auto-annotation. Updates the in-memory session; sidecars on
+    disk are not touched until the user commits.
 
     Body: {
-      entries: [{ file_name, prompt, src_path }, ...],
-      conflict_policy: 'skip' | 'overwrite' | 'rename',
-      copy_files: bool
+      tier: "basic" | "rich",
+      scope?: "all" | ["file_name1", ...],          # default: "all"
+      skip_existing?: bool                          # default: true
     }
     """
+    from app.backend.data.projects import get_session_handle, reset_cancel, project_path
+    from app.backend.data.auto_annotator import (
+        annotate_file, load_label_sets, get_clap_tagger, clap_checkpoint_available,
+    )
+
     payload = request.json or {}
-    entries = payload.get('entries') or []
-    policy = payload.get('conflict_policy') or 'skip'
-    copy_files = bool(payload.get('copy_files', True))
-
-    if policy not in {'skip', 'overwrite', 'rename'}:
-        return jsonify({'error': "conflict_policy must be one of 'skip', 'overwrite', 'rename'."}), 400
-    if not entries:
-        return jsonify({'error': 'No entries to commit.'}), 400
-
-    config = get_config()
-    data_dir = config.get_path('data')
-    data_dir.mkdir(exist_ok=True, parents=True)
-    data_dir_resolved = data_dir.resolve()
-
-    json_path = Path(config.get_metadata_json_path())
-    existing_metadata = []
-    if json_path.exists():
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                existing_metadata = json.load(f)
-        except Exception as exc:
-            logger.warning("Could not load existing metadata: %s", exc)
-            existing_metadata = []
-    existing_files = {item['file_name']: item for item in existing_metadata if isinstance(item, dict)}
-
-    def unique_name(base_name: str) -> str:
-        stem = Path(base_name).stem
-        suffix = Path(base_name).suffix
-        n = 2
-        while True:
-            candidate = f"{stem}_{n}{suffix}"
-            if candidate not in existing_files and not (data_dir / candidate).exists():
-                return candidate
-            n += 1
-
-    committed = 0
-    skipped = 0
-    renamed = 0
-    overwritten = 0
-    errors = []
-
-    for entry in entries:
-        file_name = Path((entry.get('file_name') or '').strip()).name
-        prompt = (entry.get('prompt') or '').strip()
-        src_path = entry.get('src_path') or entry.get('path')
-
-        if not file_name or not prompt or not src_path:
-            errors.append({'file_name': file_name, 'reason': 'missing required field'})
-            continue
-
-        src = Path(src_path)
-        if not src.is_file():
-            errors.append({'file_name': file_name, 'reason': 'source audio missing'})
-            continue
-
-        target_name = file_name
-        had_conflict = file_name in existing_files
-        force_copy = False
-        if had_conflict:
-            if policy == 'skip':
-                skipped += 1
-                continue
-            if policy == 'rename':
-                target_name = unique_name(file_name)
-                renamed += 1
-                # Rename only makes sense if a renamed file actually lands in data/.
-                force_copy = True
-            elif policy == 'overwrite':
-                overwritten += 1
-
-        if src.parent.resolve() != data_dir_resolved:
-            dst = data_dir / target_name
-            try:
-                _stage_into_data_dir(src, dst, copy_files=(copy_files or force_copy))
-            except Exception as exc:
-                errors.append({'file_name': file_name, 'reason': f'stage failed: {exc}'})
-                continue
-        stored_path = str(data_dir / target_name)
-
-        existing_files[target_name] = {
-            'file_name': target_name,
-            'prompt': prompt,
-            'path': stored_path,
-        }
-        committed += 1
-
-    final_metadata = list(existing_files.values())
-    with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(final_metadata, f, indent=2)
+    tier = payload.get('tier', 'basic')
+    scope = payload.get('scope', 'all')
+    skip_existing = bool(payload.get('skip_existing', True))
+    if tier not in ('basic', 'rich'):
+        return jsonify({'error': f'Invalid tier: {tier}'}), 400
 
     try:
-        config.update_dataset_config()
-    except Exception as exc:
-        logger.warning("Failed to refresh dataset-config.json: %s", exc)
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
 
-    return jsonify({
-        'message': (
-            f'Imported {committed} entries '
-            f'(skipped: {skipped}, renamed: {renamed}, overwritten: {overwritten}).'
-        ),
-        'committed': committed,
-        'skipped': skipped,
-        'renamed': renamed,
-        'overwritten': overwritten,
-        'errors': errors,
-        'metadata_json': str(json_path),
-    })
+    if tier == 'rich' and not clap_checkpoint_available(get_config().get_path('models_pretrained')):
+        return jsonify({
+            'error': 'CLAP checkpoint not downloaded yet. Open Model Management to download it.',
+            'code': 'clap_not_available',
+        }), 409
 
+    with session.lock:
+        all_clips = sorted(session.clips.values(), key=lambda c: c.file_name)
+        if scope == 'all':
+            target = list(all_clips)
+        elif isinstance(scope, list):
+            wanted = set(scope)
+            target = [c for c in all_clips if c.file_name in wanted]
+            missing = wanted - {c.file_name for c in target}
+            if missing:
+                return jsonify({'error': f'Clips not in project: {sorted(missing)}'}), 404
+        else:
+            return jsonify({'error': 'scope must be "all" or a list of file names'}), 400
 
-@app.route('/api/bulk-annotate/download-clap', methods=['POST'])
-def bulk_annotate_download_clap():
-    from app.backend.data.auto_annotator import download_clap_checkpoint
+        if skip_existing:
+            run_targets = [c for c in target if not (c.prompt or '').strip()]
+            skipped_existing = len(target) - len(run_targets)
+        else:
+            run_targets = list(target)
+            skipped_existing = 0
+        target_names = [c.file_name for c in run_targets]
 
-    with _annotate_job_lock:
-        if _clap_download_job['state'] == 'running':
-            return jsonify({'error': 'CLAP download already in progress.'}), 409
-        _clap_download_job.update({'state': 'running', 'message': 'Starting download…', 'error': None})
+    job = _get_project_annotate_job(name)
+    with _project_annotate_jobs_lock:
+        if job['state'] == 'running':
+            return jsonify({'error': f'Annotation already running for project {name}.'}), 409
+        job.update({
+            'state': 'running',
+            'current': 0,
+            'total': len(target_names),
+            'current_file': '',
+            'tier': tier,
+            'annotated': 0,
+            'skipped_existing': skipped_existing,
+            'errors': 0,
+            'error': None,
+            'started_at': time.time(),
+            'finished_at': None,
+            'cancelled': False,
+        })
+
+    reset_cancel(session)
+    labels = load_label_sets(_annotator_labels_path())
+    clap_tagger = None
+    if tier == 'rich':
+        clap_tagger = get_clap_tagger(_clap_ckpt_path())
+        try:
+            clap_tagger.ensure_loaded()
+        except FileNotFoundError as exc:
+            # File-existence check passed earlier but the actual load failed.
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            return jsonify({
+                'error': str(exc),
+                'code': 'clap_not_available',
+            }), 409
+        except ImportError as exc:
+            # The .pt weights are on disk but one of CLAP's Python deps isn't
+            # installed in the venv. Could be laion_clap itself or anything it
+            # imports transitively (e.g. torchvision). Model Manager can't fix
+            # this — the user has to pip install in their environment.
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            missing = getattr(exc, 'name', None) or 'laion_clap'
+            # Module name → PyPI name when they differ; default identical.
+            _PYPI_NAME = {'laion_clap': 'laion-clap'}
+            pip_name = _PYPI_NAME.get(missing, missing)
+            install_command = f'pip install {pip_name}'
+            # torch-family packages need the CUDA index URL to match the
+            # pinned torch build; otherwise pip installs the CPU-only wheel.
+            if missing in {'torchvision', 'torchaudio'}:
+                install_command += ' --extra-index-url https://download.pytorch.org/whl/cu128'
+            return jsonify({
+                'error': (
+                    f"The '{missing}' Python package is required for Rich-tier annotation "
+                    "but isn't installed. Install it in Fragmenta's venv, then restart the app:"
+                ),
+                'code': 'clap_package_missing',
+                'install_command': install_command,
+            }), 409
+        except Exception as exc:
+            with _project_annotate_jobs_lock:
+                job['state'] = 'idle'
+            logger.exception("CLAP load failed for project %s", name)
+            return jsonify({
+                'error': f'CLAP failed to load: {exc}',
+                'code': 'clap_load_failed',
+            }), 500
+
+    proj_path = project_path(name)
+    # Resolve the active preset to a template string once per job.
+    from app.backend.data.projects import resolve_prompt_template
+    active_template = resolve_prompt_template(session)
 
     def runner():
         try:
-            target = download_clap_checkpoint(
-                get_config().get_path('models_pretrained'),
-                progress_cb=lambda m: _clap_download_job.update({'message': m}),
+            logger.info(
+                "Project annotate started: name=%s tier=%s targets=%d skip_existing=%s",
+                name, tier, len(target_names), skip_existing,
             )
-            _clap_download_job.update({'state': 'done', 'message': f'Downloaded to {target}'})
+            for i, file_name in enumerate(target_names, start=1):
+                if session.cancel_event.is_set():
+                    logger.info("Project annotate cancelled mid-run: name=%s", name)
+                    with _project_annotate_jobs_lock:
+                        job['cancelled'] = True
+                    break
+                with _project_annotate_jobs_lock:
+                    job['current_file'] = file_name
+                logger.info("  annotating %d/%d: %s", i, len(target_names), file_name)
+                audio_path = proj_path / file_name
+                try:
+                    result = annotate_file(
+                        audio_path, tier, clap_tagger, labels,
+                        prompt_template=active_template,
+                    )
+                except Exception as exc:
+                    logger.warning("annotate_file failed for %s: %s", file_name, exc)
+                    with _project_annotate_jobs_lock:
+                        job['errors'] += 1
+                        job['current'] += 1
+                    continue
+                if result.get('error'):
+                    with _project_annotate_jobs_lock:
+                        job['errors'] += 1
+                        job['current'] += 1
+                    continue
+                prompt = result.get('prompt', '') or ''
+                with session.lock:
+                    clip = session.clips.get(file_name)
+                    if clip is not None:
+                        clip.prompt = prompt
+                with _project_annotate_jobs_lock:
+                    job['annotated'] += 1
+                    job['current'] += 1
+            with _project_annotate_jobs_lock:
+                job['state'] = 'done'
+                job['finished_at'] = time.time()
+                job['current_file'] = ''
+            logger.info(
+                "Project annotate done: name=%s annotated=%d errors=%d skipped_existing=%d cancelled=%s",
+                name, job['annotated'], job['errors'], job['skipped_existing'], job['cancelled'],
+            )
         except Exception as exc:
-            logger.exception("CLAP download failed")
-            _clap_download_job.update({'state': 'error', 'error': str(exc)})
+            logger.exception("Project annotate failed: name=%s", name)
+            with _project_annotate_jobs_lock:
+                job['state'] = 'error'
+                job['error'] = str(exc)
+                job['finished_at'] = time.time()
 
     threading.Thread(target=runner, daemon=True).start()
-    return jsonify({'message': 'CLAP download started'})
+    with _project_annotate_jobs_lock:
+        snapshot = dict(job)
+    return jsonify({'name': name, 'job': snapshot}), 202
 
 
-@app.route('/api/bulk-annotate/unload-clap', methods=['POST'])
-def bulk_annotate_unload_clap():
+@app.route('/api/projects/<name>/annotate/cancel', methods=['POST'])
+def annotate_project_cancel_route(name):
+    """Stop a running annotate job after the in-flight clip completes."""
+    from app.backend.data.projects import get_session_handle
+    try:
+        session = get_session_handle(name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    session.cancel_event.set()
+    return jsonify({'name': name, 'cancel_signal_set': True})
+
+
+@app.route('/api/projects/<name>/annotate/status', methods=['GET'])
+def annotate_project_status_route(name):
+    from app.backend.data.projects import project_path
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    with _project_annotate_jobs_lock:
+        job = _project_annotate_jobs.get(name)
+        snapshot = dict(job) if job else {'state': 'idle'}
+    return jsonify({'name': name, 'job': snapshot})
+
+
+# --- Phase 6: pre-encoded latents -----------------------------------------
+
+@app.route('/api/projects/<name>/pre-encode', methods=['POST'])
+def pre_encode_project_route(name):
+    """Kick off SA3 pre-encoding for a project. Returns the job state (202)."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import start_pre_encode
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    # silent=True so an empty/no-Content-Type body is treated as {} instead of
+    # Flask returning 415 — callers usually fire-and-forget without a payload.
+    body = request.get_json(silent=True) or {}
+    autoencoder = (body.get('autoencoder') or '').strip() or None
+    try:
+        job = start_pre_encode(name, autoencoder=autoencoder)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to start pre-encode")
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({'name': name, 'job': job}), 202
+
+
+@app.route('/api/projects/<name>/pre-encode/status', methods=['GET'])
+def pre_encode_status_route(name):
+    """Poll the current job state. Cheap (dict copy under lock)."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import get_pre_encode_job
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    return jsonify({'name': name, 'job': get_pre_encode_job(name)})
+
+
+@app.route('/api/projects/<name>/pre-encode/cancel', methods=['POST'])
+def pre_encode_cancel_route(name):
+    """Cooperative cancel. Signals SIGINT → SIGTERM → SIGKILL on the subprocess."""
+    from app.backend.data.projects import project_path
+    from app.backend.data.pre_encoder import cancel_pre_encode
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    cancelled = cancel_pre_encode(name)
+    return jsonify({'name': name, 'cancelled': cancelled})
+
+
+@app.route('/api/projects/<name>/pre-encode/prompt', methods=['PATCH'])
+def pre_encode_prompt_route(name):
+    """Persist the 'Don't ask again' choice from the post-commit dialog.
+
+    Body: { "suppress": bool }
+    """
+    from app.backend.data.projects import project_path, update_pre_encode_suppression
+    if not project_path(name).exists():
+        return jsonify({'error': f'Project not found: {name}'}), 404
+    body = request.get_json(silent=True) or {}
+    if 'suppress' not in body:
+        return jsonify({'error': "Body must contain 'suppress': bool."}), 400
+    updated = update_pre_encode_suppression(name, bool(body['suppress']))
+    return jsonify(updated)
+
+
+@app.route('/api/clap/unload', methods=['POST'])
+def clap_unload_route():
+    """Free CLAP weights from VRAM (e.g. before starting training or generation)."""
     from app.backend.data.auto_annotator import unload_clap
     unload_clap()
     return jsonify({'message': 'CLAP unloaded from memory.'})
+
+
+# --- Native MIDI input -----------------------------------------------------
+# python-rtmidi reads hardware MIDI natively (CoreMIDI / WinMM / ALSA), so MIDI
+# works regardless of the web engine. The frontend keeps all mapping/learn
+# logic; it just consumes /api/midi/stream instead of Web MIDI.
+@app.route('/api/midi/devices', methods=['GET'])
+def midi_devices():
+    from app.core.audio import midi_input
+    return jsonify({
+        "available": midi_input.is_available(),
+        "inputs": midi_input.list_inputs(),
+        "current": midi_input.current_port(),
+    })
+
+
+@app.route('/api/midi/select', methods=['POST'])
+def midi_select():
+    from app.core.audio import midi_input
+    data = request.get_json(silent=True) or {}
+    port_id = data.get('port_id')
+    ok = midi_input.open_input(port_id)
+    if not ok and port_id:
+        return jsonify(APIResponse.error(
+            "Could not open that MIDI input port.", status_code=400)), 400
+    return jsonify({"current": midi_input.current_port()})
+
+
+@app.route('/api/midi/stream', methods=['GET'])
+def midi_stream():
+    """Server-Sent Events stream of incoming MIDI from the open port. Each
+    event is {"data": [status, d1, d2]} — the same shape the frontend's
+    Web-MIDI dispatcher already expects."""
+    from app.core.audio import midi_input
+
+    def gen():
+        q = midi_input.subscribe()
+        try:
+            yield ": connected\n\n"
+            while True:
+                try:
+                    payload = q.get(timeout=15)
+                    yield f"data: {json.dumps(payload)}\n\n"
+                except queue.Empty:
+                    yield ": keepalive\n\n"   # keep idle proxies/connections alive
+        except GeneratorExit:
+            pass
+        finally:
+            midi_input.unsubscribe(q)
+
+    resp = Response(gen(), mimetype='text/event-stream')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['X-Accel-Buffering'] = 'no'
+    return resp
 
 
 @app.route('/shutdown', methods=['POST'])
@@ -2532,4 +2907,10 @@ def shutdown():
 if __name__ == '__main__':
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
     port = int(os.environ.get('FLASK_PORT', '5001'))
-    app.run(debug=True, host=host, port=port)
+    # threaded=True so the long-lived MIDI SSE stream (/api/midi/stream) doesn't
+    # block other requests on the single dev-server worker.
+    # use_reloader=False: Fragmenta is launched as a packaged desktop app via
+    # start.py, not a hot-reload dev loop. The reloader would fork a second
+    # process that re-imports the module (re-running init and doubling backend
+    # processes); we don't want that here.
+    app.run(debug=True, host=host, port=port, threaded=True, use_reloader=False)

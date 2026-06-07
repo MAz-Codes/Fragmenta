@@ -7,15 +7,38 @@
     <meta name="theme-color" content="#000000" />
     <meta
       name="description"
-      content="Fragmenta Desktop - Stable Audio Fine-Tuning Application"
+      content="Fragmenta — Stable Audio Fine-Tuning Application"
     />
     <link rel="manifest" href="/manifest.json" />
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Space+Mono:wght@400;700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-
     <style>
+      /* Layout floor — channel grid + master strip need 1300px
+         horizontally to sit side-by-side, and the vertical layout (top
+         bar + channels + bottom bar) gets cramped below 830px. Below
+         either floor, scrollbars appear so the layout stays intact
+         instead of collapsing. The launcher (start.py) opens Chromium
+         at 1300×830 so the fresh-launch experience lands exactly at
+         the floor. */
+      html, body {
+        min-width: 1300px;
+        min-height: 830px;
+      }
+
+      /* Local variable fonts — ship with the app, no network dependency. */
+      @font-face {
+        font-family: 'Bricolage Grotesque';
+        src: url('/BricolageGrotesque-VariableFont_opsz,wdth,wght.ttf') format('truetype');
+        font-weight: 200 800;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: 'Inter Tight';
+        src: url('/InterTight-VariableFont_wght.ttf') format('truetype');
+        font-weight: 100 900;
+        font-style: normal;
+        font-display: swap;
+      }
       @font-face {
         font-family: 'Bitcount Single';
         src: url('/BitcountSingle-VariableFont_CRSV,ELSH,ELXP,slnt,wght.ttf') format('truetype');
@@ -25,7 +48,7 @@
       }
     </style>
 
-    <title>Fragmenta Desktop</title>
+    <title>Fragmenta</title>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

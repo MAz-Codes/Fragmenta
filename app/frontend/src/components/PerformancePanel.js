@@ -6,6 +6,7 @@ import {
     Slider,
     Button,
     Alert,
+    Divider,
     FormControl,
     FormControlLabel,
     Switch,
@@ -13,11 +14,18 @@ import {
     MenuItem,
     TextField,
     IconButton,
-    Tooltip,
     ButtonBase,
     Menu,
     ListItemText,
+    ListSubheader,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogActions,
+    InputAdornment,
 } from '@mui/material';
+import { TIPS } from '../tooltips';
+import Tooltip from './Tooltip';
 import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
@@ -27,14 +35,18 @@ import {
     X as CloseXIcon,
     Headphones as CueIcon,
     Volume2 as AudioSetupIcon,
+    RotateCcw as RestoreIcon,
+    CloudDownload as DownloadIcon,
+    Circle as RecordIcon,
 } from 'lucide-react';
 import api from '../api';
 import PerformanceChannel from './PerformanceChannel';
-import { PerformanceEngine } from '../utils/performanceAudio';
+import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
 import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair } from '../utils/cueAudio';
+import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
     listPresetNames,
@@ -43,12 +55,23 @@ import {
     loadPresetIntoSession,
     clearPerformanceSession,
 } from './usePerformanceSession';
+import {
+    channelScope,
+    presetChannelScope,
+    copyScope,
+    clearScope as clearFragmentScope,
+} from '../utils/fragmentStorage';
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
+// Transport colors (original): Play uses the master cyan, Stop the error red,
+// Record its own red — kept as icon-only buttons.
+const RECORD_COLOR = '#E5484D';   // record red
+const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
+const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = 0;
-const MASTER_DB_DEFAULT = -6;
+const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
 const BPM_MAX = 300;
@@ -78,23 +101,32 @@ const formatDb = (db) => {
 };
 
 export default function PerformancePanel(props) {
+    // Reset key for the inner panel. Bumping it forces a full remount of
+    // PerformancePanelInner, which makes usePerformanceSession re-read from
+    // localStorage and every PerformanceChannel re-hydrate from IDB. The
+    // MidiProvider sits outside so MIDI mappings survive a reset (they
+    // have their own clearMidiConfig pathway when needed).
+    const [resetKey, setResetKey] = useState(0);
+    const triggerReset = useCallback(() => setResetKey((k) => k + 1), []);
     return (
         <MidiProvider>
-            <PerformancePanelInner {...props} />
+            <PerformancePanelInner
+                key={resetKey}
+                {...props}
+                onPresetLoaded={triggerReset}
+            />
         </MidiProvider>
     );
 }
 
 function PerformancePanelInner({
     selectedModel,
-    selectedUnwrappedModel,
     availableModels = [],
     baseModels = [],
     availableLoras = [],
     selectedLora = '',
     loraMultiplier = 1.0,
     onSelectModel,
-    onSelectUnwrappedModel,
     onRefreshModels,
     onSelectLora,
     onLoraMultiplierChange,
@@ -105,6 +137,7 @@ function PerformancePanelInner({
     onRandomSeedChange,
     onSeedValueChange,
     onPresetLoaded,
+    onOpenCheckpointManager,
 }) {
     const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
 
@@ -129,7 +162,19 @@ function PerformancePanelInner({
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
-    const [injectBpm, setInjectBpm] = useState(session.injectBpm ?? true);
+    const [promptKey, setPromptKey] = useState(session.promptKey ?? '');
+    const [promptInjectBpm, setPromptInjectBpm] = useState(session.promptInjectBpm ?? false);
+    const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
+    const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
+    const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
+
+    // Master recording. `recording` reflects an active capture; once stopped,
+    // `pendingRecording` holds the encoded WAV { blob, durationSec } until the
+    // user names + saves it (or discards) via the name dialog.
+    const [recording, setRecording] = useState(false);
+    const [pendingRecording, setPendingRecording] = useState(null);
+    const [recordingName, setRecordingName] = useState('');
+    const [savingRecording, setSavingRecording] = useState(false);
 
     // Audio output device. setSinkId requires Chromium ≥ 110 (cueSupported
     // is the runtime check). One device drives BOTH main and cue. Per-pair
@@ -201,9 +246,6 @@ function PerformancePanelInner({
         if (session.selectedModel && session.selectedModel !== selectedModel) {
             onSelectModel?.(session.selectedModel);
         }
-        if (session.selectedUnwrappedModel && session.selectedUnwrappedModel !== selectedUnwrappedModel) {
-            onSelectUnwrappedModel?.(session.selectedUnwrappedModel);
-        }
         if (typeof session.steps === 'number' && session.steps !== steps) {
             onStepsChange?.(session.steps);
         }
@@ -221,10 +263,19 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('bpm', bpm); }, [bpm, updateGlobal]);
     useEffect(() => { updateGlobal('launchQuantum', launchQuantum); }, [launchQuantum, updateGlobal]);
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
-    useEffect(() => { updateGlobal('injectBpm', injectBpm); }, [injectBpm, updateGlobal]);
+    useEffect(() => { updateGlobal('promptKey', promptKey); }, [promptKey, updateGlobal]);
+    useEffect(() => { updateGlobal('promptInjectBpm', promptInjectBpm); }, [promptInjectBpm, updateGlobal]);
+    useEffect(() => { updateGlobal('promptTimeSig', promptTimeSig); }, [promptTimeSig, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterReverbIR', masterReverbIR);
+        engineRef.current?.setMasterReverbIR?.(masterReverbIR);
+    }, [masterReverbIR, updateGlobal]);
+    useEffect(() => {
+        updateGlobal('masterDelayDivision', masterDelayDivision);
+        engineRef.current?.setMasterDelayDivision?.(masterDelayDivision);
+    }, [masterDelayDivision, updateGlobal]);
     useEffect(() => { updateGlobal('linkEnabled', linkEnabled); }, [linkEnabled, updateGlobal]);
     useEffect(() => { updateGlobal('selectedModel', selectedModel || ''); }, [selectedModel, updateGlobal]);
-    useEffect(() => { updateGlobal('selectedUnwrappedModel', selectedUnwrappedModel || ''); }, [selectedUnwrappedModel, updateGlobal]);
     useEffect(() => { updateGlobal('steps', steps); }, [steps, updateGlobal]);
     useEffect(() => { updateGlobal('randomSeed', randomSeed); }, [randomSeed, updateGlobal]);
     useEffect(() => { updateGlobal('seedValue', seedValue); }, [seedValue, updateGlobal]);
@@ -259,7 +310,7 @@ function PerformancePanelInner({
         }
     };
 
-    const handleRestoreDefaults = () => {
+    const handleRestoreDefaults = async () => {
         if (!restoreArmed) {
             // First click arms; second click within 3 s commits. Disarms
             // automatically so the destructive path is never one accidental
@@ -271,50 +322,136 @@ function PerformancePanelInner({
         }
         clearPerformanceSession();
         clearMidiConfig();
+        // Drop every channel's fragment blobs from IDB so a fresh start is
+        // actually fresh. Presets keep their own scopes and survive.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, (_, i) =>
+                clearFragmentScope(channelScope(i)).catch(() => { /* ignore */ })
+            )
+        );
         closePresetMenu();
         onPresetLoaded?.();
     };
 
-    const handleSaveAs = () => {
+    const handleSaveAs = async () => {
         const name = saveAsName.trim();
         if (!name) return;
         savePreset(name, session);
+        // Copy each channel's session-scope blobs into the preset-scope so
+        // the preset's fragments survive overwrites of the live session. Done
+        // after the metadata save so a quota failure here still leaves a
+        // recoverable (if blob-less) preset entry.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, async (_, i) => {
+                const dst = presetChannelScope(name, i);
+                // Replace, don't merge — a re-save of the same preset name
+                // should reflect the current session exactly.
+                await clearFragmentScope(dst).catch(() => { /* ignore */ });
+                await copyScope(channelScope(i), dst).catch(() => { /* ignore */ });
+            })
+        );
         setSaveAsName('');
         refreshPresetNames();
     };
 
-    const handleLoadPreset = (name) => {
+    const handleLoadPreset = async (name) => {
         if (!loadPresetIntoSession(name)) return;
+        // Swap the IDB session-scope blobs to match the loaded preset's
+        // metadata. MUST complete before onPresetLoaded triggers remount —
+        // otherwise the new channels hydrate from a stale session scope.
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, async (_, i) => {
+                const dst = channelScope(i);
+                await clearFragmentScope(dst).catch(() => { /* ignore */ });
+                await copyScope(presetChannelScope(name, i), dst).catch(() => { /* ignore */ });
+            })
+        );
         closePresetMenu();
         // Force-remount via the App-level reset key. Same pathway as Fresh
         // Start, just with a different localStorage payload pre-loaded.
         onPresetLoaded?.();
     };
 
-    const handleDeletePreset = (name, e) => {
+    const handleDeletePreset = async (name, e) => {
         e?.stopPropagation();
         deletePreset(name);
+        await Promise.all(
+            Array.from({ length: CHANNEL_COUNT }, (_, i) =>
+                clearFragmentScope(presetChannelScope(name, i)).catch(() => { /* ignore */ })
+            )
+        );
         refreshPresetNames();
     };
 
-    // Resolve which base model the current selection actually is. Fine-tuned
-    // models carry `base_model` from training_metadata.json via /api/models;
-    // legacy fine-tunes without that field fall back to the size heuristic.
+    // Resolve which SA3 base the current selection maps to. Direct picks of
+    // `sa3-*` models are themselves the base; fine-tuned models carry their
+    // base_model in training_metadata.json (exposed via /api/models).
     const resolvedBaseModel = (() => {
         if (!selectedModel) return null;
-        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
-            return selectedModel;
-        }
+        if (selectedModel.startsWith('sa3-')) return selectedModel;
         const model = availableModels.find((m) => m.name === selectedModel);
-        if (model?.base_model) return model.base_model;
-        if (model && selectedUnwrappedModel) {
-            const u = model.unwrapped_models?.find((x) => x.path === selectedUnwrappedModel);
-            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
-        }
-        return null;
+        return model?.base_model || null;
     })();
 
-    const isSmallModel = resolvedBaseModel === 'stable-audio-open-small';
+    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-small-');
+    // Distilled (post-trained) SA3 variants — names that DON'T end in `-base`.
+    // The Steps dropdown only locks at 8 for these; the *-base checkpoints let
+    // the user pick a real step count.
+    const isDistilledSA3 = !!resolvedBaseModel
+        && resolvedBaseModel.startsWith('sa3-')
+        && !resolvedBaseModel.endsWith('-base');
+
+    // Split baseModels by `kind` for the model-picker grouping. The render
+    // helper is also hoisted to component scope so its MenuItems land as
+    // direct children of <Select>, not nested inside a Fragment.
+    const distilledBaseModels = baseModels.filter(m => m.kind !== 'base');
+    const trueBaseModels = baseModels.filter(m => m.kind === 'base');
+    const renderBaseModelRow = (model) => (
+        <MenuItem
+            key={model.name}
+            value={String(model.name)}
+            disabled={!model.downloaded}
+            sx={{
+                fontSize: perfTokens.fontSize.sm,
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 1,
+                pr: 0.5,
+            }}
+        >
+            <Box component="span" sx={{
+                flex: 1,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+            }}>
+                {model.displayName || model.name}
+            </Box>
+            {!model.downloaded && (
+                <Tooltip title={TIPS.perf.notDownloaded}>
+                    <IconButton
+                        size="small"
+                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            onOpenCheckpointManager?.();
+                        }}
+                        sx={{
+                            ...styles.compactIconBtn('md'),
+                            // Override the MenuItem-disabled pointer-events:none
+                            // so the download button stays clickable, and the
+                            // dimmed opacity so it reads as actionable.
+                            pointerEvents: 'auto',
+                            opacity: 1,
+                        }}
+                    >
+                        <DownloadIcon size={perfTokens.icon.md} />
+                    </IconButton>
+                </Tooltip>
+            )}
+        </MenuItem>
+    );
 
     if (!engineRef.current) {
         engineRef.current = new PerformanceEngine(CHANNEL_COUNT);
@@ -360,6 +497,62 @@ function PerformancePanelInner({
         setMasterDb(value);
         engineRef.current?.setMasterGain(dbToGain(value));
     };
+
+    // Toggle master capture. Stopping opens the name dialog with the encoded
+    // WAV held in pendingRecording.
+    const handleToggleRecord = useCallback(async () => {
+        const engine = engineRef.current;
+        if (!engine) return;
+        if (engine.isRecording()) {
+            const result = await engine.stopRecording();
+            setRecording(false);
+            if (result?.blob) {
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+                setRecordingName(`performance_${stamp}`);
+                setPendingRecording(result);
+            } else {
+                setError('Nothing was captured — the recording was empty.');
+            }
+        } else {
+            try {
+                if (await engine.startRecording()) setRecording(true);
+            } catch (e) {
+                setError(e?.message || 'Recording is not supported in this environment.');
+            }
+        }
+    }, []);
+
+    const handleSaveRecording = useCallback(async () => {
+        const name = (recordingName || '').trim();
+        if (!pendingRecording?.blob || !name) return;
+        setSavingRecording(true);
+        try {
+            const fd = new FormData();
+            fd.append('file', pendingRecording.blob, 'recording.wav');
+            fd.append('name', name);
+            if (pendingRecording.durationSec != null) {
+                fd.append('duration', String(pendingRecording.durationSec));
+            }
+            await api.post('/api/performance/recording', fd);
+            setPendingRecording(null);
+            setRecordingName('');
+        } catch (e) {
+            setError(
+                e?.response?.data?.error
+                || e?.response?.data?.message
+                || 'Failed to save the recording.'
+            );
+        } finally {
+            setSavingRecording(false);
+        }
+    }, [pendingRecording, recordingName]);
+
+    const handleDiscardRecording = useCallback(() => {
+        setPendingRecording(null);
+        setRecordingName('');
+    }, []);
 
     useEffect(() => {
         engineRef.current?.setBpm(bpm);
@@ -415,9 +608,14 @@ function PerformancePanelInner({
         }
         let cancelled = false;
         const poll = async () => {
-            const capturedAt = performance.now();
+            const sentAt = performance.now();
             try {
                 const r = await api.get('/api/link/state');
+                // Best estimate of when the backend sampled the Link clock: the
+                // round-trip midpoint (assumes ~symmetric latency). Stamping at
+                // send-time biased the beat ~½ RTT into the future, nudging
+                // quantized launches early.
+                const capturedAt = (sentAt + performance.now()) / 2;
                 if (cancelled || !r.data?.enabled) return;
                 const serverBpm = Math.round(r.data.bpm);
                 if (serverBpm >= BPM_MIN && serverBpm <= BPM_MAX) {
@@ -449,7 +647,9 @@ function PerformancePanelInner({
             }
         };
         poll();
-        const timer = setInterval(poll, 500);
+        // 200 ms (was 500): fresher beat for launch extrapolation and a tighter
+        // bound on mirroring Ableton's stop. Localhost round-trips are cheap.
+        const timer = setInterval(poll, 200);
         return () => { cancelled = true; clearInterval(timer); };
     }, [linkEnabled]);
 
@@ -536,7 +736,7 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, batchSize = 1 }) => {
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, initAudioPath, initNoiseLevel, onBlob }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -544,10 +744,24 @@ function PerformancePanelInner({
             throw new Error(msg);
         }
 
+        // Auto-inject Key / BPM / Time sig when populated. Skip a field if
+        // its value already appears in the user's prompt so we don't double
+        // up. BPM is a toggle — when on we grab the live master BPM from
+        // the top bar (so it tracks tempo changes).
         const trimmed = (prompt || '').trim();
-        const hasExplicitBpm = /\b\d{2,3}\s*bpm\b/i.test(trimmed);
-        const finalPrompt = injectBpm && !hasExplicitBpm
-            ? `${trimmed}${trimmed ? ', ' : ''}${Math.round(bpm)} BPM`
+        const lower = trimmed.toLowerCase();
+        const additions = [];
+        if (promptKey.trim() && !lower.includes(promptKey.trim().toLowerCase())) {
+            additions.push(promptKey.trim());
+        }
+        if (promptInjectBpm && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
+            additions.push(`${Math.round(bpm)} BPM`);
+        }
+        if (promptTimeSig.trim() && !lower.includes(promptTimeSig.trim().toLowerCase())) {
+            additions.push(promptTimeSig.trim());
+        }
+        const finalPrompt = additions.length > 0
+            ? `${trimmed}${trimmed ? ', ' : ''}${additions.join(', ')}`
             : trimmed;
 
         let baseSeed;
@@ -564,35 +778,45 @@ function PerformancePanelInner({
         }
 
         const count = Math.max(1, Math.min(4, batchSize | 0));
-        const blobs = [];
         for (let i = 0; i < count; i++) {
             // Sequential rather than parallel — the backend serves one
             // generation at a time anyway, and parallelizing would just
-            // queue them server-side with no time saved. Each take gets a
+            // queue them server-side with no time saved. Each fragment gets a
             // distinct seed so the batch produces actual variations rather
             // than the same audio repeated.
             const seed = (baseSeed + i * 0x9e3779b1) >>> 0;
-            // LoRA only meaningful on top of a base model (the LoRA was bound
-            // to that exact base at training time; applying it to a full-FT
-            // model is undefined).
-            const isBaseModel = baseModels.some(m => m.name === selectedModel);
+            const isSA3Base = baseModels.some(m => m.name === selectedModel);
+            const isDistilled = isSA3Base && !selectedModel.endsWith('-base');
             const requestData = {
                 prompt: finalPrompt,
                 duration,
-                cfg_scale: 7.0,
-                steps,
                 seed,
-                model_name: selectedModel,
-                batch_index: i + 1,
-                batch_total: count,
-                ...(selectedUnwrappedModel ? { unwrapped_model_path: selectedUnwrappedModel } : {}),
-                ...(selectedLora && isBaseModel ? { lora_path: selectedLora, lora_multiplier: loraMultiplier } : {}),
+                model_id: selectedModel,
+                // CFG is only meaningful for *-base; backend ignores it on
+                // distilled models. Steps default to 8 for distilled, 50 for
+                // base — only send the override when we're on base.
+                ...(isDistilled ? {} : { steps, cfg_scale: 7.0 }),
+                // LoRA stacking (Phase 4): only attach when the user picked
+                // a LoRA AND the active model is a *-base variant (the only
+                // architecturally valid target).
+                ...(selectedLora && isSA3Base && !isDistilled
+                    ? { loras: [{ path: selectedLora, strength: loraMultiplier }] }
+                    : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
+                // Phase 7: seamless looping. Bars-mode + channel-looping
+                // signals "I want a loop"; backend wrap-inpaints the seam.
+                ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
+                // Phase 8 Variation: re-roll from a prior clip as init_audio.
+                ...(initAudioPath ? { init_audio_path: initAudioPath, init_noise_level: initNoiseLevel ?? 0.9 } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
-            blobs.push(response.data);
+            // Stream: hand each blob to the caller as it arrives so the fragment
+            // can land in the channel's history (and the first one can
+            // auto-load) without waiting for the rest of the batch. Awaited
+            // so the callback's async work (blob load, setState) finishes
+            // before the next backend round-trip starts.
+            await onBlob?.(response.data, i);
         }
-        return blobs;
     };
 
     const handleChannelStateChange = (index, change) => {
@@ -605,7 +829,9 @@ function PerformancePanelInner({
 
     const anyLoaded = channelStates.some(s => s.loaded);
     const anyPlaying = channelStates.some(s => s.playing);
-    const maxDuration = isSmallModel ? 10 : 47;
+    // SA3 max-duration limits (match _MODEL_INFO in audio_generator.py and
+    // max_duration_sec in the Checkpoint Manager catalog).
+    const maxDuration = isSmallModel ? 120 : 380;
 
     const handleMuteSoloChange = (index, change) => {
         const engine = engineRef.current;
@@ -622,11 +848,6 @@ function PerformancePanelInner({
     const handleModelChange = (event) => {
         const value = event.target.value;
         if (onSelectModel) onSelectModel(value);
-        if (onSelectUnwrappedModel) onSelectUnwrappedModel('');
-    };
-
-    const handleCheckpointChange = (event) => {
-        if (onSelectUnwrappedModel) onSelectUnwrappedModel(String(event.target.value));
     };
 
     const handleDeleteFineTuned = async (modelName) => {
@@ -638,7 +859,6 @@ function PerformancePanelInner({
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(modelName)}`);
             if (selectedModel === modelName) {
                 onSelectModel?.('');
-                onSelectUnwrappedModel?.('');
             }
             onRefreshModels?.();
         } catch (err) {
@@ -667,41 +887,20 @@ function PerformancePanelInner({
         }
     };
 
-    const selectedFineTuned = selectedModel
-        ? availableModels.find((m) => m.name === selectedModel)
-        : null;
-    const unwrappedModels = selectedFineTuned?.unwrapped_models || [];
-    const checkpointValue = unwrappedModels
-        .map((u) => String(u.path))
-        .includes(selectedUnwrappedModel)
-        ? selectedUnwrappedModel
-        : '';
-
     return (
         <Box sx={styles.root}>
             <Paper sx={{
-                display: 'flex',
-                alignItems: 'center',
+                ...styles.barCard,
                 gap: 1,
-                px: 1.25,
-                py: 0.75,
-                borderRadius: 2,
-                border: '1px solid',
-                borderColor: 'divider',
-                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
-                flexWrap: { xs: 'wrap', md: 'nowrap' },
+                // Top-only drop shadow — keeps the bar visually lifted from
+                // the app surface above it without casting darkness down onto
+                // the channels grid below. Negative Y inverts the direction
+                // of MUI's default Paper elevation.
+                boxShadow: '0 -2px 6px rgba(0, 0, 0, 0.12)',
             }}>
                 {/* Link — compact rectangle, Ableton-style */}
                 <Tooltip
-                    title={
-                        linkInstalling
-                            ? 'Installing LinkPython-extern…'
-                            : !linkAvailable
-                                ? 'Click to install Ableton Link script'
-                                : linkEnabled
-                                    ? `Link on — ${linkPeers} peer${linkPeers === 1 ? '' : 's'} (click to disable)`
-                                    : 'Click to sync BPM with other Link-enabled apps on this network'
-                    }
+                    title={TIPS.perf.link({ installing: linkInstalling, available: linkAvailable, enabled: linkEnabled, peers: linkPeers })}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <ButtonBase
@@ -711,11 +910,10 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontFamily: 'inherit',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 1,
-                                minWidth: 46,
+                                px: 0.5,
+                                minWidth: 38,
                                 height: perfTokens.height.compact,
                                 borderRadius: '2px',
                                 // Three states matching Ableton Live's button:
@@ -743,7 +941,7 @@ function PerformancePanelInner({
                             }}
                         >
                             {linkInstalling
-                                ? 'installing…'
+                                ? 'Installing…'
                                 : linkEnabled && linkPeers > 0
                                     ? `${linkPeers} Link`
                                     : 'Link'}
@@ -753,13 +951,7 @@ function PerformancePanelInner({
 
                 {/* MIDI learn toggle — same compact rectangle style as Link. */}
                 <Tooltip
-                    title={
-                        !midi?.supported
-                            ? (midi?.permissionError || 'Web MIDI is not available')
-                            : midi.learnMode
-                                ? 'Exit MIDI mode (Esc)'
-                                : 'Enter MIDI mode — click a control then move a hardware knob/button to bind'
-                    }
+                    title={TIPS.perf.midiMode({ supported: midi?.supported, permissionError: midi?.permissionError, learnMode: midi?.learnMode })}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <ButtonBase
@@ -769,11 +961,10 @@ function PerformancePanelInner({
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontFamily: 'inherit',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 1,
-                                minWidth: 46,
+                                px: 0.5,
+                                minWidth: 38,
                                 height: perfTokens.height.compact,
                                 borderRadius: '2px',
                                 bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
@@ -792,14 +983,14 @@ function PerformancePanelInner({
                         </ButtonBase>
                     </span>
                 </Tooltip>
-                <Tooltip title="MIDI settings & mappings">
+                <Tooltip title={TIPS.perf.midiSettings}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
                             onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <SettingsIcon size={14} />
+                            <SettingsIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -810,18 +1001,16 @@ function PerformancePanelInner({
                 />
 
                 <Tooltip
-                    title={cueSupported
-                        ? 'Audio setup — choose output device'
-                        : 'Audio device selection requires Chrome/Edge (AudioContext.setSinkId). Output falls back to system default.'}
+                    title={TIPS.perf.audioSetup(cueSupported)}
                 >
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
                             onClick={handleOpenAudioMenu}
                             disabled={!cueSupported}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <AudioSetupIcon size={14} />
+                            <AudioSetupIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -830,43 +1019,105 @@ function PerformancePanelInner({
                     open={Boolean(audioMenuAnchor)}
                     onClose={handleCloseAudioMenu}
                     MenuListProps={{ sx: { py: 0 } }}
-                    PaperProps={{ sx: { minWidth: 280, borderRadius: 1.5 } }}
+                    PaperProps={{
+                        sx: {
+                            width: 300,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                        },
+                    }}
                 >
-                    <MenuItem disabled sx={{ opacity: 1, fontSize: perfTokens.fontSize.small, color: 'text.disabled' }}>
-                        Audio Setup
-                    </MenuItem>
-                    <MenuItem
-                        onClick={() => handlePickAudioDevice('')}
-                        selected={outputDeviceId === ''}
-                        sx={{ fontSize: perfTokens.fontSize.body }}
-                    >
-                        <ListItemText primary="System device (default)" />
-                    </MenuItem>
-                    {audioDevices.length === 0 && (
-                        <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.small }}>
-                            No additional output devices detected
-                        </MenuItem>
-                    )}
-                    {audioDevices.map(d => (
+                    {/* Title bar — matches the Presets / MIDI menus. */}
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: 1,
+                    }}>
+                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
+                            Audio Output
+                        </Typography>
+                        <IconButton onClick={handleCloseAudioMenu} sx={styles.compactIconBtn('md')}>
+                            <CloseXIcon size={perfTokens.icon.sm} />
+                        </IconButton>
+                    </Box>
+
+                    <Divider />
+
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block' }}>
+                            Output device
+                        </Typography>
+                    </Box>
+                    <Box sx={{ pb: 0.75, px: 0.75 }}>
                         <MenuItem
-                            key={d.deviceId}
-                            onClick={() => handlePickAudioDevice(d.deviceId)}
-                            selected={outputDeviceId === d.deviceId}
-                            sx={{ fontSize: perfTokens.fontSize.body }}
+                            onClick={() => handlePickAudioDevice('')}
+                            selected={outputDeviceId === ''}
+                            sx={{
+                                borderRadius: 1,
+                                py: 0.5,
+                                px: 1,
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: 500,
+                            }}
                         >
-                            <ListItemText primary={d.label || `Output (${d.deviceId.slice(0, 6)}…)`} />
+                            <Box component="span" sx={{
+                                flex: 1,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                            }}>
+                                System device (default)
+                            </Box>
                         </MenuItem>
-                    ))}
+                        {audioDevices.length === 0 && (
+                            <Box sx={{ px: 1, py: 0.5 }}>
+                                <Typography sx={{
+                                    fontSize: perfTokens.fontSize.xs,
+                                    color: 'text.disabled',
+                                    fontStyle: 'italic',
+                                }}>
+                                    No additional output devices detected
+                                </Typography>
+                            </Box>
+                        )}
+                        {audioDevices.map(d => (
+                            <MenuItem
+                                key={d.deviceId}
+                                onClick={() => handlePickAudioDevice(d.deviceId)}
+                                selected={outputDeviceId === d.deviceId}
+                                sx={{
+                                    borderRadius: 1,
+                                    py: 0.5,
+                                    px: 1,
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 500,
+                                }}
+                            >
+                                <Box component="span" sx={{
+                                    flex: 1,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                }}>
+                                    {d.label || `Output (${d.deviceId.slice(0, 6)}…)`}
+                                </Box>
+                            </MenuItem>
+                        ))}
+                    </Box>
                 </Menu>
 
-                <Tooltip title="Save / load presets">
+                <Tooltip title={TIPS.perf.presets}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                         <IconButton
                             size="small"
                             onClick={openPresetMenu}
-                            sx={{ width: perfTokens.height.compact, height: perfTokens.height.compact, color: 'text.secondary' }}
+                            sx={styles.compactIconBtn('lg')}
                         >
-                            <SaveIcon size={14} />
+                            <SaveIcon size={perfTokens.icon.md} />
                         </IconButton>
                     </span>
                 </Tooltip>
@@ -877,103 +1128,115 @@ function PerformancePanelInner({
                     MenuListProps={{ sx: { py: 0 } }}
                     PaperProps={{
                         sx: {
-                            minWidth: 240,
-                            borderRadius: 1.5,
+                            width: 300,
+                            borderRadius: 2,
+                            border: '1px solid',
+                            borderColor: 'divider',
                         },
                     }}
                 >
-                    {/* SAVE section — type a name and click save (or press Enter) */}
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography
-                            sx={{
-                                fontSize: perfTokens.fontSize.badge,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                fontWeight: 700,
-                                color: 'text.secondary',
-                                textTransform: 'uppercase',
-                            }}
-                        >
-                            Save
+                    {/* Title bar — matches the MIDI settings popover so the two
+                        top-bar menus speak the same visual language. */}
+                    <Box sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: 1,
+                    }}>
+                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
+                            Presets
                         </Typography>
+                        <IconButton onClick={closePresetMenu} sx={styles.compactIconBtn('md')}>
+                            <CloseXIcon size={perfTokens.icon.sm} />
+                        </IconButton>
                     </Box>
-                    <Box sx={{ px: 1.5, pb: 1.25, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                        <TextField
-                            autoFocus
-                            size="small"
-                            placeholder="Preset name"
-                            value={saveAsName}
-                            onChange={(e) => setSaveAsName(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSaveAs();
-                                e.stopPropagation();
-                            }}
-                            sx={{
-                                flex: 1,
-                                '& .MuiOutlinedInput-root': {
-                                    borderRadius: 1.5,
+
+                    <Divider />
+
+                    {/* SAVE — type a name, Enter or click Save. */}
+                    <Box sx={{ px: 1.5, pt: 1.25, pb: 1.25 }}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block', mb: 0.75 }}>
+                            Save current session as
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                            <TextField
+                                autoFocus
+                                size="small"
+                                placeholder="Preset name"
+                                value={saveAsName}
+                                onChange={(e) => setSaveAsName(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveAs();
+                                    e.stopPropagation();
+                                }}
+                                sx={{
+                                    flex: 1,
+                                    '& .MuiOutlinedInput-root': {
+                                        borderRadius: 1.5,
+                                        height: perfTokens.height.compact,
+                                        fontSize: perfTokens.fontSize.sm,
+                                    },
+                                }}
+                            />
+                            <Button
+                                size="small"
+                                variant="contained"
+                                onClick={handleSaveAs}
+                                disabled={!saveAsName.trim()}
+                                sx={{
                                     height: perfTokens.height.compact,
-                                    fontSize: perfTokens.fontSize.body,
-                                },
-                            }}
-                        />
-                        <Button
-                            size="small"
-                            variant="contained"
-                            onClick={handleSaveAs}
-                            disabled={!saveAsName.trim()}
-                            sx={{
-                                height: perfTokens.height.compact,
-                                fontSize: perfTokens.fontSize.body,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                borderRadius: 1.5,
-                                minWidth: 56,
-                                px: 1.25,
-                            }}
-                        >
-                            Save
-                        </Button>
-                    </Box>
-                    {saveAsName.trim() && presetNames.includes(saveAsName.trim()) && (
-                        <Box sx={{ px: 1.5, pb: 0.75 }}>
-                            <Typography
-                                variant="caption"
-                                color="warning.main"
-                                sx={{ fontSize: perfTokens.fontSize.small }}
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 600,
+                                    borderRadius: 1.5,
+                                    minWidth: 60,
+                                    px: 1.5,
+                                    textTransform: 'none',
+                                }}
                             >
+                                Save
+                            </Button>
+                        </Box>
+                        {saveAsName.trim() && presetNames.includes(saveAsName.trim()) && (
+                            <Typography sx={{
+                                fontSize: perfTokens.fontSize.xs,
+                                color: 'warning.main',
+                                fontStyle: 'italic',
+                                mt: 0.5,
+                            }}>
                                 Will overwrite existing preset.
                             </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
-
-                    {/* LOAD section — list of saved presets */}
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography
-                            sx={{
-                                fontSize: perfTokens.fontSize.badge,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                fontWeight: 700,
-                                color: 'text.secondary',
-                                textTransform: 'uppercase',
-                            }}
-                        >
-                            Load
-                        </Typography>
+                        )}
                     </Box>
-                    {presetNames.length === 0 ? (
-                        <Box sx={{ px: 1.5, pb: 1.25 }}>
-                            <Typography
-                                variant="caption"
-                                color="text.disabled"
-                                sx={{ fontSize: perfTokens.fontSize.small }}
-                            >
-                                No presets saved yet.
+
+                    <Divider />
+
+                    {/* LOAD — saved presets. */}
+                    <Box sx={{
+                        px: 1.5,
+                        pt: 1.25,
+                        pb: presetNames.length === 0 ? 1.25 : 0.5,
+                    }}>
+                        <Typography sx={{
+                            ...perfTokens.labelMuted,
+                            display: 'block',
+                            mb: presetNames.length === 0 ? 0.5 : 0,
+                        }}>
+                            Saved presets
+                        </Typography>
+                        {presetNames.length === 0 && (
+                            <Typography sx={{
+                                fontSize: perfTokens.fontSize.xs,
+                                color: 'text.disabled',
+                                fontStyle: 'italic',
+                            }}>
+                                No presets saved yet
                             </Typography>
-                        </Box>
-                    ) : (
-                        <Box sx={{ pb: 0.5 }}>
+                        )}
+                    </Box>
+                    {presetNames.length > 0 && (
+                        <Box sx={{ pb: 0.75, px: 0.75 }}>
                             {presetNames.map((name) => (
                                 <MenuItem
                                     key={name}
@@ -982,19 +1245,28 @@ function PerformancePanelInner({
                                         display: 'flex',
                                         justifyContent: 'space-between',
                                         gap: 1,
-                                        fontSize: perfTokens.fontSize.body,
-                                        fontWeight: 600,
-                                        letterSpacing: perfTokens.letterSpacing.wide,
+                                        borderRadius: 1,
+                                        py: 0.5,
+                                        px: 1,
+                                        fontSize: perfTokens.fontSize.sm,
+                                        fontWeight: 500,
                                     }}
                                 >
-                                    <ListItemText primary={name} primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }} />
-                                    <Tooltip title="Delete preset">
+                                    <Box component="span" sx={{
+                                        flex: 1,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {name}
+                                    </Box>
+                                    <Tooltip title={TIPS.perf.deletePreset} placement="left" arrow>
                                         <IconButton
                                             size="small"
                                             onClick={(e) => handleDeletePreset(name, e)}
-                                            sx={{ ml: 1, width: perfTokens.height.sub, height: perfTokens.height.sub }}
+                                            sx={{ ...styles.compactIconBtn('md', 'danger'), ml: 1 }}
                                         >
-                                            <CloseXIcon size={12} />
+                                            <CloseXIcon size={perfTokens.icon.sm} />
                                         </IconButton>
                                     </Tooltip>
                                 </MenuItem>
@@ -1002,46 +1274,44 @@ function PerformancePanelInner({
                         </Box>
                     )}
 
-                    <Box sx={{ borderTop: '1px solid', borderColor: 'divider' }} />
+                    <Divider />
 
-                    {/* Destructive: wipes session + MIDI mappings. Two-click arm
-                        prevents accidental clicks; the menu auto-disarms after 3 s. */}
-                    <Tooltip
-                        title={restoreArmed
-                            ? 'Click again within 3s to confirm — this clears all panel settings AND MIDI mappings'
-                            : 'Reset panel settings and clear MIDI mappings'}
-                    >
-                        <MenuItem
-                            onClick={handleRestoreDefaults}
-                            sx={{
-                                fontSize: perfTokens.fontSize.body,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                color: restoreArmed ? 'error.main' : 'text.secondary',
-                            }}
+                    {/* Danger zone — armed-to-confirm wipes session config, fragments,
+                        and MIDI mappings. Auto-disarms after 3 s. */}
+                    <Box sx={{ px: 0.75, py: 0.75 }}>
+                        <Tooltip
+                            title={TIPS.perf.restoreDefaults(restoreArmed)}
+                            placement="left"
+                            arrow
                         >
-                            <ListItemText
-                                primary={restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
-                                primaryTypographyProps={{ sx: { fontSize: perfTokens.fontSize.body } }}
-                            />
-                        </MenuItem>
-                    </Tooltip>
+                            <MenuItem
+                                onClick={handleRestoreDefaults}
+                                sx={(theme) => ({
+                                    borderRadius: 1,
+                                    py: 0.5,
+                                    px: 1,
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 500,
+                                    color: restoreArmed ? theme.palette.error.main : 'text.secondary',
+                                    bgcolor: restoreArmed ? `${theme.palette.error.main}14` : 'transparent',
+                                    '&:hover': {
+                                        bgcolor: restoreArmed
+                                            ? `${theme.palette.error.main}26`
+                                            : 'action.hover',
+                                        color: restoreArmed ? theme.palette.error.main : 'text.primary',
+                                    },
+                                    transition: 'background-color 120ms, color 120ms',
+                                })}
+                            >
+                                <RestoreIcon size={perfTokens.icon.sm} style={{ marginRight: 8, flexShrink: 0 }} />
+                                {restoreArmed ? 'Click again to confirm' : 'Restore defaults'}
+                            </MenuItem>
+                        </Tooltip>
+                    </Box>
                 </Menu>
 
-                <Tooltip placement="right" title="Launch quantization — match Live's">
-                    <FormControl
-                        size="small"
-                        sx={{
-                            minWidth: 92,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, height: perfTokens.height.compact },
-                            '& .MuiSelect-select': {
-                                py: 0,
-                                fontSize: perfTokens.fontSize.body,
-                                fontWeight: 600,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                            },
-                        }}
-                    >
+                <Tooltip placement="right" title={TIPS.perf.launchQuant}>
+                    <FormControl size="small" sx={{ ...styles.pillControl, minWidth: 92 }}>
                         <Select
                             value={launchQuantum}
                             onChange={(e) => setLaunchQuantum(Number(e.target.value))}
@@ -1051,8 +1321,8 @@ function PerformancePanelInner({
                             }}
                         >
                             {LAUNCH_QUANTIZE_OPTIONS.map((opt) => (
-                                <MenuItem key={opt.value} value={opt.value}>
-                                    <Typography variant="body2">{opt.label}</Typography>
+                                <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                    {opt.label}
                                 </MenuItem>
                             ))}
                         </Select>
@@ -1075,31 +1345,35 @@ function PerformancePanelInner({
                         onChange={handleBpmChange}
                         onFocus={handleBpmFocus}
                         onBlur={handleBpmBlur}
-                        inputProps={{ step: 1, inputMode: 'numeric', 'aria-label': 'Tempo in BPM' }}
+                        // inputProps.style wins against MUI's
+                        // .MuiInputBase-inputSizeSmall 14px default — needed
+                        // because the pillControl theme can't reach the
+                        // rendered <input> at the same CSS specificity.
+                        inputProps={{
+                            step: 1,
+                            inputMode: 'numeric',
+                            'aria-label': 'Tempo in BPM',
+                            style: {
+                                textAlign: 'right',
+                                fontVariantNumeric: 'tabular-nums',
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
+                                paddingRight: 0,
+                            },
+                        }}
                         InputProps={{
                             endAdornment: (
-                                <Typography
-                                    component="span"
-                                    sx={{
-                                        fontSize: perfTokens.fontSize.small,
-                                        letterSpacing: perfTokens.letterSpacing.wide,
-                                        color: 'text.disabled',
-                                        pl: 0.5,
-                                        userSelect: 'none',
-                                    }}
-                                >
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'text.disabled', pl: 0.5, userSelect: 'none' }}>
                                     BPM
-                                </Typography>
+                                </Box>
                             ),
                         }}
                         sx={{
-                            width: 84,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5, pr: 1 },
-                            '& input': {
-                                textAlign: 'right',
-                                fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.body,
-                                pr: 0,
+                            ...styles.pillControl,
+                            width: 92,
+                            '& .MuiOutlinedInput-root': {
+                                ...styles.pillControl['& .MuiOutlinedInput-root'],
+                                pr: 1,
                             },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                 WebkitAppearance: 'none',
@@ -1113,30 +1387,98 @@ function PerformancePanelInner({
                 {/* Model picker + FT-checkpoint + LoRA pickers now live in the
                     bottom bar so the top strip stays just BPM + transport. */}
 
+                {/* Icon-only transport — titles live in the tooltips. */}
                 <MidiMappable id="master.playAll" label="Play All" kind="trigger" onChange={handlePlayAll}>
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<PlayAllIcon size={14} />}
-                        onClick={handlePlayAll}
-                        disabled={!anyLoaded}
-                        sx={styles.masterBtn(MASTER_COLOR, 'play')}
-                    >
-                        Play All
-                    </Button>
+                    <Tooltip title="Play All">
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                onClick={handlePlayAll}
+                                disabled={!anyLoaded}
+                                aria-label="Play All"
+                                sx={styles.masterIconBtn(PLAY_COLOR)}
+                            >
+                                <PlayAllIcon size={14} fill="currentColor" />
+                            </IconButton>
+                        </span>
+                    </Tooltip>
                 </MidiMappable>
                 <MidiMappable id="master.stopAll" label="Stop All" kind="trigger" onChange={handleStopAll}>
-                    <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<StopAllIcon size={14} />}
-                        onClick={handleStopAll}
-                        disabled={!anyPlaying}
-                        sx={styles.masterBtn(MASTER_COLOR, 'stop')}
-                    >
-                        Stop All
-                    </Button>
+                    <Tooltip title="Stop All">
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                onClick={handleStopAll}
+                                disabled={!anyPlaying}
+                                aria-label="Stop All"
+                                sx={styles.masterIconBtn(STOP_COLOR)}
+                            >
+                                <StopAllIcon size={14} fill="currentColor" />
+                            </IconButton>
+                        </span>
+                    </Tooltip>
                 </MidiMappable>
+
+                {/* Record the master output. Stopping opens a dialog to name
+                    the capture, saved as a WAV in the output folder. */}
+                <MidiMappable id="master.record" label="Record Performance" kind="trigger" onChange={handleToggleRecord}>
+                    <Tooltip title={recording ? 'Stop recording' : 'Record performance'}>
+                        <span style={{ display: 'inline-flex' }}>
+                            <IconButton
+                                size="small"
+                                disableRipple
+                                onClick={handleToggleRecord}
+                                aria-label={recording ? 'Stop recording' : 'Record performance'}
+                                sx={styles.masterIconBtn(RECORD_COLOR)}
+                            >
+                                {recording
+                                    ? <StopAllIcon size={14} fill="currentColor" />
+                                    : <RecordIcon size={14} fill="currentColor" />}
+                            </IconButton>
+                        </span>
+                    </Tooltip>
+                </MidiMappable>
+
+                {/* Main / Cue output channel-pair selectors. Pushed to the right
+                    edge of the bar via ml: 'auto' so the transport controls keep
+                    their cluster on the left. Pairs are derived from the current
+                    device's maxChannelCount; Stage 1 stores the selection,
+                    Stage 2 wires the ChannelMergerNode routing. */}
+                {(() => {
+                    const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
+                    const pairs = Array.from({ length: pairCount }, (_, i) => ({
+                        value: i,
+                        label: `${i * 2 + 1}–${i * 2 + 2}`,
+                    }));
+                    const fieldGroup = (label, value, onChange) => (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <Typography component="span" sx={perfTokens.labelMuted}>{label}</Typography>
+                            <FormControl size="small" sx={{ ...styles.pillControl, width: 84 }}>
+                                <Select value={value} onChange={onChange}>
+                                    {pairs.map(p => (
+                                        <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                            Ch {p.label}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Box>
+                    );
+                    return (
+                        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {fieldGroup(
+                                'Main out',
+                                Math.min(mainOutputPair, pairCount - 1),
+                                (e) => setMainOutputPair(Number(e.target.value)),
+                            )}
+                            {fieldGroup(
+                                'Cue out',
+                                Math.min(cueOutputPair, pairCount - 1),
+                                (e) => setCueOutputPair(Number(e.target.value)),
+                            )}
+                        </Box>
+                    );
+                })()}
             </Paper>
 
             {error && (
@@ -1168,186 +1510,170 @@ function PerformancePanelInner({
 
                 <Box sx={styles.masterStrip(MASTER_COLOR)}>
                     <Box sx={styles.masterHeader(MASTER_COLOR)}>
-                        <Box sx={styles.masterBadge(MASTER_COLOR)}>MASTER</Box>
+                        <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
                     </Box>
 
-                    <Box sx={styles.masterFaderWrap}>
-                        <Box sx={styles.masterMeterTrack}>
-                            <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
-                            <Box sx={styles.masterMeterSegments} />
-                        </Box>
-                        <MidiMappable
-                            id="master.fader"
-                            label="Master Fader"
-                            kind="continuous"
-                            min={MASTER_DB_MIN}
-                            max={MASTER_DB_MAX}
-                            value={masterDb}
-                            onChange={(v) => handleMasterChange(null, v)}
-                            sx={{ flex: 1, alignSelf: 'stretch' }}
-                        >
-                            <Slider
-                                orientation="vertical"
-                                value={masterDb}
-                                onChange={handleMasterChange}
+                    {/* Middle group — fader+meter (fixed height) plus the
+                        DBFS/Pk readouts, vertically centered in the remaining
+                        space between the header and the FX pickers below. */}
+                    <Box sx={{
+                        flex: 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 0.5,
+                        minHeight: 0,
+                    }}>
+                        <Box sx={styles.masterFaderWrap}>
+                            <Box sx={styles.masterMeterTrack}>
+                                <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
+                                <Box sx={styles.masterMeterSegments} />
+                            </Box>
+                            <MidiMappable
+                                id="master.fader"
+                                label="Master Fader"
+                                kind="continuous"
                                 min={MASTER_DB_MIN}
                                 max={MASTER_DB_MAX}
-                                step={0.1}
-                                sx={styles.masterFader(MASTER_COLOR)}
-                            />
-                        </MidiMappable>
+                                value={masterDb}
+                                onChange={(v) => handleMasterChange(null, v)}
+                                sx={{
+                                    alignSelf: 'stretch',
+                                    // Fixed-width lane wide enough for the 16 px
+                                    // thumb plus a touch of hit area. Without an
+                                    // explicit width the wrapper would either
+                                    // collapse to nothing (no flex parent on the
+                                    // slider) or stretch to fill (with flex: 1),
+                                    // which pinned the fader to the left edge.
+                                    width: 20,
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                }}
+                            >
+                                <Slider
+                                    orientation="vertical"
+                                    value={masterDb}
+                                    onChange={handleMasterChange}
+                                    min={MASTER_DB_MIN}
+                                    max={MASTER_DB_MAX}
+                                    step={0.1}
+                                    sx={styles.masterFader(MASTER_COLOR)}
+                                />
+                            </MidiMappable>
+                        </Box>
+
+                        <Box sx={styles.masterReadouts}>
+                            <Typography sx={styles.masterValue}>
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                    DBFS
+                                </Box>
+                                {' '}{formatDb(masterDb)}
+                            </Typography>
+                            <Typography sx={styles.masterPeakValue}>
+                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
+                                    Pk
+                                </Box>
+                                {' '}{formatDb(peakLabelDb)}
+                            </Typography>
+                        </Box>
                     </Box>
 
-                    <Box sx={styles.masterReadouts}>
-                        <Typography variant="caption" sx={styles.masterValue}>
-                            dBFS {formatDb(masterDb)}
-                        </Typography>
-                        <Typography variant="caption" sx={styles.masterPeakValue}>
-                            pk {formatDb(peakLabelDb)}
-                        </Typography>
+                    {/* Master FX pickers — Reverb IR and Delay division.
+                        No wet sliders: the shared FX run always-on, and the
+                        per-channel DLY/REV knobs drive the send amounts. */}
+                    <Box sx={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 0.75,
+                        pt: 0.75,
+                        borderTop: `1px solid ${MASTER_COLOR}33`,
+                    }}>
+                        <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                            <Select
+                                value={masterReverbIR}
+                                onChange={(e) => setMasterReverbIR(e.target.value)}
+                                renderValue={(value) => {
+                                    const ir = IMPULSE_RESPONSES.find((x) => x.id === value);
+                                    return `Rev · ${ir?.name ?? '—'}`;
+                                }}
+                            >
+                                {IMPULSE_RESPONSES.map((ir) => (
+                                    <MenuItem key={ir.id} value={ir.id} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                        {ir.name}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                        <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                            <Select
+                                value={masterDelayDivision}
+                                onChange={(e) => setMasterDelayDivision(e.target.value)}
+                                renderValue={(value) => {
+                                    const d = MASTER_DELAY_DIVISIONS.find((x) => x.id === value);
+                                    return `Dly · ${d?.label ?? '—'}`;
+                                }}
+                            >
+                                {MASTER_DELAY_DIVISIONS.map((d) => (
+                                    <MenuItem key={d.id} value={d.id} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                        {d.label}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
                     </Box>
-
-                    {/* Main / Cue output channel pair selection. Pairs are
-                        derived from the current device's maxChannelCount.
-                        Stage 1: selections are stored but routing still goes
-                        through the stereo destination — channel-pair routing
-                        via ChannelMergerNode lands in Stage 2. */}
-                    {(() => {
-                        const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
-                        const pairs = Array.from({ length: pairCount }, (_, i) => ({
-                            value: i,
-                            label: `${i * 2 + 1}–${i * 2 + 2}`,
-                        }));
-                        const labelSx = {
-                            fontSize: perfTokens.fontSize.small,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                            display: 'block',
-                            mb: 0.25,
-                        };
-                        const selectSx = {
-                            width: '100%',
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                            '& .MuiSelect-select': {
-                                fontSize: perfTokens.fontSize.body,
-                                py: 0.5,
-                            },
-                        };
-                        return (
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 0.5 }}>
-                                <Box>
-                                    <Typography component="span" sx={labelSx}>MAIN OUT</Typography>
-                                    <FormControl size="small" sx={selectSx}>
-                                        <Select
-                                            value={Math.min(mainOutputPair, pairCount - 1)}
-                                            onChange={(e) => setMainOutputPair(Number(e.target.value))}
-                                        >
-                                            {pairs.map(p => (
-                                                <MenuItem key={p.value} value={p.value}>
-                                                    <Typography variant="body2">Ch {p.label}</Typography>
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                </Box>
-                                <Box>
-                                    <Typography component="span" sx={labelSx}>CUE OUT</Typography>
-                                    <FormControl size="small" sx={selectSx}>
-                                        <Select
-                                            value={Math.min(cueOutputPair, pairCount - 1)}
-                                            onChange={(e) => setCueOutputPair(Number(e.target.value))}
-                                        >
-                                            {pairs.map(p => (
-                                                <MenuItem key={p.value} value={p.value}>
-                                                    <Typography variant="body2">Ch {p.label}</Typography>
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                </Box>
-                            </Box>
-                        );
-                    })()}
                 </Box>
             </Box>
 
-            <Paper sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2.5,
-                px: 1.5,
-                py: 0.75,
-                mt: 1,
-                borderRadius: 2,
-                border: '1px solid',
-                borderColor: 'divider',
-                background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.04) 0%, rgba(159, 138, 230, 0.03) 100%)',
-                flexWrap: { xs: 'wrap', md: 'nowrap' },
-            }}>
+            <Paper sx={{ ...styles.barCard, gap: 2.5, mt: 1 }}>
                 {/* Model + artifact pickers — moved here from the top row so the
                     primary strip stays just BPM + transport. Each is gated so
                     they only appear when relevant. */}
-                <FormControl size="small" sx={{
-                    width: 120,
-                    '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                    '& .MuiSelect-select': {
-                        fontSize: perfTokens.fontSize.body,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                    },
-                }}>
+                <FormControl size="small" sx={{ ...styles.pillControl, width: 140 }}>
                     <Select
                         value={selectedModel || ''}
                         onChange={handleModelChange}
                         displayEmpty
                         renderValue={(value) => {
                             if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
-                            const SHORT = {
-                                'stable-audio-open-1.0': 'SAO Full',
-                                'stable-audio-open-small': 'SAO Small',
-                            };
-                            if (SHORT[value]) return SHORT[value];
                             const base = baseModels.find((m) => m.name === value);
                             if (base) return base.displayName || base.name;
                             return value;
                         }}
                     >
-                        {baseModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Base Models ──
-                                </Typography>
+                        {/* Distilled (post-trained) and Base SA3 variants are
+                            split by their `kind` field. modelRow is defined
+                            inline at component scope so MUI Select sees the
+                            generated MenuItems as direct flat children — wrapping
+                            them in an IIFE-returned Fragment broke selection
+                            (Select couldn't find the option matching `value`). */}
+                        {distilledBaseModels.length > 0 && (
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Distilled ──
                             </MenuItem>
                         )}
-                        {baseModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                disabled={!model.downloaded}
-                            >
-                                <Typography variant="body2">
-                                    {model.displayName || model.name}
-                                </Typography>
+                        {distilledBaseModels.map(renderBaseModelRow)}
+                        {trueBaseModels.length > 0 && (
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Base ──
                             </MenuItem>
-                        ))}
+                        )}
+                        {trueBaseModels.map(renderBaseModelRow)}
                         {availableModels.length > 0 && (
-                            <MenuItem disabled>
-                                <Typography variant="caption" color="textSecondary">
-                                    ── Fine-tuned Models ──
-                                </Typography>
+                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                ── Fine-tuned ──
                             </MenuItem>
                         )}
                         {availableModels.map((model) => (
                             <MenuItem
                                 key={model.name}
                                 value={String(model.name)}
-                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
+                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
                             >
-                                <Typography variant="body2" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {model.name}
-                                </Typography>
-                                <Tooltip title="Delete fine-tuned model">
+                                </Box>
+                                <Tooltip title={TIPS.perf.deleteFineTuned}>
                                     <IconButton
                                         size="small"
                                         onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -1356,12 +1682,9 @@ function PerformancePanelInner({
                                             e.preventDefault();
                                             handleDeleteFineTuned(model.name);
                                         }}
-                                        sx={{
-                                            color: 'text.disabled',
-                                            '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                        }}
+                                        sx={styles.compactIconBtn('md', 'danger')}
                                     >
-                                        <DeleteIcon size={14} />
+                                        <DeleteIcon size={perfTokens.icon.md} />
                                     </IconButton>
                                 </Tooltip>
                             </MenuItem>
@@ -1369,56 +1692,20 @@ function PerformancePanelInner({
                     </Select>
                 </FormControl>
 
-                {unwrappedModels.length > 0 && (
-                    <FormControl size="small" sx={{
-                        width: 120,
-                        '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                        '& .MuiSelect-select': {
-                            fontSize: perfTokens.fontSize.body,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                        },
-                    }}>
-                        <Select
-                            value={checkpointValue}
-                            onChange={handleCheckpointChange}
-                            displayEmpty
-                            renderValue={(value) => {
-                                if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
-                                const found = unwrappedModels.find((u) => String(u.path) === value);
-                                return found ? found.name : value;
-                            }}
-                        >
-                            {unwrappedModels.map((unwrapped, index) => (
-                                <MenuItem key={index} value={String(unwrapped.path)}>
-                                    <Box>
-                                        <Typography variant="body2">{unwrapped.name}</Typography>
-                                        {unwrapped.size_mb && (
-                                            <Typography variant="caption" color="textSecondary">
-                                                {unwrapped.size_mb} MB
-                                            </Typography>
-                                        )}
-                                    </Box>
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                )}
-
-                {/* LoRA + its checkpoint sub-picker — always rendered (disabled
-                    when irrelevant) so the bar layout doesn't shift as the user
-                    picks. */}
+                {/* Combined LoRA + checkpoint picker — every option is a
+                    specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
+                    show a ListSubheader with the LoRA name + delete, then one
+                    MenuItem per checkpoint indented below. Single-checkpoint
+                    LoRAs collapse to one MenuItem with the LoRA name and
+                    inline delete. Saves the separate Ckpt dropdown's slot. */}
                 {(() => {
                     const isBaseModel = baseModels.some(m => m.name === selectedModel);
                     const compatibleLoras = isBaseModel
-                        ? availableLoras.filter(l => l.base_model === selectedModel)
+                        ? filterLorasForModel(availableLoras, selectedModel)
                         : [];
-                    const currentLora = compatibleLoras.find(
-                        l => l.path === selectedLora ||
-                             (l.all_checkpoints || []).includes(selectedLora)
+                    const findLoraForPath = (path) => compatibleLoras.find(
+                        l => l.path === path || (l.all_checkpoints || []).includes(path)
                     );
-                    const currentLoraName = currentLora?.name || '';
                     const parseCheckpointLabel = (filepath) => {
                         const name = (filepath || '').split('/').pop() || filepath || '';
                         const m = name.match(/epoch=(\d+)-step=(\d+)/);
@@ -1426,148 +1713,144 @@ function PerformancePanelInner({
                         return name.replace(/\.ckpt$/i, '');
                     };
                     const loraDisabled = compatibleLoras.length === 0;
-                    const ckptCount = currentLora?.all_checkpoints?.length ?? 0;
-                    const ckptDisabled = !currentLora || ckptCount <= 1;
-                    return (
-                        <>
-                            <FormControl size="small" disabled={loraDisabled} sx={{
-                                width: 120,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.body,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                },
-                            }}>
-                                <Select
-                                    value={currentLoraName}
-                                    onChange={(e) => {
-                                        const name = e.target.value;
-                                        if (!name) { onSelectLora?.(''); return; }
-                                        const lora = compatibleLoras.find(l => l.name === name);
-                                        onSelectLora?.(lora?.path || '');
-                                    }}
-                                    displayEmpty
-                                    renderValue={(value) => {
-                                        if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
-                                        return value;
-                                    }}
-                                >
-                                    <MenuItem value="">
-                                        <em>No LoRA</em>
-                                    </MenuItem>
-                                    {compatibleLoras.map((lora) => (
-                                        <MenuItem
-                                            key={lora.name}
-                                            value={lora.name}
-                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                                        >
-                                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                <Typography variant="body2">{lora.name}</Typography>
-                                                <Typography variant="caption" color="textSecondary">
-                                                    rank={lora.rank}
-                                                    {lora.all_checkpoints?.length > 1
-                                                        ? ` · ${lora.all_checkpoints.length} ckpts`
-                                                        : ''}
-                                                </Typography>
-                                            </Box>
-                                            <Tooltip title="Delete LoRA">
-                                                <IconButton
-                                                    size="small"
-                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        e.preventDefault();
-                                                        handleDeleteLora(lora.name);
-                                                    }}
-                                                    sx={{
-                                                        color: 'text.disabled',
-                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                                    }}
-                                                >
-                                                    <DeleteIcon size={14} />
-                                                </IconButton>
-                                            </Tooltip>
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
 
-                            <FormControl size="small" disabled={ckptDisabled} sx={{
-                                width: 100,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                '& .MuiSelect-select': {
-                                    fontSize: perfTokens.fontSize.body,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                },
-                            }}>
-                                <Select
-                                    value={ckptDisabled ? '' : (selectedLora || currentLora?.path || '')}
-                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
-                                    displayEmpty
-                                    renderValue={(value) => {
-                                        if (!value) return <em style={{ opacity: 0.6 }}>Ckpt</em>;
-                                        return parseCheckpointLabel(value);
-                                    }}
-                                >
-                                    {(currentLora?.all_checkpoints || []).map((ckpt, i, arr) => (
-                                        <MenuItem key={ckpt} value={ckpt}>
-                                            <Typography variant="body2">
+                    const deleteBtn = (loraName, size = 'md') => (
+                        <Tooltip title={TIPS.perf.deleteLora}>
+                            <IconButton
+                                size="small"
+                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    handleDeleteLora(loraName);
+                                }}
+                                sx={styles.compactIconBtn(size, 'danger')}
+                            >
+                                <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
+                            </IconButton>
+                        </Tooltip>
+                    );
+
+                    return (
+                        <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 180 }}>
+                            <Select
+                                value={selectedLora || ''}
+                                onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                displayEmpty
+                                renderValue={(value) => {
+                                    if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
+                                    const lora = findLoraForPath(value);
+                                    if (!lora) return value;
+                                    const ckpts = lora.all_checkpoints || [lora.path];
+                                    return ckpts.length === 1
+                                        ? lora.name
+                                        : `${lora.name} · ${parseCheckpointLabel(value)}`;
+                                }}
+                                MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
+                            >
+                                <MenuItem value="">
+                                    <em>No LoRA</em>
+                                </MenuItem>
+                                {compatibleLoras.flatMap((lora) => {
+                                    const ckpts = lora.all_checkpoints || [lora.path];
+                                    if (ckpts.length <= 1) {
+                                        // Single-checkpoint LoRA collapses to one row
+                                        // with the LoRA name and inline delete.
+                                        return [
+                                            <MenuItem
+                                                key={`${lora.name}::${ckpts[0]}`}
+                                                value={ckpts[0]}
+                                                sx={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    gap: 1,
+                                                    pr: 0.5,
+                                                    fontSize: perfTokens.fontSize.sm,
+                                                }}
+                                            >
+                                                <Box component="span" sx={{
+                                                    flex: 1,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {lora.name}
+                                                </Box>
+                                                {deleteBtn(lora.name)}
+                                            </MenuItem>,
+                                        ];
+                                    }
+                                    // Multi-checkpoint LoRA — subheader with name +
+                                    // delete, then one MenuItem per checkpoint.
+                                    return [
+                                        <ListSubheader
+                                            key={`${lora.name}::header`}
+                                            disableSticky
+                                            sx={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: 1,
+                                                pr: 0.5,
+                                                lineHeight: 1.6,
+                                                fontSize: perfTokens.fontSize.xs,
+                                                color: 'text.secondary',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: perfTokens.letterSpacing.wide,
+                                                bgcolor: 'background.paper',
+                                            }}
+                                        >
+                                            <Box component="span" sx={{
+                                                flex: 1,
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                            }}>
+                                                {lora.name}
+                                            </Box>
+                                            {deleteBtn(lora.name, 'sm')}
+                                        </ListSubheader>,
+                                        ...ckpts.map((ckpt, i) => (
+                                            <MenuItem
+                                                key={`${lora.name}::${ckpt}`}
+                                                value={ckpt}
+                                                sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
+                                            >
                                                 {parseCheckpointLabel(ckpt)}
-                                                {i === arr.length - 1 ? ' (latest)' : ''}
-                                            </Typography>
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </>
+                                                {i === ckpts.length - 1 ? ' (latest)' : ''}
+                                            </MenuItem>
+                                        )),
+                                    ];
+                                })}
+                            </Select>
+                        </FormControl>
                     );
                 })()}
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Typography
-                        component="span"
-                        sx={{
-                            fontSize: perfTokens.fontSize.small,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                        }}
-                    >
-                        STEPS
-                    </Typography>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Steps
+                    </Box>
                     <Tooltip
                         placement="right"
-                        title={
-                            isSmallModel
-                                ? 'Locked at 8 steps for the distilled small model'
-                                : 'Diffusion steps per generation (more = higher quality, slower)'
-                        }
+                        title={TIPS.perf.steps(isDistilledSA3)}
                     >
-                        <FormControl
-                            size="small"
-                            sx={{
-                                width: 64,
-                                '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                                '& .MuiSelect-select': { fontSize: perfTokens.fontSize.body },
-                            }}
-                        >
+                        <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
+
                             <Select
-                                value={isSmallModel ? 8 : steps}
+                                value={isDistilledSA3 ? 8 : steps}
                                 onChange={(e) => onStepsChange?.(Number(e.target.value))}
-                                disabled={isSmallModel}
+                                disabled={isDistilledSA3}
                                 renderValue={(value) => `${value}`}
                             >
-                                {isSmallModel && (
-                                    <MenuItem value={8}>
-                                        <Typography variant="body2">8 (locked)</Typography>
+                                {isDistilledSA3 && (
+                                    <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                        8 (locked)
                                     </MenuItem>
                                 )}
                                 {[50, 100, 150, 200, 250].map((n) => (
-                                    <MenuItem key={n} value={n}>
-                                        <Typography variant="body2">{n}</Typography>
+                                    <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                        {n}
                                     </MenuItem>
                                 ))}
                             </Select>
@@ -1576,16 +1859,9 @@ function PerformancePanelInner({
                 </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography
-                        component="span"
-                        sx={{
-                            fontSize: perfTokens.fontSize.small,
-                            letterSpacing: perfTokens.letterSpacing.wide,
-                            color: 'text.disabled',
-                        }}
-                    >
-                        SEED
-                    </Typography>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Seed
+                    </Box>
                     <FormControlLabel
                         sx={{ mr: 0, ml: 0.25 }}
                         control={
@@ -1596,7 +1872,7 @@ function PerformancePanelInner({
                             />
                         }
                         label={
-                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.small }}>
+                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
                                 Random
                             </Typography>
                         }
@@ -1608,41 +1884,148 @@ function PerformancePanelInner({
                         value={seedValue}
                         onChange={(e) => onSeedValueChange?.(e.target.value)}
                         disabled={randomSeed}
-                        inputProps={{ min: 0, max: 4294967295, step: 1 }}
-                        sx={{
-                            width: 78,
-                            '& .MuiOutlinedInput-root': { borderRadius: 1.5 },
-                            '& input': {
+                        // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
+                        inputProps={{
+                            min: 0,
+                            max: 4294967295,
+                            step: 1,
+                            style: {
                                 fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.body,
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
                             },
                         }}
+                        sx={{ ...styles.pillControl, width: 78 }}
                     />
                 </Box>
 
-                <Tooltip
-                    placement="right"
-                    title="When on, the master BPM is injected to each prompt automatically (turn off if doing free-tempo or multi-tempo prompts)."
-                >
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography
-                            component="span"
-                            sx={{
-                                fontSize: perfTokens.fontSize.small,
-                                letterSpacing: perfTokens.letterSpacing.wide,
-                                color: 'text.disabled',
-                            }}
-                        >
-                            AUTO BPM
-                        </Typography>
-                        <Switch
-                            size="small"
-                            checked={injectBpm}
-                            onChange={(e) => setInjectBpm(e.target.checked)}
-                        />
+                {/* Prompt auto-inject — Key / Tempo / Time sig fields. Each
+                    is appended to every generated prompt when populated; empty
+                    fields are skipped. Replaces the old Auto BPM toggle. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Inject
                     </Box>
-                </Tooltip>
+                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Key"
+                            value={promptKey}
+                            onChange={(e) => setPromptKey(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Key to inject into prompt',
+                                style: {
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 78 }}
+                        />
+                    </Tooltip>
+                    <Tooltip
+                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
+                        placement="top"
+                        arrow
+                        enterDelay={500}
+                    >
+                        <ButtonBase
+                            onClick={() => setPromptInjectBpm((p) => !p)}
+                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
+                            aria-pressed={promptInjectBpm}
+                            sx={(theme) => ({
+                                height: perfTokens.height.compact,
+                                minWidth: 62,
+                                px: 1,
+                                borderRadius: 1.5,
+                                border: '1px solid',
+                                borderColor: promptInjectBpm ? MASTER_COLOR : theme.palette.divider,
+                                backgroundColor: promptInjectBpm ? MASTER_COLOR : 'transparent',
+                                color: promptInjectBpm ? '#0c1018' : 'text.disabled',
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
+                                fontVariantNumeric: 'tabular-nums',
+                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
+                                '&:hover': {
+                                    backgroundColor: promptInjectBpm ? MASTER_COLOR : 'action.hover',
+                                    color: promptInjectBpm ? '#0c1018' : 'text.secondary',
+                                },
+                            })}
+                        >
+                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
+                        </ButtonBase>
+                    </Tooltip>
+                    <Tooltip title={TIPS.perf.timeSig} placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Time"
+                            value={promptTimeSig}
+                            onChange={(e) => setPromptTimeSig(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Time signature to inject into prompt',
+                                style: {
+                                    fontVariantNumeric: 'tabular-nums',
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 62 }}
+                        />
+                    </Tooltip>
+                </Box>
             </Paper>
+
+            {/* Name + save dialog for a finished master recording. */}
+            <Dialog
+                open={Boolean(pendingRecording)}
+                onClose={savingRecording ? undefined : handleDiscardRecording}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle>Save performance recording</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" sx={{ mb: 1.5, color: 'text.secondary' }}>
+                        {(() => {
+                            const s = Math.round(pendingRecording?.durationSec ?? 0);
+                            const mm = Math.floor(s / 60);
+                            const ss = String(s % 60).padStart(2, '0');
+                            return `Captured ${mm}:${ss}. Name the file — it will be saved to your output folder.`;
+                        })()}
+                    </Typography>
+                    <TextField
+                        autoFocus
+                        fullWidth
+                        size="small"
+                        label="Recording name"
+                        value={recordingName}
+                        onChange={(e) => setRecordingName(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && recordingName.trim() && !savingRecording) {
+                                handleSaveRecording();
+                            }
+                        }}
+                        disabled={savingRecording}
+                        InputProps={{
+                            endAdornment: (
+                                <InputAdornment position="end">
+                                    <Typography component="span" sx={{ color: 'text.disabled' }}>.wav</Typography>
+                                </InputAdornment>
+                            ),
+                        }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleDiscardRecording} disabled={savingRecording} color="inherit">
+                        Discard
+                    </Button>
+                    <Button
+                        onClick={handleSaveRecording}
+                        variant="contained"
+                        disabled={savingRecording || !recordingName.trim()}
+                    >
+                        {savingRecording ? 'Saving…' : 'Save'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }

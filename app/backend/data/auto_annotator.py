@@ -22,6 +22,11 @@ AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac")
 CLAP_CKPT_FILENAME = "music_audioset_epoch_15_esc_90.14.pt"
 CLAP_REPO = "lukewys/laion_clap"
 
+# Text-side dependencies laion_clap pulls from HF on construction.
+# We stage these into models/pretrained/clap/hub/ so the rich tier is
+# fully offline after a single download and nothing leaks to ~/.cache.
+CLAP_TEXT_DEPS = ("roberta-base", "bert-base-uncased", "facebook/bart-base")
+
 KEY_NAMES_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 KEY_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
@@ -44,9 +49,18 @@ def _iter_audio_files(folder: Path) -> List[Path]:
 
 def _estimate_tempo(y, sr) -> Optional[int]:
     import librosa
+    import numpy as np
     try:
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = float(tempo if hasattr(tempo, "__float__") else tempo[0])
+        # librosa 0.10+ returns tempo as np.ndarray (shape (1,) typically).
+        # numpy 2.x removed implicit float() conversion of N-d arrays —
+        # `float(np.array([120.]))` now raises TypeError instead of returning
+        # 120.0 like numpy 1.x did. Normalize via .flat[0] which handles
+        # scalar, 0-d, 1-d, and N-d uniformly.
+        arr = np.atleast_1d(np.asarray(tempo))
+        if arr.size == 0:
+            return None
+        bpm = float(arr.flat[0])
         if bpm <= 0:
             return None
         return int(round(bpm))
@@ -178,12 +192,58 @@ class _ClapTagger:
                     f"CLAP checkpoint not found at {self.ckpt_path}. "
                     "Download it first via /api/bulk-annotate/download-clap."
                 )
-            import laion_clap
-            import torch
             logging.getLogger("transformers").setLevel(logging.ERROR)
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
+            # Point HF resolution at our project-local cache and disable the
+            # HEAD-revalidation traffic. After download_clap_checkpoint() has
+            # staged the text deps under <pretrained>/clap/hub/, CLAP_Module
+            # loads them offline with zero HF hub requests.
+            #
+            # Two reasons env vars alone aren't enough:
+            # 1. huggingface_hub.constants.HF_HUB_OFFLINE is captured at
+            #    module-import time (constants.py:185). model_manager.py
+            #    imports huggingface_hub at app startup, so the constant is
+            #    already False by the time we set the env var here.
+            #    transformers.utils.hub.is_offline_mode reads that same
+            #    constant — patching the attribute makes both libraries see
+            #    offline mode.
+            # 2. laion_clap/training/data.py:44-46 runs three from_pretrained
+            #    calls at MODULE LEVEL — those fire the first time we do
+            #    `import laion_clap` and predate any patch we do after the
+            #    import. So we patch BEFORE the import, not after.
+            hub_dir = self.ckpt_path.parent / "hub"
+            env_keys = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE",
+                        "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
+            prev_env = {k: os.environ.get(k) for k in env_keys}
+            os.environ["HF_HUB_CACHE"] = str(hub_dir)
+            os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
+            os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+            import huggingface_hub.constants as _hhc
+            prev_offline_attr = _hhc.HF_HUB_OFFLINE
+            prev_cache_attr = _hhc.HF_HUB_CACHE
+            _hhc.HF_HUB_OFFLINE = True
+            # HF_HUB_CACHE is captured at import time too (same reason as
+            # HF_HUB_OFFLINE), so the env vars above don't actually redirect it.
+            # Patch the constant directly — otherwise transformers falls back to
+            # the default ~/.cache/huggingface, which may hold only the tokenizer
+            # (not config.json / weights) and then fails in offline mode.
+            _hhc.HF_HUB_CACHE = str(hub_dir)
+            try:
+                import laion_clap  # noqa: E402 — must follow the offline patch
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                model = laion_clap.CLAP_Module(enable_fusion=False, amodel="HTSAT-base", device=device)
+            finally:
+                _hhc.HF_HUB_OFFLINE = prev_offline_attr
+                _hhc.HF_HUB_CACHE = prev_cache_attr
+                for k, v in prev_env.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
 
             # torch >= 2.6 flipped torch.load(weights_only=True) and newer
             # transformers dropped the roberta position_ids buffer, so
@@ -268,44 +328,97 @@ def clap_checkpoint_path(models_pretrained_dir: Path) -> Path:
     return models_pretrained_dir / "clap" / CLAP_CKPT_FILENAME
 
 
+def clap_hub_dir(models_pretrained_dir: Path) -> Path:
+    """HF cache for laion_clap's text-side deps. Sibling of the .pt."""
+    return models_pretrained_dir / "clap" / "hub"
+
+
 def clap_checkpoint_available(models_pretrained_dir: Path) -> bool:
     return clap_checkpoint_path(models_pretrained_dir).exists()
+
+
+def _text_dep_snapshot_present(hub_dir: Path, repo_id: str) -> bool:
+    safe = "models--" + repo_id.replace("/", "--")
+    snap_root = hub_dir / safe / "snapshots"
+    if not snap_root.exists():
+        return False
+    return any(snap_root.iterdir())
 
 
 def download_clap_checkpoint(
     models_pretrained_dir: Path,
     progress_cb: Optional[Callable[[str], None]] = None,
+    phase_cb: Optional[Callable[[int, int, str], None]] = None,
 ) -> Path:
+    """Download the CLAP audio .pt plus laion_clap's text-side HF snapshots.
+
+    Four sequential phases — emit a phase update (current, total, label) at the
+    start of each so a multi-phase progress UI can show real context. Skips
+    phases whose artifacts are already on disk.
+
+    `progress_cb` (str-only) is kept for the bulk-annotate API.
+    `phase_cb` (current, total, label) is the structured channel.
+    """
     target = clap_checkpoint_path(models_pretrained_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        return target
+    hub_dir = clap_hub_dir(models_pretrained_dir)
+    hub_dir.mkdir(parents=True, exist_ok=True)
 
-    from huggingface_hub import hf_hub_download
+    from huggingface_hub import hf_hub_download, snapshot_download
     import os
 
-    if progress_cb:
-        progress_cb("Downloading CLAP checkpoint (~630 MB)…")
+    total_phases = 1 + len(CLAP_TEXT_DEPS)
 
-    # Use custom CLAP from fragmenta-models on HF Spaces
-    use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
-    if use_custom_repo:
-        repo_id = "MazCodes/fragmenta-models"
-    else:
-        repo_id = CLAP_REPO
+    def _emit(phase_index: int, label: str) -> None:
+        if phase_cb:
+            phase_cb(phase_index, total_phases, label)
+        if progress_cb:
+            progress_cb(f"[{phase_index}/{total_phases}] {label}")
 
-    downloaded = hf_hub_download(
-        repo_id=repo_id,
-        filename=CLAP_CKPT_FILENAME,
-        local_dir=str(target.parent),
-    )
-    downloaded_path = Path(downloaded)
-    if downloaded_path != target:
-        try:
-            downloaded_path.replace(target)
-        except OSError:
-            import shutil
-            shutil.copy2(downloaded_path, target)
+    if not target.exists():
+        _emit(1, "CLAP audio model (~2.35 GB)")
+
+        # Use custom CLAP from fragmenta-models on HF Spaces
+        use_custom_repo = os.getenv('FRAGMENTA_USE_CUSTOM_MODELS', '').lower() == 'true'
+        if use_custom_repo:
+            repo_id = "MazCodes/fragmenta-models"
+        else:
+            repo_id = CLAP_REPO
+
+        downloaded = hf_hub_download(
+            repo_id=repo_id,
+            filename=CLAP_CKPT_FILENAME,
+            local_dir=str(target.parent),
+        )
+        downloaded_path = Path(downloaded)
+        if downloaded_path != target:
+            try:
+                downloaded_path.replace(target)
+            except OSError:
+                import shutil
+                shutil.copy2(downloaded_path, target)
+
+    # laion_clap's CLAP_Module(...) constructor instantiates a Roberta text
+    # branch plus bert/bart tokenizers at import time. Pre-stage them into
+    # our own cache so the rich tier is fully offline after this step.
+    # safetensors only — pytorch_model.bin is a redundant copy.
+    for i, repo_id in enumerate(CLAP_TEXT_DEPS, start=2):
+        if _text_dep_snapshot_present(hub_dir, repo_id):
+            continue
+        _emit(i, f"Text encoder: {repo_id}")
+        snapshot_download(
+            repo_id=repo_id,
+            cache_dir=str(hub_dir),
+            allow_patterns=[
+                "config.json",
+                "tokenizer*",
+                "vocab*",
+                "merges.txt",
+                "special_tokens_map.json",
+                "model.safetensors",
+            ],
+        )
+
     return target
 
 
@@ -328,8 +441,10 @@ def annotate_file(
     label_sets: Dict[str, List[str]],
     sr: int = 22050,
     max_seconds: float = 60.0,
+    prompt_template: Optional[str] = None,
 ) -> Dict[str, Any]:
     import librosa
+    import warnings
 
     parts: Dict[str, Any] = {}
     try:
@@ -343,10 +458,19 @@ def annotate_file(
             "error": f"load failed: {exc}",
         }
 
-    parts["bpm"] = _estimate_tempo(y, loaded_sr)
-    parts["key"] = _estimate_key(y, loaded_sr)
-    parts["brightness"] = _estimate_brightness(y, loaded_sr)
-    parts["character"] = _estimate_character(y, loaded_sr)
+    # Silent / harmonically flat clips trip librosa's "Trying to estimate
+    # tuning from empty frequency set" warning during chroma extraction.
+    # The warning is benign — the analysis returns sensible defaults — but
+    # it spams stderr on every silent file, so we mute it here.
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Trying to estimate tuning from empty frequency set",
+        )
+        parts["bpm"] = _estimate_tempo(y, loaded_sr)
+        parts["key"] = _estimate_key(y, loaded_sr)
+        parts["brightness"] = _estimate_brightness(y, loaded_sr)
+        parts["character"] = _estimate_character(y, loaded_sr)
 
     if tier == "rich" and clap_tagger is not None:
         try:
@@ -355,7 +479,14 @@ def annotate_file(
         except Exception as exc:
             logger.warning("CLAP tagging failed for %s: %s", audio_path.name, exc)
 
-    prompt = _compose_prompt(parts)
+    # Template-driven prompt assembly. Falls back to the legacy descriptive
+    # prose if no template is supplied (call sites that haven't been
+    # threaded with project metadata yet).
+    if prompt_template is not None and prompt_template.strip():
+        from app.backend.data.projects import apply_template
+        prompt = apply_template(prompt_template, parts)
+    else:
+        prompt = _compose_prompt(parts)
     return {
         "file_name": audio_path.name,
         "prompt": prompt,

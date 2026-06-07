@@ -1,0 +1,12 @@
+# Model weights — pulled from HuggingFace, never committed here.
+*.npz
+
+# Generated audio — anywhere on the tree, including output/.
+*.wav
+
+# Python virtualenv created by install.sh
+.venv/
+
+# Python bytecode caches
+__pycache__/
+*.pyc

@@ -1,0 +1,4 @@
+mlx>=0.30
+numpy>=1.24
+sentencepiece>=0.2
+huggingface_hub>=0.20

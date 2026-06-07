@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import {
     Container,
     Box,
@@ -21,6 +21,11 @@ import {
     FormControl,
     Select,
     MenuItem,
+    Menu,
+    ListItemIcon,
+    ListItemText,
+    Divider,
+    Snackbar,
     Accordion,
     AccordionSummary,
     AccordionDetails,
@@ -31,8 +36,9 @@ import {
     useMediaQuery,
     ToggleButton,
     ToggleButtonGroup,
-    Tooltip,
 } from '@mui/material';
+import { TIPS } from './tooltips';
+import Tooltip from './components/Tooltip';
 import {
     Plus as AddIcon,
     Database as UploadIcon,
@@ -46,61 +52,76 @@ import {
     CloudDownload as CloudDownloadIcon,
     FolderOpen as FolderOpenIcon,
     Info as InfoIcon,
-    BookOpen as BookOpenIcon,
+    HelpCircle as InfoViewIcon,
     Moon as MoonIcon,
     Sun as SunIcon,
     Piano as PerformanceIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
-    Trash2 as DeleteIcon
+    Trash2 as DeleteIcon,
+    Menu as MenuIcon,
+    CheckCircle2 as CheckCircleIcon,
 } from 'lucide-react';
 import api from './api';
-import HfAuthDialog from './components/HfAuthDialog';
+import AboutDialog from './components/AboutDialog';
+import { InfoViewProvider } from './components/InfoView';
 import TabPanel from './components/TabPanel';
-import AudioUploadRow from './components/AudioUploadRow';
-import BulkAnnotatePanel from './components/BulkAnnotatePanel';
-import CsvImportPanel from './components/CsvImportPanel';
+import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
-import ModelUnwrapButton from './components/ModelUnwrapButton';
-import CheckpointManager from './components/CheckpointManager';
+import CheckpointManagerWindow from './components/CheckpointManagerWindow';
+import LoraStack from './components/LoraStack';
+import EditPanel from './components/EditPanel';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
-import { clearPerformanceSession } from './components/usePerformanceSession';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
-const PerformancePanel = lazy(() => import('./components/PerformancePanel'));
+import PerformancePanel from './components/PerformancePanel';
 
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
-const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome';
-const PERFORMANCE_ENABLED_KEY = 'fragmenta-performance-enabled';
+const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
+const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
+
+// Persisted across reload so the user lands back where they were.
+// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance.
+const TAB_STORAGE_KEY = 'fragmenta.lastTab';
+const TAB_COUNT = 4;
+const readStoredTab = () => {
+    try {
+        const raw = window.localStorage.getItem(TAB_STORAGE_KEY);
+        const n = Number(raw);
+        return Number.isFinite(n) && n >= 0 && n < TAB_COUNT ? n : 0;
+    } catch {
+        return 0;
+    }
+};
 
 function App() {
-    const [tabValue, setTabValue] = useState(0);
-    const [uploadRows, setUploadRows] = useState([
-        { file: null, prompt: '', audioUrl: '' }
-    ]);
+    const [tabValue, setTabValue] = useState(readStoredTab);
+    // Lags behind tabValue by ~fadeDuration so content swap happens
+    // while the panel is invisible (cross-fade between pages).
+    const [displayedTab, setDisplayedTab] = useState(readStoredTab);
+    const TAB_FADE_MS = 180;
+
+    // Persist the active tab so a reload returns the user to it.
+    useEffect(() => {
+        try { window.localStorage.setItem(TAB_STORAGE_KEY, String(tabValue)); } catch {}
+    }, [tabValue]);
+    // Header sticky chrome only kicks in once the page has scrolled.
+    const [isScrolled, setIsScrolled] = useState(false);
+    // Measure the header's actual rendered height so the fixed nav
+    // rail can be pinned at exactly the first card's top edge.
+    const headerRef = useRef(null);
+    const [navTopPx, setNavTopPx] = useState(94);
     const [processingStatus, setProcessingStatus] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
-    const [processedCount, setProcessedCount] = useState(0);
-    const [chunksPreview, setChunksPreview] = useState([]);
 
     const [showWelcomePage, setShowWelcomePage] = useState(
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
     );
-    const [performanceEnabled, setPerformanceEnabled] = useState(
-        () => window.localStorage.getItem(PERFORMANCE_ENABLED_KEY) === 'true'
-    );
-    const togglePerformance = () => {
-        setPerformanceEnabled((prev) => {
-            const next = !prev;
-            window.localStorage.setItem(PERFORMANCE_ENABLED_KEY, next ? 'true' : 'false');
-            if (!next && tabValue === 3) setTabValue(0);
-            if (next) setTabValue(3);
-            return next;
-        });
-    };
-    const [authDialogOpen, setAuthDialogOpen] = useState(false);
+    const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
+    const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
+    const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     const [colorMode, setColorMode] = useState(() => {
@@ -116,22 +137,48 @@ function App() {
         return 'dark';
     });
 
+    // Ableton-style Info View: when on, control help text shows in a fixed
+    // bottom bar (fed by the shared <Tooltip>) instead of popping over each
+    // control. Off by default; preference persisted.
+    const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
+        if (typeof window === 'undefined') return false;
+        // Off by default — only on if the user explicitly turned it on.
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
+    });
+    const toggleInfoView = useCallback(() => {
+        setInfoViewEnabled((prev) => {
+            const next = !prev;
+            try { window.localStorage.setItem(INFO_VIEW_STORAGE_KEY, next ? 'on' : 'off'); } catch (_) {}
+            return next;
+        });
+    }, []);
+
     const [trainingConfig, setTrainingConfig] = useState({
-        mode: 'lora',                
-        epochs: 30,
-        checkpointSteps: 500,
+        steps: 1000,                          // SA3 quick-start
+        checkpointSteps: 250,
         checkpointAuto: true,
-        batchSize: 4,
+        batchSize: 1,                         // SA3 examples all use 1
         learningRate: 1e-4,
-        modelName: 'my_fine_tuned_model',
-        baseModel: 'stable-audio-open-1.0',
-        saveWrappedCheckpoint: false,
-        precision: 'auto',
+        modelName: 'my_lora',
+        baseModel: 'sa3-small-music-base',    // only *-base checkpoints are valid targets
+        precision: 'bf16',
+        // Training window defaults to the base model's native length (small
+        // ≈120s; medium ≈380s — set on base-model change). Default base is
+        // small-music-base → 120s.
+        duration: 120.0,
 
         loraRank: 16,
         loraAlpha: 16,
         loraDropout: 0,
-        loraMultiplier: 1.0,
+        adapterType: 'dora-rows',             // SA3 upstream default
+        seedRandom: true,                     // fresh random seed each run (recorded server-side)
+        seed: 42,                              // used only when seedRandom is off
+
+        // SA3 docs' "common case" layer filter — prevents conditioner-hijacking
+        // on small datasets. Stored as space-separated strings (the format SA3's
+        // CLI consumes) so the Advanced TextFields can edit them directly.
+        include: 'transformer.layers',
+        exclude: 'seconds_total to_local_embed',
     });
     const [checkpointPreview, setCheckpointPreview] = useState(null);
     const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
@@ -143,14 +190,18 @@ function App() {
     const [trainingStartTime, setTrainingStartTime] = useState(null);
     const [trainingError, setTrainingError] = useState(null);
 
+    // Generation panel top-level mode: 'create' (text → audio) or
+    // 'edit' (audio → audio: style transfer, inpaint, extend).
+    const [generationMode, setGenerationMode] = useState('create');
     const [generationPrompt, setGenerationPrompt] = useState('');
+    const [negativePrompt, setNegativePrompt] = useState('');
+    const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
     const [generationDuration, setGenerationDuration] = useState(10);
     const [generatedAudio, setGeneratedAudio] = useState(null);
     const [generatedAudioBlob, setGeneratedAudioBlob] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
     const [selectedModel, setSelectedModel] = useState('');
-    const [selectedUnwrappedModel, setSelectedUnwrappedModel] = useState('');
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
@@ -200,48 +251,211 @@ function App() {
         }
     };
 
-    const downloadFragment = (fragment) => {
-        const link = document.createElement('a');
-        link.href = fragment.audioUrl;
-        link.download = fragment.filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const deleteFragment = async (fragment) => {
+        // Drop from the in-memory list + revoke any session blob URL so we
+        // don't leak object URLs after removal.
+        const dropFromList = () => {
+            setGeneratedFragments(prev => prev.filter(f => f.id !== fragment.id));
+            if (fragment.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(fragment.audioUrl); } catch { /* ignore */ }
+            }
+        };
+        // No on-disk file recorded — nothing for the backend to delete, just
+        // remove the row.
+        if (!fragment?.filename) { dropFromList(); return; }
+        try {
+            await api.delete(`/api/fragments/${encodeURIComponent(fragment.filename)}`);
+            dropFromList();
+        } catch (err) {
+            // 404 = the WAV is already gone (stale list). That's the user's
+            // intent anyway, so still clear the row instead of leaving a stuck
+            // entry. Only keep it on genuine failures (500 / network).
+            if (err?.response?.status === 404) {
+                dropFromList();
+            } else {
+                console.error('Delete fragment failed:', err);
+            }
+        }
     };
 
-    const [systemStatus, setSystemStatus] = useState(null);
-    const [isStatusLoading, setIsStatusLoading] = useState(false);
+    const clearAllFragments = async () => {
+        try {
+            await api.delete('/api/fragments');
+            // Revoke any in-session blob URLs before clearing state.
+            generatedFragments.forEach(f => {
+                if (f.audioUrl?.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
+                }
+            });
+            setGeneratedFragments([]);
+        } catch (err) {
+            console.error('Clear all fragments failed:', err);
+        }
+    };
+
     const [availableModels, setAvailableModels] = useState([]);
     const [gpuMemoryStatus, setGpuMemoryStatus] = useState(null);
     const [isUpdatingGpuMemory, setIsUpdatingGpuMemory] = useState(false);
     const [baseModels, setBaseModels] = useState([
-        {
-            name: 'stable-audio-open-small',
-            displayName: 'Stable Audio Open Small (Recommended)',
-            description: 'Faster - Lower memory usage',
-            type: 'base',
-            path: '/models/pretrained/stable-audio-open-small-model.safetensors',
-            configPath: '/models/config/model_config_small.json',
-            downloaded: false
-        },
-        {
-            name: 'stable-audio-open-1.0',
-            displayName: 'Stable Audio Open 1.0',
-            description: 'Higher quality - Requires more memory',
-            type: 'base',
-            path: '/models/pretrained/stable-audio-open-model.safetensors',
-            configPath: '/models/config/model_config.json',
-            downloaded: false
-        }
+        { name: 'sa3-small-music', displayName: 'Small - Music',     description: 'CPU/GPU · ≤ 120s',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-small-sfx',   displayName: 'Small - SFX',       description: 'CPU/GPU · ≤ 120s',         kind: 'post-trained', downloaded: false },
+        { name: 'sa3-medium',      displayName: 'Medium',            description: 'CUDA + Flash-Attn · ≤ 380s', kind: 'post-trained', downloaded: false },
+        { name: 'sa3-small-music-base', displayName: 'Small - Music (Base)', description: 'CPU/GPU · ≤ 120s',         kind: 'base', downloaded: false },
+        { name: 'sa3-small-sfx-base',   displayName: 'Small - SFX (Base)',   description: 'CPU/GPU · ≤ 120s',         kind: 'base', downloaded: false },
+        { name: 'sa3-medium-base',      displayName: 'Medium (Base)',        description: 'CUDA + Flash-Attn · ≤ 380s', kind: 'base', downloaded: false },
     ]);
 
-    const [showStartFreshDialog, setShowStartFreshDialog] = useState(false);
-    const [isStartingFresh, setIsStartingFresh] = useState(false);
-    const [uploadKey, setUploadKey] = useState(0);
-    // Bumping this key forces the performance panel to remount, which is how
-    // we flush its in-memory session state on Fresh Start (clearing localStorage
-    // alone wouldn't reset the mounted panel's useState mirrors).
-    const [performanceResetKey, setPerformanceResetKey] = useState(0);
+    // Dataset Workbench projects available as training inputs. Refreshed on
+    // mount and every time the Training tab becomes visible (in case the user
+    // just committed a project on the Dataset tab).
+    const [trainingProjects, setTrainingProjects] = useState([]);
+    const [trainingProject, setTrainingProject] = useState(() => {
+        try { return window.localStorage.getItem('fragmenta.training.lastProject') || ''; }
+        catch { return ''; }
+    });
+    // Phase 6 — pre-encode state for the selected training project.
+    // { latents_count, latents_present, job: {state, current, total, ...} | null }
+    const [trainingPreEncode, setTrainingPreEncode] = useState({
+        latents_count: 0,
+        latents_present: false,
+        job: null,
+    });
+    const preEncodePollRef = useRef(null);
+    const refreshTrainingProjects = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/projects');
+            setTrainingProjects(data.projects || []);
+        } catch { /* non-fatal */ }
+    }, []);
+    useEffect(() => { refreshTrainingProjects(); }, [refreshTrainingProjects]);
+    useEffect(() => {
+        if (tabValue === 1) refreshTrainingProjects();
+    }, [tabValue, refreshTrainingProjects]);
+
+    // Hydrate the Generated Fragments panel from disk on mount. Each
+    // /api/generate writes a sidecar JSON next to the WAV; this restores
+    // the latest 100 across page reloads. Server returns newest-first; we
+    // reverse so the in-memory order stays oldest-first (matches the
+    // append-at-end pattern used elsewhere — GeneratedFragmentsWindow
+    // reverses for display).
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const r = await api.get('/api/fragments?limit=100');
+                if (cancelled) return;
+                const items = (r.data?.fragments || [])
+                    // Performance-tab master recordings live in the same output
+                    // folder but aren't generations — keep them out of here.
+                    .filter((f) => f.source !== 'performance')
+                    // Cap the browser at the 50 most recent generations.
+                    .slice(0, 50)
+                    .map((f, i) => ({
+                    id: f.created_at ? Math.round(f.created_at * 1000) + i : Date.now() - i,
+                    prompt: f.prompt || '',
+                    duration: f.duration,
+                    cfgScale: f.cfg_scale,
+                    steps: f.steps,
+                    seed: f.seed,
+                    modelId: f.model_id || '',
+                    batchIndex: 1,
+                    batchTotal: f.batch_size || 1,
+                    audioUrl: `/api/fragments/${encodeURIComponent(f.filename)}`,
+                    audioBlob: null,
+                    filename: f.filename,
+                    timestamp: f.created_at
+                        ? new Date(f.created_at * 1000).toLocaleString()
+                        : '',
+                    createdAt: f.created_at ? f.created_at * 1000 : null,
+                    editMode: f.edit_mode || null,
+                }));
+                // Server sends newest-first; reverse to keep the in-memory
+                // append-at-end convention.
+                items.reverse();
+                setGeneratedFragments(items);
+            } catch (err) {
+                // Non-fatal — empty list is fine.
+                console.warn('Failed to hydrate fragments from server:', err);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
+    useEffect(() => {
+        try {
+            if (trainingProject) window.localStorage.setItem('fragmenta.training.lastProject', trainingProject);
+        } catch {}
+    }, [trainingProject]);
+    // If the persisted project no longer exists, clear it so the picker shows "(none)".
+    useEffect(() => {
+        if (trainingProject && trainingProjects.length > 0 && !trainingProjects.some(p => p.name === trainingProject)) {
+            setTrainingProject('');
+        }
+    }, [trainingProject, trainingProjects]);
+
+    // Phase 6 — refresh pre-encode state when the user changes which project
+    // they're training on, and keep polling while a job is in flight.
+    const refreshTrainingPreEncode = useCallback(async (name) => {
+        if (!name) {
+            setTrainingPreEncode({ latents_count: 0, latents_present: false, job: null });
+            return;
+        }
+        try {
+            const [proj, status] = await Promise.all([
+                api.get(`/api/projects/${encodeURIComponent(name)}`),
+                api.get(`/api/projects/${encodeURIComponent(name)}/pre-encode/status`),
+            ]);
+            setTrainingPreEncode({
+                latents_count: proj.data.latents_count ?? 0,
+                latents_present: !!proj.data.latents_present,
+                job: status.data.job ?? null,
+            });
+        } catch { /* non-fatal */ }
+    }, []);
+
+    useEffect(() => {
+        refreshTrainingPreEncode(trainingProject);
+    }, [trainingProject, refreshTrainingPreEncode]);
+
+    // Poll while a job is queued/running. Clean up on project change or unmount.
+    useEffect(() => {
+        const job = trainingPreEncode.job;
+        const inFlight = job && (job.state === 'queued' || job.state === 'running');
+        if (!inFlight || !trainingProject) {
+            if (preEncodePollRef.current) {
+                window.clearTimeout(preEncodePollRef.current);
+                preEncodePollRef.current = null;
+            }
+            return;
+        }
+        preEncodePollRef.current = window.setTimeout(() => {
+            refreshTrainingPreEncode(trainingProject);
+        }, 750);
+        return () => {
+            if (preEncodePollRef.current) {
+                window.clearTimeout(preEncodePollRef.current);
+                preEncodePollRef.current = null;
+            }
+        };
+    }, [trainingProject, trainingPreEncode.job, refreshTrainingPreEncode]);
+
+    const startTrainingPreEncode = useCallback(async () => {
+        if (!trainingProject) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`);
+            refreshTrainingPreEncode(trainingProject);
+        } catch (e) {
+            console.error('Failed to start pre-encode', e);
+        }
+    }, [trainingProject, refreshTrainingPreEncode]);
+
+    const cancelTrainingPreEncode = useCallback(async () => {
+        if (!trainingProject) return;
+        try {
+            await api.post(`/api/projects/${encodeURIComponent(trainingProject)}/pre-encode/cancel`);
+            refreshTrainingPreEncode(trainingProject);
+        } catch (e) { /* non-fatal */ }
+    }, [trainingProject, refreshTrainingPreEncode]);
+
     const [isFreeingGPU, setIsFreeingGPU] = useState(false);
     const [showFreeGPUDialog, setShowFreeGPUDialog] = useState(false);
     const [modelWarning, setModelWarning] = useState({
@@ -255,11 +469,18 @@ function App() {
         [colorMode]
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
-    const isIconOnlySidebar = useMediaQuery(appTheme.breakpoints.between('md', 'lg'));
-
-    useEffect(() => {
-        setSelectedUnwrappedModel('');
-    }, [selectedModel]);
+    // Vertical icon-only mode: between the compact (horizontal) threshold
+    // and a custom upper bound. The MUI `lg` breakpoint at 1200 was too
+    // eager — labels collapsed while there was still plenty of room.
+    const isIconOnlySidebar = useMediaQuery('(min-width: 900px) and (max-width: 1099.95px)');
+    // Mobile/very-small width — the nav rail goes horizontal (compact)
+    // AND drops the text labels, matching the icon-only treatment used
+    // on mid-size vertical.
+    const isMobileLayout = useMediaQuery(appTheme.breakpoints.down('sm'));
+    // Dock collapses to a hamburger at the same threshold where the nav
+    // rail flips horizontal — keeps the chrome transition unified.
+    const isDockCollapsed = isCompactLayout;
+    const [dockMenuAnchor, setDockMenuAnchor] = useState(null);
 
     useEffect(() => {
         console.log('Model changed:', selectedModel);
@@ -268,35 +489,27 @@ function App() {
         setSelectedLora('');
     }, [selectedModel]);
 
-    // Resolve the base model identity for the currently-selected entry. Works
-    // for both base-model selections (selectedModel === 'stable-audio-open-...')
-    // and fine-tunes (where the API returns base_model from training_metadata).
+    // Resolve the base SA3 model identity for the currently-selected entry.
+    // For a direct base pick it's selectedModel itself; for a fine-tune we
+    // read base_model from the training_metadata exposed by /api/models.
     const resolvedBaseModel = (() => {
         if (!selectedModel) return null;
-        if (selectedModel === 'stable-audio-open-small' || selectedModel === 'stable-audio-open-1.0') {
-            return selectedModel;
-        }
+        if (selectedModel.startsWith('sa3-')) return selectedModel;
         const model = availableModels.find(m => m.name === selectedModel);
-        if (model?.base_model) return model.base_model;
-        // Legacy fine-tunes without base_model metadata: fall back to the
-        // unwrapped-file size heuristic.
-        if (model && selectedUnwrappedModel) {
-            const u = model.unwrapped_models?.find(x => x.path === selectedUnwrappedModel);
-            if (u) return (u.size_mb || 0) < 2000 ? 'stable-audio-open-small' : 'stable-audio-open-1.0';
-        }
-        return null;
+        return model?.base_model || null;
     })();
 
-    // True only for the original distilled small base, NOT for fine-tunes of
-    // it. Fine-tuning destroys the CFG distillation, so the 8-step / CFG-1.0
-    // lock no longer applies — the user controls steps and CFG normally.
-    const isDistilledBase = selectedModel === 'stable-audio-open-small';
+    // All three user-visible SA3 models are post-trained (distilled to 8
+    // steps, CFG baked at 1.0). The backend ignores cfg_scale on these and
+    // defaults steps to 8 — the UI just mirrors that so the controls don't
+    // show misleading values.
+    const isDistilledBase = !!selectedModel && selectedModel.startsWith('sa3-') && !selectedModel.endsWith('-base');
 
     const getMaxDuration = () => {
-        if (!selectedModel) return 10;
-        if (resolvedBaseModel === 'stable-audio-open-small') return 11;
-        if (resolvedBaseModel === 'stable-audio-open-1.0') return 47;
-        return 10;
+        if (!selectedModel) return 30;
+        if (resolvedBaseModel === 'sa3-medium' || resolvedBaseModel === 'sa3-medium-base') return 380;
+        if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-')) return 120;
+        return 30;
     };
 
     useEffect(() => {
@@ -304,49 +517,65 @@ function App() {
         if (generationDuration > maxDuration) {
             setGenerationDuration(maxDuration);
         }
-        // The distilled small model is hard-coded to 8 steps + pingpong sampler
-        // at the backend regardless of slider value; snap the slider so the UI
-        // reflects what will actually run. When switching BACK to a non-
-        // distilled model, restore a sensible default — otherwise the slider
-        // is stuck at 8 from the prior selection and the big model runs 8
-        // steps (which produces noise).
+        // SA3 post-trained models run at 8 steps with CFG=1.0; base variants
+        // want ~50 steps with CFG~7. Snap the slider so the UI reflects what
+        // will actually run.
         if (isDistilledBase && steps !== 8) {
             setSteps(8);
         } else if (!isDistilledBase && steps < 50) {
-            setSteps(250);
+            setSteps(50);
         }
-    }, [selectedModel, selectedUnwrappedModel, isDistilledBase]);
+    }, [selectedModel, isDistilledBase]);
 
     const handleTabChange = (event, newValue) => {
+        if (newValue === tabValue) return;
         setTabValue(newValue);
     };
 
-    const addUploadRow = () => {
-        setUploadRows([...uploadRows, { file: null, prompt: '', audioUrl: '' }]);
-    };
+    // Sync displayedTab to tabValue with a fade-out delay so content
+    // swap happens while the wrapper opacity is at 0. Works for any
+    // code path that updates tabValue (Tabs click, model-warning
+    // auto-jump, etc).
+    useEffect(() => {
+        if (tabValue === displayedTab) return;
+        const t = window.setTimeout(() => setDisplayedTab(tabValue), TAB_FADE_MS);
+        return () => window.clearTimeout(t);
+    }, [tabValue, displayedTab]);
 
-    const removeUploadRow = (index) => {
-        const newRows = uploadRows.filter((_, i) => i !== index);
-        setUploadRows(newRows);
-    };
+    useEffect(() => {
+        const onScroll = () => setIsScrolled(window.scrollY > 8);
+        onScroll();
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, []);
 
-    const updateUploadRow = (index, data) => {
-        const newRows = [...uploadRows];
-        newRows[index] = data;
-        setUploadRows(newRows);
-    };
+    // Re-measure header bottom edge on mount, resize, and content
+    // reflows. Nav rail's `top` = headerBottom + headerRow.mb +
+    // tabPanelStyles.pt so it lines up with the first card.
+    useEffect(() => {
+        if (!headerRef.current) return undefined;
+        const el = headerRef.current;
+        const measure = () => {
+            // Header is sticky at top: 0, so rect.bottom is already the
+            // viewport y of the header's bottom edge.
+            const rect = el.getBoundingClientRect();
+            const w = window.innerWidth;
+            const offset = w >= 900 ? 18 : w >= 600 ? 14 : 12;
+            setNavTopPx(rect.bottom + offset);
+        };
+        measure();
+        // Re-measure only when the header's actual size changes (e.g.
+        // GPU card transitions detected ↔ not on first load) or the
+        // window resizes — never on scroll, never on poll churn.
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        window.addEventListener('resize', measure);
+        return () => {
+            ro.disconnect();
+            window.removeEventListener('resize', measure);
+        };
+    }, []);
 
-    const fetchSystemStatus = async () => {
-        setIsStatusLoading(true);
-        try {
-            const response = await api.get('/api/status');
-            setSystemStatus(response.data);
-        } catch (error) {
-            console.error('Error fetching system status:', error);
-        } finally {
-            setIsStatusLoading(false);
-        }
-    };
 
     const fetchAvailableModels = async () => {
         try {
@@ -369,17 +598,18 @@ function App() {
 
     const fetchBaseModelsStatus = async () => {
         try {
-            const response = await api.get('/api/base-models/status');
-            const baseModelsStatus = response.data.base_models;
-
+            const response = await api.get('/api/checkpoints');
+            const byId = Object.fromEntries(
+                (response.data.checkpoints || []).map(c => [c.id, c])
+            );
             setBaseModels(prevModels =>
                 prevModels.map(model => ({
                     ...model,
-                    downloaded: baseModelsStatus[model.name]?.downloaded || false
+                    downloaded: byId[model.name]?.downloaded || false,
                 }))
             );
         } catch (error) {
-            console.error('Error fetching base models status:', error);
+            console.error('Error fetching checkpoint status:', error);
         }
     };
 
@@ -402,7 +632,6 @@ function App() {
             } else {
                 if (selectedModel === name) {
                     setSelectedModel('');
-                    setSelectedUnwrappedModel('');
                 }
             }
             refreshAllModels();
@@ -435,7 +664,6 @@ function App() {
     };
 
     useEffect(() => {
-        fetchSystemStatus();
         fetchAvailableModels();
         fetchBaseModelsStatus();
         fetchAvailableLoras();
@@ -467,7 +695,7 @@ function App() {
         }, 300);
         return () => clearTimeout(handle);
     }, [
-        trainingConfig.epochs,
+        trainingConfig.steps,
         trainingConfig.batchSize,
         trainingConfig.checkpointSteps,
         trainingConfig.checkpointAuto,
@@ -496,10 +724,10 @@ function App() {
                         const newEntry = {
                             timestamp: Date.now(),
                             progress: currentStatus.progress || 0,
-                            current_epoch: currentStatus.current_epoch || 0,
-                            current_step: currentStatus.current_step || 0,
+                            current_step: currentStatus.current_step ?? currentStatus.step ?? 0,
                             loss: currentStatus.loss,
-                            checkpoints_saved: currentStatus.checkpoints_saved || 0,
+                            checkpoints_saved: currentStatus.checkpoints_saved
+                                ?? (currentStatus.checkpoints?.length || 0),
                             is_training: currentStatus.is_training,
                             message: currentStatus.error ||
                                 (currentStatus.progress > 0 ? `Progress: ${currentStatus.progress}%` : 'Starting...')
@@ -508,7 +736,6 @@ function App() {
                         const lastEntry = prev[prev.length - 1];
                         if (!lastEntry ||
                             lastEntry.progress !== newEntry.progress ||
-                            lastEntry.current_epoch !== newEntry.current_epoch ||
                             lastEntry.current_step !== newEntry.current_step ||
                             lastEntry.loss !== newEntry.loss ||
                             lastEntry.checkpoints_saved !== newEntry.checkpoints_saved ||
@@ -530,11 +757,9 @@ function App() {
                             setTrainingProgress(100);
                         }
                         setTimeout(() => {
-                            fetchSystemStatus();
-                            // refreshAllModels picks up the new LoRA too if
-                            // this was a LoRA run — without it, the LoRA
-                            // picker stays empty until the user manually hits
-                            // refresh.
+                            // refreshAllModels picks up the new LoRA — without it,
+                            // the LoRA picker stays empty until the user manually
+                            // hits refresh.
                             refreshAllModels();
                         }, 0);
                     }
@@ -552,41 +777,23 @@ function App() {
         };
     }, [isTraining]);
 
-    const processFiles = async () => {
-        setIsProcessing(true);
-        setProcessingStatus('Processing files...');
-
-        try {
-            const formData = new FormData();
-
-            uploadRows.forEach((row, index) => {
-                if (row.file && row.prompt) {
-                    formData.append(`file_${index}`, row.file);
-                    formData.append(`prompt_${index}`, row.prompt);
-                }
-            });
-
-            const response = await api.post('/api/process-files', formData);
-
-            setProcessingStatus(response.data.message);
-            setProcessedCount(response.data.processed_count);
-            setChunksPreview(response.data.chunks_preview || []);
-
-            setUploadRows([{ file: null, prompt: '', audioUrl: '' }]);
-
-            fetchSystemStatus();
-        } catch (error) {
-            setProcessingStatus(`Error: ${error.response?.data?.error || error.message}`);
-        } finally {
-            setIsProcessing(false);
-        }
-    };
 
     const fetchHyperparamSuggestion = async () => {
         setShowRationale(false);
+        if (!trainingProject) {
+            setSuggestionDialog({
+                open: true,
+                data: { ok: false, error: "Pick a dataset project first." },
+                loading: false,
+            });
+            return;
+        }
         setSuggestionDialog({ open: true, data: null, loading: true });
         try {
-            const resp = await api.get(`/api/training/suggest-hyperparams?mode=${trainingConfig.mode}`);
+            const url = `/api/training/suggest-hyperparams`
+                + `?project_name=${encodeURIComponent(trainingProject)}`
+                + `&base_model=${encodeURIComponent(trainingConfig.baseModel || '')}`;
+            const resp = await api.get(url);
             setSuggestionDialog({ open: true, data: resp.data, loading: false });
         } catch (e) {
             setSuggestionDialog({
@@ -600,11 +807,25 @@ function App() {
     const applyHyperparamSuggestion = () => {
         const cfg = suggestionDialog.data?.config;
         if (!cfg) return;
-        setTrainingConfig({ ...trainingConfig, ...cfg });
+        // Suggester returns include/exclude as arrays; the form edits them as
+        // space-separated strings. Backend's sa3_trainer accepts either.
+        const normalized = {
+            ...cfg,
+            include: Array.isArray(cfg.include) ? cfg.include.join(' ') : (cfg.include || ''),
+            exclude: Array.isArray(cfg.exclude) ? cfg.exclude.join(' ') : (cfg.exclude || ''),
+        };
+        setTrainingConfig({ ...trainingConfig, ...normalized });
         setSuggestionDialog({ open: false, data: null, loading: false });
     };
 
-    const startTraining = async () => {
+    // Confirm dialog for the same-name LoRA collision case.
+    const [overwriteConfirm, setOverwriteConfirm] = useState(null);
+
+    const startTraining = async (overwrite = false) => {
+        // Defensive: an `onClick={startTraining}` would pass React's
+        // SyntheticEvent in as the first arg; coerce so it can never
+        // leak into the JSON payload as a circular DOM reference.
+        overwrite = overwrite === true;
         const selectedBaseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
         if (!selectedBaseModel) {
             showModelWarning({
@@ -624,25 +845,52 @@ function App() {
             return;
         }
 
+        if (!trainingProject) {
+            showModelWarning({
+                title: 'Dataset Required',
+                message: 'Pick a dataset project before starting training. '
+                       + 'Create one in the Dataset tab if you don\'t have any yet.',
+                canOpenModels: false,
+            });
+            return;
+        }
+
         setIsTraining(true);
         setTrainingProgress(0);
         setTrainingError(null);
         setTrainingStartTime(Date.now());
         setTrainingHistory([]);
 
-        await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
+        await api.post('/api/clap/unload').catch(() => {});
 
         try {
-            const { checkpointAuto, ...rest } = trainingConfig;
+            const { checkpointAuto, seedRandom, ...rest } = trainingConfig;
             const payload = {
                 ...rest,
+                projectName: trainingProject,
                 checkpointSteps: checkpointAuto ? null : trainingConfig.checkpointSteps,
+                // null = let the backend roll a fresh seed and record it.
+                seed: seedRandom ? null : trainingConfig.seed,
+                overwrite: overwrite,
             };
             const response = await api.post('/api/start-training', payload);
             setProcessingStatus('Training started successfully!');
         } catch (error) {
             const errorData = error.response?.data;
             const errorMessage = errorData?.error || error.message;
+
+            // Same-name collision (HTTP 409) — surface a confirm dialog so the
+            // user can choose to overwrite the previous run rather than
+            // co-mingling its checkpoints.
+            if (error.response?.status === 409 && errorData?.code === 'run_exists') {
+                setIsTraining(false);
+                setOverwriteConfirm({
+                    runName: errorData.run_name,
+                    checkpointCount: errorData.checkpoint_count,
+                    message: errorData.message,
+                });
+                return;
+            }
 
             if (errorData?.checkpoint_warning) {
                 setTrainingError(errorMessage);
@@ -677,34 +925,54 @@ function App() {
         const baseRequestData = {
             prompt: generationPrompt,
             duration: generationDuration,
-            cfg_scale: cfgScale,
-            steps: steps
+            steps: steps,
         };
+        const negTrim = negativePrompt.trim();
+        if (negTrim) {
+            baseRequestData.negative_prompt = negTrim;
+        }
+
+        // LoRA stack — LoraStack is the single source of truth for the
+        // Generation panel. Empty slots (path === '') are filtered out
+        // so an unused slot doesn't break the request.
+        const activeLoras = (loraStack || []).filter(s => s.path);
+        if (activeLoras.length) {
+            // Bypassed slots stay in the stack (load order preserved) but
+            // contribute nothing — send strength 0.
+            baseRequestData.loras = activeLoras.map(s => ({
+                path: s.path,
+                strength: s.bypassed ? 0 : s.strength,
+            }));
+        }
+        // SA3 post-trained models bake CFG at 1.0 — only the *-base variants
+        // honour cfg_scale. Sending it on a post-trained model is harmless
+        // (backend forces 1.0), but we only attach it for base variants so
+        // the UI matches what the backend will use.
+        if (!isDistilledBase) {
+            baseRequestData.cfg_scale = cfgScale;
+        }
 
         const baseModel = baseModels.find(m => m.name === selectedModel);
         if (baseModel) {
             if (!baseModel.downloaded) {
                 showModelWarning({
-                    title: 'Base Model Not Downloaded',
-                    message: `The selected base model "${baseModel.displayName}" is not downloaded.`,
+                    title: 'Model Not Downloaded',
+                    message: `"${baseModel.displayName}" hasn't been downloaded yet. Open the Checkpoint Manager to fetch it.`,
                     canOpenModels: true,
                 });
                 return;
             }
-
-            baseRequestData.model_name = selectedModel;
-        } else if (selectedUnwrappedModel) {
-            baseRequestData.unwrapped_model_path = selectedUnwrappedModel;
+            baseRequestData.model_id = selectedModel;
+        } else if (selectedModel && selectedModel.startsWith('sa3-')) {
+            // Hidden SA3 variant (base or AE) reachable via /api/checkpoints?include=all.
+            baseRequestData.model_id = selectedModel;
         } else {
-            setProcessingStatus('Please select a model');
+            setProcessingStatus(
+                selectedModel
+                    ? `'${selectedModel}' is an SA2 fine-tune; SA3 cannot load it. Pick a Stable Audio 3 model.`
+                    : 'Please select a model'
+            );
             return;
-        }
-
-        // LoRA only meaningful on top of a base model (the LoRA was trained
-        // against that exact base — applying it to a full-FT model is undefined).
-        if (selectedLora && baseModel) {
-            baseRequestData.lora_path = selectedLora;
-            baseRequestData.lora_multiplier = loraMultiplier;
         }
 
         const parsedSeed = parseInt(seedValue, 10);
@@ -715,7 +983,7 @@ function App() {
 
         const totalRuns = Math.max(1, Math.min(10, batchCount));
 
-        await api.post('/api/bulk-annotate/unload-clap').catch(() => {});
+        await api.post('/api/clap/unload').catch(() => {});
 
         stopGenerationRef.current = false;
         const abortController = new AbortController();
@@ -724,14 +992,26 @@ function App() {
         setIsGenerating(true);
         setGenerationProgress(0);
 
+        // Real progress polling — the backend exposes /api/generation-progress
+        // which reflects the SA3 sampler's per-ODE-step callback. We poll at
+        // ~250ms; sampling is N steps total (8 for distilled, ~50 for base)
+        // so each step takes hundreds of ms to several seconds — finer polling
+        // is unnecessary.
         let progressInterval;
         const startProgressTicker = () => {
-            progressInterval = setInterval(() => {
-                setGenerationProgress(prev => {
-                    if (prev >= 90) return prev;
-                    return prev + Math.random() * 3;
-                });
-            }, 1000);
+            progressInterval = setInterval(async () => {
+                try {
+                    const r = await api.get('/api/generation-progress');
+                    const d = r.data || {};
+                    // Don't drop to 0 just because backend briefly reports
+                    // idle between batch elements; clamp monotonic until
+                    // we hand off to setGenerationProgress(100) on response.
+                    const pct = Number(d.progress) || 0;
+                    setGenerationProgress(prev => Math.max(prev, Math.min(95, pct)));
+                } catch {
+                    /* poll failure is non-fatal — bar just freezes briefly */
+                }
+            }, 250);
         };
         const stopProgressTicker = () => {
             if (progressInterval) {
@@ -780,9 +1060,15 @@ function App() {
                 setGenerationProgress(100);
 
                 const audioUrl = URL.createObjectURL(response.data);
-                const fragmentFilename = buildFragmentFilename(
-                    generationPrompt, batchTimestamp, batchIndex, totalRuns
-                );
+                // The backend is authoritative for the on-disk name (it writes
+                // the WAV + sidecar). Use the header it returns so reveal /
+                // delete / serve all hit the real file; only fall back to a
+                // locally-built name if the header is somehow missing.
+                const fragmentFilename =
+                    response.headers?.['x-fragment-filename'] ||
+                    buildFragmentFilename(
+                        generationPrompt, batchTimestamp, batchIndex, totalRuns
+                    );
 
                 setGeneratedAudio(audioUrl);
                 setGeneratedAudioBlob(response.data);
@@ -795,15 +1081,20 @@ function App() {
                     cfgScale,
                     steps,
                     seed: seedForRun,
+                    modelId: selectedModel,
                     batchIndex,
                     batchTotal: totalRuns,
                     audioUrl,
                     audioBlob: response.data,
                     filename: fragmentFilename,
-                    timestamp: new Date().toLocaleString()
+                    timestamp: new Date().toLocaleString(),
+                    createdAt: Date.now(),
                 };
 
-                setGeneratedFragments(prev => [...prev, newFragment]);
+                setGeneratedFragments(prev => {
+                    const next = [...prev, newFragment];
+                    return next.length > 100 ? next.slice(next.length - 100) : next;
+                });
                 completedRuns += 1;
             }
 
@@ -850,40 +1141,6 @@ function App() {
             try { generationAbortRef.current.abort(); } catch (_) {}
         }
         setProcessingStatus('Stopping generation…');
-    };
-
-    const handleStartFresh = async () => {
-        setIsStartingFresh(true);
-        setShowStartFreshDialog(false);
-
-        try {
-            const response = await api.post('/api/start-fresh');
-
-            setUploadRows([{ file: null, prompt: '', audioUrl: '' }]);
-            setProcessedCount(0);
-            setChunksPreview([]);
-            setGeneratedAudio(null);
-            setGeneratedAudioBlob(null);
-            setGeneratedFragments([]);
-            setProcessingStatus('');
-            setGenerationPrompt('');
-            setUploadKey(prev => prev + 1);
-
-            // Wipe persisted performance session and force-remount the panel so
-            // its in-memory state resets to defaults along with localStorage.
-            // (MIDI mappings and other app preferences are intentionally kept.)
-            clearPerformanceSession();
-            setPerformanceResetKey(prev => prev + 1);
-
-            setProcessingStatus(response.data.message);
-
-            fetchSystemStatus();
-
-        } catch (error) {
-            setProcessingStatus(`Start fresh error: ${error.response?.data?.error || error.message}`);
-        } finally {
-            setIsStartingFresh(false);
-        }
     };
 
     const handleFreeGPUMemory = async () => {
@@ -946,32 +1203,9 @@ function App() {
     };
 
     const getSelectedModelDisplayName = () => {
-        console.log('=== GETTING DISPLAY NAME ===');
-        console.log('selectedModel:', selectedModel);
-        console.log('selectedUnwrappedModel:', selectedUnwrappedModel);
-
-        if (!selectedModel) {
-            console.log('No selectedModel, returning empty string');
-            return '';
-        }
-
+        if (!selectedModel) return '';
         const baseModel = baseModels.find(m => m.name === selectedModel);
-        if (baseModel) {
-            console.log('Found base model:', baseModel.displayName);
-            return baseModel.displayName;
-        }
-
-        const model = availableModels.find(m => m.name === selectedModel);
-        if (model && selectedUnwrappedModel) {
-            const selectedUnwrapped = model.unwrapped_models?.find(u => u.path === selectedUnwrappedModel);
-            if (selectedUnwrapped) {
-                const displayName = `${model.name} (${selectedUnwrapped.name})`;
-                console.log('Generated fine-tuned display name:', displayName);
-                return displayName;
-            }
-        }
-
-        console.log('Using fallback name:', selectedModel);
+        if (baseModel) return baseModel.displayName;
         return selectedModel;
     };
 
@@ -983,8 +1217,6 @@ function App() {
     const handleModelChange = (event) => {
         const newSelectedModel = event.target.value;
         setSelectedModel(newSelectedModel);
-
-        setSelectedUnwrappedModel('');
 
         const selectedBaseModel = baseModels.find(m => m.name === newSelectedModel);
         if (selectedBaseModel && !selectedBaseModel.downloaded) {
@@ -1011,7 +1243,7 @@ function App() {
 
     const handleOpenModelsFromWarning = () => {
         closeModelWarning();
-        setAuthDialogOpen(true);
+        setCheckpointMgrOpen(true);
     };
 
     const getTrainingIndicatorState = () => {
@@ -1032,6 +1264,7 @@ function App() {
     return (
         <ThemeProvider theme={appTheme}>
             <CssBaseline />
+            <InfoViewProvider enabled={infoViewEnabled}>
             <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
@@ -1052,7 +1285,7 @@ function App() {
                 />
 
                 <Container maxWidth={false} sx={appStyles.container(showWelcomePage)}>
-                    <Box sx={appStyles.headerRow}>
+                    <Box ref={headerRef} sx={[appStyles.headerRow, isScrolled && appStyles.headerRowScrolled]}>
                         <Box sx={appStyles.headerBrand}>
                             {/* Logo */}
                             <Box sx={appStyles.logo} />
@@ -1067,127 +1300,46 @@ function App() {
                         </Box>
 
                         <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
-                            <Box sx={appStyles.headerActionsGrid(isCompactLayout)}>
-                                <Button
-                                    variant="outlined"
-                                    color="secondary"
-                                    size="small"
-                                    startIcon={<CloudDownloadIcon />}
-                                    onClick={() => setAuthDialogOpen(true)}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    Get Models
-                                </Button>
-                                <Button
-                                    variant="contained"
-                                    color="primary"
-                                    size="small"
-                                    startIcon={<RefreshIcon />}
-                                    onClick={() => setShowFreeGPUDialog(true)}
-                                    disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                                    sx={appStyles.headerActionButtonWithOpacity(Boolean(gpuMemoryStatus && gpuMemoryStatus.cuda))}
-                                >
-                                    {isFreeingGPU ? 'Freeing...' : 'Free GPU'}
-                                </Button>
-                                <Button
-                                    variant="outlined"
-                                    color="secondary"
-                                    size="small"
-                                    startIcon={<FolderOpenIcon />}
-                                    onClick={handleOpenOutputFolder}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    Outputs
-                                </Button>
-                                <Button
-                                    variant="contained"
-                                    color="error"
-                                    size="small"
-                                    startIcon={<RefreshIcon />}
-                                    onClick={() => setShowStartFreshDialog(true)}
-                                    disabled={isStartingFresh}
-                                    sx={appStyles.headerActionButton}
-                                >
-                                    {isStartingFresh ? 'Starting...' : 'Fresh Start'}
-                                </Button>
-                            </Box>
-
-                            <Box sx={appStyles.gpuCard(isCompactLayout)}>
+                            <Paper sx={appStyles.gpuCard(isCompactLayout)}>
                                 {gpuMemoryStatus && gpuMemoryStatus.cuda ? (
                                     <>
-                                        <Box sx={appStyles.gpuHeaderRow}>
-                                            <Typography variant="caption" color="textSecondary" sx={appStyles.gpuLabel}>
-                                                GPU Memory
+                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
+                                            <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
+                                                GPU
                                             </Typography>
-                                            <Box sx={appStyles.gpuStatusGroup}>
-                                                <Box
-                                                    sx={appStyles.gpuStatusDot(
-                                                        gpuMemoryStatus.cuda.free > 2 ? 'good' : gpuMemoryStatus.cuda.free > 0.5 ? 'low' : 'critical'
-                                                    )}
-                                                />
-                                                <Typography variant="caption" color="textSecondary">
-                                                    {gpuMemoryStatus.cuda.free > 2 ? 'Good' :
-                                                        gpuMemoryStatus.cuda.free > 0.5 ? 'Low' : 'Critical'}
-                                                </Typography>
-                                            </Box>
+                                            <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, fontSize: '0.72rem' }}>
+                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {gpuMemoryStatus.cuda.total.toFixed(0)} GB free
+                                            </Typography>
                                         </Box>
-
-                                        <Box sx={appStyles.gpuUsageWrap}>
-                                            <Box sx={appStyles.gpuUsageTrack}>
-                                                <Box
-                                                    sx={appStyles.gpuUsageFill(
-                                                        `${Math.min((gpuMemoryStatus.cuda.allocated / gpuMemoryStatus.cuda.total) * 100, 100)}%`,
-                                                        'error.main'
-                                                    )}
-                                                />
-                                                <Box
-                                                    sx={appStyles.gpuUsageFill(
-                                                        `${Math.min(((gpuMemoryStatus.cuda.allocated + gpuMemoryStatus.cuda.cached) / gpuMemoryStatus.cuda.total) * 100, 100)}%`,
-                                                        'warning.main'
-                                                    )}
-                                                />
-                                            </Box>
-                                        </Box>
-
-                                        <Box sx={appStyles.gpuFooterRow}>
-                                            <Typography variant="caption" color="primary" sx={appStyles.gpuFreeText}>
-                                                {gpuMemoryStatus.cuda.free.toFixed(1)}GB free
-                                            </Typography>
-                                            <Typography variant="caption" color="textSecondary">
-                                                {gpuMemoryStatus.cuda.total.toFixed(1)}GB total
-                                            </Typography>
+                                        <Box sx={{ height: 4, borderRadius: 999, bgcolor: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
+                                            <Box
+                                                sx={{
+                                                    height: '100%',
+                                                    width: `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
+                                                    bgcolor: 'primary.main',
+                                                    transition: 'width 0.3s ease',
+                                                }}
+                                            />
                                         </Box>
                                     </>
                                 ) : (
-                                    <>
-                                        <Box sx={appStyles.gpuHeaderRow}>
-                                            <Typography variant="caption" color="textSecondary" sx={appStyles.gpuLabel}>
-                                                GPU Status
-                                            </Typography>
-                                            <Box sx={appStyles.gpuStatusGroup}>
-                                                <Box sx={appStyles.gpuStatusDot('low', false)} />
-                                                <Typography variant="caption" color="warning.main">
-                                                    No GPU
-                                                </Typography>
-                                            </Box>
-                                        </Box>
-
-                                        <Typography variant="caption" color="textSecondary" sx={appStyles.centeredCaption}>
-                                            No CUDA GPU detected
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                        <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
+                                            GPU
                                         </Typography>
-                                        <Typography variant="caption" color="textSecondary" sx={appStyles.centeredCaptionWithMargin}>
-                                            Using CPU for processing
+                                        <Typography variant="caption" color="warning.main" sx={{ fontSize: '0.72rem' }}>
+                                            Not detected · CPU mode
                                         </Typography>
-                                    </>
+                                    </Box>
                                 )}
-                            </Box>
+                            </Paper>
                         </Box>
                     </Box>
 
                     {/* Main Content with Sidebar Layout */}
-                    <Box sx={appStyles.mainLayout}>
+                    <Box sx={appStyles.mainLayout(isCompactLayout, isIconOnlySidebar)}>
                         {/* Left Sidebar with Vertical Tabs */}
-                        <Paper sx={appStyles.navPaper}>
+                        <Paper sx={[appStyles.navPaper(isCompactLayout, isIconOnlySidebar), !isCompactLayout && { top: `${navTopPx}px` }]}>
                             <Tabs
                                 value={tabValue}
                                 onChange={handleTabChange}
@@ -1195,143 +1347,37 @@ function App() {
                                 aria-label="main navigation tabs"
                                 sx={appStyles.navigationTabs(isCompactLayout, isIconOnlySidebar)}
                             >
-                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Data Processing'} />
-                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Training'} />
-                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={isIconOnlySidebar ? undefined : 'Generation'} />
+                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
+                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
+                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
                                 <Tab
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
-                                    label={isIconOnlySidebar ? undefined : (
-                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-                                            Performance
-                                            <Switch
-                                                size="small"
-                                                checked={performanceEnabled}
-                                                onChange={() => {}}
-                                                onClick={(e) => { e.stopPropagation(); togglePerformance(); }}
-                                                sx={{ transform: 'scale(0.75)' }}
-                                            />
-                                        </Box>
-                                    )}
-                                    sx={{ opacity: performanceEnabled ? 1 : 0.5, transition: 'opacity 0.2s' }}
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
                                 />
                             </Tabs>
                         </Paper>
 
                         {/* Main Content Area */}
-                        <Paper sx={appStyles.mainContentPaper}>
+                        <Box sx={appStyles.mainContentBox}>
+                            <Box
+                                sx={{
+                                    flex: 1,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    minHeight: 0,
+                                    opacity: tabValue === displayedTab ? 1 : 0,
+                                    transition: `opacity ${TAB_FADE_MS}ms ease`,
+                                }}
+                            >
 
-                            {/* Data Processing Tab */}
-                            <TabPanel value={tabValue} index={0}>
-                                <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.dataProcessingGrid}>
-                                    <Grid item xs={12} md={8} sx={appStyles.primaryPaneItem}>
-                                        <Box sx={appStyles.primaryPaneContent}>
-                                            <Paper sx={{ p: 2 }} variant="outlined">
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                                                    <UploadIcon size={20} />
-                                                    <Typography variant="h6">Manual Annotation</Typography>
-                                                </Box>
-                                                <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                                                    Upload audio files one by one and annotate them yourself.
-                                                    Use this when you want full control over every annotation.
-                                                </Typography>
-
-                                                {uploadRows.map((row, index) => (
-                                                    <AudioUploadRow
-                                                        key={`${uploadKey}-${index}`}
-                                                        index={index}
-                                                        data={row}
-                                                        onChange={updateUploadRow}
-                                                        onRemove={removeUploadRow}
-                                                    />
-                                                ))}
-
-                                                <Button
-                                                    variant="outlined"
-                                                    startIcon={<AddIcon />}
-                                                    onClick={addUploadRow}
-                                                    sx={appStyles.addRowButton}
-                                                >
-                                                    Add Another Row
-                                                </Button>
-
-                                                <Button
-                                                    variant="contained"
-                                                    size="large"
-                                                    onClick={processFiles}
-                                                    disabled={isProcessing}
-                                                    startIcon={isProcessing ? <CircularProgress size={20} /> : <UploadIcon />}
-                                                    fullWidth
-                                                >
-                                                    {isProcessing ? 'Saving…' : 'Save to dataset'}
-                                                </Button>
-                                            </Paper>
-
-                                            <BulkAnnotatePanel key={`bulk-${uploadKey}`} onCommitted={fetchSystemStatus} />
-
-                                            <CsvImportPanel key={`csv-${uploadKey}`} onCommitted={fetchSystemStatus} />
-                                        </Box>
-                                    </Grid>
-
-                                    <Grid item xs={12} md={4}>
-
-                                        {processingStatus && (
-                                            <Alert severity="info" sx={appStyles.sectionInfoAlert}>
-                                                {processingStatus}
-                                            </Alert>
-                                        )}
-
-                                        {!systemStatus && (
-                                            <Paper sx={appStyles.elevatedInfoCard}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <FolderOpenIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
-                                                </Box>
-                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
-                                                    <CircularProgress size={18} />
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Scanning dataset…
-                                                    </Typography>
-                                                </Box>
-                                            </Paper>
-                                        )}
-
-                                        {systemStatus && (
-                                            <Paper sx={appStyles.elevatedInfoCard}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <FolderOpenIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Dataset Status</Typography>
-                                                    {isStatusLoading && (
-                                                        <CircularProgress size={14} sx={{ ml: 1 }} />
-                                                    )}
-                                                </Box>
-                                                <Typography variant="body2">Raw Files: {systemStatus.raw_files}</Typography>
-                                                <Typography variant="body2" sx={appStyles.emphasizedPrimaryBody2}>
-                                                    Total Duration: {formatDuration(systemStatus.total_duration || 0)}
-                                                </Typography>
-                                                <Typography variant="body2">
-                                                    Custom Metadata: {systemStatus.has_metadata_json ? 'Yes' : 'Not Found'}
-                                                </Typography>
-                                                {systemStatus.raw_file_names && systemStatus.raw_file_names.length > 0 && (
-                                                    <Box sx={appStyles.recentFilesBlock}>
-                                                        <Typography variant="body2" color="textSecondary">
-                                                            Recent files: {systemStatus.raw_file_names.join(', ')}
-                                                        </Typography>
-                                                    </Box>
-                                                )}
-                                            </Paper>
-                                        )}
-
-                                    </Grid>
-                                </Grid>
+                            {/* Dataset Tab */}
+                            <TabPanel value={displayedTab} index={0}>
+                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
                             </TabPanel>
 
                             {/* Training Tab */}
-                            <TabPanel value={tabValue} index={1}>
+                            <TabPanel value={displayedTab} index={1}>
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} alignItems="stretch" sx={appStyles.responsiveGrid}>
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
@@ -1341,34 +1387,6 @@ function App() {
                                                         <SlidersIcon size={20} />
                                                     </Box>
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Training Configuration</Typography>
-                                                </Box>
-
-                                                <Box sx={{ mb: 2 }}>
-                                                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mb: 0.5 }}>
-                                                        Training mode
-                                                    </Typography>
-                                                    <ToggleButtonGroup
-                                                        value={trainingConfig.mode}
-                                                        exclusive
-                                                        size="small"
-                                                        onChange={(e, newMode) => {
-                                                            if (newMode !== null) {
-                                                                setTrainingConfig({ ...trainingConfig, mode: newMode });
-                                                            }
-                                                        }}
-                                                        fullWidth
-                                                    >
-                                                        <Tooltip title="LoRA adapter — small (~50 MB) trainable layer attached to the frozen base model. Works on 16 GB cards. Recommended for most use cases.">
-                                                            <ToggleButton value="lora">
-                                                                LoRA Adapter
-                                                            </ToggleButton>
-                                                        </Tooltip>
-                                                        <Tooltip title="Full fine-tune — rewrites the entire base model. Produces a ~5 GB checkpoint. Requires ≥24 GB VRAM for the large base.">
-                                                            <ToggleButton value="full">
-                                                                Full Fine-tune
-                                                            </ToggleButton>
-                                                        </Tooltip>
-                                                    </ToggleButtonGroup>
                                                 </Box>
 
                                                 <TextField
@@ -1382,44 +1400,252 @@ function App() {
                                                     sx={appStyles.fieldMarginBottom}
                                                 />
 
-                                                <Accordion sx={appStyles.accordionMarginBottom}>
+                                                <Box sx={appStyles.fieldMarginBottom}>
+                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                        Dataset
+                                                    </Typography>
+                                                    {trainingProjects.length === 0 ? (
+                                                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                                            No projects yet — create one in the Dataset tab.
+                                                        </Typography>
+                                                    ) : (
+                                                        <Select
+                                                            fullWidth
+                                                            size="small"
+                                                            displayEmpty
+                                                            value={trainingProject}
+                                                            onChange={(e) => setTrainingProject(e.target.value)}
+                                                            renderValue={(val) => {
+                                                                if (!val) return <Typography variant="body2" color="text.secondary">Pick a project…</Typography>;
+                                                                const p = trainingProjects.find(x => x.name === val);
+                                                                return p
+                                                                    ? `${p.name} (${p.clip_count ?? 0} clips)`
+                                                                    : val;
+                                                            }}
+                                                        >
+                                                            {trainingProjects.map(p => (
+                                                                <MenuItem key={p.name} value={p.name}>
+                                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                                        <Typography variant="body2">{p.name}</Typography>
+                                                                        <Typography variant="caption" color="text.secondary">
+                                                                            {(p.clip_count ?? 0)} clip{p.clip_count === 1 ? '' : 's'}
+                                                                            {p.has_draft ? ' · draft pending' : ''}
+                                                                        </Typography>
+                                                                    </Box>
+                                                                </MenuItem>
+                                                            ))}
+                                                        </Select>
+                                                    )}
+
+                                                    {/* Phase 6 — pre-encode latents button. State machine:
+                                                        no latents → "Pre-encode latents · N clips" (clickable, outlined)
+                                                        running   → "Encoding… X / Y" (disabled, with Stop button)
+                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint). */}
+                                                    {trainingProject && (() => {
+                                                        const job = trainingPreEncode.job;
+                                                        const inFlight = job && (job.state === 'queued' || job.state === 'running');
+                                                        const ready = trainingPreEncode.latents_present && !inFlight;
+                                                        const project = trainingProjects.find(p => p.name === trainingProject);
+                                                        const clipCount = project?.clip_count ?? 0;
+                                                        let label = `Pre-encode latents · ${clipCount} clip${clipCount === 1 ? '' : 's'}`;
+                                                        if (inFlight) {
+                                                            label = job.total > 0
+                                                                ? `Encoding… ${job.current} / ${job.total}`
+                                                                : 'Encoding…';
+                                                        } else if (ready) {
+                                                            label = `Pre-encoded · ${trainingPreEncode.latents_count} latent${trainingPreEncode.latents_count === 1 ? '' : 's'}`;
+                                                        }
+                                                        return (
+                                                            <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                <Button
+                                                                    fullWidth
+                                                                    size="small"
+                                                                    variant="outlined"
+                                                                    onClick={startTrainingPreEncode}
+                                                                    disabled={inFlight || ready || clipCount === 0}
+                                                                    color={ready ? 'success' : 'primary'}
+                                                                    startIcon={ready ? <CheckCircleIcon size={14} /> : null}
+                                                                    sx={{
+                                                                        justifyContent: 'center',
+                                                                        textTransform: 'none',
+                                                                        // Make the "done" state visibly disabled (gray border /
+                                                                        // muted text) while still showing the success-green
+                                                                        // checkmark so the user can read the status at a glance.
+                                                                        ...(ready ? {
+                                                                            '&.Mui-disabled': {
+                                                                                color: 'text.disabled',
+                                                                                borderColor: 'divider',
+                                                                                '& .MuiButton-startIcon': {
+                                                                                    color: 'success.main',
+                                                                                    opacity: 0.8,
+                                                                                },
+                                                                            },
+                                                                        } : {}),
+                                                                    }}
+                                                                >
+                                                                    {label}
+                                                                </Button>
+                                                                {inFlight && (
+                                                                    <Button
+                                                                        size="small"
+                                                                        variant="text"
+                                                                        color="error"
+                                                                        onClick={cancelTrainingPreEncode}
+                                                                        sx={{ minWidth: 0, textTransform: 'none' }}
+                                                                    >
+                                                                        Stop
+                                                                    </Button>
+                                                                )}
+                                                            </Box>
+                                                        );
+                                                    })()}
+                                                </Box>
+
+                                                <Box sx={appStyles.fieldMarginBottom}>
+                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                        Base model to fine-tune
+                                                    </Typography>
+                                                    <Select
+                                                        fullWidth
+                                                        size="small"
+                                                        value={trainingConfig.baseModel}
+                                                        open={trainingBaseModelSelectOpen}
+                                                        onOpen={() => setTrainingBaseModelSelectOpen(true)}
+                                                        onClose={() => setTrainingBaseModelSelectOpen(false)}
+                                                        onChange={(e) => {
+                                                            const cap = (e.target.value || '').includes('medium') ? 380 : 120;
+                                                            setTrainingConfig({
+                                                                ...trainingConfig,
+                                                                baseModel: e.target.value,
+                                                                // Default the window to the new base's native length.
+                                                                duration: cap,
+                                                            });
+                                                        }}
+                                                    >
+                                                        {/* LoRA training requires CFG-aware *-base checkpoints —
+                                                            post-trained models have CFG distilled out and
+                                                            can't be trained against. */}
+                                                        {baseModels
+                                                            .filter(m => m.name.endsWith('-base'))
+                                                            .map(m => (
+                                                                <MenuItem
+                                                                    key={m.name}
+                                                                    value={m.name}
+                                                                    disabled={!m.downloaded}
+                                                                    sx={{
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: 1,
+                                                                        '&.Mui-disabled': { pointerEvents: 'auto' },
+                                                                    }}
+                                                                >
+                                                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                                        <Typography variant="body2">
+                                                                            {m.displayName}
+                                                                        </Typography>
+                                                                        <Typography variant="caption" color="text.secondary">
+                                                                            {m.description}
+                                                                        </Typography>
+                                                                    </Box>
+                                                                    {!m.downloaded && (
+                                                                        <Tooltip title={TIPS.training.downloadModel}>
+                                                                            <IconButton
+                                                                                size="small"
+                                                                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    e.preventDefault();
+                                                                                    setTrainingBaseModelSelectOpen(false);
+                                                                                    setCheckpointMgrOpen(true);
+                                                                                }}
+                                                                                sx={{ opacity: 1, color: 'primary.main' }}
+                                                                            >
+                                                                                <CloudDownloadIcon size={16} />
+                                                                            </IconButton>
+                                                                        </Tooltip>
+                                                                    )}
+                                                                </MenuItem>
+                                                            ))}
+                                                    </Select>
+                                                </Box>
+
+                                                <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="h6">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Epochs</Typography>
+                                                                <Tooltip title={TIPS.training.steps}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Training Steps</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
-                                                                        value={trainingConfig.epochs}
+                                                                        value={trainingConfig.steps}
                                                                         onChange={(e, value) => setTrainingConfig({
                                                                             ...trainingConfig,
-                                                                            epochs: value
+                                                                            steps: value
                                                                         })}
-                                                                        min={1}
-                                                                        max={1000}
+                                                                        min={500}
+                                                                        max={20000}
+                                                                        step={500}
+                                                                        marks={[
+                                                                            { value: 1000, label: '1k' },
+                                                                            { value: 5000, label: '5k' },
+                                                                            { value: 10000, label: '10k' },
+                                                                            { value: 20000, label: '20k' },
+                                                                        ]}
                                                                         valueLabelDisplay="auto"
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
                                                                     <TextField
                                                                         type="number"
-                                                                        value={trainingConfig.epochs}
+                                                                        value={trainingConfig.steps}
                                                                         onChange={(e) => {
-                                                                            const val = parseInt(e.target.value) || 1;
+                                                                            const val = parseInt(e.target.value) || 500;
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                epochs: Math.max(1, Math.min(1000, val))
+                                                                                steps: Math.max(500, Math.min(20000, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 1, max: 1000, step: 1 }}
+                                                                        inputProps={{ min: 500, max: 20000, step: 100 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
+                                                                <Tooltip title={TIPS.training.adapter}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Adapter Type</Typography>
+                                                                <Select
+                                                                    fullWidth
+                                                                    size="small"
+                                                                    value={trainingConfig.adapterType || 'dora-rows'}
+                                                                    onChange={(e) => setTrainingConfig({
+                                                                        ...trainingConfig,
+                                                                        adapterType: e.target.value,
+                                                                    })}
+                                                                >
+                                                                    <MenuItem value="dora-rows">DoRA-rows (recommended)</MenuItem>
+                                                                    <MenuItem value="dora-cols">DoRA-cols</MenuItem>
+                                                                    <MenuItem value="lora">LoRA (classic)</MenuItem>
+                                                                    <MenuItem value="bora">BoRA</MenuItem>
+                                                                    <MenuItem value="lora-xs">LoRA-XS (compact)</MenuItem>
+                                                                    <MenuItem value="dora-rows-xs">DoRA-rows-XS (compact)</MenuItem>
+                                                                    <MenuItem value="dora-cols-xs">DoRA-cols-XS (compact)</MenuItem>
+                                                                    <MenuItem value="bora-xs">BoRA-XS (compact)</MenuItem>
+                                                                </Select>
+                                                                </Box>
+                                                                </Tooltip>
+                                                            </Grid>
+
+                                                            <Grid item xs={12}>
+                                                                <Tooltip title={TIPS.training.checkpointEvery}>
+                                                                <Box>
                                                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                                                                     <Typography>Checkpoint Interval (steps)</Typography>
                                                                     <FormControlLabel
@@ -1486,10 +1712,14 @@ function App() {
                                                                         {trainingConfig.checkpointAuto ? ' (auto)' : ''}
                                                                     </Typography>
                                                                 )}
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Learning Rate</Typography>
+                                                                <Tooltip title={TIPS.training.learningRate}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Learning Rate</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.learningRate}
@@ -1518,10 +1748,14 @@ function App() {
                                                                         size="small"
                                                                     />
                                                                 </Box>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Batch Size</Typography>
+                                                                <Tooltip title={TIPS.training.batchSize}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Batch Size</Typography>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={trainingConfig.batchSize}
@@ -1530,8 +1764,9 @@ function App() {
                                                                             batchSize: value
                                                                         })}
                                                                         min={1}
-                                                                        max={32}
+                                                                        max={8}
                                                                         step={1}
+                                                                        marks
                                                                         valueLabelDisplay="auto"
                                                                         sx={appStyles.sliderFlexGrow}
                                                                     />
@@ -1542,21 +1777,22 @@ function App() {
                                                                             const val = parseInt(e.target.value, 10) || 1;
                                                                             setTrainingConfig({
                                                                                 ...trainingConfig,
-                                                                                batchSize: Math.max(1, Math.min(32, val))
+                                                                                batchSize: Math.max(1, Math.min(8, val))
                                                                             });
                                                                         }}
-                                                                        inputProps={{ min: 1, max: 32, step: 1 }}
+                                                                        inputProps={{ min: 1, max: 8, step: 1 }}
                                                                         sx={appStyles.sliderInputSmall}
                                                                         size="small"
                                                                     />
                                                                 </Box>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Lower this if you hit CUDA out-of-memory; raise it for faster training on large GPUs.
-                                                                </Typography>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Precision</Typography>
+                                                                <Tooltip title={TIPS.training.precision}>
+                                                                <Box>
+                                                                <Typography sx={{ mb: 0.5 }}>Base-model Precision</Typography>
                                                                 <FormControl fullWidth size="small">
                                                                     <Select
                                                                         value={trainingConfig.precision}
@@ -1565,24 +1801,22 @@ function App() {
                                                                             precision: e.target.value
                                                                         })}
                                                                     >
-                                                                        <MenuItem value="auto">Auto (recommended)</MenuItem>
-                                                                        <MenuItem value="bf16-mixed">bf16-mixed (Ampere+ GPUs)</MenuItem>
-                                                                        <MenuItem value="16-mixed">16-mixed (older GPUs)</MenuItem>
-                                                                        <MenuItem value="32">32 (full precision, highest VRAM)</MenuItem>
+                                                                        <MenuItem value="bf16">bf16 (recommended — halves VRAM, negligible quality cost)</MenuItem>
+                                                                        <MenuItem value="fp16">fp16 (legacy — only if your GPU lacks bf16 support)</MenuItem>
                                                                     </Select>
                                                                 </FormControl>
-                                                                <Typography variant="caption" color="textSecondary">
-                                                                    Auto picks bf16-mixed on modern CUDA, 16-mixed on older cards, fp32 on CPU/MPS.
-                                                                </Typography>
+                                                                </Box>
+                                                                </Tooltip>
                                                             </Grid>
 
-                                                            {trainingConfig.mode === 'lora' && (
-                                                                <Grid item xs={12}>
-                                                                    <Typography variant="subtitle2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
-                                                                        LoRA settings
-                                                                    </Typography>
+                                                            <Grid item xs={12}>
+                                                                <Typography variant="subtitle2" color="textSecondary" sx={{ mt: 1, mb: 1 }}>
+                                                                    LoRA settings
+                                                                </Typography>
 
-                                                                    <Typography gutterBottom>Rank</Typography>
+                                                                    <Tooltip title={TIPS.training.rank}>
+                                                                    <Box>
+                                                                    <Typography sx={{ mb: 0.5 }}>Rank</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraRank}
@@ -1612,11 +1846,11 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Higher rank = more capacity but more VRAM. r=16 fits comfortably on 16 GB.
-                                                                    </Typography>
-
-                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Alpha</Typography>
+                                                                    </Box>
+                                                                    </Tooltip>
+                                                                    <Tooltip title={TIPS.training.alpha}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Alpha</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraAlpha}
@@ -1642,11 +1876,11 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Scaling factor for the LoRA update. Conventional choice: alpha = rank.
-                                                                    </Typography>
-
-                                                                    <Typography gutterBottom sx={{ mt: 2 }}>Dropout</Typography>
+                                                                    </Box>
+                                                                    </Tooltip>
+                                                                    <Tooltip title={TIPS.training.dropout}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Dropout</Typography>
                                                                     <Box sx={appStyles.sliderRow}>
                                                                         <Slider
                                                                             value={trainingConfig.loraDropout}
@@ -1672,11 +1906,86 @@ function App() {
                                                                             size="small"
                                                                         />
                                                                     </Box>
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Regularization for the LoRA layers. 0 is fine for most cases; raise if overfitting on small datasets.
-                                                                    </Typography>
-                                                                </Grid>
-                                                            )}
+                                                                    </Box>
+                                                                    </Tooltip>
+
+                                                                    <Tooltip title={TIPS.training.seed}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                                                                        <Typography>Seed</Typography>
+                                                                        <FormControlLabel
+                                                                            sx={{ m: 0 }}
+                                                                            control={
+                                                                                <Switch
+                                                                                    size="small"
+                                                                                    checked={trainingConfig.seedRandom}
+                                                                                    onChange={(e) => setTrainingConfig({
+                                                                                        ...trainingConfig,
+                                                                                        seedRandom: e.target.checked,
+                                                                                    })}
+                                                                                />
+                                                                            }
+                                                                            label="Random"
+                                                                            labelPlacement="start"
+                                                                        />
+                                                                    </Box>
+                                                                    <TextField
+                                                                        type="number"
+                                                                        size="small"
+                                                                        fullWidth
+                                                                        placeholder={trainingConfig.seedRandom ? 'Randomized each run (recorded)' : 'e.g. 42'}
+                                                                        value={trainingConfig.seedRandom ? '' : trainingConfig.seed}
+                                                                        disabled={trainingConfig.seedRandom}
+                                                                        onChange={(e) => {
+                                                                            const v = parseInt(e.target.value, 10);
+                                                                            setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                seed: Number.isFinite(v) ? v : 42,
+                                                                            });
+                                                                        }}
+                                                                        inputProps={{ min: 0, step: 1 }}
+                                                                    />
+                                                                    </Box>
+                                                                    </Tooltip>
+
+                                                                    <Tooltip title={TIPS.training.sampleLength}>
+                                                                    <Box sx={{ mt: 2 }}>
+                                                                    <Typography sx={{ mb: 0.5 }}>Training Window (seconds)</Typography>
+                                                                    <Box sx={appStyles.sliderRow}>
+                                                                        <Slider
+                                                                            value={trainingConfig.duration}
+                                                                            onChange={(e, value) => setTrainingConfig({
+                                                                                ...trainingConfig,
+                                                                                duration: value,
+                                                                            })}
+                                                                            min={5}
+                                                                            max={(trainingConfig.baseModel || '').includes('medium') ? 380 : 120}
+                                                                            step={1}
+                                                                            marks={[{ value: 30, label: '30s' }]}
+                                                                            valueLabelDisplay="auto"
+                                                                            sx={appStyles.sliderFlexGrow}
+                                                                        />
+                                                                        <TextField
+                                                                            type="number"
+                                                                            value={trainingConfig.duration}
+                                                                            onChange={(e) => {
+                                                                                const cap = (trainingConfig.baseModel || '').includes('medium') ? 380 : 120;
+                                                                                const v = Math.max(5, Math.min(cap, parseFloat(e.target.value) || 30));
+                                                                                setTrainingConfig({ ...trainingConfig, duration: v });
+                                                                            }}
+                                                                            inputProps={{ min: 5, max: (trainingConfig.baseModel || '').includes('medium') ? 380 : 120, step: 1 }}
+                                                                            sx={appStyles.sliderInputSmall}
+                                                                            size="small"
+                                                                        />
+                                                                    </Box>
+                                                                    </Box>
+                                                                    </Tooltip>
+                                                                    {/* include/exclude layer targeting is intentionally not
+                                                                        exposed — the default (transformer.layers / exclude
+                                                                        seconds_total to_local_embed) is SA3's documented
+                                                                        small-dataset-safe filter; a wrong value silently
+                                                                        degrades training. Still sent from trainingConfig. */}
+                                                            </Grid>
 
                                                         </Grid>
                                                     </AccordionDetails>
@@ -1686,8 +1995,8 @@ function App() {
 
                                                 <Box sx={{ mt: 1.5, mb: 1.5 }}>
                                                     <Button
-                                                        variant="outlined"
-                                                        size="small"
+                                                        variant="contained"
+                                                        color="warm"
                                                         fullWidth
                                                         onClick={fetchHyperparamSuggestion}
                                                         disabled={isTraining}
@@ -1700,9 +2009,8 @@ function App() {
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
-                                                        size="large"
-                                                        onClick={startTraining}
-                                                        disabled={isTraining || !trainingConfig.baseModel || (() => {
+                                                        onClick={() => startTraining(false)}
+                                                        disabled={isTraining || !trainingProject || !trainingConfig.baseModel || (() => {
                                                             // Check if the selected base model is downloaded
                                                             const baseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
                                                             return baseModel ? !baseModel.downloaded : true;
@@ -1715,7 +2023,6 @@ function App() {
                                                     <Button
                                                         variant="outlined"
                                                         color="error"
-                                                        size="large"
                                                         onClick={stopTraining}
                                                         disabled={!isTraining}
                                                         startIcon={<StopIcon />}
@@ -1730,15 +2037,12 @@ function App() {
 
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.secondaryPaneContent}>
-                                            <Box sx={appStyles.trainingMonitorWrap}>
+                                            <Box sx={[appStyles.trainingMonitorWrap, appStyles.datasetStatusSticky(navTopPx)]}>
                                                 <TrainingMonitor
                                                     trainingProgress={trainingProgress}
                                                     trainingStatus={trainingStatus}
                                                     trainingHistory={trainingHistory}
-                                                    trainingStartTime={trainingStartTime}
                                                     trainingError={trainingError}
-                                                    trainingConfig={trainingConfig}
-                                                    systemStatus={systemStatus}
                                                     indicatorState={trainingIndicatorState}
                                                 />
                                             </Box>
@@ -1748,7 +2052,7 @@ function App() {
                             </TabPanel>
 
                             {/* Generation Tab */}
-                            <TabPanel value={tabValue} index={2}>
+                            <TabPanel value={displayedTab} index={2}>
                                 <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }} sx={appStyles.responsiveGrid}>
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.primaryPaneContent}>
@@ -1767,6 +2071,9 @@ function App() {
                                                             id="model-select"
                                                             value={selectedModel || ''}
                                                             label="Select Model"
+                                                            open={generationModelSelectOpen}
+                                                            onOpen={() => setGenerationModelSelectOpen(true)}
+                                                            onClose={() => setGenerationModelSelectOpen(false)}
                                                             onChange={(event) => {
                                                                 console.log('Model dropdown selected:', event.target.value, typeof event.target.value);
                                                                 handleModelChange(event);
@@ -1776,31 +2083,61 @@ function App() {
                                                             <MenuItem value="" disabled>
                                                                 <em>Select a model</em>
                                                             </MenuItem>
-                                                            {/* Base Models Section */}
-                                                            <MenuItem disabled>
-                                                                <Typography variant="subtitle2" color="textSecondary">
-                                                                    ── Base Models (Ready for Generation) ──
-                                                                </Typography>
-                                                            </MenuItem>
-                                                            {baseModels.map((model) => (
-                                                                <MenuItem key={model.name} value={String(model.name)}>
-                                                                    <Box>
-                                                                        <Typography variant="body1">{model.displayName}</Typography>
-                                                                        <Typography variant="caption" color="textSecondary">
-                                                                            {model.description}
+                                                            {[
+                                                                { kind: 'post-trained', label: '── Distilled · fixed cfg + steps (fast) ──' },
+                                                                { kind: 'base',         label: '── Base · cfg + steps live ──' },
+                                                            ].flatMap(group => {
+                                                                const rows = baseModels.filter(m => m.kind === group.kind);
+                                                                if (!rows.length) return [];
+                                                                return [
+                                                                    <MenuItem key={`hdr-${group.kind}`} disabled>
+                                                                        <Typography variant="subtitle2" color="textSecondary">
+                                                                            {group.label}
                                                                         </Typography>
-                                                                        {model.downloaded ? (
-                                                                            <Typography variant="caption" color="success.main" display="block">
-                                                                                Ready for inference
-                                                                            </Typography>
-                                                                        ) : (
-                                                                            <Typography variant="caption" color="error.main" display="block">
-                                                                                Not downloaded
-                                                                            </Typography>
-                                                                        )}
-                                                                    </Box>
-                                                                </MenuItem>
-                                                            ))}
+                                                                    </MenuItem>,
+                                                                    ...rows.map(model => (
+                                                                        <MenuItem
+                                                                            key={model.name}
+                                                                            value={String(model.name)}
+                                                                            disabled={!model.downloaded}
+                                                                            sx={{
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                gap: 1,
+                                                                                // Disabled MenuItems get opacity from MUI; the
+                                                                                // download IconButton needs to stay clickable
+                                                                                // (and look it), so re-enable pointer events on
+                                                                                // the action slot and lift its opacity.
+                                                                                '&.Mui-disabled': { pointerEvents: 'auto' },
+                                                                            }}
+                                                                        >
+                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                                                <Typography variant="body1">{model.displayName}</Typography>
+                                                                                <Typography variant="caption" color="textSecondary">
+                                                                                    {model.description}
+                                                                                </Typography>
+                                                                            </Box>
+                                                                            {!model.downloaded && (
+                                                                                <Tooltip title={TIPS.training.downloadModel}>
+                                                                                    <IconButton
+                                                                                        size="small"
+                                                                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                                                                        onClick={(e) => {
+                                                                                            e.stopPropagation();
+                                                                                            e.preventDefault();
+                                                                                            setGenerationModelSelectOpen(false);
+                                                                                            setCheckpointMgrOpen(true);
+                                                                                        }}
+                                                                                        sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                    >
+                                                                                        <CloudDownloadIcon size={16} />
+                                                                                    </IconButton>
+                                                                                </Tooltip>
+                                                                            )}
+                                                                        </MenuItem>
+                                                                    )),
+                                                                ];
+                                                            })}
                                                             {/* Fine-tuned Models Section */}
                                                             {availableModels.length > 0 && (
                                                                 <MenuItem disabled>
@@ -1819,13 +2156,10 @@ function App() {
                                                                     <Box sx={{ flex: 1, minWidth: 0 }}>
                                                                         <Typography variant="body1">{model.name}</Typography>
                                                                         <Typography variant="caption" color="textSecondary">
-                                                                            {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'} |
-                                                                            {model.unwrapped_models && model.unwrapped_models.length > 0
-                                                                                ? ` ${model.unwrapped_models.length} unwrapped models`
-                                                                                : ' No unwrapped models'}
+                                                                            {model.has_checkpoint ? 'Checkpoint' : 'No Checkpoint'}
                                                                         </Typography>
                                                                     </Box>
-                                                                    <Tooltip title="Delete fine-tuned model">
+                                                                    <Tooltip title={TIPS.training.deleteFineTuned}>
                                                                         <IconButton
                                                                             size="small"
                                                                             onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
@@ -1855,150 +2189,36 @@ function App() {
                                                     </IconButton>
                                                 </Box>
 
-                                            {/* Unwrapped Model Selection for Fine-tuned Models */}
-                                                {selectedModel && availableModels.find(m => m.name === selectedModel)?.unwrapped_models?.length > 0 && (
-                                                    (() => {
-                                                        const unwrappedModels = availableModels.find(m => m.name === selectedModel)?.unwrapped_models || [];
-                                                        const validPaths = unwrappedModels.map(u => String(u.path));
-                                                        // Only allow the value if it's in the list, otherwise set to ''
-                                                        const safeSelected = validPaths.includes(selectedUnwrappedModel) ? selectedUnwrappedModel : '';
-                                                        return (
-                                                            <>
-                                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                    <Select
-                                                                        key={selectedModel}
-                                                                        labelId="unwrapped-model-select-label"
-                                                                        id="unwrapped-model-select"
-                                                                        value={safeSelected}
-                                                                        label="Select Checkpoint"
-                                                                        onChange={(e) => {
-                                                                            console.log('Selected checkpoint:', e.target.value, typeof e.target.value);
-                                                                            setSelectedUnwrappedModel(String(e.target.value));
-                                                                        }}
-                                                                        displayEmpty
-                                                                    >
-                                                                        <MenuItem value="" disabled>
-                                                                            <em>Select a checkpoint</em>
-                                                                        </MenuItem>
-                                                                        {unwrappedModels.map((unwrapped, index) => (
-                                                                            <MenuItem key={index} value={String(unwrapped.path)}>
-                                                                                <Box>
-                                                                                    <Typography variant="body1">{unwrapped.name}</Typography>
-                                                                                    <Typography variant="caption" color="textSecondary">
-                                                                                        Size: {unwrapped.size_mb} MB
-                                                                                    </Typography>
-                                                                                    <Typography variant="body2" color="success.main" display="block">
-                                                                                        Ready for inference
-                                                                                    </Typography>
-                                                                                </Box>
-                                                                            </MenuItem>
-                                                                        ))}
-                                                                    </Select>
-                                                                </FormControl>
-                                                            </>
-                                                        );
-                                                    })()
-                                                )}
 
-                                                {/* LoRA picker — only meaningful on a base model. Filters to
-                                                    LoRAs trained against the currently-selected base.
-                                                    Two-step: pick LoRA name, then pick which saved checkpoint
-                                                    of that LoRA to load (defaults to latest). */}
-                                                {baseModels.find(m => m.name === selectedModel) && (() => {
-                                                    const compatibleLoras = availableLoras.filter(
-                                                        l => l.base_model === selectedModel
-                                                    );
-                                                    if (compatibleLoras.length === 0) return null;
-                                                    // Derive which LoRA the current checkpoint path belongs to,
-                                                    // so the dropdown's `value` stays in sync after the second
-                                                    // picker mutates `selectedLora`.
-                                                    const currentLora = compatibleLoras.find(
-                                                        l => l.path === selectedLora ||
-                                                             (l.all_checkpoints || []).includes(selectedLora)
-                                                    );
-                                                    const currentLoraName = currentLora?.name || '';
-                                                    return (
-                                                        <>
-                                                            <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                <Select
-                                                                    labelId="lora-select-label"
-                                                                    id="lora-select"
-                                                                    value={currentLoraName}
-                                                                    label="Select LoRA (optional)"
-                                                                    onChange={(e) => {
-                                                                        const name = e.target.value;
-                                                                        if (!name) { setSelectedLora(''); return; }
-                                                                        const lora = compatibleLoras.find(l => l.name === name);
-                                                                        // Default to latest checkpoint when picking a LoRA.
-                                                                        setSelectedLora(lora?.path || '');
-                                                                    }}
-                                                                    displayEmpty
-                                                                >
-                                                                    <MenuItem value="">
-                                                                        <em>No LoRA (base model only)</em>
-                                                                    </MenuItem>
-                                                                    {compatibleLoras.map((lora) => (
-                                                                        <MenuItem
-                                                                            key={lora.name}
-                                                                            value={lora.name}
-                                                                            sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5 }}
-                                                                        >
-                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                                                                                <Typography variant="body1">{lora.name}</Typography>
-                                                                                <Typography variant="caption" color="textSecondary">
-                                                                                    rank={lora.rank}, alpha={lora.alpha}
-                                                                                    {lora.all_checkpoints?.length > 1
-                                                                                        ? ` · ${lora.all_checkpoints.length} checkpoints`
-                                                                                        : ''}
-                                                                                </Typography>
-                                                                            </Box>
-                                                                            <Tooltip title="Delete LoRA">
-                                                                                <IconButton
-                                                                                    size="small"
-                                                                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                                                                    onClick={(e) => {
-                                                                                        e.stopPropagation();
-                                                                                        e.preventDefault();
-                                                                                        handleDeleteFineTunedOrLora(lora.name, { isLora: true });
-                                                                                    }}
-                                                                                    sx={{
-                                                                                        color: 'text.disabled',
-                                                                                        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
-                                                                                    }}
-                                                                                >
-                                                                                    <DeleteIcon size={14} />
-                                                                                </IconButton>
-                                                                            </Tooltip>
-                                                                        </MenuItem>
-                                                                    ))}
-                                                                </Select>
-                                                            </FormControl>
+                                                {/* Phase 4: LoraStack is the single LoRA picker for the
+                                                    Generation panel. Always rendered between model picker
+                                                    and mode toggle so it's visible in both Create + Edit
+                                                    modes without expanding Advanced Settings. */}
+                                                <Box sx={{ mb: 2 }}>
+                                                    <LoraStack
+                                                        selectedModel={selectedModel}
+                                                        value={loraStack}
+                                                        onChange={setLoraStack}
+                                                    />
+                                                </Box>
 
-                                                            {/* Second picker: which checkpoint of the chosen LoRA */}
-                                                            {currentLora && currentLora.all_checkpoints?.length > 1 && (
-                                                                <FormControl fullWidth sx={appStyles.formControlMarginBottom} variant="outlined">
-                                                                    <Select
-                                                                        labelId="lora-checkpoint-select-label"
-                                                                        id="lora-checkpoint-select"
-                                                                        value={selectedLora || currentLora.path}
-                                                                        label="Checkpoint"
-                                                                        onChange={(e) => setSelectedLora(String(e.target.value))}
-                                                                    >
-                                                                        {currentLora.all_checkpoints.map((ckpt, i, arr) => (
-                                                                            <MenuItem key={ckpt} value={ckpt}>
-                                                                                <Typography variant="body2">
-                                                                                    {parseCheckpointLabel(ckpt)}
-                                                                                    {i === arr.length - 1 ? ' (latest)' : ''}
-                                                                                </Typography>
-                                                                            </MenuItem>
-                                                                        ))}
-                                                                    </Select>
-                                                                </FormControl>
-                                                            )}
-                                                        </>
-                                                    );
-                                                })()}
+                                                {/* Phase 8: top-level mode switch. Create = text→audio,
+                                                    Edit = audio→audio (style / inpaint / extend). The
+                                                    model picker and LoRA picker above stay visible in
+                                                    both modes. */}
+                                                <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                                                    <ToggleButtonGroup
+                                                        value={generationMode}
+                                                        exclusive
+                                                        size="small"
+                                                        onChange={(_, v) => v && setGenerationMode(v)}
+                                                    >
+                                                        <ToggleButton value="create">Generate new</ToggleButton>
+                                                        <ToggleButton value="edit">Edit existing</ToggleButton>
+                                                    </ToggleButtonGroup>
+                                                </Box>
 
+                                                {generationMode === 'create' && (<>
                                                 <TextField
                                                     fullWidth
                                                     multiline
@@ -2010,6 +2230,7 @@ function App() {
                                                     onChange={(e) => setGenerationPrompt(e.target.value)}
                                                     sx={appStyles.fieldMarginBottomLarge}
                                                 />
+
 
                                                 <Box sx={appStyles.durationRow}>
                                                     <Typography variant="body2" color="textSecondary">
@@ -2029,101 +2250,80 @@ function App() {
                                                     </Typography>
                                                 </Box>
 
-                                                <Accordion sx={appStyles.accordionMarginBottom}>
+                                                <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="h6">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>CFG Scale</Typography>
-                                                                <Box sx={appStyles.sliderRow}>
-                                                                    <Slider
-                                                                        value={isDistilledBase ? 1.0 : cfgScale}
-                                                                        onChange={(e, value) => setCfgScale(value)}
-                                                                        min={0.1}
-                                                                        max={20}
-                                                                        step={0.1}
-                                                                        valueLabelDisplay="auto"
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderFlexGrow}
-                                                                    />
-                                                                    <TextField
-                                                                        type="number"
-                                                                        value={isDistilledBase ? 1.0 : cfgScale}
-                                                                        onChange={(e) => {
-                                                                            const val = parseFloat(e.target.value);
-                                                                            if (Number.isNaN(val)) return;
-                                                                            setCfgScale(Math.max(0.1, Math.min(20, val)));
-                                                                        }}
-                                                                        inputProps={{ min: 0.1, max: 20, step: 0.1 }}
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderInputSmall}
-                                                                        size="small"
-                                                                    />
-                                                                </Box>
-                                                                {isDistilledBase && (
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Locked at 1.0 for the distilled small model.
-                                                                    </Typography>
-                                                                )}
+                                                                <TextField
+                                                                    fullWidth
+                                                                    multiline
+                                                                    minRows={1}
+                                                                    maxRows={3}
+                                                                    label="Negative Prompt (optional)"
+                                                                    placeholder="What to avoid: vocals, distortion, silence..."
+                                                                    value={negativePrompt}
+                                                                    onChange={(e) => setNegativePrompt(e.target.value)}
+                                                                />
                                                             </Grid>
 
-                                                            <Grid item xs={12}>
-                                                                <Typography gutterBottom>Inference Steps</Typography>
-                                                                <Box sx={appStyles.sliderRow}>
-                                                                    <Slider
-                                                                        value={steps}
-                                                                        onChange={(e, value) => setSteps(value)}
-                                                                        min={50}
-                                                                        max={250}
-                                                                        step={null}
-                                                                        marks={[
-                                                                            { value: 50, label: '50' },
-                                                                            { value: 100, label: '100' },
-                                                                            { value: 150, label: '150' },
-                                                                            { value: 200, label: '200' },
-                                                                            { value: 250, label: '250' },
-                                                                        ]}
-                                                                        valueLabelDisplay="auto"
-                                                                        disabled={isDistilledBase}
-                                                                        sx={appStyles.sliderFlexGrow}
-                                                                    />
-                                                                </Box>
-                                                                {isDistilledBase && (
-                                                                    <Typography variant="caption" color="textSecondary">
-                                                                        Locked at 8 steps (pingpong sampler) for the distilled small model.
-                                                                    </Typography>
-                                                                )}
-                                                            </Grid>
+                                                            {/* CFG + Steps are only meaningful on *-base checkpoints.
+                                                                Distilled post-trained models bake cfg=1.0 / steps=8 and
+                                                                ignore overrides, so we hide the controls entirely. */}
+                                                            {!isDistilledBase && (
+                                                                <>
+                                                                    <Grid item xs={12}>
+                                                                        <Typography gutterBottom>CFG Scale</Typography>
+                                                                        <Box sx={appStyles.sliderRow}>
+                                                                            <Slider
+                                                                                value={cfgScale}
+                                                                                onChange={(e, value) => setCfgScale(value)}
+                                                                                min={0.1}
+                                                                                max={20}
+                                                                                step={0.1}
+                                                                                valueLabelDisplay="auto"
+                                                                                sx={appStyles.sliderFlexGrow}
+                                                                            />
+                                                                            <TextField
+                                                                                type="number"
+                                                                                value={cfgScale}
+                                                                                onChange={(e) => {
+                                                                                    const val = parseFloat(e.target.value);
+                                                                                    if (Number.isNaN(val)) return;
+                                                                                    setCfgScale(Math.max(0.1, Math.min(20, val)));
+                                                                                }}
+                                                                                inputProps={{ min: 0.1, max: 20, step: 0.1 }}
+                                                                                sx={appStyles.sliderInputSmall}
+                                                                                size="small"
+                                                                            />
+                                                                        </Box>
+                                                                    </Grid>
 
-                                                            {selectedLora && (
-                                                                <Grid item xs={12}>
-                                                                    <Typography gutterBottom>LoRA Multiplier</Typography>
-                                                                    <Box sx={appStyles.sliderRow}>
-                                                                        <Slider
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e, v) => setLoraMultiplier(v)}
-                                                                            min={0}
-                                                                            max={2}
-                                                                            step={0.05}
-                                                                            valueLabelDisplay="auto"
-                                                                            sx={appStyles.sliderFlexGrow}
-                                                                        />
-                                                                        <TextField
-                                                                            type="number"
-                                                                            value={loraMultiplier}
-                                                                            onChange={(e) => {
-                                                                                const val = parseFloat(e.target.value);
-                                                                                if (Number.isNaN(val)) return;
-                                                                                setLoraMultiplier(Math.max(0, Math.min(2, val)));
-                                                                            }}
-                                                                            inputProps={{ min: 0, max: 2, step: 0.05 }}
-                                                                            sx={appStyles.sliderInputSmall}
-                                                                            size="small"
-                                                                        />
-                                                                    </Box>
-                                                                </Grid>
+                                                                    <Grid item xs={12}>
+                                                                        <Typography gutterBottom>Inference Steps</Typography>
+                                                                        <Box sx={appStyles.sliderRow}>
+                                                                            <Slider
+                                                                                value={steps}
+                                                                                onChange={(e, value) => setSteps(value)}
+                                                                                min={20}
+                                                                                max={250}
+                                                                                step={null}
+                                                                                marks={[
+                                                                                    { value: 20, label: '20' },
+                                                                                    { value: 50, label: '50' },
+                                                                                    { value: 100, label: '100' },
+                                                                                    { value: 150, label: '150' },
+                                                                                    { value: 200, label: '200' },
+                                                                                    { value: 250, label: '250' },
+                                                                                ]}
+                                                                                valueLabelDisplay="auto"
+                                                                                sx={appStyles.sliderFlexGrow}
+                                                                            />
+                                                                        </Box>
+                                                                    </Grid>
+                                                                </>
                                                             )}
 
                                                             <Grid item xs={12}>
@@ -2196,11 +2396,13 @@ function App() {
                                                                 Generating audio... {Math.round(generationProgress)}%
                                                             </Typography>
                                                         </Box>
-                                                        <LinearProgress
-                                                            variant="determinate"
-                                                            value={generationProgress}
-                                                            sx={appStyles.generatingProgress}
-                                                        />
+                                                        <Box sx={{ width: '100%', position: 'relative' }}>
+                                                            <LinearProgress
+                                                                variant="determinate"
+                                                                value={Math.max(0, Math.min(100, Number(generationProgress) || 0))}
+                                                                sx={appStyles.generatingProgress}
+                                                            />
+                                                        </Box>
                                                         <Typography variant="caption" color="textSecondary" sx={appStyles.generatingHint}>
                                                             Generation time may vary considerably depending on your hardware.
                                                         </Typography>
@@ -2238,188 +2440,83 @@ function App() {
                                                 )}
 
                                             {/* Warnings for model issues */}
-                                                {selectedModel &&
-                                                    availableModels.find(m => m.name === selectedModel) &&
-                                                    availableModels.find(m => m.name === selectedModel)?.unwrapped_models?.length > 0 &&
-                                                    !selectedUnwrappedModel && (
-                                                        <Alert severity="warning" sx={appStyles.warningAlertTop}>
-                                                            Please select a checkpoint for the selected fine-tuned model before generating audio.
-                                                        </Alert>
-                                                    )}
+                                                </>)}
+
+                                                {generationMode === 'edit' && (
+                                                    <EditPanel
+                                                        model_id={selectedModel}
+                                                        negativePrompt={negativePrompt}
+                                                        loraStack={loraStack}
+                                                        steps={steps}
+                                                        cfgScale={cfgScale}
+                                                        onGenerated={(blob, filename, params) => {
+                                                            const audioUrl = URL.createObjectURL(blob);
+                                                            const newFrag = {
+                                                                id: Date.now(),
+                                                                prompt: params.prompt,
+                                                                duration: params.duration,
+                                                                cfgScale: params.cfg_scale,
+                                                                steps: params.steps,
+                                                                seed: params.seed,
+                                                                modelId: params.model_id,
+                                                                batchIndex: 1,
+                                                                batchTotal: 1,
+                                                                audioUrl,
+                                                                audioBlob: blob,
+                                                                filename,
+                                                                timestamp: new Date().toLocaleString(),
+                                                                createdAt: Date.now(),
+                                                                editMode: params.init_audio_path ? 'style' : params.inpaint_audio_path ? 'inpaint/extend' : null,
+                                                            };
+                                                            setGeneratedFragments(prev => {
+                                                                const next = [...prev, newFrag];
+                                                                return next.length > 100 ? next.slice(next.length - 100) : next;
+                                                            });
+                                                        }}
+                                                    />
+                                                )}
                                             </Paper>
                                         </Box>
                                     </Grid>
 
                                     <Grid item xs={12} md={6} sx={appStyles.secondaryPaneItem}>
                                         <Box sx={appStyles.secondaryPaneContent}>
-                                            <Paper sx={appStyles.selectedModelCard}>
-                                                <Box sx={appStyles.sectionCardHeader}>
-                                                    <Box component="span" sx={appStyles.sectionCardIcon}>
-                                                        <InfoIcon size={20} />
-                                                    </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Selected Model</Typography>
-                                                </Box>
-                                                {selectedModel ? (
-                                                    (() => {
-                                                        // Check if it's a base model
-                                                        const baseModel = baseModels.find(m => m.name === selectedModel);
-                                                        if (baseModel) {
-                                                            return (
-                                                                <Box>
-                                                                    <Typography variant="body1" sx={appStyles.boldBodyText}>
-                                                                        {baseModel.displayName}
-                                                                    </Typography>
-                                                                    {baseModel.downloaded ? (
-                                                                        <Typography variant="body2" color="success.main" sx={appStyles.boldBodyText}>
-                                                                            Ready for inference
-                                                                        </Typography>
-                                                                    ) : (
-                                                                        <Typography variant="body2" color="error.main" >
-                                                                            Model not downloaded
-                                                                        </Typography>
-                                                                    )}
-                                                                </Box>
-                                                            );
-                                                        }
-
-                                                        // Check if it's a fine-tuned model
-                                                        const model = availableModels.find(m => m.name === selectedModel);
-                                                        if (model) {
-                                                            const maxDuration = getMaxDuration();
-                                                            const selectedUnwrapped = selectedUnwrappedModel
-                                                                ? model.unwrapped_models?.find(u => u.path === selectedUnwrappedModel)
-                                                                : null;
-                                                            return (
-                                                                <Box>
-                                                                    <Typography variant="body1" sx={appStyles.boldBodyText}>
-                                                                        {model.name}
-                                                                    </Typography>
-                                                                    <Typography variant="caption" color="textSecondary" sx={appStyles.selectedModelMetaText}>
-                                                                        {model.checkpoints?.length || 0} wrapped checkpoints
-                                                                    </Typography>
-
-                                                                    {selectedUnwrapped ? (
-                                                                        <Box sx={appStyles.unwrappedInfoWrap}>
-                                                                            <Typography variant="body2" sx={appStyles.boldBodyText}>
-                                                                                Using: {selectedUnwrapped.name}
-                                                                            </Typography>
-                                                                            <Typography variant="caption" color="textSecondary" sx={appStyles.selectedModelMetaText}>
-                                                                                {selectedUnwrapped.size_mb} MB
-                                                                            </Typography>
-                                                                            <Typography variant="body2" color="primary.main" sx={appStyles.boldBodyText}>
-                                                                                Max Duration: {maxDuration} seconds
-                                                                            </Typography>
-                                                                        </Box>
-                                                                    ) : (
-                                                                        <Typography variant="caption" color="error" sx={appStyles.unwrappedInfoWrap}>
-                                                                            Select a checkpoint to generate audio.
-                                                                        </Typography>
-                                                                    )}
-
-                                                                    <CheckpointManager
-                                                                        model={model}
-                                                                        onRefresh={refreshAllModels}
-                                                                    />
-                                                                </Box>
-                                                            );
-                                                        }
-
-                                                        return (
-                                                            <Typography variant="body2" color="textSecondary">
-                                                                Model not found
-                                                            </Typography>
-                                                        );
-                                                    })()
-                                                ) : (
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Please select a model to generate audio
-                                                    </Typography>
-                                                )}
-                                            </Paper>
-
-                                            <GeneratedFragmentsWindow
-                                                fragments={generatedFragments}
-                                                onDownload={downloadFragment}
-                                            />
+                                            <Box sx={appStyles.datasetStatusSticky(navTopPx)}>
+                                                <GeneratedFragmentsWindow
+                                                    fragments={generatedFragments}
+                                                    onDelete={deleteFragment}
+                                                    onClearAll={clearAllFragments}
+                                                />
+                                            </Box>
                                         </Box>
                                     </Grid>
                                 </Grid>
                             </TabPanel>
 
-                            <TabPanel value={tabValue} index={3} keepMounted>
-                                {performanceEnabled ? (
-                                    <Suspense fallback={
-                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-                                            <CircularProgress size={28} />
-                                        </Box>
-                                    }>
-                                        <PerformancePanel
-                                            key={performanceResetKey}
-                                            selectedModel={selectedModel}
-                                            selectedUnwrappedModel={selectedUnwrappedModel}
-                                            availableModels={availableModels}
-                                            baseModels={baseModels}
-                                            availableLoras={availableLoras}
-                                            selectedLora={selectedLora}
-                                            loraMultiplier={loraMultiplier}
-                                            onSelectModel={setSelectedModel}
-                                            onSelectUnwrappedModel={setSelectedUnwrappedModel}
-                                            onRefreshModels={refreshAllModels}
-                                            onSelectLora={setSelectedLora}
-                                            onLoraMultiplierChange={setLoraMultiplier}
-                                            steps={steps}
-                                            onStepsChange={setSteps}
-                                            randomSeed={randomSeed}
-                                            seedValue={seedValue}
-                                            onRandomSeedChange={setRandomSeed}
-                                            onSeedValueChange={setSeedValue}
-                                            onPresetLoaded={() => setPerformanceResetKey(prev => prev + 1)}
-                                        />
-                                    </Suspense>
-                                ) : (
-                                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 8, gap: 2 }}>
-                                        <AlertIcon size={48} color="#FFB74D" />
-                                        <Typography variant="body1" color="textSecondary" align="center">
-                                            Performance mode is turned off. Toggle on from the sidebar if you wish to enter performance mode.
-                                        </Typography>
-                                    </Box>
-                                )}
+                            <TabPanel value={displayedTab} index={3} keepMounted>
+                                <PerformancePanel
+                                    selectedModel={selectedModel}
+                                    availableModels={availableModels}
+                                    baseModels={baseModels}
+                                    availableLoras={availableLoras}
+                                    selectedLora={selectedLora}
+                                    loraMultiplier={loraMultiplier}
+                                    onSelectModel={setSelectedModel}
+                                    onRefreshModels={refreshAllModels}
+                                    onSelectLora={setSelectedLora}
+                                    onLoraMultiplierChange={setLoraMultiplier}
+                                    steps={steps}
+                                    onStepsChange={setSteps}
+                                    randomSeed={randomSeed}
+                                    seedValue={seedValue}
+                                    onRandomSeedChange={setRandomSeed}
+                                    onSeedValueChange={setSeedValue}
+                                    onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
+                                />
                             </TabPanel>
-                        </Paper>
+                            </Box>
+                        </Box>
                     </Box>
-
-                    {/* Start Fresh Confirmation Dialog */}
-                    <Dialog
-                        open={showStartFreshDialog}
-                        onClose={() => setShowStartFreshDialog(false)}
-                        aria-labelledby="start-fresh-dialog-title"
-                    >
-                        <DialogTitle id="start-fresh-dialog-title">
-                            Start Fresh - Delete All Data
-                        </DialogTitle>
-                        <DialogContent>
-                            <Typography sx={appStyles.dialogBodyText}>
-                                This will permanently delete all uploaded audio files, processed segments, and metadata files.
-                                This action cannot be undone.
-                            </Typography>
-                            <Typography variant="body2" color="error" sx={appStyles.dialogErrorText}>
-                                Are you sure you want to continue?
-                            </Typography>
-                        </DialogContent>
-                        <DialogActions>
-                            <Button onClick={() => setShowStartFreshDialog(false)}>
-                                Cancel
-                            </Button>
-                            <Button
-                                onClick={handleStartFresh}
-                                color="error"
-                                variant="contained"
-                                disabled={isStartingFresh}
-                            >
-                                {isStartingFresh ? 'Deleting...' : 'Delete All Data'}
-                            </Button>
-                        </DialogActions>
-                    </Dialog>
 
                     {/* Free GPU Memory Confirmation Dialog */}
                     <Dialog
@@ -2489,123 +2586,205 @@ function App() {
                 </Container>
             </Box>
 
-            <IconButton
-                aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-                title={colorMode === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-                onClick={toggleColorMode}
-                sx={appStyles.modeToggleButton}
+            <Snackbar
+                open={Boolean(processingStatus)}
+                autoHideDuration={10000}
+                onClose={(_e, reason) => { if (reason !== 'clickaway') setProcessingStatus(''); }}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
             >
-                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
-            </IconButton>
+                <Alert
+                    onClose={() => setProcessingStatus('')}
+                    severity={
+                        /error|failed/i.test(processingStatus) ? 'error'
+                        : /completed|success/i.test(processingStatus) ? 'success'
+                        : 'info'
+                    }
+                    variant="filled"
+                    sx={{ minWidth: 280, boxShadow: 6 }}
+                >
+                    {processingStatus}
+                </Alert>
+            </Snackbar>
 
-            <IconButton
-                aria-label="Open about and documentation"
-                title="About & Documentation"
-                onClick={() => setShowInfoDialog(true)}
-                sx={appStyles.infoButton}
-            >
-                <InfoIcon size={18} />
-            </IconButton>
+            {isDockCollapsed ? (
+                <>
+                    <IconButton
+                        aria-label="Open actions menu"
+                        onClick={(e) => setDockMenuAnchor(e.currentTarget)}
+                        sx={appStyles.dockHamburger}
+                    >
+                        <MenuIcon size={18} />
+                    </IconButton>
+                    <Menu
+                        anchorEl={dockMenuAnchor}
+                        open={Boolean(dockMenuAnchor)}
+                        onClose={() => setDockMenuAnchor(null)}
+                        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+                        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                    >
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setCheckpointMgrOpen(true); }}
+                        >
+                            <ListItemIcon><CloudDownloadIcon size={18} /></ListItemIcon>
+                            <ListItemText>Get Models</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
+                        >
+                            <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
+                            <ListItemText>Outputs</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setShowFreeGPUDialog(true); }}
+                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
+                        >
+                            <ListItemIcon>
+                                {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
+                            </ListItemIcon>
+                            <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
+                        </MenuItem>
+                        <Divider />
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); toggleColorMode(); }}
+                        >
+                            <ListItemIcon>
+                                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                            </ListItemIcon>
+                            <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
+                        </MenuItem>
+                        <MenuItem
+                            onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
+                        >
+                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
+                            <ListItemText>About</ListItemText>
+                        </MenuItem>
+                    </Menu>
+                </>
+            ) : (
+                <Box
+                    sx={(theme) => ({
+                        position: 'fixed',
+                        left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
+                        bottom: { xs: theme.spacing(7), sm: theme.spacing(9), md: theme.spacing(12) },
+                        zIndex: 1350,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 0.75,
+                    })}
+                >
+                    {/* Small Info View toggle, sitting above the dock card. */}
+                    <Box
+                        component="button"
+                        type="button"
+                        onClick={toggleInfoView}
+                        aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
+                        aria-pressed={infoViewEnabled}
+                        sx={(theme) => ({
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 0.4,
+                            px: 0.5,
+                            py: 0.25,
+                            m: 0,
+                            border: 'none',
+                            background: 'transparent',
+                            cursor: 'pointer',
+                            borderRadius: 999,
+                            fontFamily: 'inherit',
+                            fontSize: '0.6rem',
+                            lineHeight: 1,
+                            letterSpacing: '0.02em',
+                            color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
+                            opacity: infoViewEnabled ? 0.9 : 0.55,
+                            transition: 'color 160ms ease, opacity 160ms ease',
+                            '&:hover': {
+                                opacity: 1,
+                                color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
+                            },
+                        })}
+                    >
+                        <InfoViewIcon size={11} />
+                        <Box component="span">Info</Box>
+                    </Box>
 
-            <Dialog
+                    <Paper sx={[appStyles.bottomDock, { position: 'static', left: 'auto', right: 'auto', bottom: 'auto', zIndex: 'auto' }]}>
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Get models"
+                            onClick={() => setCheckpointMgrOpen(true)}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <CloudDownloadIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            Get Models
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Open outputs folder"
+                            onClick={handleOpenOutputFolder}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <FolderOpenIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            Outputs
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Free GPU memory"
+                            onClick={() => setShowFreeGPUDialog(true)}
+                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
+                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
+                        >
+                            {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {isFreeingGPU ? 'Freeing…' : 'Free GPU'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+                            onClick={toggleColorMode}
+                            sx={[appStyles.dockIconButton, { color: colorMode === 'light' ? 'night.main' : 'warm.main', '&:hover': { color: colorMode === 'light' ? 'night.main' : 'warm.main' } }]}
+                        >
+                            {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            {colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}
+                        </Typography>
+                    </Box>
+
+                    <Box sx={appStyles.dockItem}>
+                        <IconButton
+                            aria-label="Open about and documentation"
+                            onClick={() => setShowInfoDialog(true)}
+                            sx={appStyles.dockIconButton}
+                        >
+                            <InfoIcon size={18} />
+                        </IconButton>
+                        <Typography className="dock-label" sx={appStyles.dockLabel}>
+                            About
+                        </Typography>
+                    </Box>
+                    </Paper>
+                </Box>
+            )}
+
+            <AboutDialog
                 open={showInfoDialog}
                 onClose={() => setShowInfoDialog(false)}
-                aria-labelledby="about-documentation-dialog-title"
-                maxWidth="sm"
-                fullWidth
-            >
-                <DialogTitle id="about-documentation-dialog-title">
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                        <Box sx={{
-                            ...appStyles.logo,
-                            width: 52, height: 52,
-                            border: 'none',
-                            boxShadow: 'none',
-                            filter: 'none',
-                        }} />
-                        <Typography variant="h5" component="span" sx={appStyles.title}>
-                            Fragmenta
-                        </Typography>
-                    </Box>
-                </DialogTitle>
-                <DialogContent>
-                    <Typography sx={appStyles.infoDialogIntro}>
-                        Fragmenta is an open source, local-first pipeline to fine-tune, LoRA, train, generate and perform with text-to-audio diffusion models.
-                        Made by the composer and researcher Misagh Azimi.
-                    </Typography>
-
-                    <Typography variant="subtitle2" sx={appStyles.infoDialogSectionTitle}>
-                        Resources
-                    </Typography>
-
-                    <Box sx={appStyles.infoDialogActionStack}>
-                        <Button
-                            variant="contained"
-                            size="small"
-                            startIcon={<InfoIcon size={16} />}
-                            onClick={() => handleOpenDocumentation('about')}
-                            disabled={isOpeningDocumentation}
-                            sx={appStyles.infoDocButton}
-                        >
-                            About
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            size="small"
-                            startIcon={<BookOpenIcon size={16} />}
-                            onClick={() => handleOpenDocumentation('documentation')}
-                            disabled={isOpeningDocumentation}
-                            sx={appStyles.infoDocButton}
-                        >
-                            Documentation
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            size="small"
-                            disabled
-                            sx={appStyles.infoDocButton}
-                        >
-                            Tutorials (Coming soon...)
-                        </Button>
-                    </Box>
-
-                    <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider', textAlign: 'center' }}>
-                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', lineHeight: 1.5, fontSize: '0.68rem' }}>
-                            <strong>Powered by Stability AI</strong> —{' '}
-                            <Typography
-                                component="a"
-                                variant="caption"
-                                href="https://huggingface.co/stabilityai/stable-audio-open-1.0"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
-                            >
-                                Stable Audio Open
-                            </Typography>{' '}
-                            models, governed by the{' '}
-                            <Typography
-                                component="a"
-                                variant="caption"
-                                href="https://stability.ai/license"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                sx={{ color: 'primary.main', textDecoration: 'underline', fontSize: '0.68rem' }}
-                            >
-                                Stability AI Community License
-                            </Typography>.
-                        </Typography>
-                        <Typography variant="caption" color="textSecondary" sx={{ display: 'block', mt: 0.5, fontStyle: 'italic', fontSize: '0.6rem', lineHeight: 1.4 }}>
-                            "This Stability AI Model is licensed under the Stability AI Community License,{' '}
-                            Copyright © Stability AI Ltd. All Rights Reserved"
-                        </Typography>
-                    </Box>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setShowInfoDialog(false)}>
-                        Close
-                    </Button>
-                </DialogActions>
-            </Dialog>
+                onOpenDocumentation={handleOpenDocumentation}
+                isOpeningDocumentation={isOpeningDocumentation}
+            />
 
             <Dialog
                 open={suggestionDialog.open}
@@ -2631,13 +2810,22 @@ function App() {
                         </Typography>
                     )}
                     {!suggestionDialog.loading && suggestionDialog.data?.ok && (() => {
-                        const { stats, config, rationale } = suggestionDialog.data;
+                        const { stats, config, rationale, warnings } = suggestionDialog.data;
+                        const includeStr = (config.include || []).join(', ') || '(all layers)';
+                        const excludeStr = (config.exclude || []).join(', ') || '(none)';
                         return (
                             <Box>
                                 <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                                     {stats.file_count} files · {stats.duration_human}
-                                    {stats.vram_gb ? ` · GPU ${stats.vram_gb} GB` : ''}
+                                    {stats.median_clip_sec ? ` · median ${stats.median_clip_sec.toFixed(1)}s` : ''}
+                                    {stats.vram_gb ? ` · GPU ${stats.vram_gb} GB` : ' · no GPU'}
                                 </Typography>
+
+                                {(warnings || []).map((w, i) => (
+                                    <Alert key={i} severity="warning" sx={{ mb: 1 }} variant="outlined">
+                                        {w}
+                                    </Alert>
+                                ))}
 
                                 <Box sx={{
                                     display: 'grid',
@@ -2645,24 +2833,31 @@ function App() {
                                     rowGap: 0.75,
                                     columnGap: 2,
                                     fontVariantNumeric: 'tabular-nums',
+                                    mt: warnings && warnings.length ? 2 : 0,
                                     mb: 2,
                                 }}>
+                                    <Typography variant="body2">Steps</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.steps.toLocaleString()}</Typography>
                                     <Typography variant="body2">Batch size</Typography>
                                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.batchSize}</Typography>
                                     <Typography variant="body2">Learning rate</Typography>
                                     <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.learningRate}</Typography>
-                                    <Typography variant="body2">Epochs</Typography>
-                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.epochs}</Typography>
-                                    {trainingConfig.mode === 'lora' && (
-                                        <>
-                                            <Typography variant="body2">LoRA rank / alpha</Typography>
-                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                                {config.loraRank} / {config.loraAlpha}
-                                            </Typography>
-                                        </>
-                                    )}
-                                    <Typography variant="body2" color="textSecondary">Total steps</Typography>
-                                    <Typography variant="body2" color="textSecondary">{stats.total_steps}</Typography>
+                                    <Typography variant="body2">Training window</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>{config.duration.toFixed(0)}s</Typography>
+                                    <Typography variant="body2">Adapter · rank / α</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                        {config.adapterType} · {config.loraRank} / {config.loraAlpha}
+                                    </Typography>
+                                    <Typography variant="body2">Dropout · precision</Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                        {config.loraDropout} · {config.precision}
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary">Include layers</Typography>
+                                    <Typography variant="body2" color="textSecondary">{includeStr}</Typography>
+                                    <Typography variant="body2" color="textSecondary">Exclude layers</Typography>
+                                    <Typography variant="body2" color="textSecondary">{excludeStr}</Typography>
+                                    <Typography variant="body2" color="textSecondary">Checkpoint every</Typography>
+                                    <Typography variant="body2" color="textSecondary">{config.checkpointSteps.toLocaleString()} steps</Typography>
                                 </Box>
 
                                 <Button
@@ -2703,15 +2898,46 @@ function App() {
                 </DialogActions>
             </Dialog>
 
-            <HfAuthDialog
-                open={authDialogOpen}
-                onClose={(success) => {
-                    setAuthDialogOpen(false);
-                    if (success) {
-                        refreshAllModels();
-                    }
+            <Dialog
+                open={Boolean(overwriteConfirm)}
+                onClose={() => setOverwriteConfirm(null)}
+                maxWidth="xs"
+                fullWidth
+            >
+                <DialogTitle>Overwrite existing run?</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2">
+                        {overwriteConfirm?.message}
+                    </Typography>
+                    <Alert severity="warning" sx={{ mt: 2 }} variant="outlined">
+                        The previous run dir for <strong>{overwriteConfirm?.runName}</strong> will
+                        be deleted, including <strong>{overwriteConfirm?.checkpointCount} checkpoint(s)</strong>,
+                        training.log, metrics.csv and any Lightning logs. This cannot be undone.
+                    </Alert>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOverwriteConfirm(null)}>Cancel</Button>
+                    <Button
+                        color="error"
+                        variant="contained"
+                        onClick={() => {
+                            setOverwriteConfirm(null);
+                            startTraining(true);
+                        }}
+                    >
+                        Overwrite and train
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            <CheckpointManagerWindow
+                open={checkpointMgrOpen}
+                onClose={() => {
+                    setCheckpointMgrOpen(false);
+                    refreshAllModels();
                 }}
             />
+            </InfoViewProvider>
         </ThemeProvider>
     );
 }

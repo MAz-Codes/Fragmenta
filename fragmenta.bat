@@ -1,6 +1,5 @@
 @echo off
 setlocal
-
 chcp 65001 >nul
 set PYTHONIOENCODING=utf-8
 
@@ -9,11 +8,12 @@ echo ===================
 
 set "PROJECT_ROOT=%~dp0"
 if "%PROJECT_ROOT:~-1%"=="\" set "PROJECT_ROOT=%PROJECT_ROOT:~0,-1%"
-
 echo Project root: %PROJECT_ROOT%
 
 REM ---------------------------------------------------------------------------
-REM  Locate Python 3.11
+REM  Locate Python 3.11. Thin by design: this launcher only finds Python; the
+REM  venv + dependency setup lives in install.py (idempotent — a relaunch with
+REM  an unchanged requirements.txt is near-instant instead of reinstalling).
 REM ---------------------------------------------------------------------------
 set "PY_LAUNCHER="
 
@@ -38,11 +38,10 @@ echo.
 echo ERROR: Python 3.11 was not found.
 echo.
 echo This project requires Python 3.11 specifically. Newer versions
-echo (3.12, 3.13) are NOT compatible.
+echo (3.12, 3.13) are NOT compatible (torch/flash-attn wheels are cp311 only).
 echo.
 echo Install Python 3.11 from:
 echo    https://www.python.org/downloads/release/python-3119/
-echo.
 echo During install, tick "Add python.exe to PATH" and keep the
 echo "py launcher" option checked. Then re-run this script.
 echo.
@@ -52,79 +51,9 @@ goto :end_fail
 echo Using Python 3.11 via: %PY_LAUNCHER%
 for /f "delims=" %%v in ('%PY_LAUNCHER% --version 2^>^&1') do echo Detected: %%v
 
-REM ---------------------------------------------------------------------------
-REM  Reuse / rebuild the venv
-REM ---------------------------------------------------------------------------
-set "VENV=%PROJECT_ROOT%\venv"
-set "VENV_PY=%VENV%\Scripts\python.exe"
-
-if exist "%VENV_PY%" (
-    "%VENV_PY%" -c "import sys; sys.exit(0 if sys.version_info[:2]==(3,11) else 1)" >nul 2>&1
-    if errorlevel 1 (
-        echo Existing venv was not built with Python 3.11 - removing and recreating...
-        rmdir /s /q "%VENV%"
-    )
-)
-
-if not exist "%VENV%" (
-    echo Creating Python virtual environment...
-    %PY_LAUNCHER% -m venv "%VENV%"
-    if errorlevel 1 (
-        echo ERROR: failed to create virtual environment.
-        goto :end_fail
-    )
-)
-
-echo Activating virtual environment...
-call "%VENV%\Scripts\activate.bat"
-if errorlevel 1 (
-    echo ERROR: failed to activate virtual environment at %VENV%
-    goto :end_fail
-)
-
-cd /d "%PROJECT_ROOT%"
-
-REM ---------------------------------------------------------------------------
-REM  Dependencies
-REM ---------------------------------------------------------------------------
-echo Updating pip...
-python -m pip install --upgrade pip "setuptools<70" wheel build
-if errorlevel 1 goto :end_fail
-
-echo Installing PyTorch (CUDA 12.8 wheels)...
-python -m pip install "torch>=2.5,<=2.8" "torchvision<0.24" "torchaudio>=2.5,<=2.8" "numpy==1.23.5" --index-url https://download.pytorch.org/whl/cu128
-if errorlevel 1 goto :end_fail
-
-echo Installing remaining dependencies from requirements.txt...
-echo This may take a few minutes...
-echo Note: skipping flash-attn on Windows (Linux-only optimization).
-findstr /V "flash-attn" requirements.txt > "%TEMP%\requirements_windows.txt"
-python -m pip install -r "%TEMP%\requirements_windows.txt" ^
-    --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
-set "PIP_RESULT=%ERRORLEVEL%"
-del "%TEMP%\requirements_windows.txt" >nul 2>&1
-if not "%PIP_RESULT%"=="0" (
-    echo ERROR: failed to install dependencies. Check your internet connection and try again.
-    goto :end_fail
-)
-echo Dependencies installed successfully.
-
-echo Installing bundled stable-audio-tools...
-pushd "%PROJECT_ROOT%\vendor\stable-audio-tools"
-python -m pip install -e . --find-links "%PROJECT_ROOT%\utils\vendor\wheels" --prefer-binary
-set "SAT_RESULT=%ERRORLEVEL%"
-popd
-if not "%SAT_RESULT%"=="0" (
-    echo ERROR: failed to install stable-audio-tools.
-    goto :end_fail
-)
-echo stable-audio-tools installed successfully.
-
-REM ---------------------------------------------------------------------------
-REM  Launch
-REM ---------------------------------------------------------------------------
-echo Starting Fragmenta...
-python start.py
+REM Hand off: install.py creates/validates the venv, installs deps only if
+REM requirements.txt changed, verifies, and launches the app.
+%PY_LAUNCHER% "%PROJECT_ROOT%\install.py" --launch
 set "RUN_RESULT=%ERRORLEVEL%"
 if not "%RUN_RESULT%"=="0" (
     echo.

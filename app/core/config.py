@@ -4,25 +4,48 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import json
 
+
+def _default_user_data_dir() -> Path:
+    """Writable per-user data dir for packaged builds.
+
+    MUST stay in sync with ``install.py``'s ``_user_data_dir`` so the venv,
+    models, output and logs all resolve to the same place.
+    """
+    if sys.platform == "win32":
+        return Path(os.environ["APPDATA"]) / "FragmentaDesktop"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
+    return Path.home() / ".local" / "share" / "FragmentaDesktop"
+
+
 class ProjectConfig:
 
     def __init__(self, project_root: Optional[Path] = None) -> None:
-        if getattr(sys, 'frozen', False):
-            self.frozen = True
-            # PyInstaller unpacks the bundle to sys._MEIPASS; writable data lives elsewhere.
-            self.project_root = Path(sys._MEIPASS)
+        frozen = bool(getattr(sys, 'frozen', False))
+        # "Packaged" = shipped desktop build. Two shapes resolve here:
+        #   * PyInstaller-frozen process (sys.frozen) — code at sys._MEIPASS.
+        #   * The bootstrapper launcher: start.py runs under the venv's normal
+        #     Python (NOT frozen), so the native launcher sets FRAGMENTA_PACKAGED=1
+        #     to flag that the code sits in a read-only bundle and data must go
+        #     to the writable user-data dir.
+        packaged = frozen or os.environ.get("FRAGMENTA_PACKAGED") == "1"
 
-            if sys.platform == "win32":
-                self.user_data_dir = Path(os.environ["APPDATA"]) / "FragmentaDesktop"
-            elif sys.platform == "darwin":
-                self.user_data_dir = Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
+        if packaged:
+            self.frozen = frozen
+            if frozen:
+                # PyInstaller unpacks the bundle to sys._MEIPASS.
+                self.project_root = Path(sys._MEIPASS)
             else:
-                self.user_data_dir = Path.home() / ".local" / "share" / "FragmentaDesktop"
-                
+                # Read-only bundle: this file is app/core/config.py, so the code
+                # root (holding app/, vendor/, requirements.txt) is three up —
+                # …/Resources on macOS, the install dir on Windows.
+                self.project_root = Path(__file__).resolve().parent.parent.parent
+
+            self.user_data_dir = _default_user_data_dir()
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Running in frozen mode. Project root: {self.project_root}")
+            print(f"Running packaged (frozen={frozen}). Project root: {self.project_root}")
             print(f"User data directory: {self.user_data_dir}")
-            
+
         else:
             self.frozen = False
             if project_root is None:
@@ -37,122 +60,53 @@ class ProjectConfig:
                             break
                     else:
                         project_root = config_file_dir
-            
+
             self.project_root: Path = Path(project_root).resolve()
             self.user_data_dir = self.project_root
 
         fine_tuned_override = os.environ.get("FRAGMENTA_FINE_TUNED_DIR")
         fine_tuned_dir = Path(fine_tuned_override) if fine_tuned_override else self.user_data_dir / "models" / "fine_tuned"
 
-        data_override = os.environ.get("FRAGMENTA_DATA_DIR")
-        data_dir = Path(data_override) if data_override else self.user_data_dir / "data"
+        # Scratch area for browser folder uploads (/api/upload-folder). The
+        # SA2-era "data" dataset directory is gone in 1.0.0 — datasets are now
+        # Dataset Workbench projects under projects/.
+        uploads_override = os.environ.get("FRAGMENTA_UPLOADS_DIR")
+        uploads_dir = Path(uploads_override) if uploads_override else self.user_data_dir / "uploads"
 
         self.paths: Dict[str, Path] = {
             "models": self.user_data_dir / "models",
             "models_config": self.user_data_dir / "models" / "config",
             "models_pretrained": self.user_data_dir / "models" / "pretrained",
             "models_fine_tuned": fine_tuned_dir,
-            "data": data_dir,
+            "uploads": uploads_dir,
             "logs": self.user_data_dir / "logs",
             "output": self.user_data_dir / "output",
 
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",
             "frontend": self.project_root / "app" / "frontend",
-            "stable_audio_tools": self.project_root / "vendor" / "stable-audio-tools",
-            "loraw_vendor": self.project_root / "vendor" / "loraw_vendor",
-            "venv": self.project_root / "venv",
+            "stable_audio_3": self.project_root / "vendor" / "stable-audio-3",
+            # venv lives with the writable data (== project_root in source mode,
+            # the user-data dir in a packaged build).
+            "venv": self.user_data_dir / "venv",
         }
 
         self._ensure_directories()
-        self.model_configs: Dict[str, Dict[str, str]
-                                 ] = self._load_model_configs()
+        # The SA3 catalog lives in app/core/model_manager.py. This dict stays
+        # empty; it's retained only because to_dict()/print_paths() and the
+        # config validator still reference it.
+        self.model_configs: Dict[str, Dict[str, str]] = {}
 
     def _ensure_directories(self) -> None:
 
         for path_name, path in self.paths.items():
-            if path_name.endswith(('_fine_tuned', 'data')):
+            if path_name.endswith(('_fine_tuned', 'uploads')):
                 path.mkdir(parents=True, exist_ok=True)
-
-    def _load_model_configs(self) -> Dict[str, Dict[str, str]]:
-
-        return {
-            "stable-audio-open-1.0": {
-                "config": str(self.paths["models_config"] / "model_config.json"),
-                "ckpt": str(self.paths["models_pretrained"] / "stable-audio-open-model.safetensors")
-            },
-            "stable-audio-open-small": {
-                "config": str(self.paths["models_config"] / "model_config_small.json"),
-                "ckpt": str(self.paths["models_pretrained"] / "stable-audio-open-small-model.safetensors")
-            },
-            "custom": {
-                "config": str(self.paths["models_config"] / "model_config_small.json"),
-                "ckpt": str(self.paths["models_pretrained"] / "stable-audio-open-small-model.safetensors")
-            }
-        }
 
     def get_path(self, path_name: str) -> Path:
         if path_name not in self.paths:
             raise ValueError(f"Unknown path name: {path_name}")
         return self.paths[path_name]
-
-    def get_model_config(self, model_name: str) -> Dict[str, str]:
-        if model_name not in self.model_configs:
-            raise ValueError(f"Unknown model: {model_name}")
-        return self.model_configs[model_name]
-
-    def get_dataset_config_path(self) -> str:
-        return str(self.paths["models_config"] / "dataset-config.json")
-
-    def get_custom_metadata_path(self) -> str:
-        return str(self.project_root / "vendor" / "stable-audio-tools" / "custom_metadata.py")
-
-    def get_metadata_json_path(self) -> str:
-        return str(self.paths["data"] / "metadata.json")
-
-    def update_dataset_config(self) -> None:
-        from app.backend.data.simple_audio_processor import SimpleAudioProcessor
-        
-        try:
-            processor = SimpleAudioProcessor(
-                model_config_path=self.paths["models_config"] / "model_config.json"
-            )
-            
-            result = processor.create_dataset_config(
-                input_dir=self.paths["data"],
-                output_dir=self.paths["data"]
-            )
-            
-            target_config = self.paths["models_config"] / "dataset-config.json"
-            with open(target_config, 'w') as f:
-                json.dump(result["dataset_config"], f, indent=4)
-            
-            print(f"Updated dataset config: {target_config}")
-            print(f"Points to {result['file_count']} original audio files")
-            print(f"Sample size: {result['sample_size']} samples ({result['sample_size']/result['sample_rate']:.1f}s)")
-            print(f"Random cropping during training (correct!)")
-            
-        except Exception as e:
-            print(f"Failed to update dataset config: {e}")
-            print("Falling back to basic dataset config...")
-            
-            dataset_config: Dict[str, Any] = {
-                "dataset_type": "audio_dir",
-                "datasets": [
-                    {
-                        "id": "fine_tune_data",
-                        "path": str(self.paths["data"]),
-                        "custom_metadata_module": "custom_metadata"
-                    }
-                ],
-                "random_crop": True
-            }
-
-            config_path = self.paths["models_config"] / "dataset-config.json"
-            with open(config_path, 'w') as f:
-                json.dump(dataset_config, f, indent=4)
-
-            print(f"Updated fallback dataset config: {config_path}")
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -66,13 +66,21 @@ export function loadPresetIntoSession(name) {
 const CHANNEL_DEFAULT = {
     prompt: '',
     duration: 8,
-    durationMode: 'seconds',
+    durationMode: 'bars',
     bars: 4,
     looping: true,
     muted: false,
     soloed: false,
     batchSize: 1,
-    knobs: { gain: -6, pan: 0, filter: 18000, delay: 0, reverb: 0 },
+    knobs: { gain: -6, pan: 0, filter: 0, delay: 0, reverb: 0 },
+    // Fragment history metadata (id, prompt, duration, createdAt, starred,
+    // number). The Blob audio bodies live in IndexedDB under the
+    // `session-ch{N}` scope — see utils/fragmentStorage.js. Cleared on
+    // Fresh Start and overwritten on preset load.
+    fragments: [],
+    // Which fragment was loaded into the channel strip last; restored on
+    // reload so the channel comes back ready to play instead of empty.
+    committedFragmentId: null,
 };
 
 function defaultSession(channelCount) {
@@ -88,6 +96,18 @@ function defaultSession(channelCount) {
         randomSeed: true,
         seedValue: '',
         cueDeviceId: '',
+        // Master FX defaults — the FX are always-on; the wet level on the
+        // master bus is determined entirely by per-channel DLY/REV send
+        // levels. We only persist the IR choice and the delay division.
+        masterReverbIR: 'hall',
+        masterDelayDivision: '1/4',
+        // Prompt auto-inject fields. Each is appended (comma-separated) to
+        // every generated prompt when set. Key and Time accept any text;
+        // empty = no injection. BPM is a toggle that, when on, grabs the
+        // live master BPM (top-bar value) at generation time.
+        promptKey: '',
+        promptInjectBpm: false,
+        promptTimeSig: '',
         channels: Array.from({ length: channelCount }, () => ({
             ...CHANNEL_DEFAULT,
             knobs: { ...CHANNEL_DEFAULT.knobs },
@@ -104,11 +124,21 @@ function loadSession(channelCount) {
         // Merge against defaults so older saves don't crash on missing fields.
         // Length shifts (channel count change between releases) are absorbed
         // by always producing exactly `channelCount` channels.
-        const channels = Array.from({ length: channelCount }, (_, i) => ({
-            ...CHANNEL_DEFAULT,
-            ...(parsed.channels?.[i] || {}),
-            knobs: { ...CHANNEL_DEFAULT.knobs, ...(parsed.channels?.[i]?.knobs || {}) },
-        }));
+        //
+        // Migration: pre-rename saves used `takes` / `committedTakeId`. Copy
+        // those into the new `fragments` / `committedFragmentId` slots when
+        // present, so users' existing generations carry over after the
+        // "Takes → Fragments" rename. Old fields are left in place but unused.
+        const channels = Array.from({ length: channelCount }, (_, i) => {
+            const ch = parsed.channels?.[i] || {};
+            return {
+                ...CHANNEL_DEFAULT,
+                ...ch,
+                fragments: ch.fragments ?? ch.takes ?? [],
+                committedFragmentId: ch.committedFragmentId ?? ch.committedTakeId ?? null,
+                knobs: { ...CHANNEL_DEFAULT.knobs, ...(ch.knobs || {}) },
+            };
+        });
         return { ...fallback, ...parsed, channels };
     } catch {
         return fallback;

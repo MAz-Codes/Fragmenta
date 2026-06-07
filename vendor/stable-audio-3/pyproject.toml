@@ -1,0 +1,70 @@
+[project]
+name = "stable-audio-3"
+version = "0.1.0"
+description = "Stable Audio 3: A state-of-the-art open platform for fast, high-quality generated audio and music"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "einops>=0.8.2",
+    "einops-exts>=0.0.4",
+    "numpy>=2.2.6",
+    "packaging>=26.0",
+    "safetensors>=0.7.0",
+    "torch==2.7.1",
+    "torchaudio==2.7.1",
+    "tqdm>=4.67.3",
+    "huggingface-hub>=1.7.1",
+    "transformers>=5.8.0",
+    "soundfile>=0.13.1",
+]
+
+[project.optional-dependencies]
+ui = [
+  "gradio==6.3.0",
+  "matplotlib>=3.10.8",
+  "accelerate>=1.13.0",
+]
+
+lora = [
+  "pytorch_lightning==2.5.5",
+  "dill>=0.4.1",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+]
+torchaudio = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }
+]
+
+[project.scripts]
+stable-audio = "stable_audio_3.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+exclude = [
+    "stable_audio_3/models",
+    "stable_audio_3/inference",
+    "stable_audio_3/interface",
+    "stable_audio_3/data",
+    "stable_audio_3/training",
+    "optimized",
+]

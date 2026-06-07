@@ -1,14 +1,26 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Paper, Box, Typography, LinearProgress, Grid, Alert } from '@mui/material';
 import { Activity as ActivityIcon } from 'lucide-react';
 import LossChart from './LossChart';
 import { trainingMonitorStyles } from '../theme';
 
+/**
+ * TrainingMonitor — right-pane status card for the Training tab.
+ *
+ * Reads SA3-shaped status from the backend:
+ *   { is_training, status, step, total_steps, current_step, progress,
+ *     loss, checkpoints, checkpoints_saved, error, ... }
+ *
+ * SA3 trains by step count, not epochs — the panel surfaces step / total
+ * directly. Loss curve is built frontend-side from successive poll snapshots
+ * (trainingHistory) so we don't depend on the backend emitting a history
+ * array.
+ */
 export default function TrainingMonitor({
     trainingProgress,
     trainingStatus,
+    trainingHistory,
     trainingError,
-    trainingConfig,
     indicatorState,
 }) {
     const getProgressColor = () => {
@@ -20,6 +32,39 @@ export default function TrainingMonitor({
     const status = indicatorState?.status || 'idle';
     const label = indicatorState?.label || 'Idle';
     const animate = indicatorState?.animate || false;
+
+    // Loss points for the chart. We prefer the backend's loss_history
+    // (built from Lightning's metrics.csv, which records per-step loss
+    // from step 0) so the chart shows the full curve even before PL's
+    // tqdm postfix surfaces train/loss (which only appears after the
+    // first metrics flush, typically end of epoch 0). Falls back to the
+    // frontend-built trainingHistory if the backend hasn't populated
+    // loss_history yet (very early in the run, before PL writes CSV).
+    const lossPoints = useMemo(() => {
+        const fromBackend = trainingStatus?.loss_history;
+        if (Array.isArray(fromBackend) && fromBackend.length > 0) {
+            return fromBackend
+                .filter(p => Number.isFinite(p?.step) && Number.isFinite(p?.loss))
+                .sort((a, b) => a.step - b.step);
+        }
+        if (!trainingHistory || trainingHistory.length === 0) return [];
+        const byStep = new Map();
+        for (const h of trainingHistory) {
+            const step = h.current_step ?? h.step;
+            const loss = typeof h.loss === 'number' ? h.loss : parseFloat(h.loss);
+            if (Number.isFinite(step) && Number.isFinite(loss)) {
+                byStep.set(step, { step, loss });
+            }
+        }
+        return Array.from(byStep.values()).sort((a, b) => a.step - b.step);
+    }, [trainingHistory, trainingStatus?.loss_history]);
+
+    const step = trainingStatus?.current_step ?? trainingStatus?.step ?? 0;
+    const totalSteps = trainingStatus?.total_steps ?? 0;
+    const checkpointsSaved = trainingStatus?.checkpoints_saved
+        ?? trainingStatus?.checkpoints?.length
+        ?? 0;
+    const currentLoss = trainingStatus?.loss;
 
     return (
         <Paper sx={trainingMonitorStyles.rootPaper}>
@@ -53,60 +98,68 @@ export default function TrainingMonitor({
                 />
             </Box>
 
-            {trainingStatus?.device_info && (
-                <Box sx={trainingMonitorStyles.deviceSection}>
-                    <Typography variant="body2" color="textSecondary">
-                        <strong>{
-                            trainingStatus.device_info.type === 'cuda' ? 'CUDA' :
-                                trainingStatus.device_info.type === 'mps' ? 'MPS' : 'CPU'
-                        }</strong>
-                        {' · '}{trainingStatus.device_info.device}
-                        {trainingStatus.device_info.memory_gb
-                            ? ` · ${trainingStatus.device_info.memory_gb.toFixed(1)} GB`
-                            : ''}
-                    </Typography>
-                </Box>
-            )}
-
             <Grid container spacing={2} sx={trainingMonitorStyles.metricsGrid}>
                 <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Current Epoch</Typography>
-                    <Typography variant="body1">
-                        {trainingStatus?.current_epoch !== undefined ?
-                            `${trainingStatus.current_epoch + 1} / ${trainingConfig.epochs}` :
-                            '0 / ' + trainingConfig.epochs}
-                    </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Global Step / Total Steps</Typography>
+                    <Typography variant="body2" color="textSecondary">Step</Typography>
                     <Typography variant="body1" color="primary">
-                        {trainingStatus?.global_step !== undefined && trainingStatus?.total_steps !== undefined ?
-                            `${trainingStatus.global_step} / ${trainingStatus.total_steps}` :
-                            'N/A'}
-                    </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Checkpoints Saved</Typography>
-                    <Typography variant="body1">
-                        {trainingStatus?.checkpoints_saved || 0}
+                        {totalSteps > 0 ? `${step} / ${totalSteps}` : `${step}`}
                     </Typography>
                 </Grid>
                 <Grid item xs={12} sm={6}>
                     <Typography variant="body2" color="textSecondary">Current Loss</Typography>
                     <Typography variant="body1">
-                        {trainingStatus?.loss ? parseFloat(trainingStatus.loss).toFixed(4) : 'N/A'}
+                        {Number.isFinite(currentLoss) ? parseFloat(currentLoss).toFixed(4) : 'N/A'}
                     </Typography>
                 </Grid>
+                <Grid item xs={12} sm={6}>
+                    <Typography variant="body2" color="textSecondary">Checkpoints Saved</Typography>
+                    <Typography variant="body1">{checkpointsSaved}</Typography>
+                </Grid>
+                <Grid item xs={12} sm={6}>
+                    <Typography variant="body2" color="textSecondary">Phase</Typography>
+                    <Typography variant="body1" sx={{ textTransform: 'capitalize' }}>
+                        {trainingStatus?.status || 'idle'}
+                    </Typography>
+                </Grid>
+                {Number.isFinite(trainingStatus?.seed) && (
+                    <Grid item xs={12} sm={6}>
+                        <Typography variant="body2" color="textSecondary">Seed</Typography>
+                        <Typography variant="body1" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {trainingStatus.seed}
+                        </Typography>
+                    </Grid>
+                )}
             </Grid>
 
-            {trainingStatus?.loss_history && trainingStatus.loss_history.length > 0 && (
+            {lossPoints.length > 0 && (
                 <Box sx={trainingMonitorStyles.lossSection}>
                     <Typography variant="body2" color="textSecondary" gutterBottom>
                         <strong>Loss History</strong>
                     </Typography>
                     <Box sx={trainingMonitorStyles.lossChartBox}>
-                        <LossChart data={trainingStatus.loss_history} />
+                        <LossChart data={lossPoints} />
                     </Box>
+                    <Typography
+                        variant="caption"
+                        color="textSecondary"
+                        sx={trainingMonitorStyles.lossDisclaimer}
+                    >
+                        LoRA diffusion loss is noisy by design. Judge the result
+                        with your ears, not only with this chart.
+                    </Typography>
+                </Box>
+            )}
+
+            {lossPoints.length === 0 && (trainingStatus?.is_training || status === 'training') && (
+                <Box sx={trainingMonitorStyles.lossSection}>
+                    <Typography variant="body2" color="textSecondary" gutterBottom>
+                        <strong>Loss History</strong>
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary">
+                        Warming up — loss is logged periodically, so the first point
+                        appears a little into the run (around step 50). The curve fills
+                        in as training proceeds.
+                    </Typography>
                 </Box>
             )}
 
