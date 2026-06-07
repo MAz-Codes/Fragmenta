@@ -467,7 +467,10 @@ class ModelManager:
         token = get_token()
 
         try:
-            with _tqdm_progress_hook(job, progress_callback):
+            # tqdm hook → cooperative cancel; disk poller → progress that works
+            # even when hf-hub's tqdm bar is disabled (1.x / non-TTY).
+            with _tqdm_progress_hook(job, progress_callback), \
+                 _disk_progress_poller(job, progress_callback, target):
                 # Write into hub/ in HF cache layout. snapshot_download in
                 # hf-hub 1.x populates `<cache_dir>/models--<org>--<name>/`
                 # with the blobs/refs/snapshots structure that
@@ -616,6 +619,56 @@ def _tqdm_progress_hook(
         yield
     finally:
         tqdm.__init__ = original_init  # type: ignore[method-assign]
+
+
+@contextlib.contextmanager
+def _disk_progress_poller(
+    job: _DownloadJob,
+    progress_callback: Optional[Callable[[int, str], None]],
+    target: Path,
+    interval: float = 0.8,
+):
+    """Drive download progress from the bytes actually written under ``target``.
+
+    huggingface_hub reports progress only through tqdm, but on hf-hub 1.x — and in
+    any non-TTY run (a packaged app, a Finder/.command launch) — that bar is
+    disabled, so the tqdm hook's ``self.n`` never advances and the job's byte
+    counters (which the frontend polls) stay at 0: an empty progress bar. Polling
+    the growing on-disk size of the download target is independent of tqdm, the
+    hf-hub version, and whether a terminal is attached, so the bar always moves.
+    The tqdm hook is still used alongside this purely for cooperative cancel."""
+    stop = threading.Event()
+
+    def _size() -> int:
+        try:
+            if not target.exists():
+                return 0
+            return sum(p.stat().st_size for p in target.rglob("*") if p.is_file())
+        except Exception:
+            return 0
+
+    # Count only bytes written during this run, so a partial leftover from a
+    # failed attempt doesn't make the bar start mid-way (or over 100%).
+    baseline = _size()
+
+    def _loop() -> None:
+        while not stop.wait(interval):
+            size = max(0, _size() - baseline)
+            if size > job.downloaded_bytes:
+                job.downloaded_bytes = size
+                if progress_callback and job.total_bytes:
+                    pct = min(int(job.downloaded_bytes / job.total_bytes * 100), 99)
+                    mb = job.downloaded_bytes / (1024 * 1024)
+                    mbt = job.total_bytes / (1024 * 1024)
+                    progress_callback(pct, f"Downloading: {mb:.0f} MB / {mbt:.0f} MB")
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join(timeout=2)
 
 
 @contextlib.contextmanager
