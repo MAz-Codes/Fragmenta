@@ -14,6 +14,7 @@ import {
     Trash2 as DeleteIcon,
     Eraser as ClearAllIcon,
     FolderOpen as RevealIcon,
+    Download as DownloadIcon,
 } from 'lucide-react';
 import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
@@ -36,7 +37,7 @@ function relativeTime(createdAt) {
     return new Date(createdAt).toLocaleDateString();
 }
 
-export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearAll }) {
+export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearAll, isDocker = false }) {
     const [playingFragment, setPlayingFragment] = useState(null);
     const [playingTime, setPlayingTime] = useState(0);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -239,6 +240,21 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
             });
     };
 
+    // Web/Docker has no host file manager to reveal in, so we offer a direct
+    // browser download instead. effectiveUrl is a blob: URL once preloaded, or
+    // the same-origin /api/fragments/... URL — both honour the download attr.
+    const downloadFragment = (fragment) => {
+        if (!fragment.filename) return;
+        const url = effectiveUrl(fragment);
+        if (!url) return;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fragment.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    };
+
     const setAudioRef = useCallback((fragmentId, audioElement) => {
         if (audioElement) {
             audioRefs.current[fragmentId] = audioElement;
@@ -416,16 +432,29 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 </Tooltip>
 
                                 {fragment.filename && (
-                                    <Tooltip title={TIPS.fragments.revealInFolder} placement="top" arrow>
-                                        <IconButton
-                                            size="small"
-                                            onClick={() => revealInFolder(fragment)}
-                                            aria-label="Show in folder"
-                                            sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
-                                        >
-                                            <RevealIcon size={16} />
-                                        </IconButton>
-                                    </Tooltip>
+                                    isDocker ? (
+                                        <Tooltip title={TIPS.fragments.download} placement="top" arrow>
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => downloadFragment(fragment)}
+                                                aria-label="Download fragment"
+                                                sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
+                                            >
+                                                <DownloadIcon size={16} />
+                                            </IconButton>
+                                        </Tooltip>
+                                    ) : (
+                                        <Tooltip title={TIPS.fragments.revealInFolder} placement="top" arrow>
+                                            <IconButton
+                                                size="small"
+                                                onClick={() => revealInFolder(fragment)}
+                                                aria-label="Show in folder"
+                                                sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
+                                            >
+                                                <RevealIcon size={16} />
+                                            </IconButton>
+                                        </Tooltip>
+                                    )
                                 )}
 
                                 {onDelete && (

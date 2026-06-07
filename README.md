@@ -61,11 +61,13 @@ The fastest way to get started locally — no Python installation needed. Run on
 
 ```bash
 # GPU (NVIDIA)
-docker run -d -p 5001:5001 --gpus all -v ./models:/app/models mazcode/fragmenta:gpu
+docker run -d -p 5001:5001 --gpus all -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:gpu
 
 # CPU (Mac / Linux / Windows — slower)
-docker run -d -p 5001:5001 -v ./models:/app/models mazcode/fragmenta:cpu
+docker run -d -p 5001:5001 -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:cpu
 ```
+
+Generated clips are saved inside the container at `/app/output`; the `-v ./output:/app/output` mount mirrors them to an `output/` folder next to where you run the command. You can also **download** any clip directly from the Generated Fragments panel in the app.
 
 For the full volume mounts, Windows/PowerShell syntax, environment variables, and a `docker-compose.yml`, see the **[Docker Hub page](https://hub.docker.com/r/mazcode/fragmenta)**.
 

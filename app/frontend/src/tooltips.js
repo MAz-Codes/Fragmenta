@@ -119,6 +119,7 @@ export const TIPS = {
         clearAll: 'Clear all (delete every fragment from disk)',
         deleteFromDisk: 'Delete from disk',
         revealInFolder: 'Show in folder (reveal this file on disk)',
+        download: 'Download to your computer',
         audition: (isAuditioning) =>
             isAuditioning ? 'Stop cue' : 'Audition through cue output',
         star: (starred) =>
