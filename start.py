@@ -364,6 +364,26 @@ def _macos_set_app_metadata() -> None:
         print(f"Could not set macOS app name: {exc}")
 
 
+def _macos_set_webview_app_name() -> None:
+    """Put "Fragmenta" in the macOS menu bar.
+
+    pywebview's Cocoa backend builds the application menu (the bold app menu and
+    its About/Hide/Quit items) from its module-level ``info`` dict, which it reads
+    from the process bundle at import. Our interpreter is bundle-less, so that
+    dict has no CFBundleName and the app menu shows no name. pywebview already
+    mutates this same dict at import, so it's writable — inject the name into it
+    before the menu is built (it's created lazily when the window first focuses)."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from webview.platforms import cocoa as _cocoa
+        if getattr(_cocoa, "info", None) is not None:
+            _cocoa.info["CFBundleName"] = "Fragmenta"
+            _cocoa.info["CFBundleDisplayName"] = "Fragmenta"
+    except Exception as exc:
+        print(f"Could not set webview app name: {exc}")
+
+
 def _macos_apply_dock_icon() -> None:
     """Set the Dock icon to Fragmenta's at runtime (no .app bundle needed).
     Bound to the window 'shown' event so NSApplication is already up."""
@@ -486,6 +506,7 @@ def run_pywebview_mode() -> int:
         print("pywebview is unavailable; falling back to browser mode.")
         return run_browser_mode()
 
+    _macos_set_webview_app_name()
     _windows_set_app_id()
     _linux_set_app_metadata()
 
