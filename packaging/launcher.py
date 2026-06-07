@@ -200,35 +200,49 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
         pass
     bar = ttk.Progressbar(root, mode="indeterminate", length=340, **bar_style)
     bar.pack()
-    bar.start(12)
 
-    result = {"kind": "ready", "rc": 0}
-
-    def poll() -> None:
+    # Drive Tk manually with root.update() on a real time.sleep() cadence instead
+    # of root.mainloop()+root.after(). The instant the app's webview window opens
+    # and takes focus, this launcher becomes a background process and macOS App
+    # Nap throttles its Cocoa/Tk timers — so an after()-scheduled dismiss (and the
+    # progress-bar animation) stall for many seconds and the splash appears to
+    # "freeze" and never close. time.sleep() is a syscall, not a Cocoa timer, so
+    # this loop keeps pumping and tears the window down promptly regardless.
+    result = ("ready", 0)
+    close_at = None             # monotonic deadline once we've decided to close
+    step = 0.0
+    try:
+        while True:
+            try:
+                while True:
+                    kind, payload = q.get_nowait()
+                    if kind == "ready":
+                        close_at = time.monotonic()            # dismiss ASAP
+                    elif kind == "exit":
+                        result = ("error", payload if isinstance(payload, int) else 1)
+                        status_var.set("Setup failed — please reopen Fragmenta.")
+                        close_at = time.monotonic() + 2.4      # let the user read it
+                    elif kind == "line":
+                        mapped = _status_from_line(payload)
+                        if mapped:
+                            status_var.set(mapped)
+            except queue.Empty:
+                pass
+            if close_at is not None and time.monotonic() >= close_at:
+                break
+            # Animate the bar ourselves so it never depends on a throttled timer.
+            step = (step + 5.0) % 100.0
+            bar["value"] = step
+            root.update()
+            time.sleep(0.03)
+    except tk.TclError:
+        pass                    # window already gone (e.g. user closed it)
+    finally:
         try:
-            while True:
-                kind, payload = q.get_nowait()
-                if kind == "ready":
-                    root.after(150, root.destroy)
-                    return
-                if kind == "exit":
-                    result["kind"] = "error"
-                    result["rc"] = payload if isinstance(payload, int) else 1
-                    bar.stop()
-                    status_var.set("Setup failed — please reopen Fragmenta.")
-                    root.after(2400, root.destroy)
-                    return
-                if kind == "line":
-                    mapped = _status_from_line(payload)
-                    if mapped:
-                        status_var.set(mapped)
-        except queue.Empty:
+            root.destroy()
+        except tk.TclError:
             pass
-        root.after(80, poll)
-
-    root.after(80, poll)
-    root.mainloop()
-    return result["kind"], result["rc"]
+    return result
 
 
 def main() -> int:
