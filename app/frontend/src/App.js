@@ -1397,7 +1397,7 @@ function App() {
 
                             {/* Dataset Tab */}
                             <TabPanel value={displayedTab} index={0}>
-                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
+                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} isDocker={isDocker} />
                             </TabPanel>
 
                             {/* Training Tab */}

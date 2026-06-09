@@ -66,7 +66,7 @@ import { appStyles } from '../theme';
  * audio all live in an in-memory session until the user explicitly hits
  * Save (writes a draft) or Commit (writes .txt sidecars).
  */
-export default function DatasetPrep({ onOpenCheckpointManager }) {
+export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false }) {
     const [projects, setProjects] = useState([]);
     const [selectedName, setSelectedName] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.lastProject') || ''; }
@@ -760,6 +760,7 @@ export default function DatasetPrep({ onOpenCheckpointManager }) {
             <IngestDialog
                 open={ingestOpen}
                 projectName={project?.name}
+                isDocker={isDocker}
                 onClose={() => setIngestOpen(false)}
                 onIngested={async () => {
                     setIngestOpen(false);
@@ -1617,14 +1618,17 @@ function CreateProjectDialog({ open, existingNames, onClose, onCreated }) {
     );
 }
 
-function IngestDialog({ open, projectName, onClose, onIngested }) {
+function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false }) {
     const [folder, setFolder] = useState('');
     const [mode, setMode] = useState('copy');
     const [busy, setBusy] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [uploadInfo, setUploadInfo] = useState('');
     const [dialogError, setDialogError] = useState('');
+    const uploadInputRef = useRef(null);
 
     useEffect(() => {
-        if (open) { setFolder(''); setMode('copy'); setDialogError(''); }
+        if (open) { setFolder(''); setMode('copy'); setDialogError(''); setUploadInfo(''); }
     }, [open]);
 
     async function pick() {
@@ -1633,6 +1637,32 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
             if (data?.path) setFolder(data.path);
         } catch (e) {
             setDialogError(extractError(e, 'Folder picker failed'));
+        }
+    }
+
+    // Docker/web mode: the backend has no display server, so a native folder
+    // dialog can't work. Upload the folder through the browser instead — the
+    // audio is staged server-side under uploads/ and the returned staging path
+    // feeds the same ingest flow as a locally picked folder.
+    async function uploadFolder(fileList) {
+        const files = Array.from(fileList || []);
+        if (!files.length) return;
+        setUploading(true);
+        setDialogError('');
+        setUploadInfo('');
+        try {
+            const form = new FormData();
+            for (const f of files) {
+                form.append('files', f);
+                form.append('rel_paths', f.webkitRelativePath || f.name);
+            }
+            const { data } = await api.post('/api/upload-folder', form);
+            setFolder(data.path);
+            setUploadInfo(`${data.file_count} audio file${data.file_count === 1 ? '' : 's'} uploaded`);
+        } catch (e) {
+            setDialogError(extractError(e, 'Folder upload failed'));
+        } finally {
+            setUploading(false);
         }
     }
 
@@ -1659,29 +1689,60 @@ function IngestDialog({ open, projectName, onClose, onIngested }) {
             <DialogContent>
                 <Stack spacing={2} sx={{ pt: 1 }}>
                     <Stack direction="row" spacing={1.5} alignItems="center">
-                        <Button variant="outlined" startIcon={<FolderOpenIcon size={18} />} onClick={pick}>
-                            Pick folder
-                        </Button>
-                        <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                            {folder || 'No folder selected'}
-                        </Typography>
+                        {isDocker ? (
+                            <>
+                                <input
+                                    ref={uploadInputRef}
+                                    type="file"
+                                    webkitdirectory=""
+                                    multiple
+                                    style={{ display: 'none' }}
+                                    onChange={(e) => { uploadFolder(e.target.files); e.target.value = ''; }}
+                                />
+                                <Button
+                                    variant="outlined"
+                                    startIcon={<FolderOpenIcon size={18} />}
+                                    disabled={uploading}
+                                    onClick={() => uploadInputRef.current?.click()}
+                                >
+                                    {uploading ? 'Uploading…' : 'Upload folder'}
+                                </Button>
+                                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+                                    {uploadInfo || 'No folder uploaded'}
+                                </Typography>
+                            </>
+                        ) : (
+                            <>
+                                <Button variant="outlined" startIcon={<FolderOpenIcon size={18} />} onClick={pick}>
+                                    Pick folder
+                                </Button>
+                                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
+                                    {folder || 'No folder selected'}
+                                </Typography>
+                            </>
+                        )}
                     </Stack>
 
-                    <FormControl>
-                        <Typography variant="body2" gutterBottom>How to bring the audio in:</Typography>
-                        <RadioGroup value={mode} onChange={(e) => setMode(e.target.value)}>
-                            <FormControlLabel
-                                value="copy"
-                                control={<Radio size="small" />}
-                                label={<Typography variant="body2">Copy — duplicates audio into the project (safe, originals untouched)</Typography>}
-                            />
-                            <FormControlLabel
-                                value="symlink"
-                                control={<Radio size="small" />}
-                                label={<Typography variant="body2">Symlink — points at the originals (saves disk, breaks if you move them)</Typography>}
-                            />
-                        </RadioGroup>
-                    </FormControl>
+                    {/* Web uploads are staged copies already — symlinking into the
+                        staging dir would break, so the mode choice is desktop-only
+                        and Docker always ingests with the default 'copy'. */}
+                    {!isDocker && (
+                        <FormControl>
+                            <Typography variant="body2" gutterBottom>How to bring the audio in:</Typography>
+                            <RadioGroup value={mode} onChange={(e) => setMode(e.target.value)}>
+                                <FormControlLabel
+                                    value="copy"
+                                    control={<Radio size="small" />}
+                                    label={<Typography variant="body2">Copy — duplicates audio into the project (safe, originals untouched)</Typography>}
+                                />
+                                <FormControlLabel
+                                    value="symlink"
+                                    control={<Radio size="small" />}
+                                    label={<Typography variant="body2">Symlink — points at the originals (saves disk, breaks if you move them)</Typography>}
+                                />
+                            </RadioGroup>
+                        </FormControl>
+                    )}
 
                     {dialogError && <Alert severity="error">{dialogError}</Alert>}
                 </Stack>
