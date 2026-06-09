@@ -2188,12 +2188,21 @@ def environment():
         flash = True
     except Exception:
         flash = False
+    # Beatsync v2 pins the frontend AudioContext to 44.1 kHz for sample-exact
+    # loop seams. Forcing a non-native rate collapses multi-channel output to
+    # stereo, so the frontend only applies the pin when this flag is on.
+    try:
+        from app.core.generation.audio_post_process import beatsync_v2_enabled
+        beatsync_v2 = bool(beatsync_v2_enabled())
+    except Exception:
+        beatsync_v2 = False
     return jsonify({
         'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,
         'flash_attn_available': flash,
+        'beatsync_v2': beatsync_v2,
     })
 
 

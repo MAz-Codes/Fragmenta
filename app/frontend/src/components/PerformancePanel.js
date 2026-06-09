@@ -45,7 +45,9 @@ import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '..
 import { performancePanelStyles as styles, perfTokens } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
-import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair } from '../utils/cueAudio';
+// setCueOutputPair is aliased: the component has a useState setter of the same
+// name which would otherwise shadow the import and leave cue routing dead.
+import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
 import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
@@ -195,25 +197,44 @@ function PerformancePanelInner({
     }, [mainOutputPair, updateGlobal]);
     useEffect(() => {
         updateGlobal('cueOutputPair', cueOutputPair);
-        setCueOutputPair(cueOutputPair);
+        applyCueOutputPair(cueOutputPair);
     }, [cueOutputPair, updateGlobal]);
 
-    // When the chosen device changes, bind both the main engine context and
-    // the (separate) cue context to it. Re-read maxChannelCount afterwards so
-    // the pair selectors populate with everything the device exposes.
-    useEffect(() => {
-        if (!cueSupported) return;
-        let cancelled = false;
-        (async () => {
-            const engine = engineRef.current;
-            if (engine?.setOutputDevice) {
-                const max = await engine.setOutputDevice(outputDeviceId);
-                if (!cancelled) setMaxChannelCount(max);
-            }
+    // Bind both the main engine context and the (separate) cue context to the
+    // chosen device, then re-read maxChannelCount so the pair selectors
+    // populate with everything the device exposes. Without setSinkId support
+    // we can't pick a device, but the system-default device may still be
+    // multichannel — refreshOutputGraph claims its full channel count.
+    const bindAudioOutput = useCallback(async () => {
+        const engine = engineRef.current;
+        if (!engine) return;
+        if (cueSupported && engine.setOutputDevice) {
+            const max = await engine.setOutputDevice(outputDeviceId);
+            setMaxChannelCount(max);
             await setCueDevice(outputDeviceId).catch(() => { /* logged in cueAudio */ });
-        })();
-        return () => { cancelled = true; };
+        } else if (engine.refreshOutputGraph) {
+            setMaxChannelCount(engine.refreshOutputGraph());
+        }
     }, [cueSupported, outputDeviceId]);
+
+    useEffect(() => { bindAudioOutput(); }, [bindAudioOutput]);
+
+    // Chromium reports destination.maxChannelCount=2 while the context is
+    // suspended (autoplay policy keeps it suspended until a user gesture), so
+    // the mount-time binding above may have seen a stereo device. Re-claim the
+    // channel count whenever the context actually starts running.
+    useEffect(() => {
+        const engine = engineRef.current;
+        const ctx = engine?.ctx;
+        if (!ctx || typeof ctx.addEventListener !== 'function') return;
+        const onStateChange = () => {
+            if (ctx.state !== 'running' || !engine.refreshOutputGraph) return;
+            const max = engine.refreshOutputGraph();
+            setMaxChannelCount(max);
+        };
+        ctx.addEventListener('statechange', onStateChange);
+        return () => ctx.removeEventListener('statechange', onStateChange);
+    }, []);
 
     const refreshAudioDevices = useCallback(async () => {
         if (!cueSupported) return;
@@ -228,6 +249,10 @@ function PerformancePanelInner({
     const handleOpenAudioMenu = (e) => {
         setAudioMenuAnchor(e.currentTarget);
         refreshAudioDevices();
+        // User gesture: contexts can resume now, so the device's real channel
+        // count is readable — rebind so the pair selectors are populated even
+        // if the mount-time binding ran against a suspended context.
+        bindAudioOutput();
     };
     const handleCloseAudioMenu = () => setAudioMenuAnchor(null);
     const handlePickAudioDevice = (id) => {

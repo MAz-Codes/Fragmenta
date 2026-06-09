@@ -38,9 +38,25 @@ CHROMIUM_CANDIDATES = (
     "brave-browser",
 )
 CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+# Persistent profile for the pywebview window. Without an explicit storage path
+# pywebview runs in private mode (private_mode defaults to True), so the
+# embedded browser discards localStorage/IndexedDB on every close — wiping
+# presets, MIDI mappings and fragment audio between launches.
+WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
+
+def _port_available(port: int) -> bool:
+    """True if we can bind ``port`` on the loopback address — i.e. nothing else
+    is holding it right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((BACKEND_HOST, port))
+            return True
+        except OSError:
+            return False
+
 
 def _pick_backend_port(preferred: int = 5001) -> int:
     """Return a free loopback TCP port: ``preferred`` if available, else one
@@ -56,18 +72,50 @@ def _pick_backend_port(preferred: int = 5001) -> int:
     raise RuntimeError("no free TCP port available for the Fragmenta backend")
 
 
+def _is_fragmenta_backend(port: int) -> bool:
+    """True if a *Fragmenta* backend is already answering on ``port``. We probe
+    /api/health and look for a field only our backend returns, so we don't
+    mistake an unrelated service squatting on 5001 for our own instance."""
+    try:
+        resp = requests.get(
+            f"http://{BACKEND_HOST}:{port}/api/health", timeout=1.5
+        )
+        return resp.status_code == 200 and "components_ready" in resp.json()
+    except Exception:
+        return False
+
+
 def configure_backend_endpoint() -> None:
     """Finalise the backend port (and the URLs derived from it) before launch.
 
-    Prefers 5001 for continuity, but transparently moves to a free port when
-    it's taken so a busy 5001 no longer yields a blank window. Safe to call
-    once at startup; subsequent helpers read the updated module globals."""
+    The frontend's saved state — MIDI mappings, performance presets, and
+    fragment audio — lives in the browser's localStorage/IndexedDB, which are
+    partitioned per origin (scheme + host + port). Moving to a different port
+    therefore makes all of it *appear* wiped, since the page is now a fresh
+    origin. So we pin 5001 whenever we possibly can:
+
+      • 5001 free                    → take it (a new backend will start there).
+      • 5001 held by *our* backend   → reuse that instance, keeping the origin
+                                       stable. This is the common Windows case
+                                       where closing the console without Ctrl+C
+                                       orphans the child backend on 5001.
+      • 5001 held by something else  → only then fall back to an OS-assigned
+                                       port, accepting the state reset.
+
+    Safe to call once at startup; subsequent helpers read the updated globals."""
     global BACKEND_PORT, BACKEND_URL, HEALTH_ENDPOINT
-    BACKEND_PORT = _pick_backend_port(BACKEND_PORT)
+    if _port_available(5001) or _is_fragmenta_backend(5001):
+        BACKEND_PORT = 5001
+    else:
+        BACKEND_PORT = _pick_backend_port()
     BACKEND_URL = f"http://{BACKEND_HOST}:{BACKEND_PORT}"
     HEALTH_ENDPOINT = f"{BACKEND_URL}/api/health"
     if BACKEND_PORT != 5001:
-        print(f"Port 5001 is busy; using {BACKEND_URL} instead.")
+        print(
+            f"Port 5001 is busy with another program; using {BACKEND_URL} "
+            "instead. Note: presets, MIDI mappings and fragments saved on 5001 "
+            "won't be visible here (browser storage is per-port)."
+        )
 
 
 def announce_ui_ready() -> None:
@@ -540,7 +588,11 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
-            webview.start()
+            # private_mode=False + a fixed storage_path so the embedded browser
+            # persists localStorage/IndexedDB (presets, MIDI mappings, fragment
+            # audio) across launches instead of starting incognito each time.
+            WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
             return 0 if window else 1
         except Exception as exc:
             print(

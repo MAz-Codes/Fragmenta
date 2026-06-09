@@ -10,22 +10,44 @@ export const ENGINE_SAMPLE_RATE = 44100;
 
 let sharedCtx = null;
 
+// Whether to pin the shared AudioContext to ENGINE_SAMPLE_RATE. Forcing a
+// non-native rate makes Chromium route output through an internal stereo
+// resampler, which collapses destination.maxChannelCount to 2 and hides every
+// multi-channel main/cue output pair. The pin only benefits beatsync v2's
+// sample-exact loop seams, so it's opt-in: App.js calls setSampleRatePin(true)
+// when /api/environment reports beatsync_v2. Default false → native device
+// rate → full channel count, so multi-channel output works out of the box.
+let pinSampleRate = false;
+
+// Set the sample-rate pin before the context is first created (i.e. before
+// entering Performance mode). Once getAudioContext() has built the shared
+// context this has no effect on it.
+export function setSampleRatePin(on) {
+    pinSampleRate = Boolean(on);
+}
+
 export function getAudioContext() {
     if (!sharedCtx) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
-        try {
-            sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
-        } catch (_) {
-            // Some browsers/hosts reject a forced rate — fall back to default
-            // and accept the resample rather than failing to produce audio.
+        if (pinSampleRate) {
+            try {
+                sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
+            } catch (_) {
+                // Some browsers/hosts reject a forced rate — fall back to default
+                // and accept the resample rather than failing to produce audio.
+                sharedCtx = new Ctor();
+            }
+            if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
+                console.warn(
+                    `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
+                    `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
+                    `sample-exact loop length is not guaranteed on this host.`
+                );
+            }
+        } else {
+            // Native device rate: keeps destination.maxChannelCount equal to the
+            // device's real channel count so multi-channel output is available.
             sharedCtx = new Ctor();
-        }
-        if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
-            console.warn(
-                `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
-                `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
-                `sample-exact loop length is not guaranteed on this host.`
-            );
         }
     }
     if (sharedCtx.state === 'suspended') {
@@ -685,6 +707,16 @@ export class PerformanceEngine {
         try { this.outputSplitter?.disconnect(); } catch { /* ok */ }
         try { this.outputMerger?.disconnect(); } catch { /* ok */ }
 
+        // Claim the device's full channel count with discrete interpretation
+        // here — not only in setOutputDevice — so multichannel works on the
+        // system-default device and on browsers without AudioContext.setSinkId.
+        try {
+            this.ctx.destination.channelCount = this.ctx.destination.maxChannelCount;
+        } catch { /* destination capped; no-op */ }
+        try {
+            this.ctx.destination.channelInterpretation = 'discrete';
+        } catch { /* older builds may not allow this — fine */ }
+
         const channels = Math.max(2, this.ctx.destination.maxChannelCount || 2);
         this.outputSplitter = this.ctx.createChannelSplitter(2);
         this.outputMerger = this.ctx.createChannelMerger(channels);
@@ -708,12 +740,25 @@ export class PerformanceEngine {
         try { this.outputSplitter.disconnect(); } catch { /* ok */ }
         this.outputSplitter.connect(this.outputMerger, 0, pair * 2);
         this.outputSplitter.connect(this.outputMerger, 1, pair * 2 + 1);
-        this.currentMainPair = pair;
     }
 
-    /** Public: pick which channel pair the master mix routes to. */
+    /** Public: pick which channel pair the master mix routes to. The unclamped
+     *  intent is stored so later graph rebuilds (device swap, or the device
+     *  exposing more channels once the context is running) restore the user's
+     *  selection instead of an early stereo clamp. */
     setMainOutputPair(pairIdx) {
-        this._wireMainPair(pairIdx);
+        this.currentMainPair = Math.max(0, pairIdx | 0);
+        this._wireMainPair(this.currentMainPair);
+    }
+
+    /** Re-coerce the destination and rebuild the output tail, restoring the
+     *  selected pair. Chromium reports maxChannelCount=2 until the context is
+     *  actually running, so callers invoke this on the 'running' statechange
+     *  (and on user gestures like opening the device menu) to pick up the
+     *  device's real channel count. Returns the current maxChannelCount. */
+    refreshOutputGraph() {
+        this._buildOutputGraph();
+        return this.getMaxChannelCount();
     }
 
     setBpm(bpm) {

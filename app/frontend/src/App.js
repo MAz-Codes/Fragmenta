@@ -77,6 +77,7 @@ import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
+import { setSampleRatePin } from './utils/performanceAudio';
 
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
@@ -131,7 +132,13 @@ function App() {
     useEffect(() => {
         let cancelled = false;
         api.get('/api/environment')
-            .then((res) => { if (!cancelled) setIsDocker(Boolean(res.data?.docker)); })
+            .then((res) => {
+                if (cancelled) return;
+                setIsDocker(Boolean(res.data?.docker));
+                // Only pin the audio engine to 44.1 kHz when beatsync v2 is on;
+                // otherwise the pin would collapse multi-channel output to stereo.
+                setSampleRatePin(Boolean(res.data?.beatsync_v2));
+            })
             .catch(() => { /* default to desktop behaviour */ });
         return () => { cancelled = true; };
     }, []);
@@ -1390,7 +1397,7 @@ function App() {
 
                             {/* Dataset Tab */}
                             <TabPanel value={displayedTab} index={0}>
-                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} />
+                                <DatasetPrep onOpenCheckpointManager={() => setCheckpointMgrOpen(true)} isDocker={isDocker} />
                             </TabPanel>
 
                             {/* Training Tab */}
