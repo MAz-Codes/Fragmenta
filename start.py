@@ -38,6 +38,11 @@ CHROMIUM_CANDIDATES = (
     "brave-browser",
 )
 CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+# Persistent profile for the pywebview window. Without an explicit storage path
+# pywebview runs in private mode (private_mode defaults to True), so the
+# embedded browser discards localStorage/IndexedDB on every close — wiping
+# presets, MIDI mappings and fragment audio between launches.
+WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
@@ -583,7 +588,11 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
-            webview.start()
+            # private_mode=False + a fixed storage_path so the embedded browser
+            # persists localStorage/IndexedDB (presets, MIDI mappings, fragment
+            # audio) across launches instead of starting incognito each time.
+            WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
             return 0 if window else 1
         except Exception as exc:
             print(
