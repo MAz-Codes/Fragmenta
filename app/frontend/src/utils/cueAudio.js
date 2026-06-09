@@ -46,11 +46,26 @@ function buildCueGraph() {
     try { cueSplitter?.disconnect(); } catch { /* ok */ }
     try { cueMerger?.disconnect(); } catch { /* ok */ }
 
+    // Claim every channel the device exposes and ask for discrete (no
+    // speaker-layout up/down-mixing) routing. Done here — not only after
+    // setSinkId — so multichannel works on the system-default device too,
+    // including browsers without AudioContext.setSinkId.
+    try { ctx.destination.channelCount = ctx.destination.maxChannelCount; } catch { /* capped */ }
+    try { ctx.destination.channelInterpretation = 'discrete'; } catch { /* older builds */ }
+
     const channels = Math.max(2, ctx.destination.maxChannelCount || 2);
     cueSplitter = ctx.createChannelSplitter(2);
     cueMerger = ctx.createChannelMerger(channels);
     cueMerger.connect(ctx.destination);
     wireCuePair(currentCuePair);
+
+    // A cue that was already sounding was connected to the old (now
+    // disconnected) splitter — re-attach it so a device swap mid-preview
+    // doesn't go silent.
+    if (currentSourceFade) {
+        try { currentSourceFade.disconnect(); } catch { /* ok */ }
+        try { currentSourceFade.connect(cueSplitter); } catch { /* ok */ }
+    }
 }
 
 function wireCuePair(pairIdx) {
@@ -62,12 +77,15 @@ function wireCuePair(pairIdx) {
     try { cueSplitter.disconnect(); } catch { /* ok */ }
     cueSplitter.connect(cueMerger, 0, pair * 2);
     cueSplitter.connect(cueMerger, 1, pair * 2 + 1);
-    currentCuePair = pair;
 }
 
-/** Public: pick which channel pair the cue routes to. */
+/** Public: pick which channel pair the cue routes to. The unclamped intent is
+ *  remembered (even before the context exists) so graph rebuilds — device
+ *  swap, or the device exposing more channels once running — restore the
+ *  user's selection rather than whatever an early stereo clamp produced. */
 export function setCueOutputPair(pairIdx) {
-    wireCuePair(pairIdx);
+    currentCuePair = Math.max(0, pairIdx | 0);
+    wireCuePair(currentCuePair);
 }
 
 // Re-route the cue context to a different output device. Pass '' (or 'default')
@@ -128,6 +146,12 @@ export async function listOutputDevices() {
 export async function playBlob(blob, { onEnded } = {}) {
     stopCue();
     const c = getContext();
+    // The graph may have been built while the context was suspended (Chromium
+    // can report maxChannelCount=2 until the context is running) — if the
+    // device exposes more channels than the merger was sized for, rebuild so
+    // non-default cue pairs are reachable.
+    const wantInputs = Math.max(2, c.destination.maxChannelCount || 2);
+    if (!cueMerger || cueMerger.numberOfInputs !== wantInputs) buildCueGraph();
     const arr = await blob.arrayBuffer();
     const buf = await c.decodeAudioData(arr);
 

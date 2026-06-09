@@ -707,6 +707,16 @@ export class PerformanceEngine {
         try { this.outputSplitter?.disconnect(); } catch { /* ok */ }
         try { this.outputMerger?.disconnect(); } catch { /* ok */ }
 
+        // Claim the device's full channel count with discrete interpretation
+        // here — not only in setOutputDevice — so multichannel works on the
+        // system-default device and on browsers without AudioContext.setSinkId.
+        try {
+            this.ctx.destination.channelCount = this.ctx.destination.maxChannelCount;
+        } catch { /* destination capped; no-op */ }
+        try {
+            this.ctx.destination.channelInterpretation = 'discrete';
+        } catch { /* older builds may not allow this — fine */ }
+
         const channels = Math.max(2, this.ctx.destination.maxChannelCount || 2);
         this.outputSplitter = this.ctx.createChannelSplitter(2);
         this.outputMerger = this.ctx.createChannelMerger(channels);
@@ -730,12 +740,25 @@ export class PerformanceEngine {
         try { this.outputSplitter.disconnect(); } catch { /* ok */ }
         this.outputSplitter.connect(this.outputMerger, 0, pair * 2);
         this.outputSplitter.connect(this.outputMerger, 1, pair * 2 + 1);
-        this.currentMainPair = pair;
     }
 
-    /** Public: pick which channel pair the master mix routes to. */
+    /** Public: pick which channel pair the master mix routes to. The unclamped
+     *  intent is stored so later graph rebuilds (device swap, or the device
+     *  exposing more channels once the context is running) restore the user's
+     *  selection instead of an early stereo clamp. */
     setMainOutputPair(pairIdx) {
-        this._wireMainPair(pairIdx);
+        this.currentMainPair = Math.max(0, pairIdx | 0);
+        this._wireMainPair(this.currentMainPair);
+    }
+
+    /** Re-coerce the destination and rebuild the output tail, restoring the
+     *  selected pair. Chromium reports maxChannelCount=2 until the context is
+     *  actually running, so callers invoke this on the 'running' statechange
+     *  (and on user gestures like opening the device menu) to pick up the
+     *  device's real channel count. Returns the current maxChannelCount. */
+    refreshOutputGraph() {
+        this._buildOutputGraph();
+        return this.getMaxChannelCount();
     }
 
     setBpm(bpm) {
