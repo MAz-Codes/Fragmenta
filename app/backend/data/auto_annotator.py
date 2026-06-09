@@ -27,6 +27,34 @@ CLAP_REPO = "lukewys/laion_clap"
 # fully offline after a single download and nothing leaks to ~/.cache.
 CLAP_TEXT_DEPS = ("roberta-base", "bert-base-uncased", "facebook/bart-base")
 
+# Whole-clip CLAP embedding windowing. laion_clap (enable_fusion=False) only
+# looks at max_len=480000 samples (10 s @ 48 kHz) and picks a RANDOM offset
+# for longer clips — non-deterministic tags and a single arbitrary window.
+# We instead embed non-overlapping 10 s windows and mean-pool, which is
+# deterministic (rand_trunc is a no-op on exact-length windows) and hears the
+# whole clip. CLAP_MAX_WINDOWS caps compute (12 ≈ 120 s/clip); a trailing
+# window shorter than CLAP_MIN_TAIL is dropped so near-silent tails don't
+# skew the pooled embedding.
+CLAP_SR = 48000
+CLAP_WIN = 480000
+CLAP_MAX_WINDOWS = 12
+CLAP_MIN_TAIL = CLAP_WIN // 2
+
+# Confidence gates: a tag is only emitted when the top-1 cosine similarity
+# clears the per-group floor, and (genre/mood) beats the runner-up by
+# CLAP_MARGIN — near-ties mean "model can't tell", not a coin-flip. Missing
+# keys are intentional: apply_template() drops the segment and
+# _compose_prompt() guards each field, same as a missing BPM/key.
+# Starting points — calibrate against a hand-labeled set if tags get sparse.
+# Measured on the bundled demo clips: real-music top-1 sims run ~0.13 (mood)
+# to ~0.22 (genre) with top1-top2 margins of 0.012-0.034, while an SFX-style
+# impulse clip sits at 0.04-0.09 across all groups. A margin of 0.02 would
+# have dropped genre/mood from real music, hence 0.01. Caveat: stationary
+# noise legitimately scores ~0.18 as "experimental", too close to real music
+# to gate on tau alone.
+CLAP_TAU = {"genre": 0.10, "mood": 0.10, "instruments": 0.12}
+CLAP_MARGIN = 0.01
+
 KEY_NAMES_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 KEY_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
@@ -280,15 +308,47 @@ class _ClapTagger:
         self._label_embeds[key] = embed
         return embed
 
+    def _embed_audio(self, audio_path: Path):
+        """Deterministic whole-clip embedding: mean-pool over 10 s windows.
+
+        Each window is exactly CLAP_WIN samples, so laion_clap's rand_trunc
+        path never fires (overflow=0) and repeated runs produce identical
+        embeddings. If laion_clap is ever run with enable_fusion=True this
+        windowing must be revisited.
+        """
+        import librosa
+        import numpy as np
+        import torch
+
+        y, _ = librosa.load(str(audio_path), sr=CLAP_SR, mono=True)
+        if y.size == 0:
+            raise ValueError("empty audio")
+
+        # Non-overlapping 10 s windows. Pad a short *first/only* window;
+        # drop a short trailing window so near-silent tails don't skew the mean.
+        windows = []
+        for start in range(0, y.size, CLAP_WIN):
+            chunk = y[start:start + CLAP_WIN]
+            if chunk.size < CLAP_WIN:
+                if windows and chunk.size < CLAP_MIN_TAIL:
+                    break  # negligible tail — ignore it
+                chunk = np.pad(chunk, (0, CLAP_WIN - chunk.size))
+            windows.append(chunk)
+            if len(windows) >= CLAP_MAX_WINDOWS:
+                break
+
+        batch = torch.from_numpy(np.stack(windows)).float()
+        with torch.no_grad():
+            embs = self._model.get_audio_embedding_from_data(x=batch, use_tensor=True)
+        # Mean-pool across windows, then L2-normalize once.
+        emb = embs.mean(dim=0, keepdim=True)
+        return emb / emb.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+
     def tag(self, audio_path: Path, label_sets: Dict[str, List[str]], top_k_instruments: int = 2) -> Dict[str, Any]:
         self.ensure_loaded()
         import torch
 
-        with torch.no_grad():
-            audio_embed = self._model.get_audio_embedding_from_filelist(
-                x=[str(audio_path)], use_tensor=True
-            )
-        audio_embed = audio_embed / audio_embed.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        audio_embed = self._embed_audio(audio_path)
 
         out: Dict[str, Any] = {}
         for group in ("genre", "mood"):
@@ -298,8 +358,21 @@ class _ClapTagger:
             prompts = [f"a {lab} music track" if group == "genre" else f"a {lab} sounding music track" for lab in labels]
             text_embed = self._embed_labels(group, prompts)
             sims = (audio_embed @ text_embed.T).squeeze(0)
-            top = int(sims.argmax().item())
-            out[group] = labels[top]
+
+            if sims.numel() >= 2:
+                top2 = torch.topk(sims, k=2)
+                top_val, top_idx = float(top2.values[0]), int(top2.indices[0])
+                margin = top_val - float(top2.values[1])
+            else:
+                top_val, top_idx, margin = float(sims[0]), 0, float("inf")
+
+            logger.debug(
+                "CLAP %s for %s: top=%r sim=%.4f margin=%.4f",
+                group, audio_path.name, labels[top_idx], top_val, margin,
+            )
+            if top_val >= CLAP_TAU[group] and margin >= CLAP_MARGIN:
+                out[group] = labels[top_idx]
+            # else: omit — the prompt template drops the segment
 
         instruments = label_sets.get("instruments") or []
         if instruments:
@@ -307,8 +380,16 @@ class _ClapTagger:
             text_embed = self._embed_labels("instruments", prompts)
             sims = (audio_embed @ text_embed.T).squeeze(0)
             k = min(top_k_instruments, len(instruments))
-            top_idx = torch.topk(sims, k=k).indices.tolist()
-            out["instruments"] = [instruments[i] for i in top_idx]
+            top = torch.topk(sims, k=k)
+            logger.debug(
+                "CLAP instruments for %s: %s",
+                audio_path.name,
+                [(instruments[i], round(v, 4)) for v, i in zip(top.values.tolist(), top.indices.tolist())],
+            )
+            kept = [instruments[i] for v, i in zip(top.values.tolist(), top.indices.tolist())
+                    if v >= CLAP_TAU["instruments"]]
+            if kept:  # only set the key if at least one passes
+                out["instruments"] = kept
         return out
 
 
