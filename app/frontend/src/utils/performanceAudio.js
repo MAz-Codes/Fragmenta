@@ -10,22 +10,44 @@ export const ENGINE_SAMPLE_RATE = 44100;
 
 let sharedCtx = null;
 
+// Whether to pin the shared AudioContext to ENGINE_SAMPLE_RATE. Forcing a
+// non-native rate makes Chromium route output through an internal stereo
+// resampler, which collapses destination.maxChannelCount to 2 and hides every
+// multi-channel main/cue output pair. The pin only benefits beatsync v2's
+// sample-exact loop seams, so it's opt-in: App.js calls setSampleRatePin(true)
+// when /api/environment reports beatsync_v2. Default false → native device
+// rate → full channel count, so multi-channel output works out of the box.
+let pinSampleRate = false;
+
+// Set the sample-rate pin before the context is first created (i.e. before
+// entering Performance mode). Once getAudioContext() has built the shared
+// context this has no effect on it.
+export function setSampleRatePin(on) {
+    pinSampleRate = Boolean(on);
+}
+
 export function getAudioContext() {
     if (!sharedCtx) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
-        try {
-            sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
-        } catch (_) {
-            // Some browsers/hosts reject a forced rate — fall back to default
-            // and accept the resample rather than failing to produce audio.
+        if (pinSampleRate) {
+            try {
+                sharedCtx = new Ctor({ sampleRate: ENGINE_SAMPLE_RATE });
+            } catch (_) {
+                // Some browsers/hosts reject a forced rate — fall back to default
+                // and accept the resample rather than failing to produce audio.
+                sharedCtx = new Ctor();
+            }
+            if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
+                console.warn(
+                    `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
+                    `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
+                    `sample-exact loop length is not guaranteed on this host.`
+                );
+            }
+        } else {
+            // Native device rate: keeps destination.maxChannelCount equal to the
+            // device's real channel count so multi-channel output is available.
             sharedCtx = new Ctor();
-        }
-        if (sharedCtx.sampleRate !== ENGINE_SAMPLE_RATE) {
-            console.warn(
-                `[PerformanceEngine] AudioContext is ${sharedCtx.sampleRate} Hz, ` +
-                `not ${ENGINE_SAMPLE_RATE} Hz — 44.1 kHz loops will be resampled; ` +
-                `sample-exact loop length is not guaranteed on this host.`
-            );
         }
     }
     if (sharedCtx.state === 'suspended') {
