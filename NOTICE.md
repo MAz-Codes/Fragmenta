@@ -30,6 +30,24 @@ BSD-3-Clause permits binary redistribution provided the copyright notice, licens
 
 ---
 
+## Included Third-Party Assets (redistributed)
+
+### Convolution reverb impulse responses (Voxengo)
+- **Files**: `app/frontend/public/ir/` (and the built copy in `app/frontend/build/ir/`) —
+  `Scala Milan Opera Hall.wav`, `Nice Drum Room.wav`, `Narrow Bumpy Space.wav`.
+- **Source**: Voxengo free Impulse Response pack — https://www.voxengo.com/impulses/
+- **Terms**: Voxengo publishes these IR files for free use in commercial and
+  non-commercial productions. They are used here for the performance-bus
+  convolution reverb.
+- **Action required before public release**: confirm Voxengo's current terms
+  permit *redistribution* of the WAV files inside a software repository (their
+  grant clearly covers *use* in productions; bundling the raw IRs in a
+  distributed app should be double-checked). If redistribution is not clearly
+  permitted, replace them with CC0 / explicitly-redistributable IRs or fetch
+  them at runtime instead of committing them.
+
+---
+
 ## Model Weights (downloaded at runtime — NOT redistributed)
 
 Fragmenta orchestrates the download and use of the following models. They are fetched from Hugging Face under the user's own account, and the user accepts each model's license at download time. Fragmenta does **not** ship these weights.
@@ -66,6 +84,7 @@ Installed from PyPI and baked into the Docker images. All licenses below are GPL
 | torch, torchvision | BSD-3-Clause |
 | torchaudio | BSD-2-Clause |
 | transformers, huggingface-hub, safetensors, accelerate | Apache-2.0 |
+| laion-clap *(Rich auto-annotation; the checkpoint it loads is attributed above)* | CC0-1.0 |
 | pytorch-lightning | Apache-2.0 |
 | ftfy | Apache-2.0 |
 | requests | Apache-2.0 |
@@ -85,9 +104,11 @@ Installed from PyPI and baked into the Docker images. All licenses below are GPL
 | webdataset | BSD-3-Clause |
 | psutil | BSD-3-Clause |
 | omegaconf | BSD-3-Clause |
+| antlr4-python3-runtime *(via omegaconf)* | BSD-3-Clause |
 | click | BSD-3-Clause |
 | python-dotenv | BSD-3-Clause |
 | pywebview | BSD-3-Clause |
+| proxy-tools *(via pywebview)* | MIT |
 | numba | BSD-2-Clause |
 | librosa | ISC |
 | tqdm | MPL-2.0 AND MIT |
@@ -123,6 +144,6 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 
 ---
 
-**Last Updated**: 2026-06-05
+**Last Updated**: 2026-06-10
 
 For licensing questions, open an issue on the project repository or contact the maintainer.
