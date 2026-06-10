@@ -57,7 +57,7 @@ If you only want to get to know the app, Fragmenta runs on a [Hugging Face Space
 
 ## Option 2: Run Locally with Docker
 
-The fastest way to get started locally — no Python installation needed. Run one of the commands below, then open **http://localhost:5001** in your browser.
+The fastest way to get started locally — no Python installation needed. Open your **Terminal** or **PowerShell** and run one of the commands below, then open **http://localhost:5001** in your browser.
 
 ```bash
 # GPU (NVIDIA)
