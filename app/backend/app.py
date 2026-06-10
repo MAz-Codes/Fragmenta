@@ -48,12 +48,31 @@ app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 app.config['MAX_FORM_PARTS'] = 20000
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
+# CORS allow-list. A wildcard origin (the old config) let any web page drive
+# every state-changing route on a desktop user's localhost backend (delete
+# projects/models, start training, swap HF token, kill GPU processes). We allow
+# only the desktop webview origin + the vite dev server, plus an optional
+# env-supplied extension for Docker deploys behind a known host.
+#   * Same-origin calls from the packaged webview send no Origin header and are
+#     unaffected by this list.
+#   * supports_credentials is dropped — nothing here uses cookies.
+_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5001",
+    "http://localhost:5001",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra_origins = os.environ.get('FRAGMENTA_ALLOWED_ORIGINS', '').strip()
+if _extra_origins:
+    _ALLOWED_ORIGINS.extend(
+        o.strip() for o in _extra_origins.split(',') if o.strip()
+    )
+
 CORS(app,
-     resources={r"/api/*": {"origins": "*"}},
-     supports_credentials=True,
+     resources={r"/api/*": {"origins": _ALLOWED_ORIGINS}},
      # /api/generate returns the WAV as the body, so the canonical on-disk
      # filename (and resolved seed) ride back in custom headers. They must be
-     # whitelisted here or the browser hides them from axios cross-origin.
+     # whitelisted here or the browser hides them from the cross-origin reader.
      expose_headers=["X-Fragment-Filename", "X-Fragment-Seed"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
@@ -862,6 +881,10 @@ def upload_source_audio():
     if not fileobj.filename:
         return jsonify(APIResponse.error("Empty filename.", status_code=400)), 400
 
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify(APIResponse.error(quota_err, status_code=507)), 507
+
     name = Path(fileobj.filename).name
     # Strip path components + restrict to known extensions.
     ext = Path(name).suffix.lower()
@@ -896,6 +919,10 @@ def save_performance_recording():
     fileobj = request.files['file']
     if not fileobj.filename:
         return jsonify(APIResponse.error("Empty recording.", status_code=400)), 400
+
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify(APIResponse.error(quota_err, status_code=507)), 507
 
     raw_name = (request.form.get('name') or '').strip()
     safe = re.sub(r"[^a-zA-Z0-9._ -]", "_", raw_name).strip().replace(" ", "_")[:80]
@@ -1598,6 +1625,13 @@ def free_gpu_memory():
         current_pid = os.getpid()
         print(f"     Current process PID: {current_pid}")
 
+        # Killing *other* GPU processes is desktop-only. In Docker/HF (headless,
+        # potentially shared/multi-tenant GPU) this sweep would SIGKILL unrelated
+        # tenants' jobs — a cross-process DoS. There we stop after unloading our
+        # own model + clearing the cache (done above). On the desktop it reclaims
+        # VRAM held by sibling Fragmenta/python jobs.
+        allow_cross_process_kill = not _is_headless()
+
         try:
             result = subprocess.run(['nvidia-smi', '--query-compute-apps=pid,used_memory,process_name', '--format=csv,noheader,nounits'],
                                     capture_output=True, text=True, timeout=10)
@@ -1618,7 +1652,7 @@ def free_gpu_memory():
                                         f"     Skipping current process PID: {pid_int}")
                                     continue
 
-                                if 'python' in process_name.lower() and mem_gb > 1.0:
+                                if allow_cross_process_kill and 'python' in process_name.lower() and mem_gb > 1.0:
                                     print(
                                         f"    Found Python process PID: {pid_int} using {mem_gb:.1f}GB")
                                     print(f"      Process: {process_name}")
@@ -1805,6 +1839,82 @@ def _is_headless() -> bool:
             os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         return True
     return False
+
+
+def _dir_size_bytes(*paths: Path) -> int:
+    """Sum the size of every regular file under each path (recursively)."""
+    total = 0
+    for p in paths:
+        try:
+            if not p.exists():
+                continue
+            for f in p.rglob('*'):
+                try:
+                    if f.is_file() and not f.is_symlink():
+                        total += f.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return total
+
+
+def _check_disk_quota():
+    """Opt-in cumulative storage cap for web deployments.
+
+    Off by default (and entirely absent on the desktop): only enforced in
+    headless mode and only when FRAGMENTA_MAX_DISK_BYTES is set to a positive
+    integer. Returns a user-facing message when over quota, else None.
+    """
+    if not _is_headless():
+        return None
+    try:
+        limit = int(os.environ.get('FRAGMENTA_MAX_DISK_BYTES', '0'))
+    except (TypeError, ValueError):
+        return None
+    if limit <= 0:
+        return None
+    cfg = get_config()
+    try:
+        from app.backend.data.projects import get_projects_dir
+        used = _dir_size_bytes(cfg.get_path('uploads'), get_projects_dir(), cfg.get_path('output'))
+    except Exception:
+        return None
+    if used >= limit:
+        return (f"Server storage quota reached "
+                f"({used // (1024 * 1024)} MB of {limit // (1024 * 1024)} MB used). "
+                "Remove some data and try again.")
+    return None
+
+
+def _check_job_quota():
+    """Opt-in global cap on concurrent background jobs (pre-encode + annotate).
+
+    Off by default. Only enforced in headless mode when
+    FRAGMENTA_MAX_CONCURRENT_JOBS is a positive integer. Returns a user-facing
+    message when at capacity, else None.
+    """
+    if not _is_headless():
+        return None
+    try:
+        cap = int(os.environ.get('FRAGMENTA_MAX_CONCURRENT_JOBS', '0'))
+    except (TypeError, ValueError):
+        return None
+    if cap <= 0:
+        return None
+    running = 0
+    with _project_annotate_jobs_lock:
+        running += sum(1 for j in _project_annotate_jobs.values()
+                       if j.get('state') == 'running')
+    try:
+        from app.backend.data.pre_encoder import count_running_pre_encode_jobs
+        running += count_running_pre_encode_jobs()
+    except Exception:
+        pass
+    if running >= cap:
+        return (f"Server is busy ({running} background jobs running, limit {cap}). "
+                "Please wait for a job to finish and try again.")
+    return None
 
 
 @app.route('/api/open-output-folder', methods=['POST'])
@@ -2223,6 +2333,10 @@ def upload_folder():
     if len(rel_paths) != len(files):
         return jsonify({'error': 'rel_paths count does not match files count.'}), 400
 
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify({'error': quota_err}), 507
+
     first_rel = (rel_paths[0] or '').replace('\\', '/').lstrip('/')
     folder_name = first_rel.split('/', 1)[0] if '/' in first_rel else 'folder'
     safe_folder = ''.join(c for c in folder_name if c.isalnum() or c in '-_') or 'folder'
@@ -2266,6 +2380,19 @@ def pick_folder():
     payload = request.json or {}
     start_dir = payload.get('start_dir') or str(Path.home())
 
+    # `start_dir` is request-controlled and gets interpolated into shell/AppleScript
+    # command strings below. Validate it is an existing directory and fall back to
+    # the home dir otherwise — this neutralises injection payloads (which are not
+    # real directories) before they reach any command builder. The per-platform
+    # branches still escape it as defence-in-depth.
+    try:
+        if not start_dir or not Path(start_dir).expanduser().is_dir():
+            start_dir = str(Path.home())
+        else:
+            start_dir = str(Path(start_dir).expanduser())
+    except (OSError, ValueError):
+        start_dir = str(Path.home())
+
     def _try(cmd):
         try:
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -2295,8 +2422,11 @@ def pick_folder():
             )
             chosen = _try(['python3', '-c', script])
     elif sys.platform == 'darwin':
+        # Escape backslashes and double-quotes so a path can't break out of the
+        # AppleScript string literal and inject `do shell script` commands.
+        safe_start = start_dir.replace('\\', '\\\\').replace('"', '\\"')
         chosen = _try(['osascript', '-e',
-                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{start_dir}")'])
+                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{safe_start}")'])
     elif sys.platform == 'win32':
         safe_start = (start_dir or '').replace("'", "''")
         ps = (
@@ -2451,6 +2581,23 @@ def ingest_into_project_route(name):
     if not folder:
         return jsonify({'error': 'folder_path is required'}), 400
     folder_path = Path(folder).expanduser()
+
+    # Web/Docker hardening: in headless deployments the only legitimate ingest
+    # source is the per-request upload staging dir written by /api/upload-folder.
+    # Allowing an arbitrary server path here would let a caller copy (or, with
+    # symlink mode, alias and then read back via the clip-audio route) any file
+    # on the host. Confine ingest to the staging root and forbid symlink mode.
+    if _is_headless():
+        if mode == 'symlink':
+            return jsonify({'error': 'Symlink ingest is disabled in web mode.'}), 400
+        staging_root = get_config().get_path('uploads').resolve()
+        try:
+            folder_path.resolve().relative_to(staging_root)
+        except ValueError:
+            return jsonify({
+                'error': 'In web mode you can only ingest folders uploaded through the app.',
+            }), 400
+
     try:
         result = ingest_folder(name, folder_path, mode)
     except FileNotFoundError as exc:
@@ -2464,6 +2611,21 @@ def ingest_into_project_route(name):
         "Ingest into project=%s mode=%s added=%d (copied=%d symlinked=%d skipped=%d)",
         name, mode, result['added'], result['copied'], result['symlinked'], result['skipped'],
     )
+
+    # Reclaim the per-request upload staging dir once its files are safely in the
+    # project. We ONLY remove folders that live under the upload staging root, so
+    # a desktop ingest of the user's own music folder is never deleted. Skip when
+    # symlinks were created (they point back at the staging files).
+    if result.get('symlinked', 0) == 0:
+        try:
+            staging_root = get_config().get_path('uploads').resolve()
+            resolved = folder_path.resolve()
+            if resolved != staging_root and resolved.is_relative_to(staging_root):
+                import shutil as _sh
+                _sh.rmtree(resolved, ignore_errors=True)
+        except (OSError, ValueError) as exc:
+            logger.debug("Upload staging cleanup skipped for %s: %s", folder, exc)
+
     return jsonify({**result, 'project': get_project(name)})
 
 
@@ -2490,6 +2652,11 @@ def delete_clip_route(name, file_name):
     from app.backend.data.projects import delete_clip, get_project
     try:
         delete_clip(name, file_name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        # Path traversal / invalid file name.
+        return jsonify({'error': str(exc)}), 400
     except Exception as exc:
         logger.exception("Failed to delete clip %s in project %s", file_name, name)
         return jsonify({'error': str(exc)}), 500
@@ -2666,6 +2833,10 @@ def annotate_project_route(name):
             skipped_existing = 0
         target_names = [c.file_name for c in run_targets]
 
+    job_quota_err = _check_job_quota()
+    if job_quota_err:
+        return jsonify({'error': job_quota_err}), 429
+
     job = _get_project_annotate_job(name)
     with _project_annotate_jobs_lock:
         if job['state'] == 'running':
@@ -2831,6 +3002,9 @@ def pre_encode_project_route(name):
     from app.backend.data.pre_encoder import start_pre_encode
     if not project_path(name).exists():
         return jsonify({'error': f'Project not found: {name}'}), 404
+    job_quota_err = _check_job_quota()
+    if job_quota_err:
+        return jsonify({'error': job_quota_err}), 429
     # silent=True so an empty/no-Content-Type body is treated as {} instead of
     # Flask returning 415 — callers usually fire-and-forget without a payload.
     body = request.get_json(silent=True) or {}

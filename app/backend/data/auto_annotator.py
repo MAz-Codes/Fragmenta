@@ -200,6 +200,46 @@ def _compose_prompt(parts: Dict[str, Any]) -> str:
     return out[:1].upper() + out[1:] if out else ""
 
 
+# Serializes checkpoint loads that need relaxed unpickling. The CLAP loader
+# below holds this while it reads the (trusted) .pt; any other model-load site
+# that has to allow weights_only=False should acquire the same lock so the
+# windows never overlap. It is module-level (process-wide) on purpose.
+CHECKPOINT_LOAD_LOCK = threading.Lock()
+
+
+def _clap_load_state_dict_trusted(checkpoint_path: str, map_location: str = "cpu",
+                                  skip_params: bool = True):
+    """Vendored copy of laion_clap.clap_module.factory.load_state_dict.
+
+    We replicate it here so weights_only=False is passed to torch.load for THIS
+    call only. The previous approach swapped torch.load process-wide while CLAP
+    loaded, which silently leaked weights_only=False into any concurrent
+    torch.load on another thread (e.g. a generation/LoRA model load) — an unsafe
+    unpickling foot-gun. Loading the state dict directly keeps the relaxation
+    local to this one trusted checkpoint and touches no global state.
+    """
+    import torch
+
+    checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        state_dict = checkpoint["state_dict"]
+    else:
+        state_dict = checkpoint
+    if skip_params and state_dict:
+        if next(iter(state_dict.items()))[0].startswith("module"):
+            state_dict = {k[7:]: v for k, v in state_dict.items()}
+        # Newer transformers dropped the roberta position_ids buffer; remove it
+        # so the strict-ish load doesn't choke. pop() is a no-op if absent.
+        try:
+            from packaging import version
+            import transformers
+            if version.parse(transformers.__version__) >= version.parse("4.31.0"):
+                state_dict.pop("text_branch.embeddings.position_ids", None)
+        except Exception:
+            state_dict.pop("text_branch.embeddings.position_ids", None)
+    return state_dict
+
+
 class _ClapTagger:
     """Lazy holder for a LAION-CLAP model used for zero-shot tagging."""
 
@@ -276,18 +316,12 @@ class _ClapTagger:
             # torch >= 2.6 flipped torch.load(weights_only=True) and newer
             # transformers dropped the roberta position_ids buffer, so
             # laion_clap's own load_ckpt errors twice: unpickling, then strict
-            # state_dict mismatch. Replicate its logic safely here.
-            from laion_clap.clap_module.factory import load_state_dict as clap_load_state_dict
-
-            orig_load = torch.load
-            def _trusted_load(*args, **kwargs):
-                kwargs.setdefault("weights_only", False)
-                return orig_load(*args, **kwargs)
-            torch.load = _trusted_load
-            try:
-                state = clap_load_state_dict(str(self.ckpt_path), skip_params=True)
-            finally:
-                torch.load = orig_load
+            # state_dict mismatch. We load the (trusted) checkpoint via a
+            # vendored helper that passes weights_only=False for this call only,
+            # under a shared lock — no process-wide torch.load patch, so a
+            # concurrent generation load can never inherit unsafe unpickling.
+            with CHECKPOINT_LOAD_LOCK:
+                state = _clap_load_state_dict_trusted(str(self.ckpt_path), skip_params=True)
             missing, unexpected = model.model.load_state_dict(state, strict=False)
             if unexpected:
                 logger.debug("CLAP unexpected keys ignored: %s", unexpected[:5])

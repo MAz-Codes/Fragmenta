@@ -62,6 +62,16 @@ def get_pre_encode_job(project_name: str) -> Dict[str, Any]:
         return dict(job)
 
 
+def count_running_pre_encode_jobs() -> int:
+    """How many pre-encode jobs are queued or running across all projects.
+
+    Used by the optional global concurrent-job cap in web deployments.
+    """
+    with _pre_encode_jobs_lock:
+        return sum(1 for j in _pre_encode_jobs.values()
+                   if j.get("state") in ("queued", "running"))
+
+
 def _idle_job() -> Dict[str, Any]:
     return {
         "state": "idle",          # idle | queued | running | complete | failed | cancelled
