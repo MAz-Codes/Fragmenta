@@ -2209,6 +2209,7 @@ function App() {
                                                     <Tooltip title="Refresh models & LoRAs">
                                                     <IconButton
                                                         onClick={refreshAllModels}
+                                                        aria-label="Refresh models & LoRAs"
                                                         sx={appStyles.refreshModelsButton}
                                                     >
                                                         <RefreshIcon />
