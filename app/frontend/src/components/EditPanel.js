@@ -17,6 +17,8 @@ import {
 import { Upload as UploadIcon, X as ClearIcon, Play as PlayIcon, Square as StopIcon } from 'lucide-react';
 import api from '../api';
 import AudioWaveform from './AudioWaveform';
+import Tooltip from './Tooltip';
+import { TIPS } from '../tooltips';
 import { getFragmentDragPayload } from '../utils/fragmentDrag';
 
 /**
@@ -341,9 +343,11 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                 onDragLeave={onDragLeave}
                 onDrop={onDrop}
             >
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                    Source clip
-                </Typography>
+                <Tooltip title={TIPS.edit.source}>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5, width: 'fit-content' }}>
+                        Source clip
+                    </Typography>
+                </Tooltip>
                 {sourcePath ? (
                     <Stack
                         direction="row"
@@ -390,6 +394,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
             </Box>
 
             {/* Mode selector */}
+            <Tooltip title={TIPS.edit.mode}>
             <ToggleButtonGroup
                 value={mode}
                 exclusive
@@ -401,13 +406,16 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                 <ToggleButton value="inpaint">Inpaint region</ToggleButton>
                 <ToggleButton value="extend">Extend</ToggleButton>
             </ToggleButtonGroup>
+            </Tooltip>
 
             {/* Mode-specific controls */}
             {mode === 'style' && (
                 <Box sx={{ mb: 2 }}>
-                    <Typography variant="caption" color="text.secondary">
-                        Preserve source character ←→ follow prompt
-                    </Typography>
+                    <Tooltip title={TIPS.edit.initNoise}>
+                        <Typography variant="caption" color="text.secondary" sx={{ width: 'fit-content', display: 'inline-block' }}>
+                            Preserve source character ←→ follow prompt
+                        </Typography>
+                    </Tooltip>
                     <Stack direction="row" alignItems="center" spacing={2}>
                         <Slider
                             value={initNoiseLevel}
@@ -432,9 +440,11 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
 
             {mode === 'inpaint' && (
                 <Box sx={{ mb: 2 }}>
-                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-                        Drag the highlighted region to inpaint
-                    </Typography>
+                    <Tooltip title={TIPS.edit.maskRegion}>
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5, width: 'fit-content' }}>
+                            Drag the highlighted region to inpaint
+                        </Typography>
+                    </Tooltip>
                     <AudioWaveform
                         file={sourceFile}
                         duration={sourceDurationSec || 0}
@@ -487,6 +497,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
 
             {mode === 'extend' && (
                 <Box sx={{ mb: 2 }}>
+                    <Tooltip title={TIPS.edit.extendSeconds}>
                     <TextField
                         label="Seconds to add at the end"
                         type="number"
@@ -496,6 +507,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                         inputProps={{ min: 0.5, max: 60, step: 0.5 }}
                         fullWidth
                     />
+                    </Tooltip>
                     <Typography variant="caption" color="text.secondary">
                         Source is {sourceDurationSec ? sourceDurationSec.toFixed(2) : '—'} s; final clip will be{' '}
                         {sourceDurationSec ? (sourceDurationSec + Number(extendSeconds || 0)).toFixed(2) : '—'} s.
@@ -504,6 +516,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
             )}
 
             {/* Shared inputs */}
+            <Tooltip title={TIPS.edit.prompt}>
             <TextField
                 label={mode === 'inpaint' ? 'Prompt for the inpainting region' : 'Prompt for the edit'}
                 placeholder={
@@ -519,6 +532,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                 fullWidth
                 sx={{ mb: 2 }}
             />
+            </Tooltip>
 
             {mode === 'style' && (
                 <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>

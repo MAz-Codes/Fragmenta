@@ -2089,6 +2089,7 @@ function App() {
                                                 </Box>
 
                                                 <Box sx={appStyles.generationModelRow}>
+                                                    <Tooltip title={TIPS.generate.modelSelect}>
                                                     <FormControl fullWidth variant="outlined">
                                                         <Select
                                                             labelId="model-select-label"
@@ -2204,13 +2205,15 @@ function App() {
                                                             ))}
                                                         </Select>
                                                     </FormControl>
+                                                    </Tooltip>
+                                                    <Tooltip title="Refresh models & LoRAs">
                                                     <IconButton
                                                         onClick={refreshAllModels}
-                                                        title="Refresh models & LoRAs"
                                                         sx={appStyles.refreshModelsButton}
                                                     >
                                                         <RefreshIcon />
                                                     </IconButton>
+                                                    </Tooltip>
                                                 </Box>
 
 
@@ -2231,6 +2234,7 @@ function App() {
                                                     model picker and LoRA picker above stay visible in
                                                     both modes. */}
                                                 <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                                                    <Tooltip title={TIPS.generate.mode}>
                                                     <ToggleButtonGroup
                                                         value={generationMode}
                                                         exclusive
@@ -2240,9 +2244,11 @@ function App() {
                                                         <ToggleButton value="create">Generate new</ToggleButton>
                                                         <ToggleButton value="edit">Edit existing</ToggleButton>
                                                     </ToggleButtonGroup>
+                                                    </Tooltip>
                                                 </Box>
 
                                                 {generationMode === 'create' && (<>
+                                                <Tooltip title={TIPS.generate.prompt}>
                                                 <TextField
                                                     fullWidth
                                                     multiline
@@ -2254,8 +2260,10 @@ function App() {
                                                     onChange={(e) => setGenerationPrompt(e.target.value)}
                                                     sx={appStyles.fieldMarginBottomLarge}
                                                 />
+                                                </Tooltip>
 
 
+                                                <Tooltip title={TIPS.generate.duration}>
                                                 <Box sx={appStyles.durationRow}>
                                                     <Typography variant="body2" color="textSecondary">
                                                         Desired Duration (seconds):
@@ -2273,6 +2281,7 @@ function App() {
                                                         {generationDuration}s
                                                     </Typography>
                                                 </Box>
+                                                </Tooltip>
 
                                                 <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -2281,6 +2290,7 @@ function App() {
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
                                                             <Grid item xs={12}>
+                                                                <Tooltip title={TIPS.generate.negativePrompt}>
                                                                 <TextField
                                                                     fullWidth
                                                                     multiline
@@ -2291,6 +2301,7 @@ function App() {
                                                                     value={negativePrompt}
                                                                     onChange={(e) => setNegativePrompt(e.target.value)}
                                                                 />
+                                                                </Tooltip>
                                                             </Grid>
 
                                                             {/* CFG + Steps are only meaningful on *-base checkpoints.
@@ -2299,7 +2310,9 @@ function App() {
                                                             {!isDistilledBase && (
                                                                 <>
                                                                     <Grid item xs={12}>
-                                                                        <Typography gutterBottom>CFG Scale</Typography>
+                                                                        <Tooltip title={TIPS.generate.cfg}>
+                                                                            <Typography gutterBottom sx={{ width: 'fit-content' }}>CFG Scale</Typography>
+                                                                        </Tooltip>
                                                                         <Box sx={appStyles.sliderRow}>
                                                                             <Slider
                                                                                 value={cfgScale}
@@ -2326,7 +2339,9 @@ function App() {
                                                                     </Grid>
 
                                                                     <Grid item xs={12}>
-                                                                        <Typography gutterBottom>Inference Steps</Typography>
+                                                                        <Tooltip title={TIPS.generate.steps}>
+                                                                            <Typography gutterBottom sx={{ width: 'fit-content' }}>Inference Steps</Typography>
+                                                                        </Tooltip>
                                                                         <Box sx={appStyles.sliderRow}>
                                                                             <Slider
                                                                                 value={steps}
@@ -2351,7 +2366,9 @@ function App() {
                                                             )}
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Batch Generation (per prompt)</Typography>
+                                                                <Tooltip title={TIPS.generate.batch}>
+                                                                    <Typography gutterBottom sx={{ width: 'fit-content' }}>Batch Generation (per prompt)</Typography>
+                                                                </Tooltip>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <Slider
                                                                         value={batchCount}
@@ -2378,7 +2395,9 @@ function App() {
                                                             </Grid>
 
                                                             <Grid item xs={12}>
-                                                                <Typography gutterBottom>Seed</Typography>
+                                                                <Tooltip title={TIPS.generate.seed}>
+                                                                    <Typography gutterBottom sx={{ width: 'fit-content' }}>Seed</Typography>
+                                                                </Tooltip>
                                                                 <Box sx={appStyles.sliderRow}>
                                                                     <FormControlLabel
                                                                         control={

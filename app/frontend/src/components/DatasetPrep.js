@@ -639,6 +639,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         toolbar={
                             <Stack spacing={1}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
+                                    <Tooltip title={TIPS.dataset.autoAnnotateAll}>
                                     <Button
                                         variant="contained"
                                         color="warm"
@@ -649,6 +650,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                     >
                                         Auto-annotate all
                                     </Button>
+                                    </Tooltip>
+                                    <Tooltip title={TIPS.dataset.templatePreset}>
                                     <FormControl size="small" sx={{ minWidth: 180 }}>
                                         <Select
                                             value={project.prompt_template_preset || 'music'}
@@ -671,6 +674,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                             ))}
                                         </Select>
                                     </FormControl>
+                                    </Tooltip>
                                     <Tooltip title={TIPS.dataset.richAnnotate}>
                                         <FormControlLabel
                                             control={

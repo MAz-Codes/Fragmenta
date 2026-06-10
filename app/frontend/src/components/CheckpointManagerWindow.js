@@ -22,6 +22,8 @@ import {
 import api from '../api';
 import CheckpointRow from './CheckpointRow';
 import StorageDrilldown from './StorageDrilldown';
+import Tooltip from './Tooltip';
+import { TIPS } from '../tooltips';
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
@@ -103,6 +105,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                 <DialogContent dividers>
                     <Box sx={{ mb: 2 }}>
                         <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap">
+                            <Tooltip title={TIPS.manager.storage}>
                             <Button
                                 size="small"
                                 variant="text"
@@ -114,6 +117,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                     ? `${fmtBytes(storage.total_used_bytes)} used · ${fmtBytes(storage.total_free_bytes)} free`
                                     : '—'}
                             </Button>
+                            </Tooltip>
 
                             <Box sx={{ flex: 1 }} />
 
@@ -133,6 +137,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                 </Stack>
                             ) : showTokenInput ? (
                                 <Stack direction="row" alignItems="center" spacing={1}>
+                                    <Tooltip title={TIPS.manager.hfToken}>
                                     <TextField
                                         size="small"
                                         placeholder="hf_..."
@@ -141,6 +146,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                         type="password"
                                         sx={{ width: 240 }}
                                     />
+                                    </Tooltip>
                                     <Button size="small" variant="contained" onClick={submitToken}>
                                         Sign in
                                     </Button>
@@ -149,6 +155,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                     </Button>
                                 </Stack>
                             ) : (
+                                <Tooltip title={TIPS.manager.hfLogin}>
                                 <Button
                                     size="small"
                                     variant="outlined"
@@ -157,6 +164,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                 >
                                     Sign in to HuggingFace
                                 </Button>
+                                </Tooltip>
                             )}
                         </Stack>
                         {authError && <Alert severity="error" sx={{ mt: 1 }}>{authError}</Alert>}
@@ -227,7 +235,9 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                 </DialogContent>
 
                 <DialogActions>
-                    <Button onClick={refresh} disabled={loading}>Refresh</Button>
+                    <Tooltip title={TIPS.manager.refresh}>
+                        <Button onClick={refresh} disabled={loading}>Refresh</Button>
+                    </Tooltip>
                     <Button onClick={onClose} variant="contained">Close</Button>
                 </DialogActions>
             </Dialog>
