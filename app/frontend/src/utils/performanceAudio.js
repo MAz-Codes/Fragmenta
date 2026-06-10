@@ -702,8 +702,13 @@ export class PerformanceEngine {
      * is fixed at construction). Restores the current pair after rebuild.
      */
     _buildOutputGraph() {
-        // Tear down any prior wiring.
-        try { this.masterAnalyser.disconnect(); } catch { /* ok */ }
+        // Tear down any prior wiring. Disconnect ONLY the analyser→splitter
+        // edge: an argless masterAnalyser.disconnect() would also sever the
+        // recorder worklet tap (startRecording), silently truncating an
+        // active master recording whenever the graph rebuilds.
+        if (this.outputSplitter) {
+            try { this.masterAnalyser.disconnect(this.outputSplitter); } catch { /* ok */ }
+        }
         try { this.outputSplitter?.disconnect(); } catch { /* ok */ }
         try { this.outputMerger?.disconnect(); } catch { /* ok */ }
 
@@ -757,7 +762,13 @@ export class PerformanceEngine {
      *  (and on user gestures like opening the device menu) to pick up the
      *  device's real channel count. Returns the current maxChannelCount. */
     refreshOutputGraph() {
-        this._buildOutputGraph();
+        // Rebuild only when the device's channel count actually changed —
+        // this runs on every device-menu open and 'running' statechange, and
+        // a needless rebuild briefly interrupts live playback.
+        const want = Math.max(2, this.ctx.destination.maxChannelCount || 2);
+        if (!this.outputMerger || this.outputMerger.numberOfInputs !== want) {
+            this._buildOutputGraph();
+        }
         return this.getMaxChannelCount();
     }
 

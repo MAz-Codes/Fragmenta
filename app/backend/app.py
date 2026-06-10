@@ -43,7 +43,10 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='')
 
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0 
+# /api/upload-folder sends two multipart parts per file (files + rel_paths);
+# Werkzeug's default cap of 1000 parts would reject folders above ~500 files.
+app.config['MAX_FORM_PARTS'] = 20000
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 CORS(app,
      resources={r"/api/*": {"origins": "*"}},
