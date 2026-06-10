@@ -1645,8 +1645,16 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
     // audio is staged server-side under uploads/ and the returned staging path
     // feeds the same ingest flow as a locally picked folder.
     async function uploadFolder(fileList) {
-        const files = Array.from(fileList || []);
-        if (!files.length) return;
+        // Filter to audio up front (mirrors the backend's accepted set) so
+        // artwork/project clutter doesn't count against the request size and
+        // multipart part limits.
+        const AUDIO_EXTS = ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'];
+        const files = Array.from(fileList || []).filter((f) =>
+            AUDIO_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext)));
+        if (!files.length) {
+            setDialogError('No audio files found in the selected folder.');
+            return;
+        }
         setUploading(true);
         setDialogError('');
         setUploadInfo('');
@@ -1748,8 +1756,8 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
                 </Stack>
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose} disabled={busy}>Cancel</Button>
-                <Button variant="contained" onClick={submit} disabled={busy || !folder}>
+                <Button onClick={onClose} disabled={busy || uploading}>Cancel</Button>
+                <Button variant="contained" onClick={submit} disabled={busy || uploading || !folder}>
                     {busy ? 'Adding…' : 'Add'}
                 </Button>
             </DialogActions>
