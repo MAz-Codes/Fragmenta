@@ -86,6 +86,10 @@ const CHANNEL_DEFAULT = {
     // Which fragment was loaded into the channel strip last; restored on
     // reload so the channel comes back ready to play instead of empty.
     committedFragmentId: null,
+    // DJ-style in/out points over the committed clip (normalized 0..1).
+    // Full clip by default; reset whenever different audio is loaded.
+    trimStart: 0,
+    trimEnd: 1,
 };
 
 function defaultSession(channelCount) {

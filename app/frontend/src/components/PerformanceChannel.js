@@ -143,6 +143,58 @@ export default function PerformanceChannel({
         return merged;
     });
 
+    // DJ-style in/out points over the loaded clip, normalized 0..1.
+    // Mirrored into the strip (which drives the actual loop bounds / start
+    // offset) and persisted with the channel form state so a trimmed clip
+    // survives reload. Reset to full whenever DIFFERENT audio is loaded.
+    const [trim, setTrimState] = useState(() => {
+        const ts = Number(init.trimStart);
+        const te = Number(init.trimEnd);
+        return (Number.isFinite(ts) && Number.isFinite(te) && te > ts)
+            ? { start: Math.max(0, ts), end: Math.min(1, te) }
+            : { start: 0, end: 1 };
+    });
+    const trimRef = useRef(trim);
+    useEffect(() => { trimRef.current = trim; }, [trim]);
+    const applyTrim = useCallback((next) => {
+        setTrimState(next);
+        strip?.setRegion(next.start, next.end);
+    }, [strip]);
+    const resetTrim = useCallback(() => {
+        // loadBufferFromBlob already reset the strip's region; this re-syncs
+        // the UI (and is harmless when called redundantly).
+        applyTrim({ start: 0, end: 1 });
+    }, [applyTrim]);
+    // Min handle gap: at least 50 ms of audio (or 2% when nothing is loaded).
+    const minTrimGap = useCallback(() => {
+        const dur = strip?.buffer?.duration || 0;
+        return dur > 0 ? Math.max(0.005, Math.min(0.5, 0.05 / dur)) : 0.02;
+    }, [strip]);
+    const waveWrapRef = useRef(null);
+    const startTrimDrag = (which) => (e) => {
+        if (!loaded) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = waveWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const move = (ev) => {
+            const x = (ev.clientX - rect.left) / Math.max(1, rect.width);
+            const gap = minTrimGap();
+            const cur = trimRef.current;
+            const next = which === 'start'
+                ? { start: Math.max(0, Math.min(x, cur.end - gap)), end: cur.end }
+                : { start: cur.start, end: Math.min(1, Math.max(x, cur.start + gap)) };
+            applyTrim(next);
+        };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+    };
+
     // Per-channel rolling fragment history. Each fragment:
     //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
     // Oldest-first. Capped at FRAGMENT_CAP via FIFO eviction with star
@@ -215,9 +267,11 @@ export default function PerformanceChannel({
             prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
             fragments: fragmentsMeta,
             committedFragmentId,
+            trimStart: trim.start,
+            trimEnd: trim.end,
         });
     }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
-        fragments, committedFragmentId, index, onFormStateChange]);
+        fragments, committedFragmentId, trim, index, onFormStateChange]);
 
     // Hydrate fragments on mount from the session metadata + IDB blobs. Runs
     // once, tolerates missing blobs (skips the entry), and rewinds the
@@ -335,6 +389,9 @@ export default function PerformanceChannel({
         if (!fragment) return;
         autoLoadDoneRef.current = true;
         strip.loadBlob(fragment.blob).then(() => {
+            // Restore the persisted in/out points for the restored clip —
+            // the decode reset the strip's region to full.
+            strip.setRegion(trimRef.current.start, trimRef.current.end);
             requestAnimationFrame(drawWave);
         }).catch(err => {
             console.warn(`Channel ${index + 1} auto-load failed:`, err);
@@ -429,6 +486,7 @@ export default function PerformanceChannel({
         // newly generated fragment, pick it from the list (handleCommitFragment).
         if (i === 0 && !loadedRef.current) {
             await strip.loadBlob(blob);
+            resetTrim();
             setCommittedFragmentId(fragment.id);
             loadedRef.current = true;
             setLoaded(true);
@@ -545,6 +603,7 @@ export default function PerformanceChannel({
         // when this fragment's buffer is already loaded.
         if (!sameFragment) {
             await strip.loadBufferFromBlob(fragment.blob);
+            resetTrim();
             setCommittedFragmentId(fragmentId);
         }
         // Mark loaded so the play button enables (covers preset/hydrated flows
@@ -946,9 +1005,11 @@ export default function PerformanceChannel({
 
             <Box
                 onDragEnter={handleWaveDragEnter}
+                ref={waveWrapRef}
                 onDragOver={handleWaveDragOver}
                 onDragLeave={handleWaveDragLeave}
                 onDrop={handleWaveDrop}
+                onDoubleClick={() => loaded && resetTrim()}
                 sx={[
                     styles.waveformWrap,
                     dropActive && {
@@ -969,6 +1030,74 @@ export default function PerformanceChannel({
                     <Typography sx={styles.waveformPlaceholder}>
                         {dropActive ? 'Drop to load' : 'Waveform'}
                     </Typography>
+                )}
+                {/* DJ-style in/out points: drag the brackets to choose where
+                    the clip starts and stops (loops cycle the region —
+                    bounds retarget live while playing). Double-click the
+                    waveform to reset to the full clip. */}
+                {loaded && (
+                    <>
+                        <Box sx={{
+                            position: 'absolute', top: 0, bottom: 0, left: 0,
+                            width: `${trim.start * 100}%`,
+                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                            pointerEvents: 'none',
+                        }} />
+                        <Box sx={{
+                            position: 'absolute', top: 0, bottom: 0, right: 0,
+                            width: `${(1 - trim.end) * 100}%`,
+                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                            pointerEvents: 'none',
+                        }} />
+                        <Tooltip title="Start point — drag to set where the clip launches. Double-click the waveform to reset." placement="top" enterDelay={600}>
+                            <Box
+                                onPointerDown={startTrimDrag('start')}
+                                sx={{
+                                    position: 'absolute', top: 0, bottom: 0,
+                                    left: `calc(${trim.start * 100}% - 5px)`,
+                                    width: 10,
+                                    cursor: 'ew-resize',
+                                    touchAction: 'none',
+                                    zIndex: 2,
+                                    display: 'flex', justifyContent: 'center',
+                                    '&::before': {
+                                        content: '""', width: 2,
+                                        height: '100%', backgroundColor: color,
+                                    },
+                                    '&::after': {
+                                        content: '""', position: 'absolute',
+                                        top: 0, left: 4, width: 5, height: 7,
+                                        backgroundColor: color,
+                                        borderRadius: '0 0 2px 0',
+                                    },
+                                }}
+                            />
+                        </Tooltip>
+                        <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
+                            <Box
+                                onPointerDown={startTrimDrag('end')}
+                                sx={{
+                                    position: 'absolute', top: 0, bottom: 0,
+                                    left: `calc(${trim.end * 100}% - 5px)`,
+                                    width: 10,
+                                    cursor: 'ew-resize',
+                                    touchAction: 'none',
+                                    zIndex: 2,
+                                    display: 'flex', justifyContent: 'center',
+                                    '&::before': {
+                                        content: '""', width: 2,
+                                        height: '100%', backgroundColor: color,
+                                    },
+                                    '&::after': {
+                                        content: '""', position: 'absolute',
+                                        bottom: 0, right: 4, width: 5, height: 7,
+                                        backgroundColor: color,
+                                        borderRadius: '2px 0 0 0',
+                                    },
+                                }}
+                            />
+                        </Tooltip>
+                    </>
                 )}
             </Box>
 

@@ -171,6 +171,12 @@ export class ChannelStrip {
         this.sourceFade = null;  // per-source fade gain — see stop() for why
         this.isPlaying = false;
         this.isLooping = false;
+        // DJ-style in/out points, normalized 0..1 over the buffer. Playback
+        // starts at regionStart; loops cycle [start, end); one-shots stop at
+        // end. Reset to full on every new buffer (a region picked for one
+        // clip is meaningless on different audio).
+        this.regionStart = 0;
+        this.regionEnd = 1;
         this.isMuted = false;
         this.isSoloed = false;
 
@@ -247,6 +253,35 @@ export class ChannelStrip {
     async loadBufferFromBlob(blob) {
         const arrayBuffer = await blob.arrayBuffer();
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
+        this.regionStart = 0;
+        this.regionEnd = 1;
+    }
+
+    /** Set the playable region (normalized 0..1). Applies to the next launch
+     *  AND live to a looping source — Web Audio re-reads loopStart/loopEnd
+     *  every render quantum, so dragging a handle mid-loop retargets the
+     *  cycle exactly like nudging a DJ loop bracket. */
+    setRegion(startNorm, endNorm) {
+        const s = Math.min(Math.max(0, Number(startNorm) || 0), 1);
+        const e = Math.min(Math.max(0, Number(endNorm) || 0), 1);
+        if (!(e > s)) return;  // degenerate — keep the previous region
+        this.regionStart = s;
+        this.regionEnd = e;
+        if (this.source && this.source.loop && this.buffer) {
+            const [rs, re] = this._regionSeconds();
+            this.source.loopStart = rs;
+            this.source.loopEnd = re;
+        }
+    }
+
+    /** Current region in seconds, falling back to the full buffer when the
+     *  stored region is degenerate or no buffer is loaded. */
+    _regionSeconds() {
+        const dur = this.buffer ? this.buffer.duration : 0;
+        let rs = this.regionStart * dur;
+        let re = this.regionEnd * dur;
+        if (!(re > rs)) { rs = 0; re = dur; }
+        return [rs, re];
     }
 
     play(loop = this.isLooping, startTime = 0) {
@@ -272,8 +307,17 @@ export class ChannelStrip {
             }
         };
 
-        // Start from the head of the clip at the scheduled (quantized) time.
-        src.start(Math.max(0, startTime));
+        // Start from the region's in-point at the scheduled (quantized)
+        // time. Loops cycle the region; one-shots stop at the out-point.
+        const [regionStart, regionEnd] = this._regionSeconds();
+        if (loop) {
+            src.loopStart = regionStart;
+            src.loopEnd = regionEnd;
+            src.start(Math.max(0, startTime), regionStart);
+        } else {
+            src.start(Math.max(0, startTime), regionStart,
+                      Math.max(0.01, regionEnd - regionStart));
+        }
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -328,7 +372,14 @@ export class ChannelStrip {
                 this.isPlaying = false;
             }
         };
-        src.start(when);
+        const [regionStart, regionEnd] = this._regionSeconds();
+        if (loop) {
+            src.loopStart = regionStart;
+            src.loopEnd = regionEnd;
+            src.start(when, regionStart);
+        } else {
+            src.start(when, regionStart, Math.max(0.01, regionEnd - regionStart));
+        }
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -375,7 +426,14 @@ export class ChannelStrip {
     setPan(value) { this.pan.pan.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
     setLoop(value) {
         this.isLooping = value;
-        if (this.source) this.source.loop = value;
+        if (this.source) {
+            if (value && this.buffer) {
+                const [rs, re] = this._regionSeconds();
+                this.source.loopStart = rs;
+                this.source.loopEnd = re;
+            }
+            this.source.loop = value;
+        }
     }
 
     applyMuteSolo(anySoloed) {
