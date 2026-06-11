@@ -55,7 +55,11 @@ install_python311() {
 
 install_linux_webview_deps() {
     command_exists pkg-config || return 0
-    if pkg-config --exists gobject-introspection-1.0 && pkg-config --exists girepository-2.0; then
+    # Probe girepository-1.0 — that's what the remedy below installs
+    # (libgirepository1.0-dev, matching the PyGObject<3.49 pin). Probing
+    # girepository-2.0 here meant the check could never pass after the
+    # install, so every launch re-ran sudo apt.
+    if pkg-config --exists gobject-introspection-1.0 && pkg-config --exists girepository-1.0; then
         echo "Linux GI/WebKit dependencies already available."
         return 0
     fi

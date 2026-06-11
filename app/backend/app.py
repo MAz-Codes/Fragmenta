@@ -88,6 +88,16 @@ def request_entity_too_large(error):
 
 DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 
+# Baked in at import on purpose: /api/health reports the version of the CODE
+# THIS PROCESS IS RUNNING. The launcher compares it against the on-disk
+# VERSION to detect an orphaned backend that predates an update — reading the
+# file per-request would make a stale process report the new version and
+# defeat that check.
+try:
+    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
+except Exception:
+    _APP_VERSION = None
+
 config = None
 generator = None
 model_manager = None
@@ -193,6 +203,7 @@ def health_check():
         'status': 'ok' if _components_initialised else 'degraded',
         'components_ready': _components_initialised,
         'init_error': _init_error,
+        'version': _APP_VERSION,
         'gpu_available': torch.cuda.is_available(),
         'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }
