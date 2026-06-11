@@ -32,7 +32,7 @@ if ! find_python_311; then
         echo "Could not automatically install Python 3.11."
         echo "  1. Install Homebrew: https://brew.sh"
         echo "  2. Run: brew install python@3.11"
-        echo "  (Fragmenta 0.2 requires Python 3.11 — torch/flash-attn wheels are cp311 only.)"
+        echo "  (Fragmenta requires Python 3.11 — torch/flash-attn wheels are cp311 only.)"
         echo ""
         read -p "Press Enter to exit..."
         exit 1

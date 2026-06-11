@@ -212,6 +212,13 @@ def health_check():
     return jsonify(status), 200
 
 
+@app.route('/api/version')
+def app_version():
+    """Version of the code this process is running (from the VERSION file,
+    read at import — see _APP_VERSION). Also exposed on /api/health."""
+    return jsonify({'version': _APP_VERSION})
+
+
 @app.route('/')
 def serve_react_app():
     return send_from_directory(app.static_folder, 'index.html')
@@ -1520,8 +1527,13 @@ def link_enable():
     ok = bridge.enable()
     state = bridge.get_state()
     if not ok:
-        # 503 so the frontend can distinguish "not installed" from "normal reply"
-        return jsonify({**state, 'error': 'Ableton Link binding not installed. Run: pip install LinkPython-extern'}), 503
+        # 503 so the frontend can distinguish "not installed" from "normal
+        # reply" — it then offers the one-click /api/link/install flow.
+        return jsonify({**state, 'error': (
+            'Ableton Link binding not installed. Enable Link in the app to '
+            'install it automatically, or run '
+            '`pip install LinkPython-extern` inside the Fragmenta venv.'
+        )}), 503
     return jsonify(state)
 
 
@@ -1588,10 +1600,13 @@ def link_install():
                 'detail': '\n'.join(tail),
             }), 500
 
-        # Force get_link_bridge() to re-probe imports next call.
+        # Force get_link_bridge() to re-probe imports next call. Reset under
+        # the module's own lock so a concurrent get_link_bridge() can't race
+        # the swap and hand back the stale no-op bridge.
         importlib.invalidate_caches()
         from app.core.audio import link_sync
-        link_sync._bridge = None
+        with link_sync._bridge_lock:
+            link_sync._bridge = None
 
         bridge = link_sync.get_link_bridge()
         if not bridge.available:

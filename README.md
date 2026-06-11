@@ -75,7 +75,7 @@ For the full volume mounts, Windows/PowerShell syntax, environment variables, an
 
 ## Option 3: Run the App Locally
 
-> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer), Intel Macs are not supported**.
+> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
 
 Open your **Terminal** or **PowerShell** and paste the following:
 
@@ -176,7 +176,7 @@ This is a 4-channel diffusion sampler designed for live performance use. Each ch
 - Master tempo (BPM) — drives bars-mode generation and launch quantization
 - Launch quantization (`Q`) — snap launches to the grid (None, 1/32 → 8 Bars)
 - Master reverb (selectable impulse response) and tempo-synced delay division
-- **Ableton Link** toggle — sync tempo with any Link-enabled app on the local network
+- **Ableton Link** toggle — sync tempo with any Link-enabled app on the local network. The small Link binding (~1–2 MB) isn't bundled; the app offers to install it the first time you enable Link. (Not available in Docker — the container's bridge network blocks Link's multicast discovery.)
 
 **Bars-mode generation:**
 Switch a channel from `sec` to `bars` and pick a length (1, 2, 4, 8, or 16 bars). The clip is rendered to that bar count at the master BPM. 
@@ -249,7 +249,8 @@ fragmenta/
 ├── fragmenta.sh            # Linux — first-time setup and subsequent launches
 ├── fragmenta.bat           # Windows — first-time setup and subsequent launches
 ├── fragmenta.command       # macOS — first-time setup and subsequent launches
-└── start.py                # App entry point (called by launch scripts)
+├── install.py              # Creates the venv + installs dependencies (run by the launch scripts)
+└── start.py                # Starts the backend + desktop window (run by install.py --launch)
 ```
 
 ---

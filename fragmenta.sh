@@ -84,7 +84,7 @@ if ! find_python_311; then
     if ! install_python311 || ! find_python_311; then
         echo ""
         echo "ERROR: Python 3.11 is required but could not be installed automatically."
-        echo "Fragmenta 0.2 pins torch==2.7.1 + flash-attn cp311 wheels — these ship"
+        echo "Fragmenta pins torch==2.7.1 + flash-attn cp311 wheels — these ship"
         echo "only for Python 3.11. Newer Pythons (3.12, 3.13) will fail to resolve them."
         echo ""
         echo "Install Python 3.11, then rerun this script:"
