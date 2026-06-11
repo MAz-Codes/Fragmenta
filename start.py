@@ -38,10 +38,6 @@ CHROMIUM_CANDIDATES = (
     "brave-browser",
 )
 CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
-# Persistent profile for the pywebview window. Without an explicit storage path
-# pywebview runs in private mode (private_mode defaults to True), so the
-# embedded browser discards localStorage/IndexedDB on every close — wiping
-# presets, MIDI mappings and fragment audio between launches.
 WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
@@ -370,12 +366,6 @@ def _windows_set_app_id() -> None:
         print(f"Could not set AppUserModelID: {exc}")
 
 def _macos_set_app_metadata() -> None:
-    """Make the macOS menu-bar app name read 'Fragmenta' instead of 'Python'.
-
-    Running a bare interpreter, the app menu's bold title comes from the
-    process bundle's CFBundleName — which is the Python interpreter. Patch the
-    in-memory Info dictionary before pywebview builds the Cocoa menu. (The
-    permanent fix is shipping a real .app bundle — see distribution.md.)"""
     if sys.platform != "darwin":
         return
     try:
@@ -394,14 +384,6 @@ def _macos_set_app_metadata() -> None:
 
 
 def _macos_set_webview_app_name() -> None:
-    """Put "Fragmenta" in the macOS menu bar.
-
-    pywebview's Cocoa backend builds the application menu (the bold app menu and
-    its About/Hide/Quit items) from its module-level ``info`` dict, which it reads
-    from the process bundle at import. Our interpreter is bundle-less, so that
-    dict has no CFBundleName and the app menu shows no name. pywebview already
-    mutates this same dict at import, so it's writable — inject the name into it
-    before the menu is built (it's created lazily when the window first focuses)."""
     if sys.platform != "darwin":
         return
     try:
@@ -423,8 +405,6 @@ def _macos_set_webview_app_name() -> None:
 
 
 def _macos_apply_dock_icon() -> None:
-    """Set the Dock icon to Fragmenta's at runtime (no .app bundle needed).
-    Bound to the window 'shown' event so NSApplication is already up."""
     if sys.platform != "darwin":
         return
     try:
@@ -437,14 +417,6 @@ def _macos_apply_dock_icon() -> None:
 
 
 def _linux_set_app_metadata() -> None:
-    """Linux analogue of `_windows_set_app_id` + bundled icon setup.
-
-    Sets the GTK program name / WM_CLASS and registers Fragmenta's PNG as the
-    default icon for every Gtk.Window created after this call. pywebview's
-    GTK backend constructs its WebKit window inside `webview.start()`, so as
-    long as this runs first the dock picks up the icon and associates the
-    window with our identity.
-    """
     if sys.platform != "linux":
         return
     if not APP_ICON_PATH.exists():
@@ -467,16 +439,6 @@ def _linux_set_app_metadata() -> None:
 
 
 def _linux_apply_window_icon() -> None:
-    """Belt-and-suspenders: after pywebview shows the window, reach into the
-    GTK backend and reapply the window icon directly. Safe no-op if the
-    internals differ from the version we expect.
-
-    NOTE: we deliberately do NOT reapply WM_CLASS here. set_wmclass() is
-    deprecated in GTK3 and a no-op once the window is realized (the WM reads
-    WM_CLASS only at map time) — calling it from the 'shown' event just emits
-    a DeprecationWarning + Gtk-WARNING. The class is set correctly before the
-    window exists, in _linux_set_app_metadata() via Gdk.set_program_class().
-    """
     if sys.platform != "linux":
         return
     if not APP_ICON_PATH.exists():
@@ -496,9 +458,6 @@ def _linux_apply_window_icon() -> None:
 
 
 def _windows_apply_window_icon() -> None:
-    """Replace the pywebview window's titlebar/taskbar icon with Fragmenta's.
-    Called from the window's `shown` event so the HWND is guaranteed to exist.
-    """
     if sys.platform != "win32":
         return
     if not _ensure_windows_icon():
@@ -588,9 +547,7 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
-            # private_mode=False + a fixed storage_path so the embedded browser
-            # persists localStorage/IndexedDB (presets, MIDI mappings, fragment
-            # audio) across launches instead of starting incognito each time.
+                
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
             return 0 if window else 1
