@@ -30,21 +30,18 @@ BSD-3-Clause permits binary redistribution provided the copyright notice, licens
 
 ---
 
-## Included Third-Party Assets (redistributed)
+## First-Party Assets
 
-### Convolution reverb impulse responses (Voxengo)
-- **Files**: `app/frontend/public/ir/` (and the built copy in `app/frontend/build/ir/`) —
-  `Scala Milan Opera Hall.wav`, `Nice Drum Room.wav`, `Narrow Bumpy Space.wav`.
-- **Source**: Voxengo free Impulse Response pack — https://www.voxengo.com/impulses/
-- **Terms**: Voxengo publishes these IR files for free use in commercial and
-  non-commercial productions. They are used here for the performance-bus
-  convolution reverb.
-- **Action required before public release**: confirm Voxengo's current terms
-  permit *redistribution* of the WAV files inside a software repository (their
-  grant clearly covers *use* in productions; bundling the raw IRs in a
-  distributed app should be double-checked). If redistribution is not clearly
-  permitted, replace them with CC0 / explicitly-redistributable IRs or fetch
-  them at runtime instead of committing them.
+### Convolution reverb impulse responses (original)
+- **Files**: `app/frontend/public/ir/hall.wav`, `room.wav`, `narrow.wav`
+  (and the built copies under `app/frontend/build/ir/`).
+- **Origin**: **Synthesised from scratch** by Fragmenta — early reflections plus
+  a multiband exponentially-decaying diffuse tail — using
+  [`tools/generate_impulse_responses.py`](tools/generate_impulse_responses.py).
+  They contain no third-party recordings or samples and carry no external
+  licensing; they are part of this AGPL-3.0 project. (They replaced an earlier
+  set of Voxengo IRs whose no-charge-distribution terms were incompatible with
+  AGPL-3.0.)
 
 ---
 

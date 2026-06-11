@@ -56,10 +56,13 @@ export function getAudioContext() {
     return sharedCtx;
 }
 
+// Original, synthesised IRs (see tools/generate_impulse_responses.py) — no
+// third-party licensing. Early reflections + a multiband exponential tail per
+// voice; the ConvolverNode normalizes the buffer at load.
 export const IMPULSE_RESPONSES = [
-    { id: 'hall',   name: 'Opera Hall',    file: 'Scala Milan Opera Hall.wav' },
-    { id: 'room',   name: 'Drum Room',     file: 'Nice Drum Room.wav' },
-    { id: 'narrow', name: 'Narrow Space',  file: 'Narrow Bumpy Space.wav' },
+    { id: 'hall',   name: 'Concert Hall',  file: 'hall.wav' },
+    { id: 'room',   name: 'Drum Room',     file: 'room.wav' },
+    { id: 'narrow', name: 'Narrow Space',  file: 'narrow.wav' },
 ];
 const DEFAULT_IR_ID = 'hall';
 
