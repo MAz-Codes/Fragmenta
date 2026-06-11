@@ -18,6 +18,7 @@ import {
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
     Shuffle as VariationIcon,
+    Repeat as LoopIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
 import { MidiMappable } from './MidiContext';
@@ -721,7 +722,7 @@ export default function PerformanceChannel({
                                 size="small"
                                 aria-label={looping ? 'Loop on' : 'Loop off'}
                             >
-                                L
+                                <LoopIcon size={14} strokeWidth={2.25} />
                             </IconButton>
                         </Tooltip>
                     </MidiMappable>
