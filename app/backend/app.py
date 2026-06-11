@@ -3,6 +3,7 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
+from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -383,10 +384,19 @@ def generate_audio():
                 f"Pick one of: {sorted(_SA3_MODEL_IDS)}.",
                 status_code=400)), 400
 
+        # Validate duration against THIS model's ceiling, not the global 380 s
+        # (only medium goes that far). Otherwise the generator silently clamps
+        # while the sidecar records the requested value — a fragment claiming
+        # 380 s of audio it doesn't have.
+        max_duration = _SA3_MODEL_INFO[model_id][2]
         duration = Validator.number(
-            data.get('duration', 10.0), 'duration', min_value=1, max_value=380)
+            data.get('duration', 10.0), 'duration',
+            min_value=1, max_value=max_duration)
+        # JSON `seed: null` means "random", same as -1. Map it before the
+        # validator, which rejects None outright.
+        seed_raw = data.get('seed', -1)
         seed = Validator.number(
-            data.get('seed', -1), 'seed',
+            -1 if seed_raw is None else seed_raw, 'seed',
             min_value=-1, max_value=2**32 - 1, integer_only=True)
         # Resolve a random request (-1) to a concrete seed up front, so the
         # actual seed used is reproducible AND recorded in the sidecar — an
@@ -1573,9 +1583,10 @@ def stop_generation_route():
         return jsonify({'stopped': False, 'message': 'Generator not initialised'}), 200
     newly_set = generator.request_stop()
     return jsonify({
-        'stopped': True,
+        'stopped': newly_set,
         'newly_set': newly_set,
-        'message': 'Stop signal sent to generator'
+        'message': ('Stop signal sent to the running generation' if newly_set
+                    else 'No generation in progress')
     })
 
 
@@ -1592,12 +1603,20 @@ def free_gpu_memory():
 
         # The dominant VRAM consumer in this process is the loaded generator
         # model. cuda.empty_cache() only releases *unused* cached blocks, so
-        # we must drop the live references first.
+        # we must drop the live references first. unload_model() also clears
+        # the LoRA bookkeeping (the adapters die with the model object; stale
+        # bookkeeping would make the next generation silently skip reloading
+        # them) and refuses while a generation holds the lock — yanking the
+        # model mid-sampling would crash the run.
         global generator
         if generator is not None and getattr(generator, 'model', None) is not None:
             print("    Unloading in-process generator model")
             try:
-                generator.model = None
+                if not generator.unload_model():
+                    return jsonify({
+                        'error': 'A generation is in progress. Stop it before '
+                                 'freeing GPU memory.'
+                    }), 409
             except Exception as exc:
                 print(f"     Could not drop generator model: {exc}")
 
