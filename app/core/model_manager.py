@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -352,16 +353,34 @@ class ModelManager:
 
     # --- HF auth --------------------------------------------------------------
 
-    @staticmethod
-    def hf_auth_status() -> Dict[str, Any]:
+    # whoami() is a network round-trip to huggingface.co, and the Checkpoint
+    # Manager polls auth status — cache per token for a few minutes. Login /
+    # logout invalidate explicitly, so a token change shows up immediately.
+    _AUTH_CACHE: Dict[str, Any] = {"token": None, "result": None, "at": 0.0}
+    _AUTH_CACHE_TTL = 300.0
+
+    @classmethod
+    def invalidate_auth_cache(cls) -> None:
+        cls._AUTH_CACHE.update({"token": None, "result": None, "at": 0.0})
+
+    @classmethod
+    def hf_auth_status(cls) -> Dict[str, Any]:
         token = get_token()
         if not token:
             return {"signed_in": False, "username": None}
+        cache = cls._AUTH_CACHE
+        if (cache["result"] is not None and cache["token"] == token
+                and time.time() - cache["at"] < cls._AUTH_CACHE_TTL):
+            return dict(cache["result"])
         try:
             user = whoami(token=token)
-            return {"signed_in": True, "username": user.get("name") or user.get("fullname")}
+            result = {"signed_in": True, "username": user.get("name") or user.get("fullname")}
         except Exception as err:
-            return {"signed_in": False, "username": None, "error": str(err)}
+            # Cache failures too — a flaky network would otherwise retry the
+            # round-trip on every poll.
+            result = {"signed_in": False, "username": None, "error": str(err)}
+        cache.update({"token": token, "result": result, "at": time.time()})
+        return dict(result)
 
     # --- Downloads ------------------------------------------------------------
 
@@ -385,6 +404,7 @@ class ModelManager:
             return {"error": f"Unknown checkpoint: {model_id}"}
 
         with self._jobs_lock:
+            self._prune_jobs_locked()
             active = [j for j in self._jobs.values()
                       if j.status in ("queued", "running")]
             for j in active:
@@ -412,6 +432,21 @@ class ModelManager:
         job._thread = thread
         thread.start()
         return job.to_dict()
+
+    def _prune_jobs_locked(self, keep_finished: int = 20) -> None:
+        """Drop old finished jobs. Caller must hold _jobs_lock.
+
+        Jobs were only ever added, so a long session accumulated every
+        complete/failed/cancelled record forever. Keep the most recent few
+        (the UI shows the latest state after a reopen) and let the rest go.
+        """
+        finished = [j for j in self._jobs.values()
+                    if j.status not in ("queued", "running")]
+        if len(finished) <= keep_finished:
+            return
+        finished.sort(key=lambda j: j.finished_at or "", reverse=True)
+        for job in finished[keep_finished:]:
+            self._jobs.pop(job.job_id, None)
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._jobs_lock:

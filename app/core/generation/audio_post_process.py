@@ -45,19 +45,11 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
-# DEPRECATED: flag goes away with the v1/v2 split (AUDIT.md §9d).
-def beatsync_v2_enabled() -> bool:
-    """Feature gate for the hardened Stage A pipeline (sample-exact length,
-    first-transient-to-zero alignment, transient-preserving stretch).
-
-    Off by default: with the flag unset, every Stage A function takes its
-    legacy code path, so Bars-mode output is byte-identical to pre-flag
-    builds and Seconds mode (which never enters Stage A at all) is unaffected.
-    Enable with ``FRAGMENTA_BEATSYNC_V2=1``.
-    """
-    return os.environ.get("FRAGMENTA_BEATSYNC_V2", "0").strip().lower() in (
-        "1", "true", "yes", "on",
-    )
+# Canonical reader lives in feature_flags (the backend reads it on every
+# /api/environment hit and must not import this librosa-heavy module for a
+# boolean). Re-exported here because Stage A and the beat-sync smoke test
+# import it from this module.
+from app.core.generation.feature_flags import beatsync_v2_enabled  # noqa: E402,F401
 
 
 # DEPRECATED: flag goes away with the v1/v2 split (AUDIT.md §9d).

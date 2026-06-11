@@ -354,7 +354,11 @@ class _ClapTagger:
         import numpy as np
         import torch
 
-        y, _ = librosa.load(str(audio_path), sr=CLAP_SR, mono=True)
+        # Decode only what the windowing below can use (CLAP_MAX_WINDOWS x
+        # 10 s). Without the cap a 2-hour file decodes fully into RAM
+        # (~1.3 GB of float32 at 48 kHz) just to embed its first 2 minutes.
+        y, _ = librosa.load(str(audio_path), sr=CLAP_SR, mono=True,
+                            duration=CLAP_MAX_WINDOWS * 10)
         if y.size == 0:
             raise ValueError("empty audio")
 

@@ -971,8 +971,16 @@ def start_training(config: Dict[str, Any]) -> Dict[str, Any]:
     with _lock:
         if _active and _active.status.get("is_training"):
             return {"error": "A training run is already in progress."}
-        _active = SA3Trainer(config)
-        return _active.start()
+        trainer = SA3Trainer(config)
+        # Claim the slot BEFORE releasing the lock. start() blocks on dataset
+        # staging and base-model prestaging (network fetches that can take
+        # minutes); holding the module lock through that made a second
+        # start request hang on the lock instead of failing fast, and froze
+        # every other locked operation behind the download.
+        trainer.status["is_training"] = True
+        trainer.status["status"] = "staging"
+        _active = trainer
+    return trainer.start()
 
 
 def get_training_status() -> Dict[str, Any]:

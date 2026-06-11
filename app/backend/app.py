@@ -319,6 +319,44 @@ def start_training():
         if training_config.get('seed') is None:
             training_config['seed'] = random.randint(0, 2**31 - 1)
 
+        # Numeric sanity with friendly 400s. Out-of-range values used to ride
+        # straight into the trainer: steps=0 stages everything then trains
+        # nothing, lr=50 diverges instantly, rank=0 crashes deep inside the
+        # vendored LoRA code with an opaque traceback.
+        try:
+            training_config['steps'] = Validator.number(
+                training_config['steps'], 'steps',
+                min_value=1, max_value=1_000_000, integer_only=True)
+            training_config['checkpointSteps'] = Validator.number(
+                training_config['checkpointSteps'], 'checkpointSteps',
+                min_value=1, max_value=1_000_000, integer_only=True)
+            training_config['batchSize'] = Validator.number(
+                training_config['batchSize'], 'batchSize',
+                min_value=1, max_value=64, integer_only=True)
+            lr = Validator.number(
+                training_config['learningRate'], 'learningRate',
+                min_value=0.0, max_value=1.0)
+            if not (0.0 < float(lr) < 1.0):
+                return jsonify({'error': 'learningRate must be between 0 and 1 (exclusive).'}), 400
+            training_config['learningRate'] = float(lr)
+            training_config['duration'] = Validator.number(
+                training_config['duration'], 'duration',
+                min_value=1.0, max_value=380.0)
+            training_config['loraRank'] = Validator.number(
+                training_config['loraRank'], 'loraRank',
+                min_value=1, max_value=512, integer_only=True)
+            training_config['loraAlpha'] = Validator.number(
+                training_config['loraAlpha'], 'loraAlpha',
+                min_value=1, max_value=4096, integer_only=True)
+            training_config['loraDropout'] = Validator.number(
+                training_config['loraDropout'], 'loraDropout',
+                min_value=0.0, max_value=0.95)
+            training_config['seed'] = Validator.number(
+                training_config['seed'], 'seed',
+                min_value=0, max_value=2**31 - 1, integer_only=True)
+        except ValidationError as e:
+            return jsonify({'error': str(e)}), 400
+
         logger.info(
             f"Training request: base={base_model}, name={training_config['modelName']}, "
             f"rank={training_config['loraRank']}, adapter={training_config['adapterType']}, "
@@ -954,6 +992,12 @@ def save_performance_recording():
 
     raw_name = (request.form.get('name') or '').strip()
     safe = re.sub(r"[^a-zA-Z0-9._ -]", "_", raw_name).strip().replace(" ", "_")[:80]
+    # Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) are
+    # special even WITH an extension — "CON.wav" can't be created/opened
+    # normally there. Prefix rather than reject so the user's chosen label
+    # survives.
+    if re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?", safe or ""):
+        safe = f"rec_{safe}"
     if not safe:
         safe = time.strftime("performance_%Y%m%d_%H%M%S")
 
@@ -961,13 +1005,24 @@ def save_performance_recording():
     output_dir = cfg.get_path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dest = output_dir / f"{safe}.wav"
     # Don't clobber an existing capture — bump a numeric suffix until free.
+    # The claim is atomic ('x' mode) so two simultaneous saves can't race the
+    # exists() check into the same path.
+    dest = output_dir / f"{safe}.wav"
     counter = 2
-    while dest.exists():
-        dest = output_dir / f"{safe}_{counter}.wav"
-        counter += 1
-    fileobj.save(str(dest))
+    while True:
+        try:
+            fh = open(dest, "xb")
+            break
+        except FileExistsError:
+            dest = output_dir / f"{safe}_{counter}.wav"
+            counter += 1
+    try:
+        with fh:
+            fileobj.save(fh)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None
@@ -1455,6 +1510,25 @@ def cancel_checkpoint_download(model_id):
 @app.route('/api/checkpoints/<model_id>', methods=['DELETE'])
 def delete_checkpoint_download(model_id):
     try:
+        # Refuse while a download for this model is in flight — deleting the
+        # target dir under snapshot_download corrupts the job AND leaves a
+        # half-written cache the next "is it downloaded?" check half-trusts.
+        in_flight = [j for j in model_manager.list_jobs()
+                     if j['model_id'] == model_id
+                     and j['status'] in ('queued', 'running')]
+        if in_flight:
+            return jsonify({'error': 'This checkpoint is currently downloading. '
+                                     'Cancel the download first.'}), 409
+        # Unload first when it's the model the generator currently holds —
+        # deleting files out from under a loaded model leaves the warm cache
+        # claiming a checkpoint that no longer exists on disk. unload_model
+        # refuses while a generation is running.
+        if (generator is not None
+                and getattr(generator, '_model_id', None) == model_id
+                and getattr(generator, 'model', None) is not None):
+            if not generator.unload_model():
+                return jsonify({'error': 'This model is generating right now. '
+                                         'Stop the generation first.'}), 409
         if model_manager.delete_model(model_id):
             return jsonify({'success': True})
         return jsonify({'error': 'Nothing to delete'}), 404
@@ -1494,6 +1568,10 @@ def hf_auth_login():
         try:
             huggingface_hub.login(token=token, add_to_git_credential=False)
             info = huggingface_hub.whoami(token=token)
+            # Auth state changed — drop the cached whoami so the next status
+            # poll reflects the new login immediately.
+            from app.core.model_manager import ModelManager
+            ModelManager.invalidate_auth_cache()
             return jsonify({
                 'success': True,
                 'username': info.get('name') or info.get('fullname'),
@@ -1509,6 +1587,8 @@ def hf_auth_logout():
     try:
         import huggingface_hub
         huggingface_hub.logout()
+        from app.core.model_manager import ModelManager
+        ModelManager.invalidate_auth_cache()
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2405,7 +2485,7 @@ def environment():
     # loop seams. Forcing a non-native rate collapses multi-channel output to
     # stereo, so the frontend only applies the pin when this flag is on.
     try:
-        from app.core.generation.audio_post_process import beatsync_v2_enabled
+        from app.core.generation.feature_flags import beatsync_v2_enabled
         beatsync_v2 = bool(beatsync_v2_enabled())
     except Exception:
         beatsync_v2 = False
@@ -3216,19 +3296,6 @@ def midi_stream():
     resp.headers['Cache-Control'] = 'no-cache'
     resp.headers['X-Accel-Buffering'] = 'no'
     return resp
-
-
-@app.route('/shutdown', methods=['POST'])
-def shutdown():
-    try:
-        print(" Shutting down Flask server...")
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func is None:
-            raise RuntimeError('Not running with the Werkzeug Server')
-        func()
-        return jsonify({'message': 'Server shutting down'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

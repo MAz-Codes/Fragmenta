@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union, Callable
+from typing import Any, Dict, List, Optional, Union
 import re
 import os
 from pathlib import Path
@@ -157,13 +157,6 @@ class Validator:
             raise ValidationError(field_name, value, "must be a valid URL")
         
         return value
-
-def validate_request_data(schema: Dict[str, Dict[str, Any]]):
-    def decorator(func: Callable) -> Callable:
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator
 
 def validate_model_config(config: Dict[str, Any]) -> Dict[str, Any]:
     errors = {}
