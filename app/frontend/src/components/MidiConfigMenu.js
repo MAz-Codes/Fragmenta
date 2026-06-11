@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
     Popover,
     Box,
@@ -26,6 +26,13 @@ const CHANNEL_OPTIONS = [
 
 export default function MidiConfigMenu({ anchorEl, open, onClose }) {
     const ctx = useMidi();
+    const refreshInputs = ctx?.refreshInputs;
+    // Devices are otherwise only enumerated on provider mount, so a
+    // controller plugged in mid-session would never show up until a page
+    // reload. Re-enumerate each time the menu opens.
+    useEffect(() => {
+        if (open) refreshInputs?.();
+    }, [open, refreshInputs]);
     if (!ctx) return null;
 
     const {

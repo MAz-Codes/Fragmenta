@@ -185,6 +185,16 @@ export function MidiProvider({ children }) {
             return undefined;
         }
         const es = new EventSource('/api/midi/stream');
+        es.onopen = () => {
+            // Fires on the initial connect AND on every EventSource auto-
+            // reconnect — i.e. after a backend restart. The new backend
+            // process starts with no MIDI port open, so re-assert the saved
+            // selection (idempotent when the port is already open). Without
+            // this, mappings stay dead after a restart until a page reload.
+            api.post('/api/midi/select', {
+                port_id: configRef.current?.deviceId || null,
+            }).catch(() => { /* non-fatal */ });
+        };
         es.onmessage = (e) => {
             try { dispatchMessage(JSON.parse(e.data)); }
             catch { /* malformed line — ignore */ }
@@ -301,6 +311,7 @@ export function MidiProvider({ children }) {
         permissionError,
         learnMode,
         learnTarget,
+        refreshInputs,
         setDevice,
         setChannelFilter,
         setTakeover,
@@ -314,8 +325,8 @@ export function MidiProvider({ children }) {
         unregisterSubscriber,
     }), [
         config, inputs, supported, permissionError, learnMode, learnTarget,
-        setDevice, setChannelFilter, setTakeover, beginLearn, cancelLearn,
-        clearMapping, clearAll, toggleLearnMode, exitLearnMode,
+        refreshInputs, setDevice, setChannelFilter, setTakeover, beginLearn,
+        cancelLearn, clearMapping, clearAll, toggleLearnMode, exitLearnMode,
         registerSubscriber, unregisterSubscriber,
     ]);
 

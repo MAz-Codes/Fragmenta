@@ -106,7 +106,17 @@ def _on_message(event, _data=None) -> None:
             pass  # slow consumer — drop rather than block the MIDI thread
 
 
-def close_input() -> None:
+# Serializes whole select operations (close + enumerate + open + assign).
+# Distinct from `_lock`, which only guards quick state reads/writes and is
+# taken inside the close path (holding it across the whole select would
+# deadlock). Without this, two concurrent /api/midi/select calls interleave
+# and the losing MidiIn leaks open with a live callback — its events keep
+# flowing alongside the winning port's until process exit.
+_select_lock = threading.Lock()
+
+
+def _close_input_locked() -> None:
+    """Close the current port. Caller must hold _select_lock."""
     global _midi_in, _current_port
     with _lock:
         mi = _midi_in
@@ -127,36 +137,42 @@ def close_input() -> None:
             pass
 
 
+def close_input() -> None:
+    with _select_lock:
+        _close_input_locked()
+
+
 def open_input(port_id: Optional[str]) -> bool:
     """Open the input port whose name == port_id. A falsy port_id just closes
     the current port. Returns True on success (or on a pure close)."""
     if not _RTMIDI_OK:
         return False
-    close_input()
-    if not port_id:
+    with _select_lock:
+        _close_input_locked()
+        if not port_id:
+            return True
+
+        mi = rtmidi.MidiIn()
+        idx = None
+        for i, name in enumerate(mi.get_ports()):
+            if name == port_id:
+                idx = i
+                break
+        if idx is None:
+            mi.delete()
+            return False
+
+        mi.open_port(idx)
+        # Drop sysex / timing-clock / active-sensing so the stream stays to the
+        # control messages the mapper cares about (CC + notes).
+        mi.ignore_types(sysex=True, timing=True, active_sense=True)
+        mi.set_callback(_on_message)
+
+        global _midi_in, _current_port
+        with _lock:
+            _midi_in = mi
+            _current_port = port_id
         return True
-
-    mi = rtmidi.MidiIn()
-    idx = None
-    for i, name in enumerate(mi.get_ports()):
-        if name == port_id:
-            idx = i
-            break
-    if idx is None:
-        mi.delete()
-        return False
-
-    mi.open_port(idx)
-    # Drop sysex / timing-clock / active-sensing so the stream stays to the
-    # control messages the mapper cares about (CC + notes).
-    mi.ignore_types(sysex=True, timing=True, active_sense=True)
-    mi.set_callback(_on_message)
-
-    global _midi_in, _current_port
-    with _lock:
-        _midi_in = mi
-        _current_port = port_id
-    return True
 
 
 def subscribe() -> "queue.Queue":
