@@ -288,6 +288,6 @@ Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://git
 
 - **Vendored code** — the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI — see [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
 - **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face and accept their license then. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
-The bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta (see [`tools/generate_impulse_responses.py`](tools/generate_impulse_responses.py)) — no third-party samples, no external licensing.
+The bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, no external licensing.
 
 Fragmenta also depends on many open-source libraries. See [NOTICE.md](NOTICE.md) for the complete attribution and license list.

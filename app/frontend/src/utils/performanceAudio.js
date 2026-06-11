@@ -56,9 +56,9 @@ export function getAudioContext() {
     return sharedCtx;
 }
 
-// Original, synthesised IRs (see tools/generate_impulse_responses.py) — no
-// third-party licensing. Early reflections + a multiband exponential tail per
-// voice; the ConvolverNode normalizes the buffer at load.
+// Original, synthesised IRs (scripts/generate_impulse_responses.py, local
+// maintainer tool) — no third-party licensing. Early reflections + a multiband
+// exponential tail per voice; the ConvolverNode normalizes the buffer at load.
 export const IMPULSE_RESPONSES = [
     { id: 'hall',   name: 'Concert Hall',  file: 'hall.wav' },
     { id: 'room',   name: 'Drum Room',     file: 'room.wav' },
