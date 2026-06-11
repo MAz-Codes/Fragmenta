@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 import threading
@@ -41,6 +40,7 @@ from typing import Any, Dict, Optional
 from app.backend.data.projects import project_path
 from app.core.config import get_config
 from utils.logger import get_logger
+from utils.process_control import graceful_stop
 
 logger = get_logger("PreEncoder")
 
@@ -149,28 +149,39 @@ def latents_match_base(project_name: str, base_model: str) -> bool:
 
 
 def cancel_pre_encode(project_name: str) -> bool:
-    """Send a cancel signal to an in-flight job. Returns True if cancelled."""
+    """Stop an in-flight job. Returns True if it was actually cancelled.
+
+    Order matters: signal the subprocess FIRST, flip the user-visible state
+    only once that succeeded. The old code marked the job "cancelled" before
+    signalling, so a failed signal (the exact Windows failure mode —
+    send_signal(SIGINT) raises ValueError there) reported success while the
+    encoder kept running. The `cancelled` flag is set up front though: the
+    worker thread uses it to label the child's exit, and it would race us if
+    set only after the process dies.
+    """
     with _pre_encode_jobs_lock:
         job = _pre_encode_jobs.get(project_name)
         if not job or job.get("state") not in ("queued", "running"):
             return False
-        job["state"] = "cancelled"
         job["cancelled"] = True
 
     proc = _pre_encode_processes.get(project_name)
     if proc is not None and proc.poll() is None:
         try:
-            proc.send_signal(signal.SIGINT)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+            graceful_stop(proc, wait_timeout=5, kill_timeout=3)
         except Exception as exc:
             logger.warning("Failed to signal pre-encode subprocess: %s", exc)
+            with _pre_encode_jobs_lock:
+                live = _pre_encode_jobs.get(project_name)
+                if live is not None:
+                    live["cancelled"] = False
+            return False
+
+    with _pre_encode_jobs_lock:
+        job = _pre_encode_jobs.get(project_name)
+        if job is not None and job.get("state") in ("queued", "running"):
+            job["state"] = "cancelled"
+            job["finished_at"] = time.time()
     return True
 
 
@@ -269,6 +280,16 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     env["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     env["HF_HUB_OFFLINE"] = "1"
     env["TRANSFORMERS_OFFLINE"] = "1"
+    # Match the utf-8 decode above — see the Popen call.
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    # A cancel can land between start_pre_encode queueing the job and this
+    # thread getting scheduled — honour it before spawning anything.
+    snapshot = get_pre_encode_job(project_name)
+    if snapshot and snapshot.get("cancelled"):
+        _update_job(project_name, state="cancelled", finished_at=time.time())
+        return
 
     _update_job(project_name, state="running")
     logger.info(
@@ -286,6 +307,11 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # Same class of bug as the trainer monitor: locale-default
+            # decoding is cp1252 on Windows, and one UTF-8 glyph in the
+            # child's output would kill this reader thread mid-encode.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
         _pre_encode_processes[project_name] = process

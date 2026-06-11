@@ -1133,9 +1133,7 @@ function App() {
         } catch (error) {
             stopProgressTicker();
             setGenerationProgress(0);
-            const wasAborted = error?.name === 'CanceledError'
-                || error?.name === 'AbortError'
-                || error?.code === 'ERR_CANCELED'
+            const wasAborted = error?.name === 'AbortError'
                 || stopGenerationRef.current;
             if (wasAborted) {
                 setProcessingStatus(

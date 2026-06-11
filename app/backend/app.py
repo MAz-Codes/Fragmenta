@@ -1115,22 +1115,48 @@ def delete_fragment(filename):
 
 @app.route('/api/fragments', methods=['DELETE'])
 def clear_fragments():
-    """Delete EVERY .wav + .wav.json directly under output/.
+    """Delete generated fragments (.wav + .wav.json) directly under output/.
 
     Does NOT recurse — uploaded source clips live under output/uploads/
     and are intentionally left alone (they may still be referenced by
     in-flight Edit-mode work, and the user uploaded them deliberately).
+
+    Performance recordings (sidecar `source: "performance"`) are SKIPPED:
+    they live in the same folder but are hidden from the fragments list, so
+    the "Clear all" confirm dialog neither shows nor counts them — deleting
+    them here was silent data loss of the user's recorded takes.
     """
     cfg = get_config()
     output_dir = cfg.get_path("output")
     if not output_dir.exists():
-        return jsonify({"deleted": 0})
+        return jsonify({"deleted": 0, "skipped_recordings": 0, "errors": []})
     removed = 0
+    skipped_recordings = 0
     errors = []
-    for pattern in ("*.wav", "*.wav.json"):
-        for p in output_dir.glob(pattern):
-            if not p.is_file():
-                continue
+    for wav in output_dir.glob("*.wav"):
+        if not wav.is_file():
+            continue
+        sidecar = output_dir / f"{wav.name}.json"
+        source = None
+        if sidecar.is_file():
+            try:
+                source = (json.loads(sidecar.read_text()) or {}).get("source")
+            except Exception:
+                source = None
+        if source == "performance":
+            skipped_recordings += 1
+            continue
+        try:
+            wav.unlink()
+            removed += 1
+            if sidecar.is_file():
+                sidecar.unlink()
+                removed += 1
+        except Exception as exc:
+            errors.append(f"{wav.name}: {exc}")
+    # Orphaned sidecars (their WAV is already gone) are stale either way.
+    for p in output_dir.glob("*.wav.json"):
+        if p.is_file() and not (output_dir / p.name[:-len(".json")]).exists():
             try:
                 p.unlink()
                 removed += 1
@@ -1139,8 +1165,15 @@ def clear_fragments():
     if errors:
         logger.warning(f"clear_fragments: removed {removed}, errors: {errors}")
     else:
-        logger.info(f"clear_fragments: removed {removed} file(s)")
-    return jsonify({"deleted": removed, "errors": errors})
+        logger.info(
+            f"clear_fragments: removed {removed} file(s), "
+            f"kept {skipped_recordings} performance recording(s)"
+        )
+    return jsonify({
+        "deleted": removed,
+        "skipped_recordings": skipped_recordings,
+        "errors": errors,
+    })
 
 
 @app.route('/api/lora-strength', methods=['POST'])
@@ -1232,6 +1265,28 @@ def get_training_status_route():
 def stop_training_route():
     try:
         result = stop_training()
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/kill-orphan', methods=['POST'])
+def kill_orphan_training_route():
+    """Kill a training subprocess left over from a previous backend.
+
+    Orphans are surfaced in /api/training-status as `orphaned_runs`
+    (run dirs whose PID file points at a live process this backend
+    doesn't own). Body: {"run_name": "<run dir name>"}.
+    """
+    from app.core.training.sa3_trainer import kill_orphaned_run
+    data = request.json or {}
+    run_name = (data.get('run_name') or '').strip()
+    if not run_name:
+        return jsonify({'error': 'run_name is required.'}), 400
+    try:
+        result = kill_orphaned_run(run_name)
         if "error" in result:
             return jsonify(result), 400
         return jsonify(result)
