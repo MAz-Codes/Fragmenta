@@ -859,10 +859,14 @@ function PerformancePanelInner({
                 // distilled models. Steps default to 8 for distilled, 50 for
                 // base — only send the override when we're on base.
                 ...(isDistilled ? {} : { steps, cfg_scale: 7.0 }),
-                // LoRA stacking (Phase 4): only attach when the user picked
-                // a LoRA AND the active model is a *-base variant (the only
-                // architecturally valid target).
-                ...(selectedLora && isSA3Base && !isDistilled
+                // LoRA stacking (Phase 4). TRAINING targets *-base only,
+                // but at inference a base-trained LoRA also applies to its
+                // distilled sibling (same backbone, only the CFG state
+                // differs) — the backend gate and the main Generation tab
+                // both already work that way. This used to skip distilled
+                // models, silently ignoring the LoRA the picker said was
+                // active.
+                ...(selectedLora && isSA3Base
                     ? { loras: [{ path: selectedLora, strength: loraMultiplier }] }
                     : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),

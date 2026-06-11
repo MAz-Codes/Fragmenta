@@ -3126,7 +3126,9 @@ export const performanceChannelStyles = {
         position: 'relative',
         height: 42,
         backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.6)' : 'rgba(0, 0, 0, 0.06)',
-        borderRadius: 1.5,
+        // Near-square: overflow:hidden + a visible radius clipped the
+        // DJ in/out handles when parked at the clip edges.
+        borderRadius: '2px',
         border: '1px solid',
         borderColor: theme.palette.divider,
         overflow: 'hidden',
