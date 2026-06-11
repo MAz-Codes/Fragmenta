@@ -357,7 +357,14 @@ def apply_lora(layer, register=True, merge=False, lora_config=default_lora_confi
                 parametrize.register_parametrization(layer, attr_name, parametrization(layer), unsafe=True)
     else:  # this will remove all parametrizations, use with caution
         if hasattr(layer, "parametrizations"):
-            for attr_name in layer.parametrizations.keys():
+            # LOCAL PATCH (see UPSTREAM.md): snapshot the keys before removing.
+            # remove_parametrizations() deletes the entry from the live
+            # ModuleDict being iterated (and drops the dict entirely on the
+            # last one), so the bare iterator raised "dictionary changed size
+            # during iteration" on every parametrized layer — remove_lora()
+            # never actually worked. remove_lora_by_index() below already
+            # guards the same way.
+            for attr_name in list(layer.parametrizations.keys()):
                 parametrize.remove_parametrizations(layer, attr_name, leave_parametrized=merge)
 
 
