@@ -23,8 +23,14 @@ function readPresetBag() {
 }
 
 function writePresetBag(bag) {
-    try { localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(bag)); }
-    catch { /* quota — non-fatal */ }
+    try {
+        localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(bag));
+        return true;
+    } catch {
+        // Quota / serialization failure — report it so callers can tell the
+        // user their preset was NOT saved instead of silently claiming success.
+        return false;
+    }
 }
 
 export function listPresetNames() {
@@ -36,8 +42,7 @@ export function savePreset(name, sessionData) {
     if (!trimmed) return false;
     const bag = readPresetBag();
     bag[trimmed] = sessionData;
-    writePresetBag(bag);
-    return true;
+    return writePresetBag(bag);
 }
 
 export function deletePreset(name) {
@@ -148,12 +153,15 @@ function loadSession(channelCount) {
 export function usePerformanceSession(channelCount = 4) {
     const [session, setSession] = useState(() => loadSession(channelCount));
     const persistTimerRef = useRef(null);
+    const sessionRef = useRef(session);
 
     // Knobs and sliders fire many times per second; debounce writes so we don't
     // hammer localStorage. Last-write-wins is fine for session continuity.
     useEffect(() => {
+        sessionRef.current = session;
         if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
         persistTimerRef.current = setTimeout(() => {
+            persistTimerRef.current = null;
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
             } catch { /* quota or serialization — non-fatal */ }
@@ -162,6 +170,32 @@ export function usePerformanceSession(channelCount = 4) {
             if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
         };
     }, [session]);
+
+    // Drop a queued (debounced) write without persisting it. Preset load and
+    // Restore Defaults replace the storage key directly and then force a
+    // remount — but they await IndexedDB blob copies in between, which is
+    // plenty of time for a pending 250 ms persist to fire and overwrite the
+    // freshly written payload with the OLD session. They must cancel first.
+    const cancelPendingPersist = useCallback(() => {
+        if (persistTimerRef.current) {
+            clearTimeout(persistTimerRef.current);
+            persistTimerRef.current = null;
+        }
+    }, []);
+
+    // Write the latest session right now (used on beforeunload so up to
+    // 250 ms of final tweaks aren't lost when the window closes).
+    const flushPersist = useCallback(() => {
+        cancelPendingPersist();
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionRef.current));
+        } catch { /* non-fatal */ }
+    }, [cancelPendingPersist]);
+
+    useEffect(() => {
+        window.addEventListener('beforeunload', flushPersist);
+        return () => window.removeEventListener('beforeunload', flushPersist);
+    }, [flushPersist]);
 
     const updateGlobal = useCallback((key, value) => {
         setSession(prev => (prev[key] === value ? prev : { ...prev, [key]: value }));
@@ -175,5 +209,5 @@ export function usePerformanceSession(channelCount = 4) {
         });
     }, []);
 
-    return { session, updateGlobal, updateChannel };
+    return { session, updateGlobal, updateChannel, cancelPendingPersist, flushPersist };
 }

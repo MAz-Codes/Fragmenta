@@ -129,17 +129,31 @@ function App() {
     // and no OS file manager to reveal in. We swap those affordances for an
     // in-browser download instead. Sourced from GET /api/environment.
     const [isDocker, setIsDocker] = useState(false);
+    // The Performance tab is keepMounted, so its PerformanceEngine (and the
+    // engine's AudioContext) would otherwise be constructed during the very
+    // first render — before this probe can call setSampleRatePin, making the
+    // beatsync-v2 44.1 kHz pin unreachable. envReady gates that mount.
+    const [envReady, setEnvReady] = useState(false);
     useEffect(() => {
         let cancelled = false;
-        api.get('/api/environment')
+        const probe = (attempt) => api.get('/api/environment')
             .then((res) => {
                 if (cancelled) return;
                 setIsDocker(Boolean(res.data?.docker));
                 // Only pin the audio engine to 44.1 kHz when beatsync v2 is on;
                 // otherwise the pin would collapse multi-channel output to stereo.
                 setSampleRatePin(Boolean(res.data?.beatsync_v2));
+                setEnvReady(true);
             })
-            .catch(() => { /* default to desktop behaviour */ });
+            .catch(() => {
+                if (cancelled) return;
+                // One retry: the backend may still be settling right after
+                // launch. After that, default to desktop behaviour rather
+                // than blocking the Performance tab forever.
+                if (attempt === 0) setTimeout(() => { if (!cancelled) probe(1); }, 1500);
+                else setEnvReady(true);
+            });
+        probe(0);
         return () => { cancelled = true; };
     }, []);
     const [colorMode, setColorMode] = useState(() => {
@@ -1111,7 +1125,17 @@ function App() {
 
                 setGeneratedFragments(prev => {
                     const next = [...prev, newFragment];
-                    return next.length > 100 ? next.slice(next.length - 100) : next;
+                    if (next.length <= 100) return next;
+                    // Cap eviction: revoke the dropped fragments' object URLs
+                    // — silently slicing them off leaked a blob URL (and its
+                    // decoded audio) per evicted fragment.
+                    const evicted = next.slice(0, next.length - 100);
+                    evicted.forEach(f => {
+                        if (f.audioUrl?.startsWith('blob:')) {
+                            try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
+                        }
+                    });
+                    return next.slice(next.length - 100);
                 });
                 completedRuns += 1;
             }
@@ -2537,7 +2561,8 @@ function App() {
                             </TabPanel>
 
                             <TabPanel value={displayedTab} index={3} keepMounted>
-                                <PerformancePanel
+                                {envReady && <PerformancePanel
+                                    active={displayedTab === 3}
                                     selectedModel={selectedModel}
                                     availableModels={availableModels}
                                     baseModels={baseModels}
@@ -2555,7 +2580,7 @@ function App() {
                                     onRandomSeedChange={setRandomSeed}
                                     onSeedValueChange={setSeedValue}
                                     onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
-                                />
+                                />}
                             </TabPanel>
                             </Box>
                         </Box>

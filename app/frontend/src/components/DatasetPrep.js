@@ -56,6 +56,7 @@ import {
     Activity as HealthIcon,
 } from 'lucide-react';
 import api from '../api';
+import { extractError } from '../utils/errors';
 import { appStyles } from '../theme';
 
 /**
@@ -99,6 +100,13 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
     const pollHandleRef = useRef(null);
     const preEncodePollRef = useRef(null);
+    // Cancellation token for the self-rescheduling poll chains. Clearing the
+    // pending timeout on project switch isn't enough: a poll request that is
+    // already in flight resolves AFTER the cleanup, setState's the OLD
+    // project's job onto the new project's UI, and re-arms its chain with the
+    // captured old name — two pollers then run forever. Bumping the epoch
+    // makes the resolved callback drop its result instead.
+    const pollEpochRef = useRef(0);
     const isAnnotating = annotateJob?.state === 'running';
     const isPreEncoding = preEncodeJob?.state === 'running' || preEncodeJob?.state === 'queued';
 
@@ -201,8 +209,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
     const pollAnnotateStatus = useCallback(async function poll(name) {
+        const epoch = pollEpochRef.current;
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/annotate/status`);
+            if (epoch !== pollEpochRef.current) return;  // project switched mid-flight
             setAnnotateJob(data.job);
             if (data.job.state === 'done') {
                 await refreshProject(name);
@@ -218,14 +228,18 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             if (data.job.state === 'running') {
                 pollHandleRef.current = window.setTimeout(() => poll(name), 500);
             }
-        } catch (e) { setError(extractError(e, 'Status poll failed')); }
+        } catch (e) {
+            if (epoch === pollEpochRef.current) setError(extractError(e, 'Status poll failed'));
+        }
     }, [refreshProject]);
 
     // Phase 6 — pre-encode polling. Same survives-tab-switch shape as the
     // annotate poller above.
     const pollPreEncodeStatus = useCallback(async function poll(name) {
+        const epoch = pollEpochRef.current;
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/pre-encode/status`);
+            if (epoch !== pollEpochRef.current) return;  // project switched mid-flight
             setPreEncodeJob(data.job);
             if (data.job.state === 'complete') {
                 refreshProject(name);
@@ -255,6 +269,9 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             setPreEncodeJob(null);
         }
         return () => {
+            // Invalidate in-flight poll promises (they check the epoch on
+            // resolve) in addition to clearing the scheduled timeouts.
+            pollEpochRef.current += 1;
             if (pollHandleRef.current) {
                 window.clearTimeout(pollHandleRef.current);
                 pollHandleRef.current = null;
@@ -1891,6 +1908,3 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
 
 // ---------- utils ----------------------------------------------------------
 
-function extractError(e, fallback) {
-    return e?.response?.data?.error || e?.message || fallback;
-}

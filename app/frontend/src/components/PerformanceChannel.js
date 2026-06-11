@@ -22,6 +22,7 @@ import {
 import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
+import { extractError } from '../utils/errors';
 import {
     channelScope,
     putFragmentBlob,
@@ -89,6 +90,9 @@ export default function PerformanceChannel({
     initialFormState,
     maxDuration = 380,
     bpm = 120,
+    // False while the Performance tab is hidden (panel stays mounted via
+    // keepMounted) — pauses this channel's meter RAF loop.
+    panelActive = true,
 }) {
     const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
     const canvasRef = useRef(null);
@@ -112,6 +116,16 @@ export default function PerformanceChannel({
     const [bars, setBars] = useState(init.bars ?? 4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);
+    // Surfaced in the strip (item-level toast); generation/variation
+    // failures used to go to the console only — a live performer staring at
+    // the channel had no idea why nothing arrived.
+    const [channelError, setChannelError] = useState(null);
+    // Live mirror of `loaded` for async callbacks: makeOnBlob is created at
+    // generation START, so reading `loaded` directly inside it sees a stale
+    // false even after the user manually commits a fragment mid-generation —
+    // and the arriving blob would silently override their choice.
+    const loadedRef = useRef(false);
+    useEffect(() => { loadedRef.current = loaded; }, [loaded]);
     const [looping, setLooping] = useState(init.looping ?? true);
     const [muted, setMuted] = useState(init.muted ?? false);
     const [soloed, setSoloed] = useState(init.soloed ?? false);
@@ -142,6 +156,20 @@ export default function PerformanceChannel({
 
     // Stop any active cue audition when the channel unmounts.
     useEffect(() => () => stopCue(), []);
+
+    // Revoke this channel's fragment object URLs on unmount. Preset loads and
+    // Fresh Start force a full panel remount, and the remounted channel mints
+    // NEW URLs while re-hydrating from IndexedDB — without this cleanup every
+    // remount leaked the previous generation of URLs (and their buffers).
+    const fragmentsRef = useRef(fragments);
+    useEffect(() => { fragmentsRef.current = fragments; }, [fragments]);
+    useEffect(() => () => {
+        fragmentsRef.current.forEach((f) => {
+            if (f.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
+            }
+        });
+    }, []);
 
     // Poll /api/generation-progress while a generation is in flight so the
     // Generate pill renders a real fill bar instead of a vague spinner. The
@@ -242,6 +270,7 @@ export default function PerformanceChannel({
             setFragments(hydrated);
             if (persistedCommittedId && hydrated.some(t => t.id === persistedCommittedId)) {
                 setCommittedFragmentId(persistedCommittedId);
+                loadedRef.current = true;
                 setLoaded(true);
                 onStateChange?.(index, { loaded: true });
             }
@@ -270,6 +299,7 @@ export default function PerformanceChannel({
     }, [maxDuration, bpm]);
 
     useEffect(() => {
+        if (!panelActive) return undefined;
         const tick = () => {
             const el = meterRef.current;
             if (el && strip) {
@@ -282,7 +312,7 @@ export default function PerformanceChannel({
         return () => {
             if (meterRafRef.current) cancelAnimationFrame(meterRafRef.current);
         };
-    }, [strip]);
+    }, [strip, panelActive]);
 
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
@@ -396,9 +426,10 @@ export default function PerformanceChannel({
         // (first-ever fragment) — harmless since nothing is playing — so the
         // user still gets a ready-to-play clip on a fresh channel. To start a
         // newly generated fragment, pick it from the list (handleCommitFragment).
-        if (i === 0 && !loaded) {
+        if (i === 0 && !loadedRef.current) {
             await strip.loadBlob(blob);
             setCommittedFragmentId(fragment.id);
+            loadedRef.current = true;
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
             requestAnimationFrame(drawWave);
@@ -410,6 +441,7 @@ export default function PerformanceChannel({
         const inBarsMode = durationMode === 'bars';
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
+        setChannelError(null);
         // Stop any in-flight cue audition so the old preview doesn't keep
         // playing while we generate the new fragment.
         stopCue();
@@ -432,6 +464,7 @@ export default function PerformanceChannel({
             });
         } catch (err) {
             console.error(`Channel ${index + 1} generate failed:`, err);
+            setChannelError(extractError(err, 'Generation failed'));
         } finally {
             setGenerating(false);
         }
@@ -450,6 +483,7 @@ export default function PerformanceChannel({
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         const promptSnap = (prompt || '').trim() || src.prompt || 'variation';
         setGenerating(true);
+        setChannelError(null);
         stopCue();
         setAuditioningFragmentId(null);
         try {
@@ -466,6 +500,7 @@ export default function PerformanceChannel({
             });
         } catch (err) {
             console.error(`Channel ${index + 1} variation failed:`, err);
+            setChannelError(extractError(err, 'Variation failed'));
         } finally {
             setGenerating(false);
         }
@@ -514,6 +549,7 @@ export default function PerformanceChannel({
         // Mark loaded so the play button enables (covers preset/hydrated flows
         // where the first commit happens here rather than via generate).
         if (!loaded) {
+            loadedRef.current = true;
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
         }
@@ -885,6 +921,26 @@ export default function PerformanceChannel({
                         </Tooltip>
                     </MidiMappable>
                 </Box>
+
+                {channelError && (
+                    <Typography
+                        onClick={() => setChannelError(null)}
+                        title="Dismiss"
+                        sx={{
+                            fontSize: perfTokens.fontSize.xs,
+                            color: 'error.main',
+                            lineHeight: 1.3,
+                            mt: 0.5,
+                            cursor: 'pointer',
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                        }}
+                    >
+                        {channelError}
+                    </Typography>
+                )}
             </Box>
 
             <Box

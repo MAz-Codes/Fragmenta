@@ -454,10 +454,23 @@ class FragmentaRecorder extends AudioWorkletProcessor {
         this._l = [];
         this._r = [];
         this._on = true;
+        // Hard ceiling on buffered samples per side: chunks accumulate in
+        // worklet memory for the whole take, so an unbounded recording grows
+        // without limit (~23 MB/min/side at 48 kHz). 20 minutes ≈ 460 MB
+        // total — plenty for a set, finite for the process. Past it we keep
+        // running but stop buffering and flag the take as truncated.
+        this._capSamples = sampleRate * 60 * 20;
+        this._samples = 0;
+        this._truncated = false;
         this.port.onmessage = (e) => {
             if (e.data === 'stop') {
                 this._on = false;
-                this.port.postMessage({ type: 'data', left: this._l, right: this._r });
+                this.port.postMessage({
+                    type: 'data',
+                    left: this._l,
+                    right: this._r,
+                    truncated: this._truncated,
+                });
                 this._l = [];
                 this._r = [];
             }
@@ -466,10 +479,15 @@ class FragmentaRecorder extends AudioWorkletProcessor {
     process(inputs) {
         const input = inputs[0];
         if (this._on && input && input.length > 0) {
+            if (this._samples >= this._capSamples) {
+                this._truncated = true;
+                return true;
+            }
             const l = input[0];
             const r = input.length > 1 ? input[1] : input[0];
             if (l && l.length) this._l.push(new Float32Array(l));
             if (r && r.length) this._r.push(new Float32Array(r));
+            if (l && l.length) this._samples += l.length;
         }
         return true;
     }
@@ -959,7 +977,7 @@ export class PerformanceEngine {
 
         return new Promise((resolve) => {
             let settled = false;
-            const finish = (chunksL, chunksR) => {
+            const finish = (chunksL, chunksR, truncated = false) => {
                 if (settled) return;
                 settled = true;
                 try { this.masterAnalyser.disconnect(node); } catch (_) { /* ok */ }
@@ -971,10 +989,11 @@ export class PerformanceEngine {
                 resolve({
                     blob: encodeWavStereo(left, right, sampleRate),
                     durationSec: left.length / sampleRate,
+                    truncated,
                 });
             };
             node.port.onmessage = (e) => {
-                if (e.data && e.data.type === 'data') finish(e.data.left, e.data.right);
+                if (e.data && e.data.type === 'data') finish(e.data.left, e.data.right, e.data.truncated);
             };
             // Safety net: if the worklet never replies, resolve empty rather
             // than hang the stop action.

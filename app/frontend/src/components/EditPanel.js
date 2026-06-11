@@ -63,6 +63,12 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
     // sa3-medium generates up to 380s; small models cap at 120s. Matches the
     // generator's _MODEL_INFO so the slider can't request past the model max.
     const maxDuration = (model_id || '').includes('medium') ? 380 : 120;
+    // Re-clamp when the user switches model while the panel is open
+    // (medium -> small shrinks the ceiling from 380 to 120; the backend now
+    // rejects over-max durations with a 400 instead of silently clamping).
+    useEffect(() => {
+        setDuration(d => Math.min(d, maxDuration));
+    }, [maxDuration]);
     // Distilled (post-trained) models bake CFG at 1.0 and ignore cfg_scale; only
     // *-base variants honour it. Same rule the Generation panel uses.
     const isDistilledBase =
@@ -74,6 +80,22 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
     // inpaint
     const [maskStart, setMaskStart] = useState(2.0);
     const [maskEnd, setMaskEnd] = useState(4.0);
+    // Editable text mirrors for the Start/End fields. Binding the inputs
+    // straight to maskStart.toFixed(2) made them untypeable: every keystroke
+    // re-rendered the canonical "x.00" string, so partial entries like "3."
+    // or an emptied field were instantly stomped. The mirrors hold whatever
+    // the user typed; valid parses commit to the numeric state, and blur
+    // snaps the text back to canonical form.
+    const [maskStartText, setMaskStartText] = useState('2.00');
+    const [maskEndText, setMaskEndText] = useState('4.00');
+    const maskStartFocusedRef = useRef(false);
+    const maskEndFocusedRef = useRef(false);
+    useEffect(() => {
+        if (!maskStartFocusedRef.current) setMaskStartText(maskStart.toFixed(2));
+    }, [maskStart]);
+    useEffect(() => {
+        if (!maskEndFocusedRef.current) setMaskEndText(maskEnd.toFixed(2));
+    }, [maskEnd]);
 
     // extend
     const [extendSeconds, setExtendSeconds] = useState(4.0);
@@ -457,8 +479,17 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             label="Start (s)"
                             type="number"
                             size="small"
-                            value={maskStart.toFixed(2)}
-                            onChange={(e) => setMaskStart(parseFloat(e.target.value) || 0)}
+                            value={maskStartText}
+                            onFocus={() => { maskStartFocusedRef.current = true; }}
+                            onChange={(e) => {
+                                setMaskStartText(e.target.value);
+                                const v = parseFloat(e.target.value);
+                                if (Number.isFinite(v)) setMaskStart(Math.max(0, v));
+                            }}
+                            onBlur={() => {
+                                maskStartFocusedRef.current = false;
+                                setMaskStartText(maskStart.toFixed(2));
+                            }}
                             inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
                             sx={{ width: 96 }}
                         />
@@ -466,8 +497,17 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             label="End (s)"
                             type="number"
                             size="small"
-                            value={maskEnd.toFixed(2)}
-                            onChange={(e) => setMaskEnd(parseFloat(e.target.value) || 0)}
+                            value={maskEndText}
+                            onFocus={() => { maskEndFocusedRef.current = true; }}
+                            onChange={(e) => {
+                                setMaskEndText(e.target.value);
+                                const v = parseFloat(e.target.value);
+                                if (Number.isFinite(v)) setMaskEnd(Math.max(0, v));
+                            }}
+                            onBlur={() => {
+                                maskEndFocusedRef.current = false;
+                                setMaskEndText(maskEnd.toFixed(2));
+                            }}
                             inputProps={{ min: 0, max: sourceDurationSec || 999, step: 0.05 }}
                             sx={{ width: 96 }}
                         />
