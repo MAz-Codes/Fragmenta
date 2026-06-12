@@ -299,7 +299,13 @@ def start_training():
         # SA3-aligned defaults. Phase 5 ships LoRA-only — no `mode` switch.
         training_config['mode'] = 'lora'
         training_config.setdefault('steps', 5000)
-        training_config.setdefault('checkpointSteps', 500)
+        # The UI sends checkpointSteps=null when "Auto" cadence is on — same
+        # null/0=auto contract as /api/training/checkpoint-preview. setdefault()
+        # only fills *missing* keys, so an explicit null used to survive into
+        # Validator.number below and 400 the whole run. Resolve auto here; 500
+        # matches DEFAULT_CHECKPOINT_STEPS and what the preview showed.
+        if not training_config.get('checkpointSteps'):
+            training_config['checkpointSteps'] = 500
         training_config.setdefault('batchSize', 1)
         training_config.setdefault('learningRate', 1e-4)
         # Window defaults to the base model's native length (medium ≈380s,
