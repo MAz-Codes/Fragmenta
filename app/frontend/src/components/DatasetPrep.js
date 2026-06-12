@@ -9,6 +9,7 @@ import {
     Button,
     Checkbox,
     Chip,
+    CircularProgress,
     Dialog,
     DialogActions,
     DialogContent,
@@ -89,6 +90,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     const [errorCode, setErrorCode] = useState('');
     const [errorExtra, setErrorExtra] = useState(null);
     const [annotateJob, setAnnotateJob] = useState(null);
+    // True from the moment an annotate button is clicked until the POST
+    // resolves. The POST is not instant — on the Rich tier it blocks while
+    // the CLAP model loads (many seconds on first run) — and without this
+    // flag the user got zero feedback until the progress bar showed up.
+    const [annotateStarting, setAnnotateStarting] = useState(false);
     const [notice, setNotice] = useState(null);  // { severity, message } | null
     // Phase 6 — pre-encoded latents
     const [preEncodeJob, setPreEncodeJob] = useState(null);
@@ -109,6 +115,9 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     // makes the resolved callback drop its result instead.
     const pollEpochRef = useRef(0);
     const isAnnotating = annotateJob?.state === 'running';
+    // Buttons gray out for the whole click → POST → running window, not just
+    // once the backend reports the job.
+    const annotateBusy = annotateStarting || isAnnotating;
     const isPreEncoding = preEncodeJob?.state === 'running' || preEncodeJob?.state === 'queued';
 
     // --- Multi-row selection (for bulk Slice) -----------------------------
@@ -316,20 +325,26 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     }
 
     async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
-        if (!project) return;
+        if (!project || annotateBusy) return;
         setError(''); setErrorCode(''); setErrorExtra(null);
+        setAnnotateStarting(true);
         try {
-            await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
                 tier,
                 scope: scope ?? 'all',
                 skip_existing: opts.skip_existing ?? skipExisting,
             });
+            // The 202 response carries the job snapshot — seed it directly so
+            // the progress bar appears now instead of after the first poll.
+            if (data?.job) setAnnotateJob(data.job);
             pollAnnotateStatus(project.name);
         } catch (e) {
             const body = e?.response?.data || {};
             setError(extractError(e, 'Failed to start annotation'));
             setErrorCode(body.code || '');
             setErrorExtra(body.install_command ? { install_command: body.install_command } : null);
+        } finally {
+            setAnnotateStarting(false);
         }
     }
 
@@ -594,13 +609,24 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         onDiscard={handleDiscard}
                         onAddAudio={() => setIngestOpen(true)}
                         onClose={handleCloseProject}
-                        disabled={isAnnotating}
+                        disabled={annotateBusy}
                     />
 
                     <HealthStrip
                         health={health}
                         onSelectFiles={(files) => setSelectedFiles(new Set(files))}
                     />
+
+                    {annotateStarting && !isAnnotating && (
+                        <Box>
+                            <LinearProgress />
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                                {tier === 'rich'
+                                    ? 'Starting annotation — loading the CLAP model (the first run can take a while)…'
+                                    : 'Starting annotation…'}
+                            </Typography>
+                        </Box>
+                    )}
 
                     {isAnnotating && annotateJob && (
                         <Box>
@@ -669,28 +695,33 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         selectedFiles={selectedFiles}
                         onToggleSelected={toggleSelected}
                         onToggleSelectAll={() => toggleSelectAll(project.clips)}
-                        disabled={isAnnotating}
+                        disabled={annotateBusy}
                         toolbar={
                             <Stack spacing={1}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
                                     <Tooltip title={TIPS.dataset.autoAnnotateAll}>
+                                    {/* span — keeps the tooltip alive while the button is disabled */}
+                                    <span>
                                     <Button
                                         variant="contained"
                                         color="warm"
                                         size="small"
-                                        startIcon={<WandSparkles size={16} />}
+                                        startIcon={annotateStarting
+                                            ? <CircularProgress size={16} color="inherit" />
+                                            : <WandSparkles size={16} />}
                                         onClick={() => handleAnnotate('all')}
-                                        disabled={isAnnotating || project.clip_count === 0}
+                                        disabled={annotateBusy || project.clip_count === 0}
                                     >
-                                        Auto-annotate all
+                                        {annotateStarting ? 'Starting…' : 'Auto-annotate all'}
                                     </Button>
+                                    </span>
                                     </Tooltip>
                                     <Tooltip title={TIPS.dataset.templatePreset}>
                                     <FormControl size="small" sx={{ minWidth: 180 }}>
                                         <Select
                                             value={project.prompt_template_preset || 'music'}
                                             onChange={(e) => handleChangeTemplatePreset(e.target.value)}
-                                            disabled={isAnnotating}
+                                            disabled={annotateBusy}
                                             renderValue={(v) => {
                                                 const p = (project.prompt_template_presets || []).find((x) => x.id === v);
                                                 return p ? p.label : v;
@@ -716,7 +747,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                                     size="small"
                                                     checked={tier === 'rich'}
                                                     onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
-                                                    disabled={isAnnotating}
+                                                    disabled={annotateBusy}
                                                 />
                                             }
                                             label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
@@ -730,7 +761,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                                     size="small"
                                                     checked={skipExisting}
                                                     onChange={(e) => setSkipExisting(e.target.checked)}
-                                                    disabled={isAnnotating}
+                                                    disabled={annotateBusy}
                                                 />
                                             }
                                             label={<Typography variant="caption" color="text.secondary">Skip already annotated</Typography>}
@@ -745,14 +776,14 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                             size="small"
                                             startIcon={<TrashIcon size={16} />}
                                             onClick={handleClearSelectedAnnotations}
-                                            disabled={isAnnotating}
+                                            disabled={annotateBusy}
                                         >
                                             Clear annotations ({selectedFiles.size})
                                         </Button>
                                     )}
                                 </Box>
                                 {tier === 'rich' && (
-                                    <ClapVocabAccordion disabled={isAnnotating} />
+                                    <ClapVocabAccordion disabled={annotateBusy} />
                                 )}
                             </Stack>
                         }
