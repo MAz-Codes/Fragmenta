@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
     Paper, Box, Typography, List, ListItem, IconButton,
     Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button,
-    CircularProgress,
+    CircularProgress, Alert,
 } from '@mui/material';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
@@ -20,6 +20,7 @@ import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
 import api from '../api';
 import { setFragmentDragPayload, clearFragmentDragPayload } from '../utils/fragmentDrag';
+import { extractError } from '../utils/errors';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
 function relativeTime(createdAt) {
@@ -37,10 +38,42 @@ function relativeTime(createdAt) {
     return new Date(createdAt).toLocaleDateString();
 }
 
+// Module-level preload cache, keyed by filename (stable across reloads; id
+// is a per-mount fallback). The window unmounts on every tab switch, so a
+// per-mount cache meant returning to this tab re-downloaded and re-decoded
+// every fragment — and the 5 s grace gate then hid the list again each time.
+// Capped with insertion-order eviction; evicted entries get their object URL
+// revoked.
+const preloadCache = new Map();      // key -> { blob, blobUrl }
+const preloadInFlight = new Set();   // keys with a fetch outstanding
+const PRELOAD_CACHE_MAX = 150;
+
+const preloadKeyOf = (frag) => frag.filename || String(frag.id);
+
+function prunePreloadCache() {
+    while (preloadCache.size > PRELOAD_CACHE_MAX) {
+        const [oldestKey, entry] = preloadCache.entries().next().value;
+        try { URL.revokeObjectURL(entry.blobUrl); } catch { /* ignore */ }
+        preloadCache.delete(oldestKey);
+    }
+}
+
+function evictPreloadEntry(frag) {
+    const key = preloadKeyOf(frag);
+    const entry = preloadCache.get(key);
+    if (entry) {
+        try { URL.revokeObjectURL(entry.blobUrl); } catch { /* ignore */ }
+        preloadCache.delete(key);
+    }
+}
+
 export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearAll, isDocker = false }) {
     const [playingFragment, setPlayingFragment] = useState(null);
     const [playingTime, setPlayingTime] = useState(0);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+    // Transient feedback for row actions (reveal failures, the web-mode
+    // "use download instead" message) — these used to die in the console.
+    const [actionMessage, setActionMessage] = useState(null);
     const audioRefs = useRef({});
     // Tracks a play request that's between "user clicked Play" and "audio
     // actually started". If the user clicks again during this window we
@@ -56,53 +89,47 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     // pre-fetch them in parallel on mount and gate the UI behind a single
     // loading screen — once everything is ready, plays + waveform decodes
     // are instant because they work off blob: URLs.
-    const fetchingIdsRef = useRef(new Set());
-    const loadedRef = useRef({});           // { [id]: { blob, blobUrl } }
     const [loadedTick, setLoadedTick] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
         fragments.forEach((frag) => {
             if (frag.audioBlob) return;             // already in memory
-            if (loadedRef.current[frag.id]) return; // already preloaded
-            if (fetchingIdsRef.current.has(frag.id)) return;
+            const key = preloadKeyOf(frag);
+            if (preloadCache.has(key)) return;      // already preloaded
+            if (preloadInFlight.has(key)) return;
             if (!frag.audioUrl) return;
-            fetchingIdsRef.current.add(frag.id);
+            preloadInFlight.add(key);
             fetch(frag.audioUrl)
                 .then((r) => {
                     if (!r.ok) throw new Error(`HTTP ${r.status}`);
                     return r.blob();
                 })
                 .then((blob) => {
-                    if (cancelled) return;
+                    // Cache even when unmounted mid-fetch — the next mount
+                    // gets it for free. Only the re-render is gated.
                     const blobUrl = URL.createObjectURL(blob);
-                    loadedRef.current[frag.id] = { blob, blobUrl };
-                    setLoadedTick((t) => t + 1);
+                    preloadCache.set(key, { blob, blobUrl });
+                    prunePreloadCache();
+                    if (!cancelled) setLoadedTick((t) => t + 1);
                 })
                 .catch((err) => {
                     console.warn(`Fragment preload failed (${frag.filename || frag.id}):`, err);
                 })
                 .finally(() => {
-                    fetchingIdsRef.current.delete(frag.id);
+                    preloadInFlight.delete(key);
                 });
         });
         return () => { cancelled = true; };
     }, [fragments]);
 
-    // Revoke all preload blob URLs on unmount so we don't leak.
-    useEffect(() => () => {
-        Object.values(loadedRef.current).forEach(({ blobUrl }) => {
-            try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
-        });
-    }, []);
-
     // Per-fragment helpers that prefer the in-memory blob (immediate) over
     // the HTTP URL. Defined after loadedTick is read so React knows to
     // re-render when a new fragment finishes preloading.
     void loadedTick;
-    const effectiveBlob = (frag) => frag.audioBlob || loadedRef.current[frag.id]?.blob || null;
-    const effectiveUrl = (frag) => loadedRef.current[frag.id]?.blobUrl || frag.audioUrl;
-    const isFragmentReady = (frag) => !!frag.audioBlob || !!loadedRef.current[frag.id];
+    const effectiveBlob = (frag) => frag.audioBlob || preloadCache.get(preloadKeyOf(frag))?.blob || null;
+    const effectiveUrl = (frag) => preloadCache.get(preloadKeyOf(frag))?.blobUrl || frag.audioUrl;
+    const isFragmentReady = (frag) => !!frag.audioBlob || preloadCache.has(preloadKeyOf(frag));
 
     const readyCount = fragments.filter(isFragmentReady).length;
     const allReady = fragments.length === 0 || readyCount === fragments.length;
@@ -113,9 +140,19 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     // list) while the user is gated behind the spinner.
     const GRACE_MS = 5000;
     const [graceDone, setGraceDone] = useState(false);
+    // Only worth waiting out when something actually had to download this
+    // mount. With everything served from the module cache (every tab switch
+    // after the first), the gate would just hide an already-ready list for
+    // five pointless seconds.
+    const hadToLoadRef = useRef(false);
     useEffect(() => {
         if (fragments.length === 0) { setGraceDone(true); return undefined; }
-        if (!allReady) { setGraceDone(false); return undefined; }
+        if (!allReady) {
+            hadToLoadRef.current = true;
+            setGraceDone(false);
+            return undefined;
+        }
+        if (!hadToLoadRef.current) { setGraceDone(true); return undefined; }
         const t = setTimeout(() => setGraceDone(true), GRACE_MS);
         return () => clearTimeout(t);
     }, [allReady, fragments.length]);
@@ -235,8 +272,16 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     const revealInFolder = (fragment) => {
         if (!fragment.filename) return;
         api.post('/api/reveal-fragment', { filename: fragment.filename })
+            .then((res) => {
+                // Headless (web/Docker) replies success:false with a hint to
+                // use the download button — show it instead of swallowing it.
+                if (res.data?.success === false && res.data?.message) {
+                    setActionMessage(res.data.message);
+                }
+            })
             .catch((err) => {
                 console.warn(`Reveal failed (${fragment.filename}):`, err);
+                setActionMessage(extractError(err, `Could not reveal ${fragment.filename}.`));
             });
     };
 
@@ -290,6 +335,16 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 </Box>
             </Box>
 
+            {actionMessage && (
+                <Alert
+                    severity="info"
+                    onClose={() => setActionMessage(null)}
+                    sx={{ mx: 1.5, mb: 1, py: 0, fontSize: 12 }}
+                >
+                    {actionMessage}
+                </Alert>
+            )}
+
             <Dialog open={clearConfirmOpen} onClose={() => setClearConfirmOpen(false)}>
                 <DialogTitle>Clear all generated fragments?</DialogTitle>
                 <DialogContent>
@@ -301,7 +356,12 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 <DialogActions>
                     <Button onClick={() => setClearConfirmOpen(false)}>Cancel</Button>
                     <Button
-                        onClick={() => { setClearConfirmOpen(false); onClearAll?.(); }}
+                        onClick={() => {
+                            setClearConfirmOpen(false);
+                            fragments.forEach(evictPreloadEntry);
+                            audioRefs.current = {};
+                            onClearAll?.();
+                        }}
                         color="error"
                         variant="contained"
                     >
@@ -461,7 +521,11 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     <Tooltip title={TIPS.fragments.deleteFromDisk} placement="top" arrow>
                                         <IconButton
                                             size="small"
-                                            onClick={() => onDelete(fragment)}
+                                            onClick={() => {
+                                                evictPreloadEntry(fragment);
+                                                delete audioRefs.current[fragment.id];
+                                                onDelete(fragment);
+                                            }}
                                             sx={{ color: 'text.disabled', '&:hover': { color: 'error.main', bgcolor: 'action.hover' } }}
                                         >
                                             <DeleteIcon size={16} />

@@ -191,8 +191,9 @@ export function stopCue() {
     if (currentSource) {
         const src = currentSource;
         const fade = currentSourceFade;
-        if (currentEndedHandler) {
-            src.removeEventListener('ended', currentEndedHandler);
+        const endedHandler = currentEndedHandler;
+        if (endedHandler) {
+            src.removeEventListener('ended', endedHandler);
         }
         const now = ctx ? ctx.currentTime : 0;
         const FADE = 0.012;
@@ -211,5 +212,10 @@ export function stopCue() {
         currentSource = null;
         currentSourceFade = null;
         currentEndedHandler = null;
+        // Fire the displaced cue's onEnded so its owner can clear its UI.
+        // Cue is a global single-player: when channel B's audition stops
+        // channel A's (playBlob calls stopCue first), A's "playing" pill
+        // otherwise sticks on forever — A never learns its cue ended.
+        try { endedHandler?.(); } catch { /* listener error — ignore */ }
     }
 }

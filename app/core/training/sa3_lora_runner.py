@@ -328,4 +328,10 @@ def build_train_env(sa3_vendor_dir: Path, hub_dir: Path) -> Dict[str, str]:
     # against a cache we know is current.
     env["HF_HUB_OFFLINE"] = "1"
     env["TRANSFORMERS_OFFLINE"] = "1"
+    # Force the child's stdio to UTF-8. The monitor reads its stdout with
+    # encoding="utf-8"; without this a Windows child writes cp1252 and any
+    # non-ASCII glyph turns into mojibake (or, before the explicit-decode
+    # fix, a UnicodeDecodeError that killed the monitor mid-run).
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     return env

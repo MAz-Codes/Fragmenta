@@ -3,6 +3,7 @@ from utils.exceptions import ModelNotFoundError, ValidationError, GenerationErro
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
+from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -48,12 +49,31 @@ app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 app.config['MAX_FORM_PARTS'] = 20000
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
+# CORS allow-list. A wildcard origin (the old config) let any web page drive
+# every state-changing route on a desktop user's localhost backend (delete
+# projects/models, start training, swap HF token, kill GPU processes). We allow
+# only the desktop webview origin + the vite dev server, plus an optional
+# env-supplied extension for Docker deploys behind a known host.
+#   * Same-origin calls from the packaged webview send no Origin header and are
+#     unaffected by this list.
+#   * supports_credentials is dropped — nothing here uses cookies.
+_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5001",
+    "http://localhost:5001",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_extra_origins = os.environ.get('FRAGMENTA_ALLOWED_ORIGINS', '').strip()
+if _extra_origins:
+    _ALLOWED_ORIGINS.extend(
+        o.strip() for o in _extra_origins.split(',') if o.strip()
+    )
+
 CORS(app,
-     resources={r"/api/*": {"origins": "*"}},
-     supports_credentials=True,
+     resources={r"/api/*": {"origins": _ALLOWED_ORIGINS}},
      # /api/generate returns the WAV as the body, so the canonical on-disk
      # filename (and resolved seed) ride back in custom headers. They must be
-     # whitelisted here or the browser hides them from axios cross-origin.
+     # whitelisted here or the browser hides them from the cross-origin reader.
      expose_headers=["X-Fragment-Filename", "X-Fragment-Seed"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
@@ -67,6 +87,16 @@ def request_entity_too_large(error):
     }), 413
 
 DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
+
+# Baked in at import on purpose: /api/health reports the version of the CODE
+# THIS PROCESS IS RUNNING. The launcher compares it against the on-disk
+# VERSION to detect an orphaned backend that predates an update — reading the
+# file per-request would make a stale process report the new version and
+# defeat that check.
+try:
+    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
+except Exception:
+    _APP_VERSION = None
 
 config = None
 generator = None
@@ -173,12 +203,20 @@ def health_check():
         'status': 'ok' if _components_initialised else 'degraded',
         'components_ready': _components_initialised,
         'init_error': _init_error,
+        'version': _APP_VERSION,
         'gpu_available': torch.cuda.is_available(),
         'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }
     # Return 200 even in degraded mode so Docker HEALTHCHECK doesn't kill
     # the container before components finish loading.
     return jsonify(status), 200
+
+
+@app.route('/api/version')
+def app_version():
+    """Version of the code this process is running (from the VERSION file,
+    read at import — see _APP_VERSION). Also exposed on /api/health."""
+    return jsonify({'version': _APP_VERSION})
 
 
 @app.route('/')
@@ -261,7 +299,13 @@ def start_training():
         # SA3-aligned defaults. Phase 5 ships LoRA-only — no `mode` switch.
         training_config['mode'] = 'lora'
         training_config.setdefault('steps', 5000)
-        training_config.setdefault('checkpointSteps', 500)
+        # The UI sends checkpointSteps=null when "Auto" cadence is on — same
+        # null/0=auto contract as /api/training/checkpoint-preview. setdefault()
+        # only fills *missing* keys, so an explicit null used to survive into
+        # Validator.number below and 400 the whole run. Resolve auto here; 500
+        # matches DEFAULT_CHECKPOINT_STEPS and what the preview showed.
+        if not training_config.get('checkpointSteps'):
+            training_config['checkpointSteps'] = 500
         training_config.setdefault('batchSize', 1)
         training_config.setdefault('learningRate', 1e-4)
         # Window defaults to the base model's native length (medium ≈380s,
@@ -280,6 +324,44 @@ def start_training():
         # status) and the run stays reproducible if the user liked the result.
         if training_config.get('seed') is None:
             training_config['seed'] = random.randint(0, 2**31 - 1)
+
+        # Numeric sanity with friendly 400s. Out-of-range values used to ride
+        # straight into the trainer: steps=0 stages everything then trains
+        # nothing, lr=50 diverges instantly, rank=0 crashes deep inside the
+        # vendored LoRA code with an opaque traceback.
+        try:
+            training_config['steps'] = Validator.number(
+                training_config['steps'], 'steps',
+                min_value=1, max_value=1_000_000, integer_only=True)
+            training_config['checkpointSteps'] = Validator.number(
+                training_config['checkpointSteps'], 'checkpointSteps',
+                min_value=1, max_value=1_000_000, integer_only=True)
+            training_config['batchSize'] = Validator.number(
+                training_config['batchSize'], 'batchSize',
+                min_value=1, max_value=64, integer_only=True)
+            lr = Validator.number(
+                training_config['learningRate'], 'learningRate',
+                min_value=0.0, max_value=1.0)
+            if not (0.0 < float(lr) < 1.0):
+                return jsonify({'error': 'learningRate must be between 0 and 1 (exclusive).'}), 400
+            training_config['learningRate'] = float(lr)
+            training_config['duration'] = Validator.number(
+                training_config['duration'], 'duration',
+                min_value=1.0, max_value=380.0)
+            training_config['loraRank'] = Validator.number(
+                training_config['loraRank'], 'loraRank',
+                min_value=1, max_value=512, integer_only=True)
+            training_config['loraAlpha'] = Validator.number(
+                training_config['loraAlpha'], 'loraAlpha',
+                min_value=1, max_value=4096, integer_only=True)
+            training_config['loraDropout'] = Validator.number(
+                training_config['loraDropout'], 'loraDropout',
+                min_value=0.0, max_value=0.95)
+            training_config['seed'] = Validator.number(
+                training_config['seed'], 'seed',
+                min_value=0, max_value=2**31 - 1, integer_only=True)
+        except ValidationError as e:
+            return jsonify({'error': str(e)}), 400
 
         logger.info(
             f"Training request: base={base_model}, name={training_config['modelName']}, "
@@ -364,10 +446,19 @@ def generate_audio():
                 f"Pick one of: {sorted(_SA3_MODEL_IDS)}.",
                 status_code=400)), 400
 
+        # Validate duration against THIS model's ceiling, not the global 380 s
+        # (only medium goes that far). Otherwise the generator silently clamps
+        # while the sidecar records the requested value — a fragment claiming
+        # 380 s of audio it doesn't have.
+        max_duration = _SA3_MODEL_INFO[model_id][2]
         duration = Validator.number(
-            data.get('duration', 10.0), 'duration', min_value=1, max_value=380)
+            data.get('duration', 10.0), 'duration',
+            min_value=1, max_value=max_duration)
+        # JSON `seed: null` means "random", same as -1. Map it before the
+        # validator, which rejects None outright.
+        seed_raw = data.get('seed', -1)
         seed = Validator.number(
-            data.get('seed', -1), 'seed',
+            -1 if seed_raw is None else seed_raw, 'seed',
             min_value=-1, max_value=2**32 - 1, integer_only=True)
         # Resolve a random request (-1) to a concrete seed up front, so the
         # actual seed used is reproducible AND recorded in the sidecar — an
@@ -862,6 +953,10 @@ def upload_source_audio():
     if not fileobj.filename:
         return jsonify(APIResponse.error("Empty filename.", status_code=400)), 400
 
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify(APIResponse.error(quota_err, status_code=507)), 507
+
     name = Path(fileobj.filename).name
     # Strip path components + restrict to known extensions.
     ext = Path(name).suffix.lower()
@@ -897,8 +992,18 @@ def save_performance_recording():
     if not fileobj.filename:
         return jsonify(APIResponse.error("Empty recording.", status_code=400)), 400
 
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify(APIResponse.error(quota_err, status_code=507)), 507
+
     raw_name = (request.form.get('name') or '').strip()
     safe = re.sub(r"[^a-zA-Z0-9._ -]", "_", raw_name).strip().replace(" ", "_")[:80]
+    # Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) are
+    # special even WITH an extension — "CON.wav" can't be created/opened
+    # normally there. Prefix rather than reject so the user's chosen label
+    # survives.
+    if re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?", safe or ""):
+        safe = f"rec_{safe}"
     if not safe:
         safe = time.strftime("performance_%Y%m%d_%H%M%S")
 
@@ -906,13 +1011,24 @@ def save_performance_recording():
     output_dir = cfg.get_path("output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    dest = output_dir / f"{safe}.wav"
     # Don't clobber an existing capture — bump a numeric suffix until free.
+    # The claim is atomic ('x' mode) so two simultaneous saves can't race the
+    # exists() check into the same path.
+    dest = output_dir / f"{safe}.wav"
     counter = 2
-    while dest.exists():
-        dest = output_dir / f"{safe}_{counter}.wav"
-        counter += 1
-    fileobj.save(str(dest))
+    while True:
+        try:
+            fh = open(dest, "xb")
+            break
+        except FileExistsError:
+            dest = output_dir / f"{safe}_{counter}.wav"
+            counter += 1
+    try:
+        with fh:
+            fileobj.save(fh)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None
@@ -1078,22 +1194,48 @@ def delete_fragment(filename):
 
 @app.route('/api/fragments', methods=['DELETE'])
 def clear_fragments():
-    """Delete EVERY .wav + .wav.json directly under output/.
+    """Delete generated fragments (.wav + .wav.json) directly under output/.
 
     Does NOT recurse — uploaded source clips live under output/uploads/
     and are intentionally left alone (they may still be referenced by
     in-flight Edit-mode work, and the user uploaded them deliberately).
+
+    Performance recordings (sidecar `source: "performance"`) are SKIPPED:
+    they live in the same folder but are hidden from the fragments list, so
+    the "Clear all" confirm dialog neither shows nor counts them — deleting
+    them here was silent data loss of the user's recorded takes.
     """
     cfg = get_config()
     output_dir = cfg.get_path("output")
     if not output_dir.exists():
-        return jsonify({"deleted": 0})
+        return jsonify({"deleted": 0, "skipped_recordings": 0, "errors": []})
     removed = 0
+    skipped_recordings = 0
     errors = []
-    for pattern in ("*.wav", "*.wav.json"):
-        for p in output_dir.glob(pattern):
-            if not p.is_file():
-                continue
+    for wav in output_dir.glob("*.wav"):
+        if not wav.is_file():
+            continue
+        sidecar = output_dir / f"{wav.name}.json"
+        source = None
+        if sidecar.is_file():
+            try:
+                source = (json.loads(sidecar.read_text()) or {}).get("source")
+            except Exception:
+                source = None
+        if source == "performance":
+            skipped_recordings += 1
+            continue
+        try:
+            wav.unlink()
+            removed += 1
+            if sidecar.is_file():
+                sidecar.unlink()
+                removed += 1
+        except Exception as exc:
+            errors.append(f"{wav.name}: {exc}")
+    # Orphaned sidecars (their WAV is already gone) are stale either way.
+    for p in output_dir.glob("*.wav.json"):
+        if p.is_file() and not (output_dir / p.name[:-len(".json")]).exists():
             try:
                 p.unlink()
                 removed += 1
@@ -1102,8 +1244,15 @@ def clear_fragments():
     if errors:
         logger.warning(f"clear_fragments: removed {removed}, errors: {errors}")
     else:
-        logger.info(f"clear_fragments: removed {removed} file(s)")
-    return jsonify({"deleted": removed, "errors": errors})
+        logger.info(
+            f"clear_fragments: removed {removed} file(s), "
+            f"kept {skipped_recordings} performance recording(s)"
+        )
+    return jsonify({
+        "deleted": removed,
+        "skipped_recordings": skipped_recordings,
+        "errors": errors,
+    })
 
 
 @app.route('/api/lora-strength', methods=['POST'])
@@ -1195,6 +1344,28 @@ def get_training_status_route():
 def stop_training_route():
     try:
         result = stop_training()
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/training/kill-orphan', methods=['POST'])
+def kill_orphan_training_route():
+    """Kill a training subprocess left over from a previous backend.
+
+    Orphans are surfaced in /api/training-status as `orphaned_runs`
+    (run dirs whose PID file points at a live process this backend
+    doesn't own). Body: {"run_name": "<run dir name>"}.
+    """
+    from app.core.training.sa3_trainer import kill_orphaned_run
+    data = request.json or {}
+    run_name = (data.get('run_name') or '').strip()
+    if not run_name:
+        return jsonify({'error': 'run_name is required.'}), 400
+    try:
+        result = kill_orphaned_run(run_name)
         if "error" in result:
             return jsonify(result), 400
         return jsonify(result)
@@ -1345,6 +1516,25 @@ def cancel_checkpoint_download(model_id):
 @app.route('/api/checkpoints/<model_id>', methods=['DELETE'])
 def delete_checkpoint_download(model_id):
     try:
+        # Refuse while a download for this model is in flight — deleting the
+        # target dir under snapshot_download corrupts the job AND leaves a
+        # half-written cache the next "is it downloaded?" check half-trusts.
+        in_flight = [j for j in model_manager.list_jobs()
+                     if j['model_id'] == model_id
+                     and j['status'] in ('queued', 'running')]
+        if in_flight:
+            return jsonify({'error': 'This checkpoint is currently downloading. '
+                                     'Cancel the download first.'}), 409
+        # Unload first when it's the model the generator currently holds —
+        # deleting files out from under a loaded model leaves the warm cache
+        # claiming a checkpoint that no longer exists on disk. unload_model
+        # refuses while a generation is running.
+        if (generator is not None
+                and getattr(generator, '_model_id', None) == model_id
+                and getattr(generator, 'model', None) is not None):
+            if not generator.unload_model():
+                return jsonify({'error': 'This model is generating right now. '
+                                         'Stop the generation first.'}), 409
         if model_manager.delete_model(model_id):
             return jsonify({'success': True})
         return jsonify({'error': 'Nothing to delete'}), 404
@@ -1384,6 +1574,10 @@ def hf_auth_login():
         try:
             huggingface_hub.login(token=token, add_to_git_credential=False)
             info = huggingface_hub.whoami(token=token)
+            # Auth state changed — drop the cached whoami so the next status
+            # poll reflects the new login immediately.
+            from app.core.model_manager import ModelManager
+            ModelManager.invalidate_auth_cache()
             return jsonify({
                 'success': True,
                 'username': info.get('name') or info.get('fullname'),
@@ -1399,6 +1593,8 @@ def hf_auth_logout():
     try:
         import huggingface_hub
         huggingface_hub.logout()
+        from app.core.model_manager import ModelManager
+        ModelManager.invalidate_auth_cache()
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1417,8 +1613,13 @@ def link_enable():
     ok = bridge.enable()
     state = bridge.get_state()
     if not ok:
-        # 503 so the frontend can distinguish "not installed" from "normal reply"
-        return jsonify({**state, 'error': 'Ableton Link binding not installed. Run: pip install LinkPython-extern'}), 503
+        # 503 so the frontend can distinguish "not installed" from "normal
+        # reply" — it then offers the one-click /api/link/install flow.
+        return jsonify({**state, 'error': (
+            'Ableton Link binding not installed. Enable Link in the app to '
+            'install it automatically, or run '
+            '`pip install LinkPython-extern` inside the Fragmenta venv.'
+        )}), 503
     return jsonify(state)
 
 
@@ -1485,10 +1686,13 @@ def link_install():
                 'detail': '\n'.join(tail),
             }), 500
 
-        # Force get_link_bridge() to re-probe imports next call.
+        # Force get_link_bridge() to re-probe imports next call. Reset under
+        # the module's own lock so a concurrent get_link_bridge() can't race
+        # the swap and hand back the stale no-op bridge.
         importlib.invalidate_caches()
         from app.core.audio import link_sync
-        link_sync._bridge = None
+        with link_sync._bridge_lock:
+            link_sync._bridge = None
 
         bridge = link_sync.get_link_bridge()
         if not bridge.available:
@@ -1546,9 +1750,10 @@ def stop_generation_route():
         return jsonify({'stopped': False, 'message': 'Generator not initialised'}), 200
     newly_set = generator.request_stop()
     return jsonify({
-        'stopped': True,
+        'stopped': newly_set,
         'newly_set': newly_set,
-        'message': 'Stop signal sent to generator'
+        'message': ('Stop signal sent to the running generation' if newly_set
+                    else 'No generation in progress')
     })
 
 
@@ -1565,12 +1770,20 @@ def free_gpu_memory():
 
         # The dominant VRAM consumer in this process is the loaded generator
         # model. cuda.empty_cache() only releases *unused* cached blocks, so
-        # we must drop the live references first.
+        # we must drop the live references first. unload_model() also clears
+        # the LoRA bookkeeping (the adapters die with the model object; stale
+        # bookkeeping would make the next generation silently skip reloading
+        # them) and refuses while a generation holds the lock — yanking the
+        # model mid-sampling would crash the run.
         global generator
         if generator is not None and getattr(generator, 'model', None) is not None:
             print("    Unloading in-process generator model")
             try:
-                generator.model = None
+                if not generator.unload_model():
+                    return jsonify({
+                        'error': 'A generation is in progress. Stop it before '
+                                 'freeing GPU memory.'
+                    }), 409
             except Exception as exc:
                 print(f"     Could not drop generator model: {exc}")
 
@@ -1598,6 +1811,13 @@ def free_gpu_memory():
         current_pid = os.getpid()
         print(f"     Current process PID: {current_pid}")
 
+        # Killing *other* GPU processes is desktop-only. In Docker/HF (headless,
+        # potentially shared/multi-tenant GPU) this sweep would SIGKILL unrelated
+        # tenants' jobs — a cross-process DoS. There we stop after unloading our
+        # own model + clearing the cache (done above). On the desktop it reclaims
+        # VRAM held by sibling Fragmenta/python jobs.
+        allow_cross_process_kill = not _is_headless()
+
         try:
             result = subprocess.run(['nvidia-smi', '--query-compute-apps=pid,used_memory,process_name', '--format=csv,noheader,nounits'],
                                     capture_output=True, text=True, timeout=10)
@@ -1618,7 +1838,7 @@ def free_gpu_memory():
                                         f"     Skipping current process PID: {pid_int}")
                                     continue
 
-                                if 'python' in process_name.lower() and mem_gb > 1.0:
+                                if allow_cross_process_kill and 'python' in process_name.lower() and mem_gb > 1.0:
                                     print(
                                         f"    Found Python process PID: {pid_int} using {mem_gb:.1f}GB")
                                     print(f"      Process: {process_name}")
@@ -1805,6 +2025,82 @@ def _is_headless() -> bool:
             os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         return True
     return False
+
+
+def _dir_size_bytes(*paths: Path) -> int:
+    """Sum the size of every regular file under each path (recursively)."""
+    total = 0
+    for p in paths:
+        try:
+            if not p.exists():
+                continue
+            for f in p.rglob('*'):
+                try:
+                    if f.is_file() and not f.is_symlink():
+                        total += f.stat().st_size
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return total
+
+
+def _check_disk_quota():
+    """Opt-in cumulative storage cap for web deployments.
+
+    Off by default (and entirely absent on the desktop): only enforced in
+    headless mode and only when FRAGMENTA_MAX_DISK_BYTES is set to a positive
+    integer. Returns a user-facing message when over quota, else None.
+    """
+    if not _is_headless():
+        return None
+    try:
+        limit = int(os.environ.get('FRAGMENTA_MAX_DISK_BYTES', '0'))
+    except (TypeError, ValueError):
+        return None
+    if limit <= 0:
+        return None
+    cfg = get_config()
+    try:
+        from app.backend.data.projects import get_projects_dir
+        used = _dir_size_bytes(cfg.get_path('uploads'), get_projects_dir(), cfg.get_path('output'))
+    except Exception:
+        return None
+    if used >= limit:
+        return (f"Server storage quota reached "
+                f"({used // (1024 * 1024)} MB of {limit // (1024 * 1024)} MB used). "
+                "Remove some data and try again.")
+    return None
+
+
+def _check_job_quota():
+    """Opt-in global cap on concurrent background jobs (pre-encode + annotate).
+
+    Off by default. Only enforced in headless mode when
+    FRAGMENTA_MAX_CONCURRENT_JOBS is a positive integer. Returns a user-facing
+    message when at capacity, else None.
+    """
+    if not _is_headless():
+        return None
+    try:
+        cap = int(os.environ.get('FRAGMENTA_MAX_CONCURRENT_JOBS', '0'))
+    except (TypeError, ValueError):
+        return None
+    if cap <= 0:
+        return None
+    running = 0
+    with _project_annotate_jobs_lock:
+        running += sum(1 for j in _project_annotate_jobs.values()
+                       if j.get('state') == 'running')
+    try:
+        from app.backend.data.pre_encoder import count_running_pre_encode_jobs
+        running += count_running_pre_encode_jobs()
+    except Exception:
+        pass
+    if running >= cap:
+        return (f"Server is busy ({running} background jobs running, limit {cap}). "
+                "Please wait for a job to finish and try again.")
+    return None
 
 
 @app.route('/api/open-output-folder', methods=['POST'])
@@ -2195,7 +2491,7 @@ def environment():
     # loop seams. Forcing a non-native rate collapses multi-channel output to
     # stereo, so the frontend only applies the pin when this flag is on.
     try:
-        from app.core.generation.audio_post_process import beatsync_v2_enabled
+        from app.core.generation.feature_flags import beatsync_v2_enabled
         beatsync_v2 = bool(beatsync_v2_enabled())
     except Exception:
         beatsync_v2 = False
@@ -2222,6 +2518,10 @@ def upload_folder():
         return jsonify({'error': 'No files uploaded.'}), 400
     if len(rel_paths) != len(files):
         return jsonify({'error': 'rel_paths count does not match files count.'}), 400
+
+    quota_err = _check_disk_quota()
+    if quota_err:
+        return jsonify({'error': quota_err}), 507
 
     first_rel = (rel_paths[0] or '').replace('\\', '/').lstrip('/')
     folder_name = first_rel.split('/', 1)[0] if '/' in first_rel else 'folder'
@@ -2266,6 +2566,19 @@ def pick_folder():
     payload = request.json or {}
     start_dir = payload.get('start_dir') or str(Path.home())
 
+    # `start_dir` is request-controlled and gets interpolated into shell/AppleScript
+    # command strings below. Validate it is an existing directory and fall back to
+    # the home dir otherwise — this neutralises injection payloads (which are not
+    # real directories) before they reach any command builder. The per-platform
+    # branches still escape it as defence-in-depth.
+    try:
+        if not start_dir or not Path(start_dir).expanduser().is_dir():
+            start_dir = str(Path.home())
+        else:
+            start_dir = str(Path(start_dir).expanduser())
+    except (OSError, ValueError):
+        start_dir = str(Path.home())
+
     def _try(cmd):
         try:
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -2295,8 +2608,11 @@ def pick_folder():
             )
             chosen = _try(['python3', '-c', script])
     elif sys.platform == 'darwin':
+        # Escape backslashes and double-quotes so a path can't break out of the
+        # AppleScript string literal and inject `do shell script` commands.
+        safe_start = start_dir.replace('\\', '\\\\').replace('"', '\\"')
         chosen = _try(['osascript', '-e',
-                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{start_dir}")'])
+                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{safe_start}")'])
     elif sys.platform == 'win32':
         safe_start = (start_dir or '').replace("'", "''")
         ps = (
@@ -2451,6 +2767,23 @@ def ingest_into_project_route(name):
     if not folder:
         return jsonify({'error': 'folder_path is required'}), 400
     folder_path = Path(folder).expanduser()
+
+    # Web/Docker hardening: in headless deployments the only legitimate ingest
+    # source is the per-request upload staging dir written by /api/upload-folder.
+    # Allowing an arbitrary server path here would let a caller copy (or, with
+    # symlink mode, alias and then read back via the clip-audio route) any file
+    # on the host. Confine ingest to the staging root and forbid symlink mode.
+    if _is_headless():
+        if mode == 'symlink':
+            return jsonify({'error': 'Symlink ingest is disabled in web mode.'}), 400
+        staging_root = get_config().get_path('uploads').resolve()
+        try:
+            folder_path.resolve().relative_to(staging_root)
+        except ValueError:
+            return jsonify({
+                'error': 'In web mode you can only ingest folders uploaded through the app.',
+            }), 400
+
     try:
         result = ingest_folder(name, folder_path, mode)
     except FileNotFoundError as exc:
@@ -2464,6 +2797,21 @@ def ingest_into_project_route(name):
         "Ingest into project=%s mode=%s added=%d (copied=%d symlinked=%d skipped=%d)",
         name, mode, result['added'], result['copied'], result['symlinked'], result['skipped'],
     )
+
+    # Reclaim the per-request upload staging dir once its files are safely in the
+    # project. We ONLY remove folders that live under the upload staging root, so
+    # a desktop ingest of the user's own music folder is never deleted. Skip when
+    # symlinks were created (they point back at the staging files).
+    if result.get('symlinked', 0) == 0:
+        try:
+            staging_root = get_config().get_path('uploads').resolve()
+            resolved = folder_path.resolve()
+            if resolved != staging_root and resolved.is_relative_to(staging_root):
+                import shutil as _sh
+                _sh.rmtree(resolved, ignore_errors=True)
+        except (OSError, ValueError) as exc:
+            logger.debug("Upload staging cleanup skipped for %s: %s", folder, exc)
+
     return jsonify({**result, 'project': get_project(name)})
 
 
@@ -2490,6 +2838,11 @@ def delete_clip_route(name, file_name):
     from app.backend.data.projects import delete_clip, get_project
     try:
         delete_clip(name, file_name)
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        # Path traversal / invalid file name.
+        return jsonify({'error': str(exc)}), 400
     except Exception as exc:
         logger.exception("Failed to delete clip %s in project %s", file_name, name)
         return jsonify({'error': str(exc)}), 500
@@ -2666,6 +3019,10 @@ def annotate_project_route(name):
             skipped_existing = 0
         target_names = [c.file_name for c in run_targets]
 
+    job_quota_err = _check_job_quota()
+    if job_quota_err:
+        return jsonify({'error': job_quota_err}), 429
+
     job = _get_project_annotate_job(name)
     with _project_annotate_jobs_lock:
         if job['state'] == 'running':
@@ -2831,6 +3188,9 @@ def pre_encode_project_route(name):
     from app.backend.data.pre_encoder import start_pre_encode
     if not project_path(name).exists():
         return jsonify({'error': f'Project not found: {name}'}), 404
+    job_quota_err = _check_job_quota()
+    if job_quota_err:
+        return jsonify({'error': job_quota_err}), 429
     # silent=True so an empty/no-Content-Type body is treated as {} instead of
     # Flask returning 415 — callers usually fire-and-forget without a payload.
     body = request.get_json(silent=True) or {}
@@ -2942,19 +3302,6 @@ def midi_stream():
     resp.headers['Cache-Control'] = 'no-cache'
     resp.headers['X-Accel-Buffering'] = 'no'
     return resp
-
-
-@app.route('/shutdown', methods=['POST'])
-def shutdown():
-    try:
-        print(" Shutting down Flask server...")
-        func = request.environ.get('werkzeug.server.shutdown')
-        if func is None:
-            raise RuntimeError('Not running with the Werkzeug Server')
-        func()
-        return jsonify({'message': 'Server shutting down'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

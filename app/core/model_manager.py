@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -352,16 +353,34 @@ class ModelManager:
 
     # --- HF auth --------------------------------------------------------------
 
-    @staticmethod
-    def hf_auth_status() -> Dict[str, Any]:
+    # whoami() is a network round-trip to huggingface.co, and the Checkpoint
+    # Manager polls auth status — cache per token for a few minutes. Login /
+    # logout invalidate explicitly, so a token change shows up immediately.
+    _AUTH_CACHE: Dict[str, Any] = {"token": None, "result": None, "at": 0.0}
+    _AUTH_CACHE_TTL = 300.0
+
+    @classmethod
+    def invalidate_auth_cache(cls) -> None:
+        cls._AUTH_CACHE.update({"token": None, "result": None, "at": 0.0})
+
+    @classmethod
+    def hf_auth_status(cls) -> Dict[str, Any]:
         token = get_token()
         if not token:
             return {"signed_in": False, "username": None}
+        cache = cls._AUTH_CACHE
+        if (cache["result"] is not None and cache["token"] == token
+                and time.time() - cache["at"] < cls._AUTH_CACHE_TTL):
+            return dict(cache["result"])
         try:
             user = whoami(token=token)
-            return {"signed_in": True, "username": user.get("name") or user.get("fullname")}
+            result = {"signed_in": True, "username": user.get("name") or user.get("fullname")}
         except Exception as err:
-            return {"signed_in": False, "username": None, "error": str(err)}
+            # Cache failures too — a flaky network would otherwise retry the
+            # round-trip on every poll.
+            result = {"signed_in": False, "username": None, "error": str(err)}
+        cache.update({"token": token, "result": result, "at": time.time()})
+        return dict(result)
 
     # --- Downloads ------------------------------------------------------------
 
@@ -370,16 +389,38 @@ class ModelManager:
         model_id: str,
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Dict[str, Any]:
-        """Spawn a background download job. Returns the job descriptor."""
+        """Spawn a background download job. Returns the job descriptor.
+
+        Single-flight: at most one download job runs at a time. The tqdm
+        hooks the job thread installs swap huggingface_hub's progress-bar
+        __init__ globally for the duration of the run; two overlapping jobs
+        would corrupt the save/restore chain (B captures A's patched init as
+        "original" and re-installs it forever). A repeat request for the
+        model already downloading returns the running job (so double-clicking
+        "Get" resumes polling instead of erroring); a request for a different
+        model is refused.
+        """
         if model_id not in _SA3_CATALOG:
             return {"error": f"Unknown checkpoint: {model_id}"}
 
-        job = _DownloadJob(
-            job_id=str(uuid.uuid4()),
-            model_id=model_id,
-            total_bytes=_SA3_CATALOG[model_id]["size_bytes"],
-        )
         with self._jobs_lock:
+            self._prune_jobs_locked()
+            active = [j for j in self._jobs.values()
+                      if j.status in ("queued", "running")]
+            for j in active:
+                if j.model_id == model_id:
+                    return j.to_dict()
+            if active:
+                running_name = _SA3_CATALOG.get(
+                    active[0].model_id, {}).get("name", active[0].model_id)
+                return {"error":
+                        f"Another download ({running_name}) is already running. "
+                        "Wait for it to finish or cancel it first."}
+            job = _DownloadJob(
+                job_id=str(uuid.uuid4()),
+                model_id=model_id,
+                total_bytes=_SA3_CATALOG[model_id]["size_bytes"],
+            )
             self._jobs[job.job_id] = job
 
         thread = threading.Thread(
@@ -391,6 +432,21 @@ class ModelManager:
         job._thread = thread
         thread.start()
         return job.to_dict()
+
+    def _prune_jobs_locked(self, keep_finished: int = 20) -> None:
+        """Drop old finished jobs. Caller must hold _jobs_lock.
+
+        Jobs were only ever added, so a long session accumulated every
+        complete/failed/cancelled record forever. Keep the most recent few
+        (the UI shows the latest state after a reopen) and let the rest go.
+        """
+        finished = [j for j in self._jobs.values()
+                    if j.status not in ("queued", "running")]
+        if len(finished) <= keep_finished:
+            return
+        finished.sort(key=lambda j: j.finished_at or "", reverse=True)
+        for job in finished[keep_finished:]:
+            self._jobs.pop(job.job_id, None)
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self._jobs_lock:
@@ -466,6 +522,14 @@ class ModelManager:
 
         token = get_token()
 
+        # Cancel cleanup must know which phase the cancel interrupted: once
+        # the main snapshot is complete, deleting `target` would throw away
+        # the multi-GB download that just finished because the user backed
+        # out of the (much smaller) companion fetch.
+        main_snapshot_complete = False
+        sibling_dir: Optional[Path] = None
+        sibling_preexisting = False
+
         try:
             # tqdm hook → cooperative cancel; disk poller → progress that works
             # even when hf-hub's tqdm bar is disabled (1.x / non-TTY).
@@ -485,6 +549,7 @@ class ModelManager:
                         "tokenizer*", "*.tiktoken",
                     ],
                 )
+                main_snapshot_complete = True
 
                 # Companion fetch: base models reference their T5Gemma
                 # conditioner in a subfolder of the *post-trained sibling*
@@ -496,6 +561,8 @@ class ModelManager:
                 sibling = SA3_T5GEMMA_SIBLINGS.get(job.model_id)
                 if sibling:
                     sib_repo, sib_subfolder = sibling
+                    sibling_dir = cache_dir / ("models--" + sib_repo.replace("/", "--"))
+                    sibling_preexisting = sibling_dir.exists()
                     if progress_callback:
                         progress_callback(
                             min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
@@ -514,7 +581,15 @@ class ModelManager:
         except _DownloadCancelled:
             job.status = "cancelled"
             job.error = "Cancelled by user"
-            shutil.rmtree(target, ignore_errors=True)
+            if not main_snapshot_complete:
+                shutil.rmtree(target, ignore_errors=True)
+            elif sibling_dir is not None and not sibling_preexisting:
+                # Cancelled during the companion fetch. Keep the completed
+                # main snapshot (re-Get resumes with it cached) and only
+                # remove the sibling cache dir if THIS run created it — when
+                # it pre-existed it may hold the user's installed post-trained
+                # model, which a cancel must never destroy.
+                shutil.rmtree(sibling_dir, ignore_errors=True)
         except GatedRepoError as err:
             job.status = "failed"
             job.error = f"hf_auth_required: {err}"
@@ -589,8 +664,14 @@ def _tqdm_progress_hook(
     `snapshot_download` doesn't expose a progress callback. tqdm is its
     internal progress bar — we wrap `update` to update job state and raise
     `_DownloadCancelled` when the job's cancel flag fires.
+
+    We patch huggingface_hub's OWN tqdm subclass (every hf-hub download bar
+    is constructed from it), not `tqdm.auto.tqdm`. Patching the shared base
+    class wrapped every bar in the process — cancelling a download could
+    raise `_DownloadCancelled` inside a concurrent generation's sampler bar
+    or a CLAP annotate's bar.
     """
-    from tqdm.auto import tqdm
+    from huggingface_hub.utils import tqdm
     original_init = tqdm.__init__
 
     def patched_init(self, *args: Any, **kwargs: Any) -> None:
@@ -684,8 +765,11 @@ def _cumulative_tqdm_hook(
     the previous bar's total. Here we track the previous `self.n` per bar id
     and add only the delta to job.downloaded_bytes — so progress climbs
     monotonically across all phases.
+
+    Patches huggingface_hub's own tqdm subclass for the same isolation
+    reasons as _tqdm_progress_hook.
     """
-    from tqdm.auto import tqdm
+    from huggingface_hub.utils import tqdm
     original_init = tqdm.__init__
     prev_n: Dict[int, int] = {}
 

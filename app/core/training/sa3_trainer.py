@@ -40,7 +40,6 @@ import json
 import os
 import re
 import shlex
-import signal
 import subprocess
 import sys
 import threading
@@ -58,8 +57,13 @@ from app.core.training.sa3_lora_runner import (
     prestage_base_model,
 )
 from utils.logger import get_logger
+from utils.process_control import graceful_stop, pid_alive
 
 logger = get_logger("SA3Trainer")
+
+# Written into each run dir on spawn so a restarted backend can detect (and
+# offer to kill) a training subprocess it no longer holds a Popen handle for.
+PID_FILENAME = "run.pid"
 
 
 # --- Defaults --------------------------------------------------------------
@@ -123,6 +127,7 @@ class SA3Trainer:
             "message": "Preparing dataset and base model…",
         })
         try:
+            self._refuse_if_run_dir_owned_by_live_pid()
             self._maybe_wipe_run_dir()
             self._resolve_paths()
             self._stage_dataset()
@@ -176,15 +181,12 @@ class SA3Trainer:
             # Flag the stop so the monitor thread labels the exit "stopped"
             # rather than "failed" — SIGINT doesn't yield a stable rc==-2.
             self._stop_requested = True
-            self.process.send_signal(signal.SIGINT)
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.process.kill()
+            # Platform-split escalation lives in graceful_stop. The old code
+            # sent SIGINT unconditionally, which raises ValueError on Windows
+            # — and the terminate()/kill() fallbacks were nested inside the
+            # TimeoutExpired branch, so they never ran: Stop was a dead
+            # button on Windows while the child kept training.
+            graceful_stop(self.process)
             self.status["status"] = "stopped"
             self.status["is_training"] = False
             self.status["ended_at"] = time.time()
@@ -265,13 +267,33 @@ class SA3Trainer:
             "has_log": (run_dir / "training.log").exists(),
         }
 
+    def _run_dir_for_config(self) -> Path:
+        cfg = get_config()
+        run_name = self._safe_name(self.config.get("modelName") or "lora-run")
+        return cfg.get_path("models_fine_tuned") / run_name
+
+    def _refuse_if_run_dir_owned_by_live_pid(self) -> None:
+        """Abort start-up when the target run dir belongs to a live process.
+
+        An orphaned trainer (spawned by a backend that has since restarted)
+        is still writing checkpoints into its run dir; wiping or re-staging
+        that dir would corrupt the run. The user can kill it via the
+        orphaned-runs surface in /api/training-status.
+        """
+        meta = _read_pid_file(self._run_dir_for_config())
+        if meta and pid_alive(meta.get("pid"), meta.get("create_time")):
+            raise RuntimeError(
+                f"Run '{self._run_dir_for_config().name}' appears to still be "
+                f"training under PID {meta['pid']} (probably orphaned by a "
+                "backend restart). Kill it from the training status panel "
+                "before starting or overwriting this run."
+            )
+
     def _maybe_wipe_run_dir(self) -> None:
         """Honor the `overwrite` flag — wipe the run dir before staging."""
         if not self.config.get("overwrite"):
             return
-        cfg = get_config()
-        run_name = self._safe_name(self.config.get("modelName") or "lora-run")
-        run_dir = cfg.get_path("models_fine_tuned") / run_name
+        run_dir = self._run_dir_for_config()
         if run_dir.exists():
             import shutil
             shutil.rmtree(run_dir)
@@ -504,8 +526,16 @@ class SA3Trainer:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            # Without an explicit encoding, text mode decodes with the locale
+            # default — cp1252 on Windows — and the first UTF-8 glyph the
+            # child prints raises UnicodeDecodeError in the monitor thread:
+            # the run gets marked failed while the child keeps training and
+            # eventually blocks on a full stdout pipe.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
+        _write_pid_file(self.run_dir, self.process.pid, self.run_dir.name)
         self._monitor_thread = threading.Thread(
             target=self._monitor,
             args=(log_path,),
@@ -626,6 +656,11 @@ class SA3Trainer:
 
         self.status["ended_at"] = time.time()
         self.status["is_training"] = False
+        # The subprocess is gone — drop its PID file so it can't be reported
+        # as an orphan. PID files only outlive a run when the backend died
+        # while the child was still training.
+        if self.run_dir is not None:
+            _remove_pid_file(self.run_dir)
         # A user-requested stop wins regardless of the exit code (SIGINT can
         # surface as various negative/non-zero codes across platforms).
         if getattr(self, "_stop_requested", False):
@@ -795,6 +830,132 @@ class SA3Trainer:
         return re.sub(r"[^a-zA-Z0-9_-]+", "_", s).strip("_") or "lora-run"
 
 
+# --- PID files + orphan detection -------------------------------------------
+# Run state used to live only in the in-memory `_active` trainer + its Popen
+# handle. A backend restart (crash, packaged-app relaunch, dev reload) left
+# the training subprocess running with nothing tracking it: invisible in the
+# UI, unkillable, holding the GPU, and its run dir free to be overwritten.
+
+def _write_pid_file(run_dir: Path, pid: int, run_name: str) -> None:
+    try:
+        create_time = None
+        try:
+            import psutil
+            create_time = psutil.Process(pid).create_time()
+        except Exception:
+            pass
+        (run_dir / PID_FILENAME).write_text(json.dumps({
+            "pid": pid,
+            # create_time pins the PID to THIS process so a recycled PID
+            # belonging to something unrelated is never reported or killed.
+            "create_time": create_time,
+            "run_name": run_name,
+            "started_at": time.time(),
+        }, indent=2))
+    except Exception as exc:
+        logger.warning("Could not write PID file for %s: %s", run_name, exc)
+
+
+def _read_pid_file(run_dir: Path) -> Optional[Dict[str, Any]]:
+    pf = run_dir / PID_FILENAME
+    if not pf.is_file():
+        return None
+    try:
+        meta = json.loads(pf.read_text())
+        meta["pid"] = int(meta.get("pid") or 0)
+        return meta
+    except Exception:
+        return None
+
+
+def _remove_pid_file(run_dir: Path) -> None:
+    try:
+        (run_dir / PID_FILENAME).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+_orphan_cache: Dict[str, Any] = {"at": 0.0, "runs": []}
+_ORPHAN_SCAN_TTL = 10.0
+
+
+def scan_orphaned_runs(force: bool = False) -> List[Dict[str, Any]]:
+    """Run dirs whose PID file points at a live process we don't own.
+
+    Cached for a few seconds — /api/training-status is polled continuously
+    and the scan touches the filesystem + process table. Stale PID files
+    (process gone, i.e. the child crashed alongside the backend) are
+    cleaned up as a side effect.
+    """
+    now = time.time()
+    if not force and now - _orphan_cache["at"] < _ORPHAN_SCAN_TTL:
+        return list(_orphan_cache["runs"])
+
+    orphans: List[Dict[str, Any]] = []
+    try:
+        root = get_config().get_path("models_fine_tuned")
+        active_pid = None
+        if _active and _active.process and _active.process.poll() is None:
+            active_pid = _active.process.pid
+        if root.exists():
+            for run_dir in root.iterdir():
+                if not run_dir.is_dir():
+                    continue
+                meta = _read_pid_file(run_dir)
+                if not meta or not meta["pid"]:
+                    continue
+                if meta["pid"] == active_pid:
+                    continue  # the run we're tracking, not an orphan
+                if pid_alive(meta["pid"], meta.get("create_time")):
+                    orphans.append({
+                        "run_name": run_dir.name,
+                        "pid": meta["pid"],
+                        "started_at": meta.get("started_at"),
+                    })
+                else:
+                    _remove_pid_file(run_dir)
+    except Exception as exc:
+        logger.warning("Orphan-run scan failed: %s", exc)
+
+    _orphan_cache["at"] = now
+    _orphan_cache["runs"] = orphans
+    return list(orphans)
+
+
+def kill_orphaned_run(run_name: str) -> Dict[str, Any]:
+    """Terminate an orphaned training process identified by its run dir."""
+    root = get_config().get_path("models_fine_tuned").resolve()
+    run_dir = (root / run_name).resolve()
+    try:
+        run_dir.relative_to(root)  # no traversal via run_name
+    except ValueError:
+        return {"error": f"Invalid run name: {run_name!r}"}
+    meta = _read_pid_file(run_dir)
+    if not meta or not meta["pid"]:
+        return {"error": f"No PID file for run '{run_name}'."}
+    if _active and _active.process and _active.process.poll() is None \
+            and _active.process.pid == meta["pid"]:
+        return {"error": "That run is actively tracked — use Stop Training instead."}
+    if not pid_alive(meta["pid"], meta.get("create_time")):
+        _remove_pid_file(run_dir)
+        return {"success": True, "message": "Process already gone; cleaned up its PID file."}
+    try:
+        import psutil
+        proc = psutil.Process(meta["pid"])
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except psutil.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    except Exception as exc:
+        return {"error": f"Could not kill PID {meta['pid']}: {exc}"}
+    _remove_pid_file(run_dir)
+    _orphan_cache["at"] = 0.0  # next status poll re-scans
+    logger.info("Killed orphaned training run '%s' (PID %d)", run_name, meta["pid"])
+    return {"success": True, "killed_pid": meta["pid"]}
+
+
 # --- Module-level singleton + public functions -----------------------------
 
 _active: Optional[SA3Trainer] = None
@@ -810,13 +971,21 @@ def start_training(config: Dict[str, Any]) -> Dict[str, Any]:
     with _lock:
         if _active and _active.status.get("is_training"):
             return {"error": "A training run is already in progress."}
-        _active = SA3Trainer(config)
-        return _active.start()
+        trainer = SA3Trainer(config)
+        # Claim the slot BEFORE releasing the lock. start() blocks on dataset
+        # staging and base-model prestaging (network fetches that can take
+        # minutes); holding the module lock through that made a second
+        # start request hang on the lock instead of failing fast, and froze
+        # every other locked operation behind the download.
+        trainer.status["is_training"] = True
+        trainer.status["status"] = "staging"
+        _active = trainer
+    return trainer.start()
 
 
 def get_training_status() -> Dict[str, Any]:
     if _active is None:
-        return {
+        status = {
             "is_training": False,
             "status": "idle",
             "message": "No training run has been started yet.",
@@ -826,7 +995,12 @@ def get_training_status() -> Dict[str, Any]:
             "checkpoints_saved": 0,
             "loss": None,
         }
-    return _active.get_status()
+    else:
+        status = _active.get_status()
+    # Surface training subprocesses a previous backend left running so the
+    # UI can warn and offer to kill them (POST /api/training/kill-orphan).
+    status["orphaned_runs"] = scan_orphaned_runs()
+    return status
 
 
 def stop_training() -> Dict[str, Any]:

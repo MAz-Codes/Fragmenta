@@ -114,26 +114,3 @@ class TrainingError(FragmentaError):
             message += f": {reason}"
         
         super().__init__(message, details)
-
-def map_common_exception(exception: Exception, context: str = None) -> FragmentaError:
-    
-    if isinstance(exception, FileNotFoundError):
-        if "model" in str(exception).lower():
-            return ModelNotFoundError("Unknown", str(exception))
-        else:
-            return ConfigurationError("file_path", "existing file", "missing file")
-    
-    elif isinstance(exception, PermissionError):
-        return ConfigurationError("permissions", "read/write access", "permission denied")
-    
-    elif isinstance(exception, ImportError):
-        return ConfigurationError("dependencies", "installed package", "missing dependency")
-    
-    elif isinstance(exception, ValueError):
-        return ValidationError("input_value", str(exception))
-    
-    else:
-        details = {"original_type": type(exception).__name__}
-        if context:
-            details["context"] = context
-        return FragmentaError(f"Unexpected error: {str(exception)}", details)

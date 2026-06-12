@@ -2768,9 +2768,13 @@ export const performancePanelStyles = {
             border: 'none',
             opacity: 0.9,
         },
+        // Unity (0 dB) tick. NOTE: numeric height <= 1 in MUI sx means a
+        // PERCENTAGE (1 -> 100%), which rendered the tick as a full-height
+        // bar overflowing the lane — use 2 (px) like the knob marks.
         '& .MuiSlider-mark': {
-            width: 6,
-            height: 1,
+            width: 10,
+            height: 2,
+            borderRadius: 1,
             bgcolor: 'text.disabled',
             opacity: 1,
         },
@@ -2980,6 +2984,31 @@ export const performanceChannelStyles = {
             },
         };
     },
+    sidechainBtn: (active) => (theme) => {
+        const c = theme.palette.info.main;
+        return {
+            width: perfTokens.height.sub,
+            height: perfTokens.height.sub,
+            // xs — "SC" is two glyphs in the same square M/S get for one.
+            fontSize: perfTokens.fontSize.xs,
+            fontWeight: 700,
+            borderRadius: 1,
+            color: active ? '#0c1018' : 'text.secondary',
+            backgroundColor: active ? `${c}F2` : 'transparent',
+            backgroundImage: active ? SHEEN_DARK : 'none',
+            border: '1px solid',
+            borderColor: active ? `${c}F2` : 'divider',
+            boxShadow: active ? RAISE_DARK : 'none',
+            '&:hover': {
+                backgroundColor: active ? c : `${c}33`,
+            },
+            '&.Mui-disabled': {
+                color: 'text.disabled',
+                borderColor: 'divider',
+                opacity: 0.4,
+            },
+        };
+    },
     promptBox: {
         display: 'flex',
         flexDirection: 'column',
@@ -3126,7 +3155,9 @@ export const performanceChannelStyles = {
         position: 'relative',
         height: 42,
         backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.6)' : 'rgba(0, 0, 0, 0.06)',
-        borderRadius: 1.5,
+        // Near-square: overflow:hidden + a visible radius clipped the
+        // DJ in/out handles when parked at the clip edges.
+        borderRadius: '2px',
         border: '1px solid',
         borderColor: theme.palette.divider,
         overflow: 'hidden',

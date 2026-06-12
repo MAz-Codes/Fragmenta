@@ -2,6 +2,8 @@ import React, { useMemo } from 'react';
 import { Paper, Box, Typography, LinearProgress, Grid, Alert } from '@mui/material';
 import { Activity as ActivityIcon } from 'lucide-react';
 import LossChart from './LossChart';
+import Tooltip from './Tooltip';
+import { TIPS } from '../tooltips';
 import { trainingMonitorStyles } from '../theme';
 
 /**
@@ -100,7 +102,9 @@ export default function TrainingMonitor({
 
             <Grid container spacing={2} sx={trainingMonitorStyles.metricsGrid}>
                 <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Step</Typography>
+                    <Tooltip title={TIPS.monitor.steps}>
+                        <Typography variant="body2" color="textSecondary" sx={{ width: 'fit-content' }}>Step</Typography>
+                    </Tooltip>
                     <Typography variant="body1" color="primary">
                         {totalSteps > 0 ? `${step} / ${totalSteps}` : `${step}`}
                     </Typography>
@@ -112,7 +116,9 @@ export default function TrainingMonitor({
                     </Typography>
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Checkpoints Saved</Typography>
+                    <Tooltip title={TIPS.monitor.checkpoints}>
+                        <Typography variant="body2" color="textSecondary" sx={{ width: 'fit-content' }}>Checkpoints Saved</Typography>
+                    </Tooltip>
                     <Typography variant="body1">{checkpointsSaved}</Typography>
                 </Grid>
                 <Grid item xs={12} sm={6}>
@@ -133,9 +139,11 @@ export default function TrainingMonitor({
 
             {lossPoints.length > 0 && (
                 <Box sx={trainingMonitorStyles.lossSection}>
-                    <Typography variant="body2" color="textSecondary" gutterBottom>
-                        <strong>Loss History</strong>
-                    </Typography>
+                    <Tooltip title={TIPS.monitor.lossChart}>
+                        <Typography variant="body2" color="textSecondary" gutterBottom sx={{ width: 'fit-content' }}>
+                            <strong>Loss History</strong>
+                        </Typography>
+                    </Tooltip>
                     <Box sx={trainingMonitorStyles.lossChartBox}>
                         <LossChart data={lossPoints} />
                     </Box>
@@ -152,9 +160,11 @@ export default function TrainingMonitor({
 
             {lossPoints.length === 0 && (trainingStatus?.is_training || status === 'training') && (
                 <Box sx={trainingMonitorStyles.lossSection}>
-                    <Typography variant="body2" color="textSecondary" gutterBottom>
-                        <strong>Loss History</strong>
-                    </Typography>
+                    <Tooltip title={TIPS.monitor.lossChart}>
+                        <Typography variant="body2" color="textSecondary" gutterBottom sx={{ width: 'fit-content' }}>
+                            <strong>Loss History</strong>
+                        </Typography>
+                    </Tooltip>
                     <Typography variant="caption" color="textSecondary">
                         Warming up — loss is logged periodically, so the first point
                         appears a little into the run (around step 50). The curve fills

@@ -18,10 +18,13 @@ import {
     Volume2 as VolumeIcon,
     VolumeX as MuteIcon,
     Shuffle as VariationIcon,
+    Repeat as LoopIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
+import { extractError } from '../utils/errors';
+import { faderPosToDb, faderDbToPos, FADER_MAX_DB } from '../utils/faderLaw';
 import {
     channelScope,
     putFragmentBlob,
@@ -44,12 +47,16 @@ const CHANNEL_COLORS = [
 // scales line up: -60 dB floor, 0 dB ceiling, default at -6 dB. The knob's
 // dB value is converted to linear before reaching the audio graph.
 const GAIN_DB_MIN = -60;
-const GAIN_DB_MAX = 0;
+// +6 dB boost headroom — the fader taper puts unity at ~80% of throw.
+const GAIN_DB_MAX = FADER_MAX_DB;
 const GAIN_DB_DEFAULT = 0;
 const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
-    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT },
+    // scale 'fader' → console-style position↔dB taper (faderLaw), same as
+    // the master fader. Without it the gain knob was linear-in-dB and a
+    // quarter-turn down already dropped to ~-15 dB.
+    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
     // Bipolar "DJ-filter" knob. -1..+1 with 0 = bypass. Negative side drives
     // the LPF cutoff down from 20 kHz → 20 Hz (kills highs). Positive side
     // drives the HPF cutoff up from 20 Hz → 20 kHz (kills lows). The two
@@ -84,11 +91,17 @@ export default function PerformanceChannel({
     onGenerate,
     canGenerate,
     onMuteSoloChange,
+    // Index of the channel that owns sidechain ducking, or null. Exclusive:
+    // when set, every other channel's sidechain button is grayed out.
+    sidechainOwner = null,
     onStateChange,
     onFormStateChange,
     initialFormState,
     maxDuration = 380,
     bpm = 120,
+    // False while the Performance tab is hidden (panel stays mounted via
+    // keepMounted) — pauses this channel's meter RAF loop.
+    panelActive = true,
 }) {
     const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
     const canvasRef = useRef(null);
@@ -112,6 +125,16 @@ export default function PerformanceChannel({
     const [bars, setBars] = useState(init.bars ?? 4);
     const [generating, setGenerating] = useState(false);
     const [loaded, setLoaded] = useState(false);
+    // Surfaced in the strip (item-level toast); generation/variation
+    // failures used to go to the console only — a live performer staring at
+    // the channel had no idea why nothing arrived.
+    const [channelError, setChannelError] = useState(null);
+    // Live mirror of `loaded` for async callbacks: makeOnBlob is created at
+    // generation START, so reading `loaded` directly inside it sees a stale
+    // false even after the user manually commits a fragment mid-generation —
+    // and the arriving blob would silently override their choice.
+    const loadedRef = useRef(false);
+    useEffect(() => { loadedRef.current = loaded; }, [loaded]);
     const [looping, setLooping] = useState(init.looping ?? true);
     const [muted, setMuted] = useState(init.muted ?? false);
     const [soloed, setSoloed] = useState(init.soloed ?? false);
@@ -128,6 +151,58 @@ export default function PerformanceChannel({
         return merged;
     });
 
+    // DJ-style in/out points over the loaded clip, normalized 0..1.
+    // Mirrored into the strip (which drives the actual loop bounds / start
+    // offset) and persisted with the channel form state so a trimmed clip
+    // survives reload. Reset to full whenever DIFFERENT audio is loaded.
+    const [trim, setTrimState] = useState(() => {
+        const ts = Number(init.trimStart);
+        const te = Number(init.trimEnd);
+        return (Number.isFinite(ts) && Number.isFinite(te) && te > ts)
+            ? { start: Math.max(0, ts), end: Math.min(1, te) }
+            : { start: 0, end: 1 };
+    });
+    const trimRef = useRef(trim);
+    useEffect(() => { trimRef.current = trim; }, [trim]);
+    const applyTrim = useCallback((next) => {
+        setTrimState(next);
+        strip?.setRegion(next.start, next.end);
+    }, [strip]);
+    const resetTrim = useCallback(() => {
+        // loadBufferFromBlob already reset the strip's region; this re-syncs
+        // the UI (and is harmless when called redundantly).
+        applyTrim({ start: 0, end: 1 });
+    }, [applyTrim]);
+    // Min handle gap: at least 50 ms of audio (or 2% when nothing is loaded).
+    const minTrimGap = useCallback(() => {
+        const dur = strip?.buffer?.duration || 0;
+        return dur > 0 ? Math.max(0.005, Math.min(0.5, 0.05 / dur)) : 0.02;
+    }, [strip]);
+    const waveWrapRef = useRef(null);
+    const startTrimDrag = (which) => (e) => {
+        if (!loaded) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrap = waveWrapRef.current;
+        if (!wrap) return;
+        const rect = wrap.getBoundingClientRect();
+        const move = (ev) => {
+            const x = (ev.clientX - rect.left) / Math.max(1, rect.width);
+            const gap = minTrimGap();
+            const cur = trimRef.current;
+            const next = which === 'start'
+                ? { start: Math.max(0, Math.min(x, cur.end - gap)), end: cur.end }
+                : { start: cur.start, end: Math.min(1, Math.max(x, cur.start + gap)) };
+            applyTrim(next);
+        };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+    };
+
     // Per-channel rolling fragment history. Each fragment:
     //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
     // Oldest-first. Capped at FRAGMENT_CAP via FIFO eviction with star
@@ -142,6 +217,20 @@ export default function PerformanceChannel({
 
     // Stop any active cue audition when the channel unmounts.
     useEffect(() => () => stopCue(), []);
+
+    // Revoke this channel's fragment object URLs on unmount. Preset loads and
+    // Fresh Start force a full panel remount, and the remounted channel mints
+    // NEW URLs while re-hydrating from IndexedDB — without this cleanup every
+    // remount leaked the previous generation of URLs (and their buffers).
+    const fragmentsRef = useRef(fragments);
+    useEffect(() => { fragmentsRef.current = fragments; }, [fragments]);
+    useEffect(() => () => {
+        fragmentsRef.current.forEach((f) => {
+            if (f.audioUrl?.startsWith('blob:')) {
+                try { URL.revokeObjectURL(f.audioUrl); } catch { /* ignore */ }
+            }
+        });
+    }, []);
 
     // Poll /api/generation-progress while a generation is in flight so the
     // Generate pill renders a real fill bar instead of a vague spinner. The
@@ -186,9 +275,11 @@ export default function PerformanceChannel({
             prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
             fragments: fragmentsMeta,
             committedFragmentId,
+            trimStart: trim.start,
+            trimEnd: trim.end,
         });
     }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
-        fragments, committedFragmentId, index, onFormStateChange]);
+        fragments, committedFragmentId, trim, index, onFormStateChange]);
 
     // Hydrate fragments on mount from the session metadata + IDB blobs. Runs
     // once, tolerates missing blobs (skips the entry), and rewinds the
@@ -242,6 +333,7 @@ export default function PerformanceChannel({
             setFragments(hydrated);
             if (persistedCommittedId && hydrated.some(t => t.id === persistedCommittedId)) {
                 setCommittedFragmentId(persistedCommittedId);
+                loadedRef.current = true;
                 setLoaded(true);
                 onStateChange?.(index, { loaded: true });
             }
@@ -270,6 +362,7 @@ export default function PerformanceChannel({
     }, [maxDuration, bpm]);
 
     useEffect(() => {
+        if (!panelActive) return undefined;
         const tick = () => {
             const el = meterRef.current;
             if (el && strip) {
@@ -282,7 +375,7 @@ export default function PerformanceChannel({
         return () => {
             if (meterRafRef.current) cancelAnimationFrame(meterRafRef.current);
         };
-    }, [strip]);
+    }, [strip, panelActive]);
 
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
@@ -304,6 +397,9 @@ export default function PerformanceChannel({
         if (!fragment) return;
         autoLoadDoneRef.current = true;
         strip.loadBlob(fragment.blob).then(() => {
+            // Restore the persisted in/out points for the restored clip —
+            // the decode reset the strip's region to full.
+            strip.setRegion(trimRef.current.start, trimRef.current.end);
             requestAnimationFrame(drawWave);
         }).catch(err => {
             console.warn(`Channel ${index + 1} auto-load failed:`, err);
@@ -396,9 +492,11 @@ export default function PerformanceChannel({
         // (first-ever fragment) — harmless since nothing is playing — so the
         // user still gets a ready-to-play clip on a fresh channel. To start a
         // newly generated fragment, pick it from the list (handleCommitFragment).
-        if (i === 0 && !loaded) {
+        if (i === 0 && !loadedRef.current) {
             await strip.loadBlob(blob);
+            resetTrim();
             setCommittedFragmentId(fragment.id);
+            loadedRef.current = true;
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
             requestAnimationFrame(drawWave);
@@ -410,6 +508,7 @@ export default function PerformanceChannel({
         const inBarsMode = durationMode === 'bars';
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         setGenerating(true);
+        setChannelError(null);
         // Stop any in-flight cue audition so the old preview doesn't keep
         // playing while we generate the new fragment.
         stopCue();
@@ -432,6 +531,7 @@ export default function PerformanceChannel({
             });
         } catch (err) {
             console.error(`Channel ${index + 1} generate failed:`, err);
+            setChannelError(extractError(err, 'Generation failed'));
         } finally {
             setGenerating(false);
         }
@@ -450,6 +550,7 @@ export default function PerformanceChannel({
         const effectiveDuration = inBarsMode ? secondsFromBars : duration;
         const promptSnap = (prompt || '').trim() || src.prompt || 'variation';
         setGenerating(true);
+        setChannelError(null);
         stopCue();
         setAuditioningFragmentId(null);
         try {
@@ -466,6 +567,7 @@ export default function PerformanceChannel({
             });
         } catch (err) {
             console.error(`Channel ${index + 1} variation failed:`, err);
+            setChannelError(extractError(err, 'Variation failed'));
         } finally {
             setGenerating(false);
         }
@@ -509,11 +611,13 @@ export default function PerformanceChannel({
         // when this fragment's buffer is already loaded.
         if (!sameFragment) {
             await strip.loadBufferFromBlob(fragment.blob);
+            resetTrim();
             setCommittedFragmentId(fragmentId);
         }
         // Mark loaded so the play button enables (covers preset/hydrated flows
         // where the first commit happens here rather than via generate).
         if (!loaded) {
+            loadedRef.current = true;
             setLoaded(true);
             onStateChange?.(index, { loaded: true });
         }
@@ -629,6 +733,16 @@ export default function PerformanceChannel({
         onMuteSoloChange(index, { solo: next });
     };
 
+    // Sidechain state is owned by the panel (it's exclusive across channels),
+    // so unlike mute/solo there is no local mirror — just derive from the prop.
+    const sidechained = sidechainOwner === index;
+    const sidechainLocked = sidechainOwner !== null && sidechainOwner !== index;
+
+    const handleSidechainToggle = () => {
+        if (sidechainLocked) return;
+        onMuteSoloChange(index, { sidechain: !sidechained });
+    };
+
     const handleKnob = (key, value) => {
         setKnobs(prev => ({ ...prev, [key]: value }));
         if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
@@ -685,7 +799,7 @@ export default function PerformanceChannel({
                                 size="small"
                                 aria-label={looping ? 'Loop on' : 'Loop off'}
                             >
-                                L
+                                <LoopIcon size={14} strokeWidth={2.25} />
                             </IconButton>
                         </Tooltip>
                     </MidiMappable>
@@ -699,6 +813,22 @@ export default function PerformanceChannel({
                     <MidiMappable id={ctrlId('solo')} label={ctrlLabel('Solo')} kind="trigger" onChange={handleSoloToggle}>
                         <Tooltip title={TIPS.channel.solo}>
                             <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
+                        </Tooltip>
+                    </MidiMappable>
+                    <MidiMappable id={ctrlId('sidechain')} label={ctrlLabel('Sidechain')} kind="trigger" onChange={handleSidechainToggle}>
+                        <Tooltip title={TIPS.channel.sidechain(sidechained, sidechainLocked)}>
+                            {/* span — MUI tooltips need a focusable wrapper around disabled buttons */}
+                            <span>
+                                <IconButton
+                                    size="small"
+                                    onClick={handleSidechainToggle}
+                                    disabled={sidechainLocked}
+                                    sx={styles.sidechainBtn(sidechained)}
+                                    aria-label={sidechained ? 'Sidechain on' : 'Sidechain off'}
+                                >
+                                    SC
+                                </IconButton>
+                            </span>
                         </Tooltip>
                     </MidiMappable>
                 </Box>
@@ -885,13 +1015,35 @@ export default function PerformanceChannel({
                         </Tooltip>
                     </MidiMappable>
                 </Box>
+
+                {channelError && (
+                    <Typography
+                        onClick={() => setChannelError(null)}
+                        title="Dismiss"
+                        sx={{
+                            fontSize: perfTokens.fontSize.xs,
+                            color: 'error.main',
+                            lineHeight: 1.3,
+                            mt: 0.5,
+                            cursor: 'pointer',
+                            overflow: 'hidden',
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                        }}
+                    >
+                        {channelError}
+                    </Typography>
+                )}
             </Box>
 
             <Box
                 onDragEnter={handleWaveDragEnter}
+                ref={waveWrapRef}
                 onDragOver={handleWaveDragOver}
                 onDragLeave={handleWaveDragLeave}
                 onDrop={handleWaveDrop}
+                onDoubleClick={() => loaded && resetTrim()}
                 sx={[
                     styles.waveformWrap,
                     dropActive && {
@@ -912,6 +1064,74 @@ export default function PerformanceChannel({
                     <Typography sx={styles.waveformPlaceholder}>
                         {dropActive ? 'Drop to load' : 'Waveform'}
                     </Typography>
+                )}
+                {/* DJ-style in/out points: drag the brackets to choose where
+                    the clip starts and stops (loops cycle the region —
+                    bounds retarget live while playing). Double-click the
+                    waveform to reset to the full clip. */}
+                {loaded && (
+                    <>
+                        <Box sx={{
+                            position: 'absolute', top: 0, bottom: 0, left: 0,
+                            width: `${trim.start * 100}%`,
+                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                            pointerEvents: 'none',
+                        }} />
+                        <Box sx={{
+                            position: 'absolute', top: 0, bottom: 0, right: 0,
+                            width: `${(1 - trim.end) * 100}%`,
+                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
+                            pointerEvents: 'none',
+                        }} />
+                        <Tooltip title="Start point — drag to set where the clip launches. Double-click the waveform to reset." placement="top" enterDelay={600}>
+                            <Box
+                                onPointerDown={startTrimDrag('start')}
+                                sx={{
+                                    position: 'absolute', top: 0, bottom: 0,
+                                    left: `calc(${trim.start * 100}% - 5px)`,
+                                    width: 10,
+                                    cursor: 'ew-resize',
+                                    touchAction: 'none',
+                                    zIndex: 2,
+                                    display: 'flex', justifyContent: 'center',
+                                    '&::before': {
+                                        content: '""', width: 2,
+                                        height: '100%', backgroundColor: color,
+                                    },
+                                    '&::after': {
+                                        content: '""', position: 'absolute',
+                                        top: 0, left: 4, width: 5, height: 7,
+                                        backgroundColor: color,
+                                        borderRadius: '0 0 2px 0',
+                                    },
+                                }}
+                            />
+                        </Tooltip>
+                        <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
+                            <Box
+                                onPointerDown={startTrimDrag('end')}
+                                sx={{
+                                    position: 'absolute', top: 0, bottom: 0,
+                                    left: `calc(${trim.end * 100}% - 5px)`,
+                                    width: 10,
+                                    cursor: 'ew-resize',
+                                    touchAction: 'none',
+                                    zIndex: 2,
+                                    display: 'flex', justifyContent: 'center',
+                                    '&::before': {
+                                        content: '""', width: 2,
+                                        height: '100%', backgroundColor: color,
+                                    },
+                                    '&::after': {
+                                        content: '""', position: 'absolute',
+                                        bottom: 0, right: 4, width: 5, height: 7,
+                                        backgroundColor: color,
+                                        borderRadius: '2px 0 0 0',
+                                    },
+                                }}
+                            />
+                        </Tooltip>
+                    </>
                 )}
             </Box>
 
@@ -982,23 +1202,30 @@ export default function PerformanceChannel({
                 {KNOB_DEFS.map((k) => {
                     const isLog = k.scale === 'log';
                     const isBipolar = k.scale === 'bipolar';
-                    // For log knobs, the slider drives a 0..1 position and we
-                    // convert to/from the underlying value (Hz) on the audio
-                    // boundary. The knob value stored in state stays in the
-                    // domain unit (Hz here) so persistence and MIDI keep working.
+                    const isFader = k.scale === 'fader';
+                    // log + fader knobs drive a 0..1 slider position and
+                    // convert to/from the underlying value at the boundary;
+                    // the value stored in state stays in the domain unit
+                    // (Hz for log, dB for fader) so persistence + MIDI keep
+                    // working unchanged.
+                    const usesPos = isLog || isFader;
                     const valueToPos = isLog
                         ? (v) => Math.log(Math.max(v, k.min) / k.min) / Math.log(k.max / k.min)
-                        : (v) => v;
+                        : isFader
+                            ? faderDbToPos
+                            : (v) => v;
                     const posToValue = isLog
                         ? (p) => k.min * Math.pow(k.max / k.min, p)
-                        : (v) => v;
+                        : isFader
+                            ? faderPosToDb
+                            : (v) => v;
                     return (
                         <Box key={k.key} sx={styles.knobCell}>
                             <MidiMappable
                                 id={ctrlId(k.key)}
                                 label={ctrlLabel(k.label)}
                                 kind="continuous"
-                                curve={isLog ? 'log' : 'linear'}
+                                curve={isLog ? 'log' : isFader ? 'fader' : 'linear'}
                                 min={k.min}
                                 max={k.max}
                                 value={knobs[k.key]}
@@ -1009,12 +1236,13 @@ export default function PerformanceChannel({
                                     orientation="vertical"
                                     value={valueToPos(knobs[k.key])}
                                     onChange={(_, v) => handleKnob(k.key, posToValue(v))}
-                                    min={isLog ? 0 : k.min}
-                                    max={isLog ? 1 : k.max}
-                                    step={isLog ? 0.001 : k.step}
+                                    min={usesPos ? 0 : k.min}
+                                    max={usesPos ? 1 : k.max}
+                                    step={usesPos ? 0.001 : k.step}
                                     size="small"
                                     track={isBipolar ? false : undefined}
-                                    marks={isBipolar ? [{ value: 0 }] : undefined}
+                                    marks={isBipolar ? [{ value: 0 }]
+                                        : isFader ? [{ value: faderDbToPos(0) }] : undefined}
                                     sx={{
                                         ...styles.knobSlider(color, k.key === 'gain'),
                                         ...(isBipolar && {
@@ -1027,6 +1255,24 @@ export default function PerformanceChannel({
                                             },
                                             '& .MuiSlider-markActive': {
                                                 backgroundColor: 'text.secondary',
+                                                opacity: 0.7,
+                                            },
+                                        }),
+                                        // Subtle unity (0 dB) tick on the gain knob.
+                                        // height must be > 1: numeric <= 1 in
+                                        // MUI sx means a percentage (1 = 100%),
+                                        // which drew a full-height bar past the
+                                        // top of the knob lane.
+                                        ...(isFader && {
+                                            '& .MuiSlider-mark': {
+                                                width: 10,
+                                                height: 2,
+                                                borderRadius: 1,
+                                                backgroundColor: 'text.disabled',
+                                                opacity: 0.7,
+                                            },
+                                            '& .MuiSlider-markActive': {
+                                                backgroundColor: 'text.disabled',
                                                 opacity: 0.7,
                                             },
                                         }),

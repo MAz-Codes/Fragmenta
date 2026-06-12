@@ -154,36 +154,3 @@ def handle_api_error(func):
             )
     
     return wrapper
-
-def paginate_response(
-    data: List[Any],
-    page: int = 1,
-    per_page: int = 10,
-    total: int = None
-) -> Dict[str, Any]:
-    if total is None:
-        total = len(data)
-    
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
-    page_data = data[start_idx:end_idx]
-    
-    total_pages = (total + per_page - 1) // per_page
-    
-    meta = {
-        "pagination": {
-            "page": page,
-            "per_page": per_page,
-            "total_items": total,
-            "total_pages": total_pages,
-            "has_next": page < total_pages,
-            "has_prev": page > 1,
-            "next_page": page + 1 if page < total_pages else None,
-            "prev_page": page - 1 if page > 1 else None
-        }
-    }
-    
-    return APIResponse.success(
-        data=page_data,
-        meta=meta
-    )

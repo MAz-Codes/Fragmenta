@@ -40,6 +40,8 @@ import {
     Circle as RecordIcon,
 } from 'lucide-react';
 import api from '../api';
+import { extractError } from '../utils/errors';
+import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
@@ -72,7 +74,9 @@ const RECORD_COLOR = '#E5484D';   // record red
 const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
 const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
-const MASTER_DB_MAX = 0;
+// +6 dB of boost headroom above unity; the fader taper (faderLaw) puts unity
+// at ~80% of throw, not the very top.
+const MASTER_DB_MAX = FADER_MAX_DB;
 const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
@@ -99,7 +103,8 @@ const ampToDb = (amp) => (amp <= 0 ? -Infinity : 20 * Math.log10(amp));
 const formatDb = (db) => {
     if (!isFinite(db) || db <= METER_FLOOR_DB) return '−∞';
     if (Math.abs(db) < 0.05) return '0.0';
-    return db.toFixed(1);
+    // Explicit + in the boost range so "3.0" can't read as a cut.
+    return (db > 0 ? '+' : '') + db.toFixed(1);
 };
 
 export default function PerformancePanel(props) {
@@ -140,8 +145,14 @@ function PerformancePanelInner({
     onSeedValueChange,
     onPresetLoaded,
     onOpenCheckpointManager,
+    // False while another tab is shown (the panel stays mounted via
+    // keepMounted). Used to pause the meter RAF loops, which otherwise run
+    // at full frame rate behind every other tab.
+    active = true,
 }) {
-    const { session, updateGlobal, updateChannel } = usePerformanceSession(CHANNEL_COUNT);
+    const {
+        session, updateGlobal, updateChannel, cancelPendingPersist,
+    } = usePerformanceSession(CHANNEL_COUNT);
 
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
@@ -161,6 +172,11 @@ function PerformancePanelInner({
     const wasPlayingRef = useRef(false);
     const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
+    // Mirror of peakLabelDb for the RAF tick's 0.5 dB hysteresis gate. The
+    // tick is created once, so reading the state variable directly would
+    // compare against a permanently stale closure value — making the gate
+    // pass every frame and re-render the whole panel at 60 fps.
+    const peakLabelDbRef = useRef(METER_FLOOR_DB);
     const [channelStates, setChannelStates] = useState(() =>
         Array.from({ length: CHANNEL_COUNT }, () => ({ loaded: false, playing: false }))
     );
@@ -345,6 +361,10 @@ function PerformancePanelInner({
             restoreArmTimerRef.current = setTimeout(() => setRestoreArmed(false), 3000);
             return;
         }
+        // Kill any queued (debounced) session write FIRST — the IDB clears
+        // below take long enough for it to fire and re-persist the old
+        // session over the just-cleared key, undoing the restore.
+        cancelPendingPersist();
         clearPerformanceSession();
         clearMidiConfig();
         // Drop every channel's fragment blobs from IDB so a fresh start is
@@ -361,7 +381,13 @@ function PerformancePanelInner({
     const handleSaveAs = async () => {
         const name = saveAsName.trim();
         if (!name) return;
-        savePreset(name, session);
+        if (!savePreset(name, session)) {
+            setError(
+                `Could not save preset "${name}" — browser storage is full. `
+                + 'Delete old presets or clear some fragments and try again.'
+            );
+            return;
+        }
         // Copy each channel's session-scope blobs into the preset-scope so
         // the preset's fragments survive overwrites of the live session. Done
         // after the metadata save so a quota failure here still leaves a
@@ -380,6 +406,10 @@ function PerformancePanelInner({
     };
 
     const handleLoadPreset = async (name) => {
+        // Same race as Restore Defaults: a pending debounced persist firing
+        // during the IDB copies below would overwrite the preset payload we
+        // just wrote with the old session. Cancel it before touching the key.
+        cancelPendingPersist();
         if (!loadPresetIntoSession(name)) return;
         // Swap the IDB session-scope blobs to match the loaded preset's
         // metadata. MUST complete before onPresetLoaded triggers remount —
@@ -486,9 +516,20 @@ function PerformancePanelInner({
     useEffect(() => {
         setEngineReady(true);
         const engine = engineRef.current;
+        return () => {
+            engine.dispose();
+            engineRef.current = null;
+        };
+    }, []);
 
+    // Master meter loop. Separate from the engine-lifecycle effect so it can
+    // pause while the Performance tab is hidden (keepMounted leaves the panel
+    // mounted behind other tabs).
+    useEffect(() => {
+        if (!active) return undefined;
         const tick = () => {
             const now = performance.now();
+            const engine = engineRef.current;
             const peakAmp = engine ? engine.getMasterPeak() : 0;
             const instantDb = ampToDb(peakAmp);
             const hold = peakHoldRef.current;
@@ -504,19 +545,17 @@ function PerformancePanelInner({
                 const pct = ((displayDb - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
                 fill.style.height = `${Math.max(0, Math.min(100, pct))}%`;
             }
-            if (Math.abs(displayDb - peakLabelDb) > 0.5) {
+            if (Math.abs(displayDb - peakLabelDbRef.current) > 0.5) {
+                peakLabelDbRef.current = displayDb;
                 setPeakLabelDb(displayDb);
             }
             meterRafRef.current = requestAnimationFrame(tick);
         };
         meterRafRef.current = requestAnimationFrame(tick);
-
         return () => {
             if (meterRafRef.current) cancelAnimationFrame(meterRafRef.current);
-            engine.dispose();
-            engineRef.current = null;
         };
-    }, []);
+    }, [active]);
 
     const handleMasterChange = (_, value) => {
         setMasterDb(value);
@@ -537,6 +576,12 @@ function PerformancePanelInner({
                 const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
                 setRecordingName(`performance_${stamp}`);
                 setPendingRecording(result);
+                if (result.truncated) {
+                    setError(
+                        'The recording hit the in-memory capture limit and was '
+                        + 'truncated — everything up to that point is intact.'
+                    );
+                }
             } else {
                 setError('Nothing was captured — the recording was empty.');
             }
@@ -564,11 +609,11 @@ function PerformancePanelInner({
             setPendingRecording(null);
             setRecordingName('');
         } catch (e) {
-            setError(
-                e?.response?.data?.error
-                || e?.response?.data?.message
-                || 'Failed to save the recording.'
-            );
+            // extractError digs the message out of both backend error shapes
+            // ({error: "str"} and the APIResponse {error: {message, …}}
+            // envelope) — setting the raw envelope object here crashed the
+            // render ("Objects are not valid as a React child").
+            setError(extractError(e, 'Failed to save the recording.'));
         } finally {
             setSavingRecording(false);
         }
@@ -706,8 +751,7 @@ function PerformancePanelInner({
                 await api.post('/api/link/enable');
                 setLinkEnabled(true);
             } catch (err) {
-                const msg = err?.response?.data?.error || err?.response?.data?.detail || err.message || 'Install failed';
-                setError(`Link install failed: ${msg}`);
+                setError(`Link install failed: ${extractError(err, 'Install failed')}`);
             } finally {
                 setLinkInstalling(false);
             }
@@ -724,10 +768,8 @@ function PerformancePanelInner({
                 setLinkEnabled(true);
             }
         } catch (err) {
-            const status = err?.response?.status;
-            const msg = err?.response?.data?.error || err.message || 'Link toggle failed';
-            if (status === 503) setLinkAvailable(false);
-            setError(msg);
+            if (err?.response?.status === 503) setLinkAvailable(false);
+            setError(extractError(err, 'Link toggle failed'));
         }
     }, [linkEnabled, linkAvailable]);
 
@@ -821,10 +863,14 @@ function PerformancePanelInner({
                 // distilled models. Steps default to 8 for distilled, 50 for
                 // base — only send the override when we're on base.
                 ...(isDistilled ? {} : { steps, cfg_scale: 7.0 }),
-                // LoRA stacking (Phase 4): only attach when the user picked
-                // a LoRA AND the active model is a *-base variant (the only
-                // architecturally valid target).
-                ...(selectedLora && isSA3Base && !isDistilled
+                // LoRA stacking (Phase 4). TRAINING targets *-base only,
+                // but at inference a base-trained LoRA also applies to its
+                // distilled sibling (same backbone, only the CFG state
+                // differs) — the backend gate and the main Generation tab
+                // both already work that way. This used to skip distilled
+                // models, silently ignoring the LoRA the picker said was
+                // active.
+                ...(selectedLora && isSA3Base
                     ? { loras: [{ path: selectedLora, strength: loraMultiplier }] }
                     : {}),
                 ...(alignBars && alignBpm ? { align_bars: alignBars, align_bpm: alignBpm } : {}),
@@ -858,11 +904,30 @@ function PerformancePanelInner({
     // max_duration_sec in the Checkpoint Manager catalog).
     const maxDuration = isSmallModel ? 120 : 380;
 
+    // Which channel (if any) owns sidechain ducking. Lifted here because it
+    // is exclusive across channels: the owner's button is lit, every other
+    // channel's button is grayed out. Deliberately not persisted — it's a
+    // live performance gesture, so it resets off on reload.
+    const [sidechainOwner, setSidechainOwner] = useState(null);
+
     const handleMuteSoloChange = (index, change) => {
         const engine = engineRef.current;
         if (!engine) return;
         if ('mute' in change) engine.setMute(index, change.mute);
         if ('solo' in change) engine.setSolo(index, change.solo);
+        if ('sidechain' in change) {
+            // Exclusive ownership. The buttons on other channels are disabled,
+            // but a learned MIDI trigger can still fire — ignore those.
+            if (change.sidechain) {
+                if (sidechainOwner === null || sidechainOwner === index) {
+                    engine.setSidechain(index, true);
+                    setSidechainOwner(index);
+                }
+            } else if (sidechainOwner === index) {
+                engine.setSidechain(index, false);
+                setSidechainOwner(null);
+            }
+        }
     };
 
     const channels = useMemo(() => {
@@ -887,8 +952,7 @@ function PerformancePanelInner({
             }
             onRefreshModels?.();
         } catch (err) {
-            const msg = err?.response?.data?.error || err.message || 'Delete failed';
-            setError(`Failed to delete "${modelName}": ${msg}`);
+            setError(`Failed to delete "${modelName}": ${extractError(err, 'Delete failed')}`);
         }
     };
 
@@ -907,8 +971,7 @@ function PerformancePanelInner({
             if (paths.includes(selectedLora)) onSelectLora?.('');
             onRefreshModels?.();
         } catch (err) {
-            const msg = err?.response?.data?.error || err.message || 'Delete failed';
-            setError(`Failed to delete LoRA "${loraName}": ${msg}`);
+            setError(`Failed to delete LoRA "${loraName}": ${extractError(err, 'Delete failed')}`);
         }
     };
 
@@ -1524,11 +1587,13 @@ function PerformancePanelInner({
                             onGenerate={generateForChannel}
                             canGenerate={Boolean(selectedModel)}
                             onMuteSoloChange={handleMuteSoloChange}
+                            sidechainOwner={sidechainOwner}
                             onStateChange={handleChannelStateChange}
                             onFormStateChange={handleChannelFormChange}
                             initialFormState={session.channels[i]}
                             maxDuration={maxDuration}
                             bpm={bpm}
+                            panelActive={active}
                         />
                     ))}
                 </Box>
@@ -1559,6 +1624,7 @@ function PerformancePanelInner({
                                 id="master.fader"
                                 label="Master Fader"
                                 kind="continuous"
+                                curve="fader"
                                 min={MASTER_DB_MIN}
                                 max={MASTER_DB_MAX}
                                 value={masterDb}
@@ -1578,11 +1644,17 @@ function PerformancePanelInner({
                             >
                                 <Slider
                                     orientation="vertical"
-                                    value={masterDb}
-                                    onChange={handleMasterChange}
-                                    min={MASTER_DB_MIN}
-                                    max={MASTER_DB_MAX}
-                                    step={0.1}
+                                    // Slider travels in tapered POSITION space
+                                    // (0..1); the dB value rides through
+                                    // faderLaw so unity sits ~80% up with
+                                    // boost above. handleMasterChange stays in
+                                    // dB (readout, MIDI, engine unchanged).
+                                    value={faderDbToPos(masterDb)}
+                                    onChange={(_, pos) => handleMasterChange(null, faderPosToDb(pos))}
+                                    min={0}
+                                    max={1}
+                                    step={0.002}
+                                    marks={[{ value: FADER_UNITY_POS }]}
                                     sx={styles.masterFader(MASTER_COLOR)}
                                 />
                             </MidiMappable>

@@ -9,6 +9,7 @@ import {
     Button,
     Checkbox,
     Chip,
+    CircularProgress,
     Dialog,
     DialogActions,
     DialogContent,
@@ -54,8 +55,10 @@ import {
     Scissors as ScissorsIcon,
     Music as MusicIcon,
     Activity as HealthIcon,
+    X as CloseIcon,
 } from 'lucide-react';
 import api from '../api';
+import { extractError } from '../utils/errors';
 import { appStyles } from '../theme';
 
 /**
@@ -87,6 +90,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     const [errorCode, setErrorCode] = useState('');
     const [errorExtra, setErrorExtra] = useState(null);
     const [annotateJob, setAnnotateJob] = useState(null);
+    // True from the moment an annotate button is clicked until the POST
+    // resolves. The POST is not instant — on the Rich tier it blocks while
+    // the CLAP model loads (many seconds on first run) — and without this
+    // flag the user got zero feedback until the progress bar showed up.
+    const [annotateStarting, setAnnotateStarting] = useState(false);
     const [notice, setNotice] = useState(null);  // { severity, message } | null
     // Phase 6 — pre-encoded latents
     const [preEncodeJob, setPreEncodeJob] = useState(null);
@@ -99,7 +107,17 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
     const pollHandleRef = useRef(null);
     const preEncodePollRef = useRef(null);
+    // Cancellation token for the self-rescheduling poll chains. Clearing the
+    // pending timeout on project switch isn't enough: a poll request that is
+    // already in flight resolves AFTER the cleanup, setState's the OLD
+    // project's job onto the new project's UI, and re-arms its chain with the
+    // captured old name — two pollers then run forever. Bumping the epoch
+    // makes the resolved callback drop its result instead.
+    const pollEpochRef = useRef(0);
     const isAnnotating = annotateJob?.state === 'running';
+    // Buttons gray out for the whole click → POST → running window, not just
+    // once the backend reports the job.
+    const annotateBusy = annotateStarting || isAnnotating;
     const isPreEncoding = preEncodeJob?.state === 'running' || preEncodeJob?.state === 'queued';
 
     // --- Multi-row selection (for bulk Slice) -----------------------------
@@ -201,8 +219,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     useEffect(() => { refreshProjects(); }, [refreshProjects]);
 
     const pollAnnotateStatus = useCallback(async function poll(name) {
+        const epoch = pollEpochRef.current;
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/annotate/status`);
+            if (epoch !== pollEpochRef.current) return;  // project switched mid-flight
             setAnnotateJob(data.job);
             if (data.job.state === 'done') {
                 await refreshProject(name);
@@ -218,14 +238,18 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             if (data.job.state === 'running') {
                 pollHandleRef.current = window.setTimeout(() => poll(name), 500);
             }
-        } catch (e) { setError(extractError(e, 'Status poll failed')); }
+        } catch (e) {
+            if (epoch === pollEpochRef.current) setError(extractError(e, 'Status poll failed'));
+        }
     }, [refreshProject]);
 
     // Phase 6 — pre-encode polling. Same survives-tab-switch shape as the
     // annotate poller above.
     const pollPreEncodeStatus = useCallback(async function poll(name) {
+        const epoch = pollEpochRef.current;
         try {
             const { data } = await api.get(`/api/projects/${encodeURIComponent(name)}/pre-encode/status`);
+            if (epoch !== pollEpochRef.current) return;  // project switched mid-flight
             setPreEncodeJob(data.job);
             if (data.job.state === 'complete') {
                 refreshProject(name);
@@ -255,6 +279,9 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             setPreEncodeJob(null);
         }
         return () => {
+            // Invalidate in-flight poll promises (they check the epoch on
+            // resolve) in addition to clearing the scheduled timeouts.
+            pollEpochRef.current += 1;
             if (pollHandleRef.current) {
                 window.clearTimeout(pollHandleRef.current);
                 pollHandleRef.current = null;
@@ -282,21 +309,42 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         setSelectedName(nextName);
     }
 
-    async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
+    function handleCloseProject() {
+        // Unload the current project — nothing on disk is touched. The
+        // workbench returns to the empty no-project state.
         if (!project) return;
+        if (project.dirty || project.has_unsaved_changes) {
+            const ok = window.confirm(
+                `“${project.name}” has unsaved or uncommitted changes. Close anyway? They'll stay in memory until you reload the project — but a backend restart will lose them.`,
+            );
+            if (!ok) return;
+        }
+        stopPlayback();
+        setSelectedName('');
+        try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
+    }
+
+    async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
+        if (!project || annotateBusy) return;
         setError(''); setErrorCode(''); setErrorExtra(null);
+        setAnnotateStarting(true);
         try {
-            await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
+            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/annotate`, {
                 tier,
                 scope: scope ?? 'all',
                 skip_existing: opts.skip_existing ?? skipExisting,
             });
+            // The 202 response carries the job snapshot — seed it directly so
+            // the progress bar appears now instead of after the first poll.
+            if (data?.job) setAnnotateJob(data.job);
             pollAnnotateStatus(project.name);
         } catch (e) {
             const body = e?.response?.data || {};
             setError(extractError(e, 'Failed to start annotation'));
             setErrorCode(body.code || '');
             setErrorExtra(body.install_command ? { install_command: body.install_command } : null);
+        } finally {
+            setAnnotateStarting(false);
         }
     }
 
@@ -391,7 +439,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         if (!name) return;
         setConfirm({
             title: 'Delete project',
-            body: `Permanently delete project “${name}”? Audio files, sidecars, and any drafts will be removed from disk.`,
+            body: `Permanently delete project “${name}”? The project folder (audio copies/symlinks, sidecars, drafts) will be removed from disk. Original source files outside the project are never touched.`,
             warning: 'This cannot be undone.',
             confirmLabel: 'Delete',
             busyLabel: 'Deleting…',
@@ -466,7 +514,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
     async function handleClipDelete(fileName) {
         if (!project) return;
-        if (!window.confirm(`Remove ${fileName} from this project? (Deletes the audio file from disk immediately — cannot be discarded back.)`)) return;
+        if (!window.confirm(`Remove ${fileName} from this project? Only the project's copy (or symlink) is deleted — the original source file is never touched. This is immediate and cannot be discarded back.`)) return;
         try {
             await api.delete(
                 `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
@@ -560,13 +608,25 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         onCommit={handleCommit}
                         onDiscard={handleDiscard}
                         onAddAudio={() => setIngestOpen(true)}
-                        disabled={isAnnotating}
+                        onClose={handleCloseProject}
+                        disabled={annotateBusy}
                     />
 
                     <HealthStrip
                         health={health}
                         onSelectFiles={(files) => setSelectedFiles(new Set(files))}
                     />
+
+                    {annotateStarting && !isAnnotating && (
+                        <Box>
+                            <LinearProgress />
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                                {tier === 'rich'
+                                    ? 'Starting annotation — loading the CLAP model (the first run can take a while)…'
+                                    : 'Starting annotation…'}
+                            </Typography>
+                        </Box>
+                    )}
 
                     {isAnnotating && annotateJob && (
                         <Box>
@@ -635,25 +695,33 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         selectedFiles={selectedFiles}
                         onToggleSelected={toggleSelected}
                         onToggleSelectAll={() => toggleSelectAll(project.clips)}
-                        disabled={isAnnotating}
+                        disabled={annotateBusy}
                         toolbar={
                             <Stack spacing={1}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
+                                    <Tooltip title={TIPS.dataset.autoAnnotateAll}>
+                                    {/* span — keeps the tooltip alive while the button is disabled */}
+                                    <span>
                                     <Button
                                         variant="contained"
                                         color="warm"
                                         size="small"
-                                        startIcon={<WandSparkles size={16} />}
+                                        startIcon={annotateStarting
+                                            ? <CircularProgress size={16} color="inherit" />
+                                            : <WandSparkles size={16} />}
                                         onClick={() => handleAnnotate('all')}
-                                        disabled={isAnnotating || project.clip_count === 0}
+                                        disabled={annotateBusy || project.clip_count === 0}
                                     >
-                                        Auto-annotate all
+                                        {annotateStarting ? 'Starting…' : 'Auto-annotate all'}
                                     </Button>
+                                    </span>
+                                    </Tooltip>
+                                    <Tooltip title={TIPS.dataset.templatePreset}>
                                     <FormControl size="small" sx={{ minWidth: 180 }}>
                                         <Select
                                             value={project.prompt_template_preset || 'music'}
                                             onChange={(e) => handleChangeTemplatePreset(e.target.value)}
-                                            disabled={isAnnotating}
+                                            disabled={annotateBusy}
                                             renderValue={(v) => {
                                                 const p = (project.prompt_template_presets || []).find((x) => x.id === v);
                                                 return p ? p.label : v;
@@ -671,6 +739,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                             ))}
                                         </Select>
                                     </FormControl>
+                                    </Tooltip>
                                     <Tooltip title={TIPS.dataset.richAnnotate}>
                                         <FormControlLabel
                                             control={
@@ -678,7 +747,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                                     size="small"
                                                     checked={tier === 'rich'}
                                                     onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
-                                                    disabled={isAnnotating}
+                                                    disabled={annotateBusy}
                                                 />
                                             }
                                             label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
@@ -692,7 +761,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                                     size="small"
                                                     checked={skipExisting}
                                                     onChange={(e) => setSkipExisting(e.target.checked)}
-                                                    disabled={isAnnotating}
+                                                    disabled={annotateBusy}
                                                 />
                                             }
                                             label={<Typography variant="caption" color="text.secondary">Skip already annotated</Typography>}
@@ -707,14 +776,14 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                             size="small"
                                             startIcon={<TrashIcon size={16} />}
                                             onClick={handleClearSelectedAnnotations}
-                                            disabled={isAnnotating}
+                                            disabled={annotateBusy}
                                         >
                                             Clear annotations ({selectedFiles.size})
                                         </Button>
                                     )}
                                 </Box>
                                 {tier === 'rich' && (
-                                    <ClapVocabAccordion disabled={isAnnotating} />
+                                    <ClapVocabAccordion disabled={annotateBusy} />
                                 )}
                             </Stack>
                         }
@@ -1125,7 +1194,7 @@ function LoadProjectDialog({ open, projects, currentName, onClose, onLoad, onDel
     );
 }
 
-function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disabled }) {
+function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClose, disabled }) {
     const stateLabel = (() => {
         if (project.dirty && project.has_unsaved_changes) return 'Unsaved changes';
         if (project.dirty && !project.has_unsaved_changes) return 'Draft saved · dataset not created';
@@ -1192,6 +1261,16 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                             Create Dataset
                         </Button>
                     </span>
+                </Tooltip>
+                <Tooltip title={TIPS.dataset.closeProject}>
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<CloseIcon size={16} />}
+                        onClick={onClose}
+                    >
+                        Close
+                    </Button>
                 </Tooltip>
             </Stack>
         </Box>
@@ -1887,6 +1966,3 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
 
 // ---------- utils ----------------------------------------------------------
 
-function extractError(e, fallback) {
-    return e?.response?.data?.error || e?.message || fallback;
-}

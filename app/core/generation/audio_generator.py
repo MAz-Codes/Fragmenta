@@ -4,10 +4,15 @@ Thin wrapper around stable_audio_3.StableAudioModel.from_pretrained() that
 caches the loaded model between requests (eviction on model_id change),
 auto-detects the device, and writes 44.1 kHz stereo int16 WAV.
 
-Cancellation is wired via `request_stop()` for API parity, but SA3's
-generate() doesn't expose a per-step callback yet — the flag is checked
-between calls, not inside them. A finer-grained cancel hook is a Phase
-3.1 follow-up.
+Generations are serialized: `generate_audio` holds an internal lock for the
+whole run, so concurrent requests (e.g. a Performance-channel generation
+overlapping a main-tab one — Flask runs threaded) queue instead of evicting
+each other's model mid-sampling or interleaving the shared progress state.
+
+Cancellation is per-run: each generation gets its own stop event, set by
+`request_stop()`. The SA3 sampler fires our per-ODE-step callback, which
+checks the event and aborts mid-run. Starting a new generation can never
+clear a stop aimed at the previous one.
 """
 import os
 import platform
@@ -124,17 +129,55 @@ class AudioGenerator:
         self.model: Any = None
         self._model_id: Optional[str] = None
         self._device: Optional[str] = None
-        self._stop_requested: bool = False
         # Tracks LoRAs currently injected into self.model. List of
         # {"path": str, "strength": float}. Empty when no LoRAs are active.
         self._loaded_loras: list = []
+        # Serializes whole generations (and model unloads) — see module
+        # docstring. _state_lock only guards the _current_stop swap so
+        # request_stop() never blocks behind a running generation.
+        self._gen_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._current_stop: Optional[threading.Event] = None
 
     # --- cooperative cancel ---------------------------------------------------
     def request_stop(self) -> bool:
-        if self._stop_requested:
+        """Signal the in-flight generation, if any, to stop.
+
+        Returns True only when a running generation was newly signalled.
+        A stop with nothing running is a no-op — it must NOT arm a flag
+        that a later, unrelated run would inherit.
+        """
+        with self._state_lock:
+            ev = self._current_stop
+        if ev is None or ev.is_set():
             return False
-        self._stop_requested = True
+        ev.set()
         return True
+
+    # --- unload ----------------------------------------------------------------
+    def unload_model(self) -> bool:
+        """Drop the cached model and every piece of bookkeeping tied to it.
+
+        Returns False (and does nothing) when a generation is in flight —
+        yanking the model out from under the sampler would crash it.
+
+        The LoRA bookkeeping must die with the model: the adapters live as
+        parametrizations inside the model object, so after a drop the
+        `_apply_loras` fast path ("same paths → just update strengths") would
+        otherwise no-op against a fresh, adapter-less model while the UI still
+        claims the LoRA is active.
+        """
+        if not self._gen_lock.acquire(blocking=False):
+            return False
+        try:
+            self.model = None
+            self._model_id = None
+            self._loaded_loras = []
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return True
+        finally:
+            self._gen_lock.release()
 
     # --- model load -----------------------------------------------------------
     def _ensure_model(
@@ -204,6 +247,11 @@ class AudioGenerator:
         if self.model is not None:
             del self.model
             self.model = None
+            # The LoRA stack was injected into the evicted model's
+            # parametrizations and is gone with it. Without this reset the
+            # next _apply_loras call with the same paths takes the
+            # strengths-only fast path and silently applies nothing.
+            self._loaded_loras = []
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
@@ -369,10 +417,37 @@ class AudioGenerator:
         return True
 
     # --- public entry ---------------------------------------------------------
-    def generate_audio(
+    def generate_audio(self, prompt: str, **kwargs: Any) -> Path:
+        """Serialized public entry. See _generate_audio_impl for parameters.
+
+        Holds the generation lock for the whole run (concurrent callers
+        queue) and owns the per-run stop event's lifecycle.
+        """
+        with self._gen_lock:
+            stop_event = threading.Event()
+            with self._state_lock:
+                self._current_stop = stop_event
+            try:
+                return self._generate_audio_impl(
+                    prompt, stop_event=stop_event, **kwargs)
+            except BaseException as exc:
+                # Sampling failures and stops reset the progress state at
+                # their raise site, but a failure before sampling (a model
+                # load error, a bad init-audio file) would leave the
+                # frontend's progress poller stuck on is_generating=True.
+                if get_generation_progress().get("is_generating"):
+                    _set_progress(phase="failed", is_generating=False,
+                                  error=str(exc), ended_at=time.time())
+                raise
+            finally:
+                with self._state_lock:
+                    self._current_stop = None
+
+    def _generate_audio_impl(
         self,
         prompt: str,
         *,
+        stop_event: threading.Event,
         model_id: str,
         duration: float = 10.0,
         steps: Optional[int] = None,
@@ -397,10 +472,6 @@ class AudioGenerator:
         loop_bpm: Optional[float] = None,
         **_ignored_legacy_kwargs: Any,
     ) -> Path:
-        self._stop_requested = False
-        if self._stop_requested:                  # honour pre-call stop
-            raise GenerationStopped()
-
         # `loop_stitch` / `loop_bars` / `loop_bpm` are accepted for API
         # compatibility but ignored — the seamless-loop pipeline was
         # removed because user A/B testing showed it degraded audio
@@ -446,13 +517,14 @@ class AudioGenerator:
             native_sample_size = 0
         sample_size_ceiling = max(native_sample_size, target_samples)
 
-        if self._stop_requested:                  # one more check before the heavy call
+        if stop_event.is_set():                   # stopped during model load
+            _set_progress(phase="idle", is_generating=False, ended_at=time.time())
             raise GenerationStopped()
 
         # Sampler callback — fires per ODE step. Also gives us a cheap
         # cancellation hook: raising mid-callback aborts the sampler.
         def _cb(info: Dict[str, Any]) -> None:
-            if self._stop_requested:
+            if stop_event.is_set():
                 raise GenerationStopped()
             i = info.get("i")
             if isinstance(i, int):
@@ -509,6 +581,13 @@ class AudioGenerator:
         # at the wrap point and multi-channel stacks will not be
         # sample-aligned — both acceptable trade-offs vs. the artifacts
         # the quantizer was introducing.
+        # A stop that lands after the final ODE step (the sampler callback
+        # has already fired for the last time) would otherwise be ignored and
+        # a ghost fragment written. Honour it before touching disk.
+        if stop_event.is_set():
+            _set_progress(phase="idle", is_generating=False, ended_at=time.time())
+            raise GenerationStopped()
+
         _set_progress(phase="decoding", step=total_steps_logical)
         try:
             return self._finalize(audio, prompt=prompt, model_id=model_id)
@@ -538,12 +617,24 @@ class AudioGenerator:
         audio = audio.detach().clamp_(-1.0, 1.0).cpu()
         if audio.ndim != 3:
             raise RuntimeError(f"Unexpected SA3 output shape {tuple(audio.shape)}")
-        first = audio[0]                           # [C, samples]
-        pcm = (first.numpy() * 32767.0).astype(np.int16).T  # → [samples, C]
+        first = audio[0].numpy()                   # [C, samples]
+        # clamp_ bounds ±inf but lets NaN through (NaN compares false), and a
+        # NaN hits int16 conversion as undefined behaviour — scrub it here so
+        # a numerically unstable run yields silence, not a corrupt WAV.
+        first = np.nan_to_num(first, nan=0.0, posinf=1.0, neginf=-1.0)
+        pcm = (first * 32767.0).astype(np.int16).T  # → [samples, C]
 
         out_dir = self.config.get_path("output")
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d_%H%M%S")
-        out_path = out_dir / f"{ts}_{model_id}_{_slugify(prompt)}.wav"
+        base = f"{ts}_{model_id}_{_slugify(prompt)}"
+        # The timestamp has 1 s resolution; back-to-back fast generations of
+        # the same prompt would silently overwrite each other without a
+        # uniquing suffix.
+        out_path = out_dir / f"{base}.wav"
+        counter = 2
+        while out_path.exists():
+            out_path = out_dir / f"{base}_{counter}.wav"
+            counter += 1
         sf.write(str(out_path), pcm, 44100, subtype="PCM_16")
         return out_path

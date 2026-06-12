@@ -114,6 +114,23 @@ def project_draft_path(name: str) -> Path:
 # ---------- Validation ------------------------------------------------------
 
 
+def _safe_clip_path(proj_path: Path, file_name: str) -> Path:
+    """Resolve `proj_path / file_name`, guaranteeing it stays inside the project.
+
+    Clip routes take `<path:file_name>`, which permits slashes and `..`. Without
+    this guard a request like `..%2f..%2f..%2ftmp%2ftarget.wav` would resolve to
+    an arbitrary location and any destructive op (unlink) would follow it out of
+    the project tree. `relative_to` raises ValueError when the resolved path
+    escapes — callers translate that into a 4xx.
+    """
+    if not isinstance(file_name, str) or not file_name:
+        raise ValueError("Invalid clip file name.")
+    base = proj_path.resolve()
+    candidate = (proj_path / file_name).resolve()
+    candidate.relative_to(base)  # raises ValueError on escape
+    return candidate
+
+
 def sanitize_project_name(raw: Any) -> str:
     if not isinstance(raw, str):
         raise ValueError("Project name must be a string.")
@@ -467,6 +484,12 @@ def ingest_folder(name: str, source_folder: Path, mode: str) -> Dict[str, Any]:
     """
     if mode not in INGEST_MODES:
         raise ValueError(f"Invalid ingest mode: {mode}")
+    # Defence in depth: containerised deploys must never create symlinks that
+    # could alias arbitrary host files into the readable project tree. The route
+    # already blocks this in headless mode; downgrade here too for any caller.
+    if mode == "symlink" and os.environ.get("FRAGMENTA_DOCKER") == "1":
+        logger.warning("Symlink ingest requested under FRAGMENTA_DOCKER; forcing copy mode.")
+        mode = "copy"
     if not source_folder.exists() or not source_folder.is_dir():
         raise FileNotFoundError(f"Source folder not found: {source_folder}")
 
@@ -534,9 +557,18 @@ def delete_clip(name: str, file_name: str) -> None:
     session = _get_or_load_session(name)
     proj_path = project_path(name)
     with session.lock:
-        audio_path = proj_path / file_name
+        # Reject path-traversal file names and anything not actually tracked in
+        # this project's session before we unlink. `<path:file_name>` allows
+        # slashes and `..`, so an unconstrained `proj_path / file_name` could
+        # delete files outside the project tree.
+        if file_name not in session.clips:
+            raise FileNotFoundError(f"Clip not found in project '{name}': {file_name}")
+        audio_path = _safe_clip_path(proj_path, file_name)
         txt_path = _sidecar_for(audio_path)
-        if audio_path.exists():
+        # `exists()` follows symlinks, so a dangling symlink (source moved or
+        # deleted) would be left behind without the is_symlink() check. Either
+        # way only the project-local entry is unlinked — never the source.
+        if audio_path.exists() or audio_path.is_symlink():
             audio_path.unlink()
         if txt_path.exists():
             txt_path.unlink()
@@ -665,7 +697,9 @@ def discard_project(name: str) -> Dict[str, Any]:
         for file_name in uncommitted:
             audio_path = proj_path / file_name
             txt_path = _sidecar_for(audio_path)
-            if audio_path.exists():
+            # is_symlink() so dangling symlinks (source moved/deleted) are
+            # still cleaned up — exists() follows the link and reports False.
+            if audio_path.exists() or audio_path.is_symlink():
                 audio_path.unlink()
             if txt_path.exists():
                 txt_path.unlink()
@@ -962,7 +996,13 @@ def slice_clip(
 
     session = _get_or_load_session(name)
     proj_path = project_path(name)
-    audio_path = proj_path / file_name
+
+    # Same guard as delete_clip: the route accepts `<path:file_name>` so reject
+    # traversal and require the clip to be tracked before we resolve/unlink it.
+    with session.lock:
+        if file_name not in session.clips:
+            raise FileNotFoundError(f"Clip not found in project '{name}': {file_name}")
+    audio_path = _safe_clip_path(proj_path, file_name)
 
     if not audio_path.exists():
         raise FileNotFoundError(f"Clip not on disk: {file_name}")

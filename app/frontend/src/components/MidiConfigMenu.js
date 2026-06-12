@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
     Popover,
     Box,
@@ -15,6 +15,8 @@ import {
 } from '@mui/material';
 import { Trash2 as DeleteIcon, X as CloseIcon } from 'lucide-react';
 import { useMidi, formatMidi } from './MidiContext';
+import Tooltip from './Tooltip';
+import { TIPS } from '../tooltips';
 import { perfTokens, performancePanelStyles as panelStyles } from '../theme';
 
 const CHANNEL_OPTIONS = [
@@ -24,6 +26,13 @@ const CHANNEL_OPTIONS = [
 
 export default function MidiConfigMenu({ anchorEl, open, onClose }) {
     const ctx = useMidi();
+    const refreshInputs = ctx?.refreshInputs;
+    // Devices are otherwise only enumerated on provider mount, so a
+    // controller plugged in mid-session would never show up until a page
+    // reload. Re-enumerate each time the menu opens.
+    useEffect(() => {
+        if (open) refreshInputs?.();
+    }, [open, refreshInputs]);
     if (!ctx) return null;
 
     const {
@@ -98,9 +107,11 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                 gap: 1.25,
             }}>
                 <Box>
-                    <Typography sx={{ ...perfTokens.labelMuted, display: 'block', mb: 0.5 }}>
-                        Input device
-                    </Typography>
+                    <Tooltip title={TIPS.midi.device}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                            Input device
+                        </Typography>
+                    </Tooltip>
                     <FormControl size="small" fullWidth>
                         <Select
                             value={config.deviceId && inputs.some(i => i.id === config.deviceId) ? config.deviceId : ''}
@@ -139,9 +150,11 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
 
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Box sx={{ flex: 1 }}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block', mb: 0.5 }}>
-                            Channel filter
-                        </Typography>
+                        <Tooltip title={TIPS.midi.channelFilter}>
+                            <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                                Channel filter
+                            </Typography>
+                        </Tooltip>
                         <FormControl size="small" fullWidth>
                             <Select
                                 value={config.channelFilter}
@@ -157,9 +170,11 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     </Box>
 
                     <Box sx={{ flex: 1 }}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block', mb: 0.5 }}>
-                            Takeover
-                        </Typography>
+                        <Tooltip title={TIPS.midi.takeover}>
+                            <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                                Takeover
+                            </Typography>
+                        </Tooltip>
                         <ToggleButtonGroup
                             size="small"
                             value={config.takeover}
@@ -185,9 +200,11 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     justifyContent: 'space-between',
                     mb: 0.75,
                 }}>
-                    <Typography sx={{ ...perfTokens.labelMuted, display: 'block' }}>
-                        Mappings ({config.mappings.length})
-                    </Typography>
+                    <Tooltip title={TIPS.midi.mappings}>
+                        <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block' }}>
+                            Mappings ({config.mappings.length})
+                        </Typography>
+                    </Tooltip>
                     <Button
                         size="small"
                         onClick={clearAll}
