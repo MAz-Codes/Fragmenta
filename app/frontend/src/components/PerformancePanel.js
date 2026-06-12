@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
+import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens } from '../theme';
@@ -73,7 +74,9 @@ const RECORD_COLOR = '#E5484D';   // record red
 const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
 const PLAY_COLOR = '#35C2D4';     // master cyan
 const MASTER_DB_MIN = -60;
-const MASTER_DB_MAX = 0;
+// +6 dB of boost headroom above unity; the fader taper (faderLaw) puts unity
+// at ~80% of throw, not the very top.
+const MASTER_DB_MAX = FADER_MAX_DB;
 const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
 const BPM_MIN = 20;
@@ -1619,11 +1622,17 @@ function PerformancePanelInner({
                             >
                                 <Slider
                                     orientation="vertical"
-                                    value={masterDb}
-                                    onChange={handleMasterChange}
-                                    min={MASTER_DB_MIN}
-                                    max={MASTER_DB_MAX}
-                                    step={0.1}
+                                    // Slider travels in tapered POSITION space
+                                    // (0..1); the dB value rides through
+                                    // faderLaw so unity sits ~80% up with
+                                    // boost above. handleMasterChange stays in
+                                    // dB (readout, MIDI, engine unchanged).
+                                    value={faderDbToPos(masterDb)}
+                                    onChange={(_, pos) => handleMasterChange(null, faderPosToDb(pos))}
+                                    min={0}
+                                    max={1}
+                                    step={0.002}
+                                    marks={[{ value: FADER_UNITY_POS }]}
                                     sx={styles.masterFader(MASTER_COLOR)}
                                 />
                             </MidiMappable>

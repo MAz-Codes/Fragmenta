@@ -24,6 +24,7 @@ import { performanceChannelStyles as styles, performancePanelStyles as panelStyl
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import { extractError } from '../utils/errors';
+import { faderPosToDb, faderDbToPos, FADER_MAX_DB } from '../utils/faderLaw';
 import {
     channelScope,
     putFragmentBlob,
@@ -46,12 +47,16 @@ const CHANNEL_COLORS = [
 // scales line up: -60 dB floor, 0 dB ceiling, default at -6 dB. The knob's
 // dB value is converted to linear before reaching the audio graph.
 const GAIN_DB_MIN = -60;
-const GAIN_DB_MAX = 0;
+// +6 dB boost headroom — the fader taper puts unity at ~80% of throw.
+const GAIN_DB_MAX = FADER_MAX_DB;
 const GAIN_DB_DEFAULT = 0;
 const gainDbToLinear = (db) => (db <= GAIN_DB_MIN ? 0 : Math.pow(10, db / 20));
 
 const KNOB_DEFS = [
-    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT },
+    // scale 'fader' → console-style position↔dB taper (faderLaw), same as
+    // the master fader. Without it the gain knob was linear-in-dB and a
+    // quarter-turn down already dropped to ~-15 dB.
+    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
     // Bipolar "DJ-filter" knob. -1..+1 with 0 = bypass. Negative side drives
     // the LPF cutoff down from 20 kHz → 20 Hz (kills highs). Positive side
     // drives the HPF cutoff up from 20 Hz → 20 kHz (kills lows). The two
@@ -1168,16 +1173,23 @@ export default function PerformanceChannel({
                 {KNOB_DEFS.map((k) => {
                     const isLog = k.scale === 'log';
                     const isBipolar = k.scale === 'bipolar';
-                    // For log knobs, the slider drives a 0..1 position and we
-                    // convert to/from the underlying value (Hz) on the audio
-                    // boundary. The knob value stored in state stays in the
-                    // domain unit (Hz here) so persistence and MIDI keep working.
+                    const isFader = k.scale === 'fader';
+                    // log + fader knobs drive a 0..1 slider position and
+                    // convert to/from the underlying value at the boundary;
+                    // the value stored in state stays in the domain unit
+                    // (Hz for log, dB for fader) so persistence + MIDI keep
+                    // working unchanged.
+                    const usesPos = isLog || isFader;
                     const valueToPos = isLog
                         ? (v) => Math.log(Math.max(v, k.min) / k.min) / Math.log(k.max / k.min)
-                        : (v) => v;
+                        : isFader
+                            ? faderDbToPos
+                            : (v) => v;
                     const posToValue = isLog
                         ? (p) => k.min * Math.pow(k.max / k.min, p)
-                        : (v) => v;
+                        : isFader
+                            ? faderPosToDb
+                            : (v) => v;
                     return (
                         <Box key={k.key} sx={styles.knobCell}>
                             <MidiMappable
@@ -1195,12 +1207,13 @@ export default function PerformanceChannel({
                                     orientation="vertical"
                                     value={valueToPos(knobs[k.key])}
                                     onChange={(_, v) => handleKnob(k.key, posToValue(v))}
-                                    min={isLog ? 0 : k.min}
-                                    max={isLog ? 1 : k.max}
-                                    step={isLog ? 0.001 : k.step}
+                                    min={usesPos ? 0 : k.min}
+                                    max={usesPos ? 1 : k.max}
+                                    step={usesPos ? 0.001 : k.step}
                                     size="small"
                                     track={isBipolar ? false : undefined}
-                                    marks={isBipolar ? [{ value: 0 }] : undefined}
+                                    marks={isBipolar ? [{ value: 0 }]
+                                        : isFader ? [{ value: faderDbToPos(0) }] : undefined}
                                     sx={{
                                         ...styles.knobSlider(color, k.key === 'gain'),
                                         ...(isBipolar && {
@@ -1214,6 +1227,18 @@ export default function PerformanceChannel({
                                             '& .MuiSlider-markActive': {
                                                 backgroundColor: 'text.secondary',
                                                 opacity: 0.7,
+                                            },
+                                        }),
+                                        // Subtle unity (0 dB) tick on the gain knob.
+                                        ...(isFader && {
+                                            '& .MuiSlider-mark': {
+                                                width: 6,
+                                                height: 1,
+                                                backgroundColor: 'text.disabled',
+                                                opacity: 1,
+                                            },
+                                            '& .MuiSlider-markActive': {
+                                                backgroundColor: 'text.disabled',
                                             },
                                         }),
                                     }}

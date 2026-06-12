@@ -1,35 +1,4 @@
 #!/usr/bin/env python3
-"""Fragmenta bootstrapping installer (cross-platform, stdlib-only).
-
-This is the single source of truth for setting up Fragmenta's Python
-environment. The platform launchers (`fragmenta.sh`, `fragmenta.command`,
-`fragmenta.bat`) only acquire Python 3.11 (and any OS-level runtime libs),
-then hand off to this script — so the venv + dependency logic lives in one
-place instead of being triplicated and drifting across three shells.
-
-Design goals
-------------
-* **Idempotent / fast relaunch.** Dependencies are (re)installed only when
-  `requirements.txt` actually changes. A stamp file under the venv records the
-  hash of what was last installed; a matching stamp turns a relaunch into a
-  near-instant no-op. (The old launchers ran `pip install -r requirements.txt`
-  on *every* launch — minutes each time.) Force a fresh install with
-  `--reinstall`.
-* **No third-party imports.** This runs under a *bare* system Python 3.11
-  before any deps exist, so it uses only the standard library.
-* **SA3-aware.** `requirements.txt` already pins torch==2.7.1, declares the
-  CUDA wheel index, and gates flash-attn behind `sys_platform == 'linux'`, so
-  one `pip install -r requirements.txt` resolves the whole graph. The Stable
-  Audio 3 vendor at `vendor/stable-audio-3` is loaded via `sys.path` at
-  runtime — nothing to pip-install for it.
-
-Usage
------
-    python3.11 install.py            # ensure the environment is ready
-    python3.11 install.py --launch   # ensure, then start the app
-    python3.11 install.py --reinstall  # force a dependency reinstall
-    python3.11 install.py --check    # report status, change nothing
-"""
 from __future__ import annotations
 
 import argparse
@@ -45,11 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def _user_data_dir() -> Path:
-    """Writable per-user data dir for packaged builds.
-
-    MUST stay in sync with ``app/core/config.py``'s ``user_data_dir`` so the
-    venv we build here lands in the same place models/output/logs go at runtime.
-    """
     if sys.platform == "win32":
         return Path(os.environ["APPDATA"]) / "FragmentaDesktop"
     if sys.platform == "darwin":
@@ -94,12 +58,6 @@ def is_py311(python: Path) -> bool:
 
 
 def require_py311_host() -> None:
-    """We're running under the system Python the launcher chose; insist 3.11.
-
-    Fragmenta pins torch==2.7.1 + flash-attn cp311 wheels, which ship only for
-    Python 3.11. The launchers try to hand us a 3.11; if something else slipped
-    through, stop with a clear message rather than producing a broken venv.
-    """
     if sys.version_info[:2] != (3, 11):
         hint = (
             "the bundled Python looks wrong — reinstall Fragmenta."
@@ -114,16 +72,6 @@ def require_py311_host() -> None:
 
 
 def _macos_link_libpython(venv_path: Path) -> None:
-    """Make ``libpython3.11.dylib`` resolvable from the venv interpreter (macOS).
-
-    Our bundled standalone CPython loads libpython via
-    ``@executable_path/../lib/libpython3.11.dylib``. ``venv`` places the
-    interpreter at ``venv/bin/python3.11``, so dyld resolves that to
-    ``venv/lib/libpython3.11.dylib`` — which doesn't exist — and the venv
-    interpreter aborts (SIGABRT) the moment it's launched, including the
-    ``ensurepip`` step inside ``EnvBuilder.create``. Drop a symlink into the
-    venv's ``lib/`` pointing at the bundled dylib so the relative load resolves.
-    """
     if sys.platform != "darwin":
         return
     src = Path(sys.base_prefix) / "lib" / "libpython3.11.dylib"
@@ -152,11 +100,6 @@ def ensure_venv() -> Path:
 
 
 def requirements_hash() -> str:
-    """Stamp value: hash of requirements.txt + the laion-clap spec + py tag.
-
-    Any change to the dependency set (or the Python minor) invalidates the
-    stamp and triggers a reinstall on the next run.
-    """
     h = hashlib.sha256()
     h.update(REQUIREMENTS.read_bytes())
     h.update(LAION_CLAP_SPEC.encode())

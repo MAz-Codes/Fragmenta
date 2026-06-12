@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 import { Box } from '@mui/material';
 import api from '../api';
+import { faderPosToDb, faderDbToPos } from '../utils/faderLaw';
 
 const STORAGE_KEY = 'fragmenta.midi.config.v1';
 
@@ -213,27 +214,40 @@ export function MidiProvider({ children }) {
 
     function applyContinuous(sub, mapping, midiValue, takeover) {
         const norm = midiValue / 127;
+        // Prefer the LIVE subscriber's curve/range over the snapshot stored
+        // in the mapping at learn time — when a control's law changes (e.g.
+        // the gain faders gained a console taper + boost headroom), existing
+        // learned mappings follow it without needing a re-learn.
+        const curve = sub.opts?.curve ?? mapping.curve;
+        const min = sub.opts?.min ?? mapping.min;
+        const max = sub.opts?.max ?? mapping.max;
         let target;
-        if (mapping.curve === 'log' && mapping.min > 0 && mapping.max > 0) {
-            target = mapping.min * Math.pow(mapping.max / mapping.min, norm);
+        if (curve === 'fader') {
+            // Same console taper as the on-screen fader throw, so a hardware
+            // fader at 80% sits at unity just like the UI.
+            target = Math.min(max, Math.max(min, faderPosToDb(norm)));
+        } else if (curve === 'log' && min > 0 && max > 0) {
+            target = min * Math.pow(max / min, norm);
         } else {
-            target = mapping.min + norm * (mapping.max - mapping.min);
+            target = min + norm * (max - min);
         }
 
         if (takeover === 'pickup') {
             const armed = pickupArmedRef.current.get(mapping.controlId);
             if (!armed) {
                 const current = typeof sub.getValue === 'function' ? sub.getValue() : sub.value;
-                const span = mapping.max - mapping.min;
+                const span = max - min;
                 if (span === 0 || !isFinite(current)) {
                     pickupArmedRef.current.set(mapping.controlId, true);
                 } else {
                     // Compare on the same curve we used to compute target.
                     let currentNorm;
-                    if (mapping.curve === 'log' && mapping.min > 0 && current > 0) {
-                        currentNorm = Math.log(current / mapping.min) / Math.log(mapping.max / mapping.min);
+                    if (curve === 'fader') {
+                        currentNorm = faderDbToPos(current);
+                    } else if (curve === 'log' && min > 0 && current > 0) {
+                        currentNorm = Math.log(current / min) / Math.log(max / min);
                     } else {
-                        currentNorm = (current - mapping.min) / span;
+                        currentNorm = (current - min) / span;
                     }
                     if (Math.abs(norm - currentNorm) < 0.02) {
                         pickupArmedRef.current.set(mapping.controlId, true);
