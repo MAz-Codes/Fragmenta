@@ -103,7 +103,8 @@ const ampToDb = (amp) => (amp <= 0 ? -Infinity : 20 * Math.log10(amp));
 const formatDb = (db) => {
     if (!isFinite(db) || db <= METER_FLOOR_DB) return '−∞';
     if (Math.abs(db) < 0.05) return '0.0';
-    return db.toFixed(1);
+    // Explicit + in the boost range so "3.0" can't read as a cut.
+    return (db > 0 ? '+' : '') + db.toFixed(1);
 };
 
 export default function PerformancePanel(props) {
@@ -1603,6 +1604,7 @@ function PerformancePanelInner({
                                 id="master.fader"
                                 label="Master Fader"
                                 kind="continuous"
+                                curve="fader"
                                 min={MASTER_DB_MIN}
                                 max={MASTER_DB_MAX}
                                 value={masterDb}

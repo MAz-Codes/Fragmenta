@@ -1196,7 +1196,7 @@ export default function PerformanceChannel({
                                 id={ctrlId(k.key)}
                                 label={ctrlLabel(k.label)}
                                 kind="continuous"
-                                curve={isLog ? 'log' : 'linear'}
+                                curve={isLog ? 'log' : isFader ? 'fader' : 'linear'}
                                 min={k.min}
                                 max={k.max}
                                 value={knobs[k.key]}
