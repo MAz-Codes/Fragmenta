@@ -2768,9 +2768,13 @@ export const performancePanelStyles = {
             border: 'none',
             opacity: 0.9,
         },
+        // Unity (0 dB) tick. NOTE: numeric height <= 1 in MUI sx means a
+        // PERCENTAGE (1 -> 100%), which rendered the tick as a full-height
+        // bar overflowing the lane — use 2 (px) like the knob marks.
         '& .MuiSlider-mark': {
-            width: 6,
-            height: 1,
+            width: 10,
+            height: 2,
+            borderRadius: 1,
             bgcolor: 'text.disabled',
             opacity: 1,
         },

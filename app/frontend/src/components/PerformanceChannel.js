@@ -1230,15 +1230,21 @@ export default function PerformanceChannel({
                                             },
                                         }),
                                         // Subtle unity (0 dB) tick on the gain knob.
+                                        // height must be > 1: numeric <= 1 in
+                                        // MUI sx means a percentage (1 = 100%),
+                                        // which drew a full-height bar past the
+                                        // top of the knob lane.
                                         ...(isFader && {
                                             '& .MuiSlider-mark': {
-                                                width: 6,
-                                                height: 1,
+                                                width: 10,
+                                                height: 2,
+                                                borderRadius: 1,
                                                 backgroundColor: 'text.disabled',
-                                                opacity: 1,
+                                                opacity: 0.7,
                                             },
                                             '& .MuiSlider-markActive': {
                                                 backgroundColor: 'text.disabled',
+                                                opacity: 0.7,
                                             },
                                         }),
                                     }}
