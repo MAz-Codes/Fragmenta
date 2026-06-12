@@ -65,6 +65,12 @@ export const TIPS = {
     channel: {
         mute: 'Mute',
         solo: 'Solo',
+        sidechain: (active, locked) =>
+            locked
+                ? 'Another channel is the sidechain source'
+                : active
+                    ? 'Sidechain on — this channel ducks all the others'
+                    : 'Sidechain — duck all other channels under this one',
         batch: "Batch generate Fragments and cue below.",
         loop: (looping, durationMode) =>
             looping

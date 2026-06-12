@@ -91,6 +91,9 @@ export default function PerformanceChannel({
     onGenerate,
     canGenerate,
     onMuteSoloChange,
+    // Index of the channel that owns sidechain ducking, or null. Exclusive:
+    // when set, every other channel's sidechain button is grayed out.
+    sidechainOwner = null,
     onStateChange,
     onFormStateChange,
     initialFormState,
@@ -730,6 +733,16 @@ export default function PerformanceChannel({
         onMuteSoloChange(index, { solo: next });
     };
 
+    // Sidechain state is owned by the panel (it's exclusive across channels),
+    // so unlike mute/solo there is no local mirror — just derive from the prop.
+    const sidechained = sidechainOwner === index;
+    const sidechainLocked = sidechainOwner !== null && sidechainOwner !== index;
+
+    const handleSidechainToggle = () => {
+        if (sidechainLocked) return;
+        onMuteSoloChange(index, { sidechain: !sidechained });
+    };
+
     const handleKnob = (key, value) => {
         setKnobs(prev => ({ ...prev, [key]: value }));
         if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
@@ -800,6 +813,22 @@ export default function PerformanceChannel({
                     <MidiMappable id={ctrlId('solo')} label={ctrlLabel('Solo')} kind="trigger" onChange={handleSoloToggle}>
                         <Tooltip title={TIPS.channel.solo}>
                             <IconButton size="small" onClick={handleSoloToggle} sx={styles.soloBtn(soloed)}>S</IconButton>
+                        </Tooltip>
+                    </MidiMappable>
+                    <MidiMappable id={ctrlId('sidechain')} label={ctrlLabel('Sidechain')} kind="trigger" onChange={handleSidechainToggle}>
+                        <Tooltip title={TIPS.channel.sidechain(sidechained, sidechainLocked)}>
+                            {/* span — MUI tooltips need a focusable wrapper around disabled buttons */}
+                            <span>
+                                <IconButton
+                                    size="small"
+                                    onClick={handleSidechainToggle}
+                                    disabled={sidechainLocked}
+                                    sx={styles.sidechainBtn(sidechained)}
+                                    aria-label={sidechained ? 'Sidechain on' : 'Sidechain off'}
+                                >
+                                    SC
+                                </IconButton>
+                            </span>
                         </Tooltip>
                     </MidiMappable>
                 </Box>

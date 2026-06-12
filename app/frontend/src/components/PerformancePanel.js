@@ -904,11 +904,30 @@ function PerformancePanelInner({
     // max_duration_sec in the Checkpoint Manager catalog).
     const maxDuration = isSmallModel ? 120 : 380;
 
+    // Which channel (if any) owns sidechain ducking. Lifted here because it
+    // is exclusive across channels: the owner's button is lit, every other
+    // channel's button is grayed out. Deliberately not persisted — it's a
+    // live performance gesture, so it resets off on reload.
+    const [sidechainOwner, setSidechainOwner] = useState(null);
+
     const handleMuteSoloChange = (index, change) => {
         const engine = engineRef.current;
         if (!engine) return;
         if ('mute' in change) engine.setMute(index, change.mute);
         if ('solo' in change) engine.setSolo(index, change.solo);
+        if ('sidechain' in change) {
+            // Exclusive ownership. The buttons on other channels are disabled,
+            // but a learned MIDI trigger can still fire — ignore those.
+            if (change.sidechain) {
+                if (sidechainOwner === null || sidechainOwner === index) {
+                    engine.setSidechain(index, true);
+                    setSidechainOwner(index);
+                }
+            } else if (sidechainOwner === index) {
+                engine.setSidechain(index, false);
+                setSidechainOwner(null);
+            }
+        }
     };
 
     const channels = useMemo(() => {
@@ -1568,6 +1587,7 @@ function PerformancePanelInner({
                             onGenerate={generateForChannel}
                             canGenerate={Boolean(selectedModel)}
                             onMuteSoloChange={handleMuteSoloChange}
+                            sidechainOwner={sidechainOwner}
                             onStateChange={handleChannelStateChange}
                             onFormStateChange={handleChannelFormChange}
                             initialFormState={session.channels[i]}

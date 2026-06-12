@@ -2984,6 +2984,31 @@ export const performanceChannelStyles = {
             },
         };
     },
+    sidechainBtn: (active) => (theme) => {
+        const c = theme.palette.info.main;
+        return {
+            width: perfTokens.height.sub,
+            height: perfTokens.height.sub,
+            // xs — "SC" is two glyphs in the same square M/S get for one.
+            fontSize: perfTokens.fontSize.xs,
+            fontWeight: 700,
+            borderRadius: 1,
+            color: active ? '#0c1018' : 'text.secondary',
+            backgroundColor: active ? `${c}F2` : 'transparent',
+            backgroundImage: active ? SHEEN_DARK : 'none',
+            border: '1px solid',
+            borderColor: active ? `${c}F2` : 'divider',
+            boxShadow: active ? RAISE_DARK : 'none',
+            '&:hover': {
+                backgroundColor: active ? c : `${c}33`,
+            },
+            '&.Mui-disabled': {
+                color: 'text.disabled',
+                borderColor: 'divider',
+                opacity: 0.4,
+            },
+        };
+    },
     promptBox: {
         display: 'flex',
         flexDirection: 'column',

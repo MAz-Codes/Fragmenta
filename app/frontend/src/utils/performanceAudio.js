@@ -211,6 +211,13 @@ export class ChannelStrip {
         this.channelGain.gain.value = DEFAULT_CHANNEL_GAIN;
         this._lastUserGain = DEFAULT_CHANNEL_GAIN;
 
+        // Sidechain duck stage — unity unless another channel is flagged as
+        // the sidechain source, in which case the engine's envelope follower
+        // drives this down (see PerformanceEngine.setSidechain). Kept apart
+        // from channelGain so ducking never fights the fader/mute math.
+        this.duckGain = ctx.createGain();
+        this.duckGain.gain.value = 1;
+
         this.pan = ctx.createStereoPanner();
         this.pan.pan.value = 0;
 
@@ -224,7 +231,8 @@ export class ChannelStrip {
         // — thr -16, 2.5:1, no makeup gain — quietly costing several dB on
         // transient material and making the whole app feel quiet.)
         this.filter.connect(this.channelGain);
-        this.channelGain.connect(this.pan);
+        this.channelGain.connect(this.duckGain);
+        this.duckGain.connect(this.pan);
         this.pan.connect(this.analyser);
         this.analyser.connect(masterBus);
 
@@ -494,6 +502,7 @@ export class ChannelStrip {
             this.delaySend.disconnect();
             this.reverbSend.disconnect();
             this.channelGain.disconnect();
+            this.duckGain.disconnect();
             this.pan.disconnect();
             this.analyser.disconnect();
         } catch (_) { /* already disconnected */ }
@@ -599,6 +608,18 @@ function encodeWavStereo(left, right, sampleRate) {
     return new Blob([view], { type: 'audio/wav' });
 }
 
+// --- Sidechain ducking -------------------------------------------------
+// One channel can be flagged as the sidechain source; every OTHER channel
+// is then gently ducked by the source's live envelope. Implemented as an
+// envelope follower (the source's existing analyser) driving per-channel
+// duckGain nodes — Web Audio's DynamicsCompressorNode has no external
+// sidechain input. setInterval rather than rAF so ducking keeps working
+// when the tab is hidden (audio keeps playing there, rAF does not fire).
+const SIDECHAIN_TICK_MS = 1000 / 30;
+const SIDECHAIN_DEPTH = 0.55;       // max attenuation at full-scale peaks (≈ -7 dB)
+const SIDECHAIN_ATTACK_TC = 0.015;  // s — quick dip when the source sounds
+const SIDECHAIN_RELEASE_TC = 0.12;  // s — smooth recovery in the gaps
+
 export class PerformanceEngine {
     constructor(channelCount = 8) {
         const ctx = getAudioContext();
@@ -658,6 +679,10 @@ export class PerformanceEngine {
             new ChannelStrip(this.masterBus, this.masterDelay, this.masterReverb)
         );
 
+
+        // Sidechain source channel (null = ducking off). See setSidechain().
+        this.sidechainIndex = null;
+        this._duckTimer = null;
 
         this.linkSnapshot = null;
         this.launchQuantum = 0;
@@ -1075,6 +1100,56 @@ export class PerformanceEngine {
         this.refreshMuteSolo();
     }
 
+    /** Flag `index` as the sidechain source (or clear it). While a source is
+     *  set, an envelope follower ducks every other channel under it. Only one
+     *  source at a time — enabling on a new channel takes ownership over. */
+    setSidechain(index, value) {
+        if (value) {
+            this.sidechainIndex = index;
+            // A previous source may still be sitting at unity while others
+            // are part-ducked; the follower retargets everyone next tick.
+            this._startDuckLoop();
+        } else if (this.sidechainIndex === index) {
+            this.sidechainIndex = null;
+            this._stopDuckLoop();
+        }
+    }
+
+    _startDuckLoop() {
+        if (this._duckTimer) return;
+        this._duckTimer = setInterval(() => {
+            const srcIdx = this.sidechainIndex;
+            const src = srcIdx === null ? null : this.channels[srcIdx];
+            if (!src) return;
+            // getLevel() reads the source's post-fader analyser peak and is 0
+            // when the source isn't playing, so the duck releases on its own
+            // when the source stops or its fader is pulled down.
+            const level = Math.min(1, src.getLevel());
+            const target = 1 - SIDECHAIN_DEPTH * level;
+            const now = this.ctx.currentTime;
+            this.channels.forEach((ch, i) => {
+                if (i === srcIdx) {
+                    ch.duckGain.gain.setTargetAtTime(1, now, SIDECHAIN_RELEASE_TC);
+                    return;
+                }
+                const tc = target < ch.duckGain.gain.value
+                    ? SIDECHAIN_ATTACK_TC
+                    : SIDECHAIN_RELEASE_TC;
+                ch.duckGain.gain.setTargetAtTime(target, now, tc);
+            });
+        }, SIDECHAIN_TICK_MS);
+    }
+
+    _stopDuckLoop() {
+        if (this._duckTimer) {
+            clearInterval(this._duckTimer);
+            this._duckTimer = null;
+        }
+        // Everyone back to unity.
+        const now = this.ctx.currentTime;
+        this.channels.forEach(ch => ch.duckGain.gain.setTargetAtTime(1, now, 0.08));
+    }
+
     playAll(loop = true) {
         // All channels launch from their head on the same quantized boundary,
         // so equal-length downbeat-anchored clips line up (INV#9) without
@@ -1090,6 +1165,10 @@ export class PerformanceEngine {
     }
 
     dispose() {
+        if (this._duckTimer) {
+            clearInterval(this._duckTimer);
+            this._duckTimer = null;
+        }
         this.channels.forEach(ch => ch.dispose());
         const tryDisconnect = (node) => {
             try { node?.disconnect(); } catch (_) { /* already disconnected */ }
