@@ -616,9 +616,13 @@ function encodeWavStereo(left, right, sampleRate) {
 // sidechain input. setInterval rather than rAF so ducking keeps working
 // when the tab is hidden (audio keeps playing there, rAF does not fire).
 const SIDECHAIN_TICK_MS = 1000 / 30;
-const SIDECHAIN_DEPTH = 0.55;       // max attenuation at full-scale peaks (≈ -7 dB)
-const SIDECHAIN_ATTACK_TC = 0.015;  // s — quick dip when the source sounds
-const SIDECHAIN_RELEASE_TC = 0.12;  // s — smooth recovery in the gaps
+const SIDECHAIN_DEPTH = 0.75;        // max attenuation at full duck (≈ -12 dB)
+// Real material rarely peaks at full scale; the sensitivity boost lets
+// typical peaks (~0.6-0.7) reach most of the depth so the duck is heard,
+// not just measured.
+const SIDECHAIN_SENSITIVITY = 1.4;
+const SIDECHAIN_ATTACK_TC = 0.015;   // s — quick dip when the source sounds
+const SIDECHAIN_RELEASE_TC = 0.15;   // s — smooth recovery in the gaps
 
 export class PerformanceEngine {
     constructor(channelCount = 8) {
@@ -1124,7 +1128,7 @@ export class PerformanceEngine {
             // getLevel() reads the source's post-fader analyser peak and is 0
             // when the source isn't playing, so the duck releases on its own
             // when the source stops or its fader is pulled down.
-            const level = Math.min(1, src.getLevel());
+            const level = Math.min(1, src.getLevel() * SIDECHAIN_SENSITIVITY);
             const target = 1 - SIDECHAIN_DEPTH * level;
             const now = this.ctx.currentTime;
             this.channels.forEach((ch, i) => {
