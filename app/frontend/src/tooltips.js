@@ -93,6 +93,7 @@ export const TIPS = {
         richAnnotate: 'Adds genre / mood / instrument tags using LAION-CLAP. Requires the CLAP weights — downloadable from the Checkpoint Manager.',
         skipAnnotated: 'When on, Auto-annotate skips clips that already have an annotation. Off means every run overwrites existing prompts.',
         deleteProject: 'Delete this project (folder, audio, sidecars, drafts) — irreversible',
+        closeProject: 'Close this project — nothing is deleted. Reopen it anytime via Load project.',
         discardChanges: 'Delete unsaved changes — reverts to the last created dataset (removes any audio added since)',
         saveDraft: "Save a draft — persists across app restarts but isn't the SA3 sidecar form",
         createDataset: 'Create Dataset — writes the .txt sidecars (overwrites the previous dataset)',

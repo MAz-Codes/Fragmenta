@@ -565,7 +565,10 @@ def delete_clip(name: str, file_name: str) -> None:
             raise FileNotFoundError(f"Clip not found in project '{name}': {file_name}")
         audio_path = _safe_clip_path(proj_path, file_name)
         txt_path = _sidecar_for(audio_path)
-        if audio_path.exists():
+        # `exists()` follows symlinks, so a dangling symlink (source moved or
+        # deleted) would be left behind without the is_symlink() check. Either
+        # way only the project-local entry is unlinked — never the source.
+        if audio_path.exists() or audio_path.is_symlink():
             audio_path.unlink()
         if txt_path.exists():
             txt_path.unlink()
@@ -694,7 +697,9 @@ def discard_project(name: str) -> Dict[str, Any]:
         for file_name in uncommitted:
             audio_path = proj_path / file_name
             txt_path = _sidecar_for(audio_path)
-            if audio_path.exists():
+            # is_symlink() so dangling symlinks (source moved/deleted) are
+            # still cleaned up — exists() follows the link and reports False.
+            if audio_path.exists() or audio_path.is_symlink():
                 audio_path.unlink()
             if txt_path.exists():
                 txt_path.unlink()

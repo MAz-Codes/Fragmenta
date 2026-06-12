@@ -54,6 +54,7 @@ import {
     Scissors as ScissorsIcon,
     Music as MusicIcon,
     Activity as HealthIcon,
+    X as CloseIcon,
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
@@ -299,6 +300,21 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         setSelectedName(nextName);
     }
 
+    function handleCloseProject() {
+        // Unload the current project — nothing on disk is touched. The
+        // workbench returns to the empty no-project state.
+        if (!project) return;
+        if (project.dirty || project.has_unsaved_changes) {
+            const ok = window.confirm(
+                `“${project.name}” has unsaved or uncommitted changes. Close anyway? They'll stay in memory until you reload the project — but a backend restart will lose them.`,
+            );
+            if (!ok) return;
+        }
+        stopPlayback();
+        setSelectedName('');
+        try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
+    }
+
     async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
         if (!project) return;
         setError(''); setErrorCode(''); setErrorExtra(null);
@@ -408,7 +424,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         if (!name) return;
         setConfirm({
             title: 'Delete project',
-            body: `Permanently delete project “${name}”? Audio files, sidecars, and any drafts will be removed from disk.`,
+            body: `Permanently delete project “${name}”? The project folder (audio copies/symlinks, sidecars, drafts) will be removed from disk. Original source files outside the project are never touched.`,
             warning: 'This cannot be undone.',
             confirmLabel: 'Delete',
             busyLabel: 'Deleting…',
@@ -483,7 +499,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
     async function handleClipDelete(fileName) {
         if (!project) return;
-        if (!window.confirm(`Remove ${fileName} from this project? (Deletes the audio file from disk immediately — cannot be discarded back.)`)) return;
+        if (!window.confirm(`Remove ${fileName} from this project? Only the project's copy (or symlink) is deleted — the original source file is never touched. This is immediate and cannot be discarded back.`)) return;
         try {
             await api.delete(
                 `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
@@ -577,6 +593,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         onCommit={handleCommit}
                         onDiscard={handleDiscard}
                         onAddAudio={() => setIngestOpen(true)}
+                        onClose={handleCloseProject}
                         disabled={isAnnotating}
                     />
 
@@ -1146,7 +1163,7 @@ function LoadProjectDialog({ open, projects, currentName, onClose, onLoad, onDel
     );
 }
 
-function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disabled }) {
+function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClose, disabled }) {
     const stateLabel = (() => {
         if (project.dirty && project.has_unsaved_changes) return 'Unsaved changes';
         if (project.dirty && !project.has_unsaved_changes) return 'Draft saved · dataset not created';
@@ -1213,6 +1230,16 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, disab
                             Create Dataset
                         </Button>
                     </span>
+                </Tooltip>
+                <Tooltip title={TIPS.dataset.closeProject}>
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<CloseIcon size={16} />}
+                        onClick={onClose}
+                    >
+                        Close
+                    </Button>
                 </Tooltip>
             </Stack>
         </Box>
