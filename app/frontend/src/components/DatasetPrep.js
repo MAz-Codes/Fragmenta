@@ -622,7 +622,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                             <LinearProgress />
                             <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
                                 {tier === 'rich'
-                                    ? 'Starting annotation — loading the CLAP model (the first run can take a while)…'
+                                    ? 'Starting annotation (the first run can take a while)…'
                                     : 'Starting annotation…'}
                             </Typography>
                         </Box>
