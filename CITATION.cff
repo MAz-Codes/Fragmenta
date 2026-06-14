@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Fragmenta"
+abstract: "An open-source text-to-audio pipeline for musicians, built on Stable Audio 3, with dataset tooling, LoRA training, generation, editing, and a live performance mode."
+type: software
+authors:
+  - family-names: "Azimi"
+    given-names: "Misagh"
+    orcid: "https://orcid.org/0009-0006-4330-0742"
+version: 1.0.0
+date-released: 2026-06-14
+doi: "10.5281/zenodo.20692998"
+url: "https://github.com/MAz-Codes/Fragmenta"
+repository-code: "https://github.com/MAz-Codes/Fragmenta"
+license: AGPL-3.0-only
+keywords:
+  - "text-to-audio"
+  - "generative audio"
+  - "music"
+  - "LoRA"
+  - "diffusion"
+  - "Stable Audio"
