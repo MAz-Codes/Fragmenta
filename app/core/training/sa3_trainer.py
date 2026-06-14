@@ -567,7 +567,12 @@ class SA3Trainer:
         current_epoch = 0
         batches_per_epoch = 0
         try:
-            with open(log_path, "w") as logf:
+            # UTF-8, not the Windows locale default (cp1252): the child's
+            # stdout is decoded as UTF-8 (see Popen) and tqdm progress bars
+            # contain block glyphs like ▏ (▏). Writing those to a cp1252
+            # file raises UnicodeEncodeError, which would crash the monitor
+            # thread and mark a healthy run "failed" while the child trains on.
+            with open(log_path, "w", encoding="utf-8", errors="replace") as logf:
                 if self.process and self.process.stdout:
                     for line in self.process.stdout:
                         line = line.rstrip()

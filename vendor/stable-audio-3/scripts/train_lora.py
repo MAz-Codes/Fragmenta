@@ -33,6 +33,7 @@ import os
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import argparse
+import functools
 import itertools
 import json
 from pathlib import Path
@@ -74,7 +75,22 @@ def load_model(model_name: str, device: torch.device):
     return model, model_config
 
 
+def _worker_seed_init(worker_id, base_seed):
+    # Must be a top-level (picklable) function, not a closure/lambda: on
+    # Windows DataLoader workers are spawned, not forked, so worker_init_fn
+    # is pickled to each child. A local lambda raises
+    # "Can't pickle local object 'train.<locals>.<lambda>'".
+    torch.manual_seed(base_seed + worker_id)
+
+
 def caption_metadata_fn(info, audio):
+    # Import Path locally rather than relying on the module global. SA3
+    # dill-serializes this fn and dill.loads() it inside each DataLoader
+    # worker; under Windows/macOS spawn the worker imports this script as
+    # __mp_main__, so the reconstructed fn's globals don't contain the
+    # top-level `from pathlib import Path` and every clip would raise
+    # "name 'Path' is not defined", get rejected, and stall training.
+    from pathlib import Path
     txt = Path(info["path"]).with_suffix(".txt")
     if not txt.exists():
         return {"__reject__": True}
@@ -141,7 +157,7 @@ def train(args):
         num_workers=args.num_workers,
         drop_last=True,
         collate_fn=collation_fn,
-        worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
+        worker_init_fn=functools.partial(_worker_seed_init, base_seed=seed),
     )
 
     lora_state_dict = None
