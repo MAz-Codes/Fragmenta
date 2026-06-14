@@ -37,22 +37,11 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 
 ## Before You Start
 
-Fragmenta runs two ways — pick the one that fits:
-
-| Path | Best for | Needs |
-|---|---|---|
-| **[Hugging Face Space](#option-1-run-on-hugging-face-)** | A quick look, zero install | A browser (CPU only) |
-| **[Local source](#option-2-run-the-app-locally)** | Development, Apple Silicon | Python 3.11 |
-
 Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU. After a one-time model download everything runs offline and on-device — the in-app **Checkpoint Manager** handles the downloads (see [Authenticate & Download Models](#0-authenticate--download-models)).
 
 ---
 
-## Option 1: Run on Hugging Face 🤗
-
-If you only want to get to know the app, Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs.
-
-## Option 2: Run the App Locally
+## Run the App Locally
 
 > **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
 
