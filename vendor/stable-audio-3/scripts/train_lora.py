@@ -69,7 +69,13 @@ def load_model(model_name: str, device: torch.device):
         model_config = json.load(f)
     model = create_diffusion_cond_from_config(model_config)
     copy_state_dict(model, load_file(local_ckpt))
-    model.to(device=device, dtype=torch.bfloat16).eval().requires_grad_(False)
+    # On MPS we train with precision="32-true" (no autocast), so the frozen
+    # base must stay fp32 to match the fp32 input — a bf16 base raises
+    # "Input type (MPSFloatType) and weight type (MPSBFloat16Type) should be
+    # the same" in the first conv. CUDA/CPU keep bf16 (autocast reconciles
+    # dtypes under bf16-mixed).
+    base_dtype = torch.float32 if device.type == "mps" else torch.bfloat16
+    model.to(device=device, dtype=base_dtype).eval().requires_grad_(False)
     if model.pretransform is not None:
         model.pretransform.enable_grad = False
     return model, model_config
@@ -197,6 +203,12 @@ def train(args):
         }
     }
 
+    # On MPS the base stays fp32 (see load_model + the "32-true" precision
+    # below), so skip the wrapper's bf16/fp16 downcast — otherwise it would
+    # re-cast model, conditioner and pretransform back to bf16 and reintroduce
+    # the fp32-input/bf16-weight mismatch. CUDA/CPU keep args.base_precision.
+    base_precision = None if device.type == "mps" else args.base_precision
+
     training_wrapper = DiffusionCondTrainingWrapper(
         model,
         mask_loss_weight=1.0,
@@ -217,7 +229,7 @@ def train(args):
         svd_bases_path=args.svd_bases_path,
         log_every_n_steps=args.log_every,
         ot_coupling=True,
-        base_precision=args.base_precision,
+        base_precision=base_precision,
     )
 
     exc_callback = ExceptionCallback()
