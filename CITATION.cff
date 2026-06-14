@@ -6,7 +6,7 @@ type: software
 authors:
   - family-names: "Azimi"
     given-names: "Misagh"
-    orcid: "https://orcid.org/0009-0006-4330-742"
+    orcid: "https://orcid.org/0009-0006-4330-0742"
 version: 1.0.0
 date-released: 2026-06-14
 doi: "10.5281/zenodo.20692998"
