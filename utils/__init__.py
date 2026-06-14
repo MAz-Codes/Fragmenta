@@ -1,8 +1,3 @@
-"""
-Fragmenta Utilities Package
-Centralized utilities for improved code organization and reusability
-"""
-
 from .logger import get_logger, setup_logging
 from .exceptions import (
     FragmentaError,

@@ -4,7 +4,6 @@
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
-[![Docker](https://img.shields.io/badge/Docker_Hub-mazcode%2Ffragmenta-2496ED.svg?logo=docker)](https://hub.docker.com/r/mazcode/fragmenta)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
@@ -24,14 +23,13 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 ## Features
 
 - **Desktop app** with a lightweight `pywebview` window and a pre-built React frontend
-- **Docker images** for GPU and CPU, run as a web app on any machine
 - **Bulk auto-annotation** — generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
 - **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision — trains directly on a Dataset Workbench project
 - **LoRA adapters** — train LoRA, DoRA, or BoRA adapters (plus low-VRAM `-xs` variants) on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
 - **Text-to-audio generation** — variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
 - **Audio editing (Edit tab)** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation
 - **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
-- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance-mode))
+- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance))
 - **Real-time GPU memory monitoring**
 
 
@@ -39,41 +37,11 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 
 ## Before You Start
 
-Fragmenta runs three ways — pick the one that fits:
-
-| Path | Best for | Needs |
-|---|---|---|
-| **[Hugging Face Space](#option-1-run-on-hugging-face-)** | A quick look, zero install | A browser (CPU only) |
-| **[Docker](#option-2-run-locally-with-docker)** | Running locally, fast setup | Docker (NVIDIA GPU optional) |
-| **[Local source](#option-3-run-the-app-locally)** | Development, Apple Silicon | Python 3.11 |
-
 Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU. After a one-time model download everything runs offline and on-device — the in-app **Checkpoint Manager** handles the downloads (see [Authenticate & Download Models](#0-authenticate--download-models)).
 
 ---
 
-## Option 1: Run on Hugging Face 🤗
-
-If you only want to get to know the app, Fragmenta runs on a [Hugging Face Space](https://huggingface.co/spaces/MazCodes/fragmenta) on CPUs.
-
-## Option 2: Run Locally with Docker
-
-The fastest way to get started locally — no Python installation needed. Open your **Terminal** or **PowerShell** and run one of the commands below, then open **http://localhost:5001** in your browser.
-
-```bash
-# GPU (NVIDIA)
-docker run -d -p 5001:5001 --gpus all -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:gpu
-
-# CPU (Mac / Linux / Windows — slower)
-docker run -d -p 5001:5001 -v ./models:/app/models -v ./output:/app/output mazcode/fragmenta:cpu
-```
-
-Generated clips are saved inside the container at `/app/output`; the `-v ./output:/app/output` mount mirrors them to an `output/` folder next to where you run the command. You can also **download** any clip directly from the Generated Fragments panel in the app.
-
-For the full volume mounts, Windows/PowerShell syntax, environment variables, and a `docker-compose.yml`, see the **[Docker Hub page](https://hub.docker.com/r/mazcode/fragmenta)**.
-
----
-
-## Option 3: Run the App Locally
+## Run the App Locally
 
 > **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
 
@@ -176,7 +144,7 @@ This is a 4-channel diffusion sampler designed for live performance use. Each ch
 - Master tempo (BPM) — drives bars-mode generation and launch quantization
 - Launch quantization (`Q`) — snap launches to the grid (None, 1/32 → 8 Bars)
 - Master reverb (selectable impulse response) and tempo-synced delay division
-- **Ableton Link** toggle — sync tempo with any Link-enabled app on the local network. The small Link binding (~1–2 MB) isn't bundled; the app offers to install it the first time you enable Link. (Not available in Docker — the container's bridge network blocks Link's multicast discovery.)
+- **Ableton Link** toggle — sync tempo with any Link-enabled app on the local network. The small Link binding (~1–2 MB) isn't bundled; the app offers to install it the first time you enable Link.
 
 **Bars-mode generation:**
 Switch a channel from `sec` to `bars` and pick a length (1, 2, 4, 8, or 16 bars). The clip is rendered to that bar count at the master BPM. 
@@ -289,6 +257,6 @@ Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://git
 
 - **Vendored code** — the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI — see [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
 - **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face and accept their license then. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
-The bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, no external licensing.
+- **Impulse responses** — the bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, with no external licensing.
 
 Fragmenta also depends on many open-source libraries. See [NOTICE.md](NOTICE.md) for the complete attribution and license list.

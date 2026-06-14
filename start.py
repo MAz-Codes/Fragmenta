@@ -39,9 +39,6 @@ CHROMIUM_CANDIDATES = (
     "brave-browser",
 )
 CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
-# A Chromium that survived this long was a working session: a nonzero exit
-# after it means the session ENDED (crash on close, SIGTERM at logout…), not
-# that the launch failed. Genuine launch failures die within a few seconds.
 CHROMIUM_MIN_SESSION_SECONDS = 15.0
 WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
@@ -49,14 +46,6 @@ DESKTOP_ENTRY_PATH = (
 )
 
 def _port_available(port: int) -> bool:
-    """True if we can bind ``port`` on the loopback address — i.e. nothing else
-    is holding it right now.
-
-    SO_REUSEADDR (POSIX only) makes the probe match what Flask's own bind can
-    do: lingering TIME_WAIT sockets from a just-closed session would otherwise
-    fail this probe and needlessly push us off 5001 — resetting the browser
-    storage origin. On Windows that flag would let the probe bind over a LIVE
-    listener, so it stays off there."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         if os.name != "nt":
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -68,9 +57,6 @@ def _port_available(port: int) -> bool:
 
 
 def _pick_backend_port(preferred: int = 5001) -> int:
-    """Return a free loopback TCP port: ``preferred`` if available, else one
-    the OS assigns. Bound to 127.0.0.1 so we only ever claim the loopback
-    address the window actually connects to."""
     for candidate in (preferred, 0):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             try:
@@ -82,9 +68,6 @@ def _pick_backend_port(preferred: int = 5001) -> int:
 
 
 def _is_fragmenta_backend(port: int) -> bool:
-    """True if a *Fragmenta* backend is already answering on ``port``. We probe
-    /api/health and look for a field only our backend returns, so we don't
-    mistake an unrelated service squatting on 5001 for our own instance."""
     try:
         resp = requests.get(
             f"http://{BACKEND_HOST}:{port}/api/health", timeout=1.5
@@ -95,22 +78,15 @@ def _is_fragmenta_backend(port: int) -> bool:
 
 
 def _install_sigterm_handler() -> None:
-    """Translate SIGTERM into SystemExit so the ``finally`` blocks in the
-    run_* functions clean up the backend/browser children — the same path a
-    Ctrl+C already takes. Without this, a plain ``kill`` (or session logout)
-    terminates the launcher and leaves the backend running orphaned."""
     def _terminate(_signum, _frame):
         raise SystemExit(143)
     try:
         signal.signal(signal.SIGTERM, _terminate)
     except (ValueError, OSError, AttributeError):
-        pass  # non-main thread or platform without SIGTERM delivery
+        pass
 
 
 def _terminate_backend_on_port(port: int) -> bool:
-    """Terminate the process LISTENING on ``port`` and wait for the port to
-    free. Only called after _is_fragmenta_backend() verified the listener is
-    one of ours. Returns True when the port is free afterwards."""
     try:
         import psutil
     except ImportError:
@@ -140,10 +116,7 @@ def _terminate_backend_on_port(port: int) -> bool:
         pass
     except Exception:
         return False
-    # Wait for the LISTENER to vanish (connection refused), not for a clean
-    # bind: our own health probes leave TIME_WAIT sockets on the port for up
-    # to a minute, but they don't stop the new backend from binding (Flask
-    # sets SO_REUSEADDR).
+
     for _ in range(20):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(0.5)
@@ -154,11 +127,6 @@ def _terminate_backend_on_port(port: int) -> bool:
 
 
 def _maybe_replace_stale_backend(port: int) -> None:
-    """A reused (orphaned) backend may predate an update — it keeps serving
-    the old code and UI bundle from memory. Compare the version baked into
-    the running process (/api/health) against this tree's VERSION; on
-    mismatch, stop it so the normal startup path spawns a fresh backend on
-    the SAME port, keeping the browser-storage origin stable."""
     try:
         resp = requests.get(
             f"http://{BACKEND_HOST}:{port}/api/health", timeout=1.5
@@ -181,31 +149,11 @@ def _maybe_replace_stale_backend(port: int) -> None:
 
 
 def configure_backend_endpoint() -> None:
-    """Finalise the backend port (and the URLs derived from it) before launch.
-
-    The frontend's saved state — MIDI mappings, performance presets, and
-    fragment audio — lives in the browser's localStorage/IndexedDB, which are
-    partitioned per origin (scheme + host + port). Moving to a different port
-    therefore makes all of it *appear* wiped, since the page is now a fresh
-    origin. So we pin 5001 whenever we possibly can:
-
-      • 5001 free                    → take it (a new backend will start there).
-      • 5001 held by *our* backend   → reuse that instance, keeping the origin
-                                       stable. This is the common Windows case
-                                       where closing the console without Ctrl+C
-                                       orphans the child backend on 5001.
-      • 5001 held by something else  → only then fall back to an OS-assigned
-                                       port, accepting the state reset.
-
-    Safe to call once at startup; subsequent helpers read the updated globals."""
     global BACKEND_PORT, BACKEND_URL, HEALTH_ENDPOINT
     if _port_available(5001):
         BACKEND_PORT = 5001
     elif _is_fragmenta_backend(5001):
         BACKEND_PORT = 5001
-        # Reusing an existing instance — unless it predates an update, in
-        # which case replace it (frees 5001; the run_* path then starts a
-        # fresh backend there, preserving the origin).
         _maybe_replace_stale_backend(5001)
     else:
         BACKEND_PORT = _pick_backend_port()
@@ -220,20 +168,12 @@ def configure_backend_endpoint() -> None:
 
 
 def announce_ui_ready() -> None:
-    """Tell the native launcher's first-run splash that the backend is healthy
-    and the window is about to appear, so it can dismiss the progress UI. Harmless
-    when launched without the splash (it's just a line on stdout)."""
     print("__FRAGMENTA_UI_READY__", flush=True)
     if os.environ.get("FRAGMENTA_PACKAGED") == "1":
         time.sleep(0.6)
 
 
 def wait_for_backend(timeout_seconds: int = 60) -> bool:
-    """Wait until OUR Flask backend answers on the chosen port.
-
-    Identity-checked via _is_fragmenta_backend — accepting any HTTP <500
-    (the old behaviour) would greenlight an unrelated service that grabbed
-    the port between the availability probe and our spawn."""
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
         if _is_fragmenta_backend(BACKEND_PORT):
@@ -242,7 +182,6 @@ def wait_for_backend(timeout_seconds: int = 60) -> bool:
     return False
 
 def backend_process_running() -> bool:
-    """Return True if something is already listening on the backend port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
         return sock.connect_ex((BACKEND_HOST, BACKEND_PORT)) == 0
@@ -273,8 +212,6 @@ def run_browser_mode() -> int:
         print("Press Ctrl+C to stop.")
         while True:
             time.sleep(1)
-            # Exit with a message when the backend dies instead of sleeping
-            # forever next to a dead server.
             if backend_process is not None:
                 rc = backend_process.poll()
                 if rc is not None:
@@ -294,8 +231,6 @@ def run_browser_mode() -> int:
                 backend_process.kill()
 
 def _chromium_install_paths() -> list[str]:
-    """Absolute install locations to probe on macOS/Windows (where the browser
-    isn't on PATH), in priority order: real Chrome/Chromium before Edge/Brave."""
     if sys.platform == "darwin":
         home = Path.home()
         return [
@@ -342,7 +277,6 @@ def find_chromium() -> str | None:
 
 
 def ensure_desktop_entry() -> None:
-    """Install a .desktop file so the WM picks up Fragmenta's name and icon."""
     if DESKTOP_ENTRY_PATH.exists():
         return
     DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -408,10 +342,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             if last_exit_code == 0:
                 return 0
             if elapsed >= CHROMIUM_MIN_SESSION_SECONDS:
-                # The window ran — the user had a session and it's over now.
-                # Returning nonzero here would relaunch into the DEFAULT
-                # profile (a different storage partition: presets/MIDI appear
-                # wiped) and then fall through to a third pywebview window.
                 print(
                     f"Chromium exited with code {last_exit_code} after "
                     f"{elapsed:.0f}s — treating it as the end of the session."
@@ -442,7 +372,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
                 backend_process.kill()
 
 def check_linux_webview_deps() -> tuple[bool, str]:
-    """Check if Linux has required GTK/WebKit dependencies for pywebview."""
     if sys.platform != "linux":
         return True, ""
     try:
@@ -458,11 +387,6 @@ def check_linux_webview_deps() -> tuple[bool, str]:
         return False, f"Missing GTK/WebKit: {e}"
 
 def _ensure_windows_icon() -> bool:
-    """Generate a multi-resolution .ico from the source PNG if it's missing.
-
-    Cached on disk after first run; relies on Pillow, which is already part of
-    the project's dependency footprint. Returns False if generation fails.
-    """
     if WINDOWS_ICON_PATH.exists():
         return True
     try:
@@ -480,9 +404,6 @@ def _ensure_windows_icon() -> bool:
         return False
 
 def _windows_set_app_id() -> None:
-    """Give the host process its own AppUserModelID. Without this, Windows
-    looks up the taskbar icon by the host executable (python.exe) and groups
-    Fragmenta under "Python" in the taskbar/alt-tab list."""
     if sys.platform != "win32":
         return
     try:
@@ -673,7 +594,7 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
-                
+
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
             return 0 if window else 1

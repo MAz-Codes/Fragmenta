@@ -33,6 +33,7 @@ import os
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 
 import argparse
+import functools
 import itertools
 import json
 from pathlib import Path
@@ -68,13 +69,47 @@ def load_model(model_name: str, device: torch.device):
         model_config = json.load(f)
     model = create_diffusion_cond_from_config(model_config)
     copy_state_dict(model, load_file(local_ckpt))
-    model.to(device=device, dtype=torch.bfloat16).eval().requires_grad_(False)
+    # On MPS we train with precision="32-true" (no autocast), so the frozen
+    # base must stay fp32 to match the fp32 input — a bf16 base raises
+    # "Input type (MPSFloatType) and weight type (MPSBFloat16Type) should be
+    # the same" in the first conv. CUDA/CPU keep bf16 (autocast reconciles
+    # dtypes under bf16-mixed).
+    base_dtype = torch.float32 if device.type == "mps" else torch.bfloat16
+    model.to(device=device, dtype=base_dtype).eval().requires_grad_(False)
     if model.pretransform is not None:
         model.pretransform.enable_grad = False
     return model, model_config
 
 
+def _pick_device():
+    # cuda → mps (Apple Silicon) → cpu. Gated so CUDA/CPU behaviour is
+    # unchanged: MPS is selected ONLY when CUDA is absent and a built,
+    # available MPS backend exists. Lightning's accelerator="auto" would also
+    # land the module on MPS, but selecting it explicitly here keeps the
+    # initial load_model() placement and the Trainer on the same device.
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _worker_seed_init(worker_id, base_seed):
+    # Must be a top-level (picklable) function, not a closure/lambda: on
+    # Windows DataLoader workers are spawned, not forked, so worker_init_fn
+    # is pickled to each child. A local lambda raises
+    # "Can't pickle local object 'train.<locals>.<lambda>'".
+    torch.manual_seed(base_seed + worker_id)
+
+
 def caption_metadata_fn(info, audio):
+    # Import Path locally rather than relying on the module global. SA3
+    # dill-serializes this fn and dill.loads() it inside each DataLoader
+    # worker; under Windows/macOS spawn the worker imports this script as
+    # __mp_main__, so the reconstructed fn's globals don't contain the
+    # top-level `from pathlib import Path` and every clip would raise
+    # "name 'Path' is not defined", get rejected, and stall training.
+    from pathlib import Path
     txt = Path(info["path"]).with_suffix(".txt")
     if not txt.exists():
         return {"__reject__": True}
@@ -94,9 +129,8 @@ def train(args):
 
     pl.seed_everything(seed, workers=True)
 
-    model, model_config = load_model(
-        args.model, torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = _pick_device()
+    model, model_config = load_model(args.model, device)
 
     sample_rate = model.sample_rate
     ds_ratio = model.pretransform.downsampling_ratio
@@ -141,7 +175,7 @@ def train(args):
         num_workers=args.num_workers,
         drop_last=True,
         collate_fn=collation_fn,
-        worker_init_fn=lambda worker_id: torch.manual_seed(seed + worker_id),
+        worker_init_fn=functools.partial(_worker_seed_init, base_seed=seed),
     )
 
     lora_state_dict = None
@@ -169,6 +203,12 @@ def train(args):
         }
     }
 
+    # On MPS the base stays fp32 (see load_model + the "32-true" precision
+    # below), so skip the wrapper's bf16/fp16 downcast — otherwise it would
+    # re-cast model, conditioner and pretransform back to bf16 and reintroduce
+    # the fp32-input/bf16-weight mismatch. CUDA/CPU keep args.base_precision.
+    base_precision = None if device.type == "mps" else args.base_precision
+
     training_wrapper = DiffusionCondTrainingWrapper(
         model,
         mask_loss_weight=1.0,
@@ -189,7 +229,7 @@ def train(args):
         svd_bases_path=args.svd_bases_path,
         log_every_n_steps=args.log_every,
         ot_coupling=True,
-        base_precision=args.base_precision,
+        base_precision=base_precision,
     )
 
     exc_callback = ExceptionCallback()
@@ -277,11 +317,17 @@ def train(args):
     summary = pl.callbacks.ModelSummary(max_depth=2)
     callbacks.append(summary)
 
+    # bf16-mixed relies on autocast, whose MPS support for bfloat16 is
+    # version-dependent and historically unreliable. On Apple Silicon fall
+    # back to full fp32 ("32-true") for a correct (if slower) run; CUDA/CPU
+    # keep the original bf16 mixed-precision path unchanged.
+    precision = "32-true" if device.type == "mps" else "bf16-mixed"
+
     trainer = pl.Trainer(
         devices="auto",
         accelerator="auto",
         strategy="auto",
-        precision="bf16-mixed",
+        precision=precision,
         accumulate_grad_batches=1,
         callbacks=callbacks,
         logger=logger,
