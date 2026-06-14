@@ -75,6 +75,19 @@ def load_model(model_name: str, device: torch.device):
     return model, model_config
 
 
+def _pick_device():
+    # cuda → mps (Apple Silicon) → cpu. Gated so CUDA/CPU behaviour is
+    # unchanged: MPS is selected ONLY when CUDA is absent and a built,
+    # available MPS backend exists. Lightning's accelerator="auto" would also
+    # land the module on MPS, but selecting it explicitly here keeps the
+    # initial load_model() placement and the Trainer on the same device.
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 def _worker_seed_init(worker_id, base_seed):
     # Must be a top-level (picklable) function, not a closure/lambda: on
     # Windows DataLoader workers are spawned, not forked, so worker_init_fn
@@ -110,9 +123,8 @@ def train(args):
 
     pl.seed_everything(seed, workers=True)
 
-    model, model_config = load_model(
-        args.model, torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = _pick_device()
+    model, model_config = load_model(args.model, device)
 
     sample_rate = model.sample_rate
     ds_ratio = model.pretransform.downsampling_ratio
@@ -293,11 +305,17 @@ def train(args):
     summary = pl.callbacks.ModelSummary(max_depth=2)
     callbacks.append(summary)
 
+    # bf16-mixed relies on autocast, whose MPS support for bfloat16 is
+    # version-dependent and historically unreliable. On Apple Silicon fall
+    # back to full fp32 ("32-true") for a correct (if slower) run; CUDA/CPU
+    # keep the original bf16 mixed-precision path unchanged.
+    precision = "32-true" if device.type == "mps" else "bf16-mixed"
+
     trainer = pl.Trainer(
         devices="auto",
         accelerator="auto",
         strategy="auto",
-        precision="bf16-mixed",
+        precision=precision,
         accumulate_grad_batches=1,
         callbacks=callbacks,
         logger=logger,

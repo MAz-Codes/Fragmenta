@@ -334,4 +334,10 @@ def build_train_env(sa3_vendor_dir: Path, hub_dir: Path) -> Dict[str, str]:
     # fix, a UnicodeDecodeError that killed the monitor mid-run).
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # Apple Silicon: let any SA3 op without an MPS kernel (some autoencoder /
+    # conditioner ops) fall back to CPU instead of crashing the run. No-op on
+    # CUDA/Windows/Linux, but gated to darwin so we don't set irrelevant env
+    # elsewhere. Slower for the fallen-back ops, but keeps training running.
+    if sys.platform == "darwin":
+        env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     return env
