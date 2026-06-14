@@ -29,7 +29,7 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 - **Text-to-audio generation** — variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
 - **Audio editing (Edit tab)** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation
 - **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
-- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance-mode))
+- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance))
 - **Real-time GPU memory monitoring**
 
 
@@ -257,6 +257,6 @@ Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://git
 
 - **Vendored code** — the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI — see [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
 - **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face and accept their license then. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
-The bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, no external licensing.
+- **Impulse responses** — the bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, with no external licensing.
 
 Fragmenta also depends on many open-source libraries. See [NOTICE.md](NOTICE.md) for the complete attribution and license list.
