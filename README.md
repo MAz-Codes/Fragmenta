@@ -4,6 +4,7 @@
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Version](https://img.shields.io/badge/version-1.0.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20692998.svg)](https://doi.org/10.5281/zenodo.20692998)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
@@ -233,6 +234,29 @@ fragmenta/
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
 | Multi-channel audio in Performance mode (macOS) | The native macOS window can't route audio to separate output devices. Open Fragmenta in your browser instead: [http://localhost:5001](http://localhost:5001) |
 | Import errors | Verify Python 3.11 is installed — newer versions are not supported. [Download Python 3.11.9](https://www.python.org/downloads/release/python-3119/). If you previously ran the installer with the wrong Python version, delete the `venv/` folder and rerun. |
+
+---
+
+## Citation
+
+If you use Fragmenta in your research, please cite it. You can use the **Cite this repository** button on GitHub (powered by [CITATION.cff](CITATION.cff)), or:
+
+> Azimi, M. (2026). *Fragmenta* (Version 1.0.0) [Computer software]. https://doi.org/10.5281/zenodo.20692998
+
+**BibTeX:**
+
+```bibtex
+@software{azimi_fragmenta_2026,
+  author  = {Azimi, Misagh},
+  title   = {Fragmenta},
+  year    = {2026},
+  version = {1.0.0},
+  doi     = {10.5281/zenodo.20692998},
+  url     = {https://github.com/MAz-Codes/Fragmenta}
+}
+```
+
+The DOI is a Zenodo concept DOI — it always resolves to the latest release.
 
 ---
 
