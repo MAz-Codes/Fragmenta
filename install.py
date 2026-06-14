@@ -39,7 +39,6 @@ def fail(msg: str, code: int = 1) -> "None":
 
 
 def venv_python(path: Path = VENV_PATH) -> Path:
-    """Path to the interpreter inside a venv, per-platform."""
     if os.name == "nt":
         return path / "Scripts" / "python.exe"
     return path / "bin" / "python"
@@ -82,7 +81,6 @@ def _macos_link_libpython(venv_path: Path) -> None:
 
 
 def ensure_venv() -> Path:
-    """Create the venv if missing; recreate it if it's the wrong Python."""
     py = venv_python()
     if VENV_PATH.exists():
         if py.exists() and is_py311(py):
