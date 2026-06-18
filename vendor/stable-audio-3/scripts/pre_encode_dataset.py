@@ -36,6 +36,8 @@ from stable_audio_3.data.dataset import (
 
 
 def caption_metadata_fn(info, _audio):
+    # Local import: runs in spawned DataLoader workers without module globals.
+    from pathlib import Path
     txt = Path(info["path"]).with_suffix(".txt")
     if not txt.exists():
         return {"__reject__": True}
