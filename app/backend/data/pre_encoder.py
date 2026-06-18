@@ -283,6 +283,8 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     # Match the utf-8 decode above — see the Popen call.
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    # Unbuffered child stdout so progress lines stream to our reader live.
+    env["PYTHONUNBUFFERED"] = "1"
 
     # A cancel can land between start_pre_encode queueing the job and this
     # thread getting scheduled — honour it before spawning anything.
