@@ -180,6 +180,49 @@ class _DownloadCancelled(Exception):
     """Raised inside the tqdm hook when a job's cancel flag fires."""
 
 
+def _friendly_disk_error(err: OSError) -> str:
+    """Translate an OS-level write failure into a plain-language message.
+
+    Downloads write multi-GB blobs into the app's data dir. When that write
+    fails the kernel raises an ``OSError`` whose ``str()`` is cryptic (e.g.
+    ``[Errno 5] Input/output error``). Map the common errnos to advice the
+    user can act on; the install/drive is the cause, not the app.
+    """
+    import errno as _errno
+    where = "the install / data folder"
+    advice = {
+        _errno.EIO: (  # 5
+            "Couldn't write to disk — the drive reported an I/O error. "
+            f"Make sure {where} isn't on a disconnected or failing "
+            "external/USB/network drive, then try again."
+        ),
+        _errno.ENOSPC: (  # 28
+            f"Not enough free disk space to download the model. Free up space "
+            f"on the drive holding {where} and try again."
+        ),
+        _errno.EACCES: (  # 13
+            f"Permission denied writing to {where}. Check the folder's "
+            "permissions and try again."
+        ),
+        _errno.EPERM: (  # 1
+            f"Permission denied writing to {where}. Check the folder's "
+            "permissions and try again."
+        ),
+        _errno.EROFS: (  # 30
+            f"{where.capitalize()} is on a read-only filesystem and can't be "
+            "written to. Move the app to a writable location and try again."
+        ),
+        _errno.ENAMETOOLONG: (  # 36
+            f"A download path was too long for the filesystem holding {where}. "
+            "An encrypted home folder (ecryptfs) is a common cause; try a "
+            "different location."
+        ),
+    }.get(err.errno)
+    if advice is None:
+        return f"Couldn't write the download to disk ({err})."
+    return f"{advice} (system error: {err})"
+
+
 # --- ModelManager -------------------------------------------------------------
 
 class ModelManager:
@@ -510,6 +553,10 @@ class ModelManager:
                 job.status = "cancelled"
                 job.error = "Cancelled by user"
                 job.finished_at = datetime.now().isoformat()
+            except OSError as err:
+                job.status = "failed"
+                job.error = _friendly_disk_error(err)
+                job.finished_at = datetime.now().isoformat()
             except Exception as err:
                 job.status = "failed"
                 job.error = f"{type(err).__name__}: {err}"
@@ -596,6 +643,9 @@ class ModelManager:
         except RepositoryNotFoundError as err:
             job.status = "failed"
             job.error = f"Repository not found: {err}"
+        except OSError as err:
+            job.status = "failed"
+            job.error = _friendly_disk_error(err)
         except Exception as err:
             job.status = "failed"
             job.error = str(err)

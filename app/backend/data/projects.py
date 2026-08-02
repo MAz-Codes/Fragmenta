@@ -122,13 +122,22 @@ def _safe_clip_path(proj_path: Path, file_name: str) -> Path:
     an arbitrary location and any destructive op (unlink) would follow it out of
     the project tree. `relative_to` raises ValueError when the resolved path
     escapes — callers translate that into a 4xx.
+
+    Only the *parent* is resolved: ingested clips are often symlinks into a
+    source dataset, and resolving the leaf would follow the link and report the
+    dataset path as an escape. Leaving the leaf un-followed also keeps unlink()
+    acting on the project-local entry rather than the source file.
     """
     if not isinstance(file_name, str) or not file_name:
         raise ValueError("Invalid clip file name.")
     base = proj_path.resolve()
-    candidate = (proj_path / file_name).resolve()
-    candidate.relative_to(base)  # raises ValueError on escape
-    return candidate
+    candidate = proj_path / file_name
+    leaf = candidate.name
+    if leaf in ("", ".", ".."):
+        raise ValueError("Invalid clip file name.")
+    parent = candidate.parent.resolve()
+    parent.relative_to(base)  # raises ValueError on escape
+    return parent / leaf
 
 
 def sanitize_project_name(raw: Any) -> str:

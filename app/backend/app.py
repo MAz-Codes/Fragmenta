@@ -2605,10 +2605,6 @@ def pick_folder():
         if not chosen and has_kdialog:
             chosen = _try(['kdialog', '--getexistingdirectory', start_dir])
         if not chosen:
-            # Last resort: system python3's tkinter. Pin to /usr/bin/python3 —
-            # bare `python3` on PATH may resolve to our venv, which has no tk.
-            # Most desktops don't ship python3-tk either, so this rarely works;
-            # zenity is the real dependency (installed by fragmenta.sh).
             sys_py = '/usr/bin/python3' if os.path.exists('/usr/bin/python3') else 'python3'
             script = (
                 "import tkinter as tk; from tkinter import filedialog; "
