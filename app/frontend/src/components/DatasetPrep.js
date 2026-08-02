@@ -150,9 +150,27 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     const [playingFile, setPlayingFile] = useState(null);
     const [playProgress, setPlayProgress] = useState(0);  // 0..1
 
+    // Mirrors of the two values the seek handler needs. ClipRow is memoized and
+    // deliberately ignores callback identity, so a handler closing over state
+    // would go stale on rows that didn't re-render; reading refs keeps
+    // handleSeek correct while letting it stay identity-stable.
+    const playingFileRef = useRef(null);
+    const selectedNameRef = useRef(selectedName);
+    useEffect(() => { playingFileRef.current = playingFile; }, [playingFile]);
+    useEffect(() => { selectedNameRef.current = selectedName; }, [selectedName]);
+    // Which clip the <audio> element currently has loaded — lets a seek on an
+    // already-loaded-but-paused clip resume in place instead of re-fetching.
+    const loadedFileRef = useRef(null);
+    // A seek requested before duration was known; applied on loadedmetadata.
+    const pendingSeekRef = useRef(null);
+
     const stopPlayback = useCallback(() => {
         const audio = audioRef.current;
         if (audio) { audio.pause(); }
+        pendingSeekRef.current = null;
+        // The loaded src belongs to the project/clip we're leaving — forget it
+        // so the next play or seek re-fetches instead of resuming a stale file.
+        loadedFileRef.current = null;
         setPlayingFile(null);
         setPlayProgress(0);
     }, []);
@@ -168,12 +186,60 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         }
         const url = `/api/projects/${encodeURIComponent(selectedName)}/clip/${encodeURIComponent(fileName)}/audio`;
         audio.src = url;
+        loadedFileRef.current = fileName;
+        pendingSeekRef.current = null;
         setPlayProgress(0);
         setPlayingFile(fileName);
         audio.play().catch(() => {
             setPlayingFile(null);
         });
     }, [selectedName, playingFile]);
+
+    // Click / drag anywhere on a row's waveform to jump there. On a clip that
+    // isn't playing this doubles as "start here", which is what you want when
+    // you're auditioning a bench full of clips.
+    const handleSeek = useCallback((fileName, fraction) => {
+        const audio = audioRef.current;
+        const projectName = selectedNameRef.current;
+        if (!audio || !projectName) return;
+        const frac = Math.min(1, Math.max(0, fraction));
+
+        const applyNow = () => {
+            const d = audio.duration;
+            if (!d || !isFinite(d)) return false;
+            // Nudge off the very end so a click on the last pixel doesn't fire
+            // `ended` and snap the playhead back to zero.
+            audio.currentTime = Math.min(frac * d, Math.max(0, d - 0.05));
+            setPlayProgress(frac);
+            return true;
+        };
+
+        if (loadedFileRef.current === fileName) {
+            if (!applyNow()) pendingSeekRef.current = frac;
+            if (audio.paused) {
+                setPlayingFile(fileName);
+                playingFileRef.current = fileName;
+                audio.play().catch(() => {
+                    setPlayingFile(null);
+                    playingFileRef.current = null;
+                });
+            }
+            return;
+        }
+
+        // A different clip (or none) is loaded: swap the source and start from
+        // the clicked offset once metadata lands.
+        audio.src = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/audio`;
+        loadedFileRef.current = fileName;
+        pendingSeekRef.current = frac;
+        setPlayProgress(frac);
+        setPlayingFile(fileName);
+        playingFileRef.current = fileName;
+        audio.play().catch(() => {
+            setPlayingFile(null);
+            playingFileRef.current = null;
+        });
+    }, []);
 
     // Stop playback when the project changes — the audio element's src would
     // suddenly refer to a different project's file.
@@ -682,6 +748,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         playingFile={playingFile}
                         playProgress={playProgress}
                         onPlayToggle={handlePlayToggle}
+                        onSeek={handleSeek}
                         onPromptChange={handleClipPromptChange}
                         onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
                         onDelete={(fname) => {
@@ -791,14 +858,24 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                     <audio
                         ref={audioRef}
                         style={{ display: 'none' }}
+                        onLoadedMetadata={(e) => {
+                            // A waveform click that landed before the file was
+                            // loaded parks the offset in pendingSeekRef; now
+                            // that duration is known, honour it.
+                            const a = e.currentTarget;
+                            const pending = pendingSeekRef.current;
+                            pendingSeekRef.current = null;
+                            if (pending == null || !a.duration || !isFinite(a.duration)) return;
+                            a.currentTime = Math.min(pending * a.duration, Math.max(0, a.duration - 0.05));
+                        }}
                         onTimeUpdate={(e) => {
                             const a = e.currentTarget;
                             if (a.duration && isFinite(a.duration)) {
                                 setPlayProgress(a.currentTime / a.duration);
                             }
                         }}
-                        onEnded={() => { setPlayingFile(null); setPlayProgress(0); }}
-                        onError={() => { setPlayingFile(null); setPlayProgress(0); }}
+                        onEnded={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
+                        onError={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
                     />
                 </Stack>
             )}
@@ -1401,11 +1478,12 @@ function HealthStrip({ health, onSelectFiles }) {
     );
 }
 
-function Waveform({ projectName, fileName, isActive, progress }) {
+function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
     const canvasRef = useRef(null);
     const theme = useTheme();
     const [peaks, setPeaks] = useState(null);
     const [failed, setFailed] = useState(false);
+    const scrubbingRef = useRef(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -1454,19 +1532,61 @@ function Waveform({ projectName, fileName, isActive, progress }) {
             ctx.fillStyle = i <= playedIdx ? playedColor : restColor;
             ctx.fillRect(x, y, barWidth, barH);
         }
+
+        // Playhead: bars are only 80 buckets wide, so a hairline is what makes
+        // the position readable enough to scrub against.
+        if (isActive) {
+            const px = Math.min(w - 1, Math.max(0, progress * w));
+            ctx.fillStyle = playedColor;
+            ctx.fillRect(px, 0, 1, h);
+        }
     }, [peaks, isActive, progress, theme]);
+
+    // Translate a pointer position into a 0..1 offset in the clip.
+    const seekTo = useCallback((clientX) => {
+        const canvas = canvasRef.current;
+        if (!canvas || !onSeek) return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width) return;
+        onSeek(fileName, (clientX - rect.left) / rect.width);
+    }, [fileName, onSeek]);
+
+    const endScrub = useCallback((e) => {
+        scrubbingRef.current = false;
+        // Capture is already gone if the pointer was cancelled by the browser.
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+    }, []);
 
     return (
         <Box sx={{ width: 120, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
             <canvas
                 ref={canvasRef}
-                style={{ width: '100%', height: '100%', display: 'block' }}
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'block',
+                    cursor: onSeek ? 'pointer' : 'default',
+                    touchAction: 'none',
+                }}
+                title={onSeek ? 'Click or drag to scrub' : undefined}
+                onPointerDown={(e) => {
+                    if (!onSeek || e.button !== 0) return;
+                    // Stops the row's text selection from kicking in mid-drag.
+                    e.preventDefault();
+                    // Pointer capture keeps the drag alive past the 120px canvas.
+                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+                    scrubbingRef.current = true;
+                    seekTo(e.clientX);
+                }}
+                onPointerMove={(e) => { if (scrubbingRef.current) seekTo(e.clientX); }}
+                onPointerUp={endScrub}
+                onPointerCancel={endScrub}
             />
         </Box>
     );
 }
 
-function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, selectedFiles, onToggleSelected, onToggleSelectAll, disabled, toolbar }) {
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selectedFiles, onToggleSelected, onToggleSelectAll, disabled, toolbar }) {
     const totalSelected = selectedFiles ? selectedFiles.size : 0;
     const allSelected = clips && clips.length > 0 && totalSelected === clips.length;
     const partiallySelected = totalSelected > 0 && !allSelected;
@@ -1520,6 +1640,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                                 isPlaying={playingFile === c.file_name}
                                 playProgress={playingFile === c.file_name ? playProgress : 0}
                                 onPlayToggle={onPlayToggle}
+                                onSeek={onSeek}
                                 onPromptChange={onPromptChange}
                                 onAnnotate={onAnnotate}
                                 onDelete={onDelete}
@@ -1541,7 +1662,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
 // identity intentionally ignored — they're stable in behavior, just inline
 // arrows from the parent, and re-creating a row only to re-bind a click
 // handler isn't worth the work. playProgress only matters on the active row.
-const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
+const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
@@ -1570,6 +1691,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                         fileName={clip.file_name}
                         isActive={isPlaying}
                         progress={playProgress}
+                        onSeek={onSeek}
                     />
                     <Typography variant="body2" sx={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
                         {clip.file_name}
