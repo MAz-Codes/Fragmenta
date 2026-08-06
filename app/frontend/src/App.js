@@ -71,8 +71,10 @@ import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
+import { VENDOR_AUDIO_EDIT_READY } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
+import DemoNoticeDialog from './components/DemoNoticeDialog';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
@@ -129,6 +131,11 @@ function App() {
     // and no OS file manager to reveal in. We swap those affordances for an
     // in-browser download instead. Sourced from GET /api/environment.
     const [isDocker, setIsDocker] = useState(false);
+    // Public Hugging Face Spaces demo. Drives the demo-only affordances: the
+    // demo notice below, no "don't show this again" on the welcome page, and
+    // a disabled HF sign-in in the Checkpoint Manager. False everywhere else.
+    const [isHfSpace, setIsHfSpace] = useState(false);
+    const [showDemoNotice, setShowDemoNotice] = useState(false);
     // The Performance tab is keepMounted, so its PerformanceEngine (and the
     // engine's AudioContext) would otherwise be constructed during the very
     // first render — before this probe can call setSampleRatePin, making the
@@ -140,6 +147,15 @@ function App() {
             .then((res) => {
                 if (cancelled) return;
                 setIsDocker(Boolean(res.data?.docker));
+                const hfSpace = Boolean(res.data?.hf_space);
+                setIsHfSpace(hfSpace);
+                // Normally the notice opens when the welcome page is
+                // dismissed. If a visitor carries a stale "hide welcome"
+                // preference from before this build, there's no welcome page
+                // to dismiss — open the notice straight away.
+                if (hfSpace && window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) === 'true') {
+                    setShowDemoNotice(true);
+                }
                 // Only pin the audio engine to 44.1 kHz when beatsync v2 is on;
                 // otherwise the pin would collapse multi-channel output to stereo.
                 setSampleRatePin(Boolean(res.data?.beatsync_v2));
@@ -171,11 +187,14 @@ function App() {
 
     // Ableton-style Info View: when on, control help text shows in a fixed
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
-    // control. Off by default; preference persisted.
+    // control. On by default; preference persisted.
     const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
-        if (typeof window === 'undefined') return false;
-        // Off by default — only on if the user explicitly turned it on.
-        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
+        if (typeof window === 'undefined') return true;
+        // On by default so help is there from the first run — this is the
+        // app's only hover-help surface, and with it off a new user sees no
+        // tooltips at all. Only an explicit "off" turns it back off, so
+        // anyone who has already switched it off keeps that choice.
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) !== 'off';
     });
     const toggleInfoView = useCallback(() => {
         setInfoViewEnabled((prev) => {
@@ -225,6 +244,11 @@ function App() {
     // Generation panel top-level mode: 'create' (text → audio) or
     // 'edit' (audio → audio: style transfer, inpaint, extend).
     const [generationMode, setGenerationMode] = useState('create');
+    // Audio-to-audio is hidden while the vendor runtime can't do it — see
+    // features.js. Deriving the mode rather than reading state directly means
+    // there's no way to land in the edit panel while the flag is off, however
+    // the state got set.
+    const effectiveGenerationMode = VENDOR_AUDIO_EDIT_READY ? generationMode : 'create';
     const [generationPrompt, setGenerationPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
@@ -1314,10 +1338,14 @@ function App() {
             <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
+                    hideDontShowAgain={isHfSpace}
                     onClose={(dontShowAgain) => {
                         setShowWelcomePage(false);
                         if (dontShowAgain) {
                             window.localStorage.setItem(HIDE_WELCOME_PAGE_KEY, 'true');
+                        }
+                        if (isHfSpace) {
+                            setShowDemoNotice(true);
                         }
 
                         api.post('/api/welcome-page-closed')
@@ -1329,6 +1357,13 @@ function App() {
                             });
                     }}
                 />
+
+                {isHfSpace && (
+                    <DemoNoticeDialog
+                        open={showDemoNotice}
+                        onClose={() => setShowDemoNotice(false)}
+                    />
+                )}
 
                 <Container maxWidth={false} sx={appStyles.container(showWelcomePage)}>
                     <Box ref={headerRef} sx={[appStyles.headerRow, isScrolled && appStyles.headerRowScrolled]}>
@@ -2255,7 +2290,13 @@ function App() {
                                                 {/* Phase 8: top-level mode switch. Create = text→audio,
                                                     Edit = audio→audio (style / inpaint / extend). The
                                                     model picker and LoRA picker above stay visible in
-                                                    both modes. */}
+                                                    both modes.
+
+                                                    Hidden while VENDOR_AUDIO_EDIT_READY is false: with
+                                                    only one reachable mode a switch is just a dead
+                                                    control, so the page opens straight into Generate
+                                                    new. See features.js for the roll-back condition. */}
+                                                {VENDOR_AUDIO_EDIT_READY && (
                                                 <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
                                                     <Tooltip title={TIPS.generate.mode}>
                                                     <ToggleButtonGroup
@@ -2269,8 +2310,9 @@ function App() {
                                                     </ToggleButtonGroup>
                                                     </Tooltip>
                                                 </Box>
+                                                )}
 
-                                                {generationMode === 'create' && (<>
+                                                {effectiveGenerationMode === 'create' && (<>
                                                 <Tooltip title={TIPS.generate.prompt}>
                                                 <TextField
                                                     fullWidth
@@ -2508,7 +2550,7 @@ function App() {
                                             {/* Warnings for model issues */}
                                                 </>)}
 
-                                                {generationMode === 'edit' && (
+                                                {effectiveGenerationMode === 'edit' && (
                                                     <EditPanel
                                                         model_id={selectedModel}
                                                         negativePrompt={negativePrompt}

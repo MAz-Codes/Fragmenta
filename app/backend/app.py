@@ -2495,8 +2495,17 @@ def environment():
         beatsync_v2 = bool(beatsync_v2_enabled())
     except Exception:
         beatsync_v2 = False
+    # Hugging Face Spaces demo build. Set explicitly by docker/Dockerfile.hf;
+    # SPACE_ID is injected by HF itself, so a Space started from any other
+    # image is still recognised. Only ever true on the HF deployment — every
+    # other platform (desktop, plain Docker) reports False and is unaffected.
+    hf_space = (
+        os.environ.get('FRAGMENTA_HF_SPACE', '0') == '1'
+        or bool(os.environ.get('SPACE_ID'))
+    )
     return jsonify({
         'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
+        'hf_space': hf_space,
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,
@@ -2849,6 +2858,62 @@ def patch_clip_route(name, file_name):
         logger.exception("Failed to update clip %s in project %s", file_name, name)
         return jsonify({'error': str(exc)}), 500
     return jsonify(clip)
+
+
+@app.route('/api/projects/<name>/clips/prompt', methods=['PATCH'])
+def inject_clip_prompts_route(name):
+    """Bulk prompt injection across many clips in one request.
+
+    One round-trip rather than N sequential PATCHes — a few hundred clips
+    over per-clip calls is slow enough to feel broken. In-memory like the
+    single-clip PATCH; persists only on Save or Commit.
+
+    Body: {text, files?: [names] | null (= all), mode?: append|prepend|
+    replace, separator?: str}
+    """
+    from app.backend.data.projects import inject_clip_prompts, get_project
+    payload = request.json or {}
+    if 'text' not in payload:
+        return jsonify({'error': 'text is required'}), 400
+    files = payload.get('files')
+    if files is not None and not isinstance(files, list):
+        return jsonify({'error': 'files must be a list of file names, or null for all clips'}), 400
+    try:
+        result = inject_clip_prompts(
+            name,
+            payload['text'],
+            file_names=files,
+            mode=payload.get('mode', 'append'),
+            separator=payload.get('separator', ', '),
+        )
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception as exc:
+        logger.exception("Failed to inject prompts in project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({**result, 'project': get_project(name)})
+
+
+@app.route('/api/projects/<name>/clips/prompt/undo', methods=['POST'])
+def undo_inject_prompts_route(name):
+    """Roll back the most recent bulk injection on this project.
+
+    Clips edited by hand since the injection are left alone and reported in
+    `skipped` — undo restores what the injection wrote, nothing newer.
+    """
+    from app.backend.data.projects import undo_inject_prompts, get_project
+    try:
+        result = undo_inject_prompts(name)
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 409
+    except FileNotFoundError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except Exception as exc:
+        logger.exception("Failed to undo prompt injection in project %s", name)
+        return jsonify({'error': str(exc)}), 500
+    return jsonify({**result, 'project': get_project(name)})
 
 
 @app.route('/api/projects/<name>/clip/<path:file_name>', methods=['DELETE'])

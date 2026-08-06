@@ -2401,6 +2401,64 @@ export const welcomePageStyles = {
     },
 };
 
+// --- Demo notice (Hugging Face Space only) ----------------------------------
+// Same vocabulary as AboutDialog: centred logo + display title inside the
+// glass DialogTitle, quiet body copy, one accent action. The only extra note
+// is the warm "Demo Space" badge — the app already uses `warm` to mean
+// "temporary / in progress state", so it reads as a status, not as an alert.
+export const demoNoticeStyles = {
+    titleStack: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 1,
+    },
+    badge: (muiTheme) => {
+        const isDark = muiTheme.palette.mode === 'dark';
+        // DARK.warm #FDA22B / LIGHT.warm #C97A1A, as rgba so the badge tints
+        // the glass beneath it instead of sitting on an opaque chip.
+        const warmRgb = isDark ? '253, 162, 43' : '201, 122, 26';
+        return {
+            mt: 0.25,
+            px: 1.1,
+            py: 0.3,
+            borderRadius: 999,
+            border: `1px solid rgba(${warmRgb}, 0.45)`,
+            backgroundColor: `rgba(${warmRgb}, 0.12)`,
+            color: isDark ? DARK.warm : LIGHT.warm,
+            fontFamily: FONT_MONO,
+            fontSize: '0.62rem',
+            fontWeight: 500,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            lineHeight: 1.6,
+        };
+    },
+    body: {
+        mt: 2.5,
+        mb: 1.25,
+        color: 'text.primary',
+        textAlign: 'center',
+        fontSize: '0.9rem',
+        lineHeight: 1.6,
+    },
+    subBody: {
+        mb: 2,
+        color: 'text.secondary',
+        textAlign: 'center',
+        fontSize: '0.8rem',
+    },
+    linkButton: {
+        fontFamily: FONT_MONO,
+        fontSize: '0.78rem',
+        letterSpacing: '0.01em',
+        textTransform: 'none',
+    },
+    actions: {
+        justifyContent: 'center',
+    },
+};
+
 export const lossChartStyles = {
     padding: { top: 10, right: 16, bottom: 28, left: 44 },
     colors: {

@@ -103,6 +103,10 @@ export const TIPS = {
         discardChanges: 'Delete unsaved changes — reverts to the last created dataset (removes any audio added since)',
         saveDraft: "Save a draft — persists across app restarts but isn't the SA3 sidecar form",
         createDataset: 'Create Dataset — writes the .txt sidecars (overwrites the previous dataset)',
+        injectText: 'Text to splice into many annotations at once — a shared detail like "recorded at 120bpm" or a mic note. Press Enter or hit Inject. Repeat as often as you like; each pass keeps what the last one wrote.',
+        injectMode: 'Where the injected text lands. Append puts it after the existing annotation, Prepend before it, Replace discards the existing annotation entirely. Empty annotations just get the bare text, with no stray comma.',
+        injectScope: 'Which clips get the text — every clip in the project, or only the ones ticked in the table. Switches to Selected automatically as soon as you tick something.',
+        injectUndo: 'Roll back the last injection, one pass at a time. Clips you\'ve edited by hand since are left as they are, so undo never eats newer work.',
         selectClips: 'Click to select these clips — then Auto-annotate them.',
         autoAnnotateClip: 'Auto-annotate this clip (overwrites any current prompt)',
         sliceClip: 'Slice this clip into shorter children (immediate)',
@@ -182,6 +186,7 @@ export const TIPS = {
     manager: {
         storage: 'See how much disk each downloaded model and checkpoint is using, and free space by removing ones you don\'t need.',
         hfLogin: 'Sign in to HuggingFace so Fragmenta can fetch gated or private checkpoints on your account. Stored locally; used only for downloads.',
+        hfLoginDemo: 'Disabled in this demonstration Space. Install Fragmenta locally from misaghazimi.com/fragmenta to sign in with your own HuggingFace account.',
         hfLogout: 'Forget the saved HuggingFace token on this machine.',
         hfToken: 'Paste a HuggingFace access token (starts with "hf_"). Create one at huggingface.co/settings/tokens — read scope is enough for downloads.',
         refresh: 'Re-scan the catalog and disk for which models are downloaded, in case something changed outside the app.',
