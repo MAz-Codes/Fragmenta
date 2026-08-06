@@ -20,6 +20,7 @@ import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
 import api from '../api';
 import { setFragmentDragPayload, clearFragmentDragPayload } from '../utils/fragmentDrag';
+import { VENDOR_AUDIO_EDIT_READY } from '../features';
 import { extractError } from '../utils/errors';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
@@ -425,32 +426,42 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
                                 </IconButton>
 
+                                {/* The drag source exists only to feed EditPanel's drop
+                                    zone, so it's gated with it — otherwise the grab
+                                    cursor and tooltip advertise an Edit tab that isn't
+                                    there. The waveform's separate OS drag-out below is
+                                    untouched either way. See features.js. */}
                                 <Box
-                                    sx={{ ...generatedFragmentsWindowStyles.fragmentMeta, cursor: 'grab' }}
-                                    draggable
-                                    onDragStart={(e) => {
-                                        // In-app payload consumed by EditPanel's drop zone
-                                        // ("drag a clip into the Edit tab"). Keeps the
-                                        // waveform's separate OS drag-out untouched.
-                                        e.dataTransfer.setData(
-                                            'application/x-fragmenta-fragment',
-                                            fragment.filename || '',
-                                        );
-                                        e.dataTransfer.effectAllowed = 'copy';
-                                        // Hand off the in-memory blob too so the drop can
-                                        // use it directly — no disk fetch, immune to any
-                                        // name mismatch. Falls back to the filename when
-                                        // the blob isn't preloaded yet.
-                                        const blob = effectiveBlob(fragment);
-                                        if (blob) {
-                                            setFragmentDragPayload({
-                                                filename: fragment.filename || '',
-                                                blob,
-                                            });
-                                        }
+                                    sx={{
+                                        ...generatedFragmentsWindowStyles.fragmentMeta,
+                                        ...(VENDOR_AUDIO_EDIT_READY && { cursor: 'grab' }),
                                     }}
-                                    onDragEnd={() => clearFragmentDragPayload()}
-                                    title="Drag into the Edit tab to use as a source clip"
+                                    {...(VENDOR_AUDIO_EDIT_READY ? {
+                                        draggable: true,
+                                        onDragStart: (e) => {
+                                            // In-app payload consumed by EditPanel's drop zone
+                                            // ("drag a clip into the Edit tab"). Keeps the
+                                            // waveform's separate OS drag-out untouched.
+                                            e.dataTransfer.setData(
+                                                'application/x-fragmenta-fragment',
+                                                fragment.filename || '',
+                                            );
+                                            e.dataTransfer.effectAllowed = 'copy';
+                                            // Hand off the in-memory blob too so the drop can
+                                            // use it directly — no disk fetch, immune to any
+                                            // name mismatch. Falls back to the filename when
+                                            // the blob isn't preloaded yet.
+                                            const blob = effectiveBlob(fragment);
+                                            if (blob) {
+                                                setFragmentDragPayload({
+                                                    filename: fragment.filename || '',
+                                                    blob,
+                                                });
+                                            }
+                                        },
+                                        onDragEnd: () => clearFragmentDragPayload(),
+                                        title: 'Drag into the Edit tab to use as a source clip',
+                                    } : {})}
                                 >
                                     <Typography
                                         variant="body2"
