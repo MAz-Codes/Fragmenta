@@ -3,7 +3,15 @@ import { Backdrop, Box, Fade, Typography, Button, Checkbox, FormControlLabel, St
 import { welcomePageStyles } from '../theme';
 import { APP_VERSION } from '../version';
 
-export default function WelcomePage({ open, onClose }) {
+/**
+ * Props:
+ *   open:                bool
+ *   onClose:             (dontShowAgain: bool) => void
+ *   hideDontShowAgain:   bool — drops the "Don't show this again" opt-out so
+ *                        the page (and the demo notice behind it) is shown on
+ *                        every visit. Only set on the Hugging Face Space.
+ */
+export default function WelcomePage({ open, onClose, hideDontShowAgain = false }) {
     const [titleVisible, setTitleVisible] = useState(false);
     const [textVisible, setTextVisible] = useState(false);
     const [dontShowAgain, setDontShowAgain] = useState(false);
@@ -67,6 +75,7 @@ export default function WelcomePage({ open, onClose }) {
                                 Get Started
                             </Button>
                         </Box>
+                        {!hideDontShowAgain && (
                         <Box mt={6}>
                             <FormControlLabel
                                 control={
@@ -83,6 +92,7 @@ export default function WelcomePage({ open, onClose }) {
                                 }
                             />
                         </Box>
+                        )}
                     </Stack>
                 </Fade>
             </Box>

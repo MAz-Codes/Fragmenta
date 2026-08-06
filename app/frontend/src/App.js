@@ -73,6 +73,7 @@ import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
+import DemoNoticeDialog from './components/DemoNoticeDialog';
 import { formatDuration } from './utils/format';
 import theme, { appStyles, lightTheme } from './theme';
 
@@ -129,6 +130,11 @@ function App() {
     // and no OS file manager to reveal in. We swap those affordances for an
     // in-browser download instead. Sourced from GET /api/environment.
     const [isDocker, setIsDocker] = useState(false);
+    // Public Hugging Face Spaces demo. Drives the demo-only affordances: the
+    // demo notice below, no "don't show this again" on the welcome page, and
+    // a disabled HF sign-in in the Checkpoint Manager. False everywhere else.
+    const [isHfSpace, setIsHfSpace] = useState(false);
+    const [showDemoNotice, setShowDemoNotice] = useState(false);
     // The Performance tab is keepMounted, so its PerformanceEngine (and the
     // engine's AudioContext) would otherwise be constructed during the very
     // first render — before this probe can call setSampleRatePin, making the
@@ -140,6 +146,15 @@ function App() {
             .then((res) => {
                 if (cancelled) return;
                 setIsDocker(Boolean(res.data?.docker));
+                const hfSpace = Boolean(res.data?.hf_space);
+                setIsHfSpace(hfSpace);
+                // Normally the notice opens when the welcome page is
+                // dismissed. If a visitor carries a stale "hide welcome"
+                // preference from before this build, there's no welcome page
+                // to dismiss — open the notice straight away.
+                if (hfSpace && window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) === 'true') {
+                    setShowDemoNotice(true);
+                }
                 // Only pin the audio engine to 44.1 kHz when beatsync v2 is on;
                 // otherwise the pin would collapse multi-channel output to stereo.
                 setSampleRatePin(Boolean(res.data?.beatsync_v2));
@@ -1314,10 +1329,14 @@ function App() {
             <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
+                    hideDontShowAgain={isHfSpace}
                     onClose={(dontShowAgain) => {
                         setShowWelcomePage(false);
                         if (dontShowAgain) {
                             window.localStorage.setItem(HIDE_WELCOME_PAGE_KEY, 'true');
+                        }
+                        if (isHfSpace) {
+                            setShowDemoNotice(true);
                         }
 
                         api.post('/api/welcome-page-closed')
@@ -1329,6 +1348,13 @@ function App() {
                             });
                     }}
                 />
+
+                {isHfSpace && (
+                    <DemoNoticeDialog
+                        open={showDemoNotice}
+                        onClose={() => setShowDemoNotice(false)}
+                    />
+                )}
 
                 <Container maxWidth={false} sx={appStyles.container(showWelcomePage)}>
                     <Box ref={headerRef} sx={[appStyles.headerRow, isScrolled && appStyles.headerRowScrolled]}>

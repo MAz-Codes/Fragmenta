@@ -2495,8 +2495,17 @@ def environment():
         beatsync_v2 = bool(beatsync_v2_enabled())
     except Exception:
         beatsync_v2 = False
+    # Hugging Face Spaces demo build. Set explicitly by docker/Dockerfile.hf;
+    # SPACE_ID is injected by HF itself, so a Space started from any other
+    # image is still recognised. Only ever true on the HF deployment — every
+    # other platform (desktop, plain Docker) reports False and is unaffected.
+    hf_space = (
+        os.environ.get('FRAGMENTA_HF_SPACE', '0') == '1'
+        or bool(os.environ.get('SPACE_ID'))
+    )
     return jsonify({
         'docker': os.environ.get('FRAGMENTA_DOCKER', '0') == '1',
+        'hf_space': hf_space,
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,

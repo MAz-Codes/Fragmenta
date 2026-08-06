@@ -182,6 +182,7 @@ export const TIPS = {
     manager: {
         storage: 'See how much disk each downloaded model and checkpoint is using, and free space by removing ones you don\'t need.',
         hfLogin: 'Sign in to HuggingFace so Fragmenta can fetch gated or private checkpoints on your account. Stored locally; used only for downloads.',
+        hfLoginDemo: 'Disabled in this demonstration Space. Install Fragmenta locally from misaghazimi.com/fragmenta to sign in with your own HuggingFace account.',
         hfLogout: 'Forget the saved HuggingFace token on this machine.',
         hfToken: 'Paste a HuggingFace access token (starts with "hf_"). Create one at huggingface.co/settings/tokens — read scope is enough for downloads.',
         refresh: 'Re-scan the catalog and disk for which models are downloaded, in case something changed outside the app.',

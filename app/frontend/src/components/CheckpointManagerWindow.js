@@ -93,6 +93,10 @@ export default function CheckpointManagerWindow({ open, onClose }) {
     };
 
     const anyInstalled = catalog.some(c => c.downloaded);
+    // Public HF Spaces demo: checkpoints are pre-provisioned and visitors
+    // must not hand a personal HF token to a shared Space, so sign-in is
+    // greyed out there. Every other platform is unaffected.
+    const isHfDemo = Boolean(env?.hf_space);
 
     return (
         <>
@@ -155,12 +159,13 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                     </Button>
                                 </Stack>
                             ) : (
-                                <Tooltip title={TIPS.manager.hfLogin}>
+                                <Tooltip title={isHfDemo ? TIPS.manager.hfLoginDemo : TIPS.manager.hfLogin}>
                                 <Button
                                     size="small"
                                     variant="outlined"
                                     startIcon={<LoginIcon size={14} />}
                                     onClick={() => setShowTokenInput(true)}
+                                    disabled={isHfDemo}
                                 >
                                     Sign in to HuggingFace
                                 </Button>
@@ -170,7 +175,15 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                         {authError && <Alert severity="error" sx={{ mt: 1 }}>{authError}</Alert>}
                     </Box>
 
-                    {!hfAuth.signed_in ? (
+                    {isHfDemo ? (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                            HuggingFace sign-in is disabled in this demonstration Space.{' '}
+                            <a href="https://www.misaghazimi.com/fragmenta" target="_blank" rel="noreferrer">
+                                Install Fragmenta locally
+                            </a>
+                            {' '}to sign in with your own account and download checkpoints.
+                        </Alert>
+                    ) : !hfAuth.signed_in ? (
                         <Alert severity="info" sx={{ mb: 2 }}>
                             SA3 checkpoints are gated on HuggingFace. You need a{' '}
                             <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">
