@@ -187,11 +187,14 @@ function App() {
 
     // Ableton-style Info View: when on, control help text shows in a fixed
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
-    // control. Off by default; preference persisted.
+    // control. On by default; preference persisted.
     const [infoViewEnabled, setInfoViewEnabled] = useState(() => {
-        if (typeof window === 'undefined') return false;
-        // Off by default — only on if the user explicitly turned it on.
-        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) === 'on';
+        if (typeof window === 'undefined') return true;
+        // On by default so help is there from the first run — this is the
+        // app's only hover-help surface, and with it off a new user sees no
+        // tooltips at all. Only an explicit "off" turns it back off, so
+        // anyone who has already switched it off keeps that choice.
+        return window.localStorage.getItem(INFO_VIEW_STORAGE_KEY) !== 'off';
     });
     const toggleInfoView = useCallback(() => {
         setInfoViewEnabled((prev) => {
