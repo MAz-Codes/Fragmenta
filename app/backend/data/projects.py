@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 PROJECT_METADATA_FILENAME = ".project.json"
 PROJECT_DRAFT_FILENAME = ".draft.json"
 DEFAULT_INGEST_MODE = "copy"  # copy | symlink
+# How many bulk prompt injections stay undoable per session.
+MAX_INJECT_UNDO = 20
 INGEST_MODES = ("copy", "symlink")
 
 # SA3's prompting guide (vendor/stable-audio-3/docs/guides/prompting.md)
@@ -301,6 +303,12 @@ class ProjectSession:
     # file_name -> duration_sec. Same lifecycle, but populated cheaply via
     # soundfile.info() instead of waiting for a peaks fetch.
     duration_cache: Dict[str, float] = field(default_factory=dict)
+    # Undo stack for bulk prompt injection. Newest last; each entry is
+    # {file_name: (before, after)}. Bounded — an injection can carry a few
+    # hundred clips, and an unbounded history of them is a slow leak.
+    # Session-scoped by design: it dies with the session on discard/reload,
+    # which is exactly when "undo the last inject" stops making sense.
+    inject_undo: List[Dict[str, Tuple[str, str]]] = field(default_factory=list)
 
     def _draft_snapshot(self) -> Dict[str, str]:
         """Map file_name -> prompt, only for clips whose prompt differs from
@@ -349,6 +357,10 @@ class ProjectSession:
             "uncommitted_files": [c.file_name for c in ordered if not c.committed],
             "clips": [c.to_dict() for c in ordered],
             "clip_count": len(self.clips),
+            # How many bulk injections can still be undone. Drives the Undo
+            # button's enabled state, and survives a page refresh because it
+            # rides along with every project fetch.
+            "inject_undo_depth": len(self.inject_undo),
             "latents_present": bool(latents_npy),
             "latents_count": len(latents_npy),
             "suppress_pre_encode_prompt": bool(self.metadata.get("suppress_pre_encode_prompt")),
@@ -554,6 +566,100 @@ def update_clip_prompt(name: str, file_name: str, prompt: str) -> Dict[str, Any]
             raise FileNotFoundError(f"Clip not found in project '{name}': {file_name}")
         clip.prompt = prompt or ""
         return clip.to_dict()
+
+
+def inject_clip_prompts(
+    name: str,
+    text: str,
+    file_names: Optional[List[str]] = None,
+    mode: str = "append",
+    separator: str = ", ",
+) -> Dict[str, Any]:
+    """Splice `text` into many clip prompts at once. In-memory, like
+    update_clip_prompt — disk is untouched until Save or Commit.
+
+    `file_names=None` targets every clip in the project. `mode` is one of
+    append / prepend / replace; append and prepend only insert `separator`
+    when there's an existing prompt to separate from, so injecting into a
+    blank field yields the bare text rather than a leading comma.
+
+    Unknown file names are reported back in `missing` rather than raising:
+    a stale selection in the UI shouldn't fail the whole batch.
+    """
+    if mode not in ("append", "prepend", "replace"):
+        raise ValueError(f"Unknown inject mode: {mode}")
+
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("text is required")
+
+    session = _get_or_load_session(name)
+    with session.lock:
+        if file_names is None:
+            targets = list(session.clips.keys())
+            missing: List[str] = []
+        else:
+            targets = [f for f in file_names if f in session.clips]
+            missing = [f for f in file_names if f not in session.clips]
+
+        # before/after per clip, so undo can tell "still as I left it" from
+        # "the user has since edited this by hand" and skip the latter.
+        snapshot: Dict[str, Tuple[str, str]] = {}
+        for file_name in targets:
+            clip = session.clips[file_name]
+            before = clip.prompt or ""
+            existing = before.strip()
+            if mode == "replace" or not existing:
+                clip.prompt = text
+            elif mode == "append":
+                clip.prompt = f"{existing}{separator}{text}"
+            else:
+                clip.prompt = f"{text}{separator}{existing}"
+            snapshot[file_name] = (before, clip.prompt)
+
+        if snapshot:
+            session.inject_undo.append(snapshot)
+            del session.inject_undo[:-MAX_INJECT_UNDO]
+
+        return {
+            "updated": len(snapshot),
+            "missing": missing,
+            "undo_depth": len(session.inject_undo),
+        }
+
+
+def undo_inject_prompts(name: str) -> Dict[str, Any]:
+    """Roll back the most recent bulk injection.
+
+    Only clips whose prompt still matches what that injection produced are
+    restored; anything edited by hand since is left alone and counted in
+    `skipped`, so undo can never silently discard newer work.
+    """
+    session = _get_or_load_session(name)
+    with session.lock:
+        if not session.inject_undo:
+            raise LookupError("Nothing to undo")
+
+        snapshot = session.inject_undo.pop()
+        restored = 0
+        skipped = 0
+        for file_name, (before, after) in snapshot.items():
+            clip = session.clips.get(file_name)
+            if clip is None:
+                # Clip deleted since the injection — nothing to restore.
+                skipped += 1
+                continue
+            if (clip.prompt or "") != after:
+                skipped += 1
+                continue
+            clip.prompt = before
+            restored += 1
+
+        return {
+            "restored": restored,
+            "skipped": skipped,
+            "undo_depth": len(session.inject_undo),
+        }
 
 
 def delete_clip(name: str, file_name: str) -> None:

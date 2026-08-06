@@ -56,6 +56,8 @@ import {
     Music as MusicIcon,
     Activity as HealthIcon,
     X as CloseIcon,
+    TextCursorInput,
+    Undo2,
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
@@ -566,6 +568,40 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         });
     }
 
+    async function handleInjectPrompts({ text, mode, scope }) {
+        if (!project) return;
+        // null = every clip in the project; the backend resolves it so we
+        // never have to ship a few hundred file names up the wire.
+        const files = scope === 'selected' ? Array.from(selectedFiles) : null;
+        setError('');
+        const { data } = await api.patch(
+            `/api/projects/${encodeURIComponent(project.name)}/clips/prompt`,
+            { text, files, mode },
+        );
+        await refreshProject(project.name);
+        const n = data.updated;
+        setNotice({
+            severity: 'success',
+            message: `Injected into ${n} clip${n === 1 ? '' : 's'} — buffered until you Save or Create Dataset.`,
+        });
+    }
+
+    async function handleUndoInject() {
+        if (!project) return;
+        setError('');
+        const { data } = await api.post(
+            `/api/projects/${encodeURIComponent(project.name)}/clips/prompt/undo`,
+        );
+        await refreshProject(project.name);
+        const { restored, skipped } = data;
+        setNotice({
+            severity: skipped > 0 ? 'warning' : 'info',
+            message: skipped > 0
+                ? `Undid ${restored} clip${restored === 1 ? '' : 's'} — left ${skipped} you've edited since.`
+                : `Undid the last inject on ${restored} clip${restored === 1 ? '' : 's'}.`,
+        });
+    }
+
     async function handleClipPromptChange(fileName, newPrompt) {
         if (!project) return;
         try {
@@ -849,6 +885,15 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                         </Button>
                                     )}
                                 </Box>
+                                <PromptInjector
+                                    clipCount={project.clips.length}
+                                    selectedCount={selectedFiles.size}
+                                    undoDepth={project.inject_undo_depth || 0}
+                                    onInject={handleInjectPrompts}
+                                    onUndo={handleUndoInject}
+                                    onError={(msg) => setError(msg)}
+                                    disabled={annotateBusy}
+                                />
                                 {tier === 'rich' && (
                                     <ClapVocabAccordion disabled={annotateBusy} />
                                 )}
@@ -1038,6 +1083,161 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 }
 
 // ---------- subcomponents --------------------------------------------------
+
+const INJECT_MODES = [
+    { id: 'append', label: 'Append', hint: 'after the existing text' },
+    { id: 'prepend', label: 'Prepend', hint: 'before the existing text' },
+    { id: 'replace', label: 'Replace', hint: 'discard the existing text' },
+];
+
+/**
+ * Bulk annotation injection — one line of text spliced into many clips at
+ * once. Sits under the auto-annotate toolbar and only shows once clips are
+ * in the project.
+ *
+ * Append is the default because injecting is a repeatable act: you add
+ * "recorded at 120bpm", then "analog synth", then a mic note, and each pass
+ * has to survive the last. Replace is there when you mean it.
+ *
+ * Scope follows the table selection — selecting rows is an explicit act of
+ * intent, so it would be wrong to keep aiming at all clips afterwards. The
+ * button always spells out the exact count it will touch, so the target is
+ * never a guess.
+ */
+function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo, onError, disabled }) {
+    const [text, setText] = useState('');
+    const [mode, setMode] = useState('append');
+    const [scope, setScope] = useState('all');
+    const [busy, setBusy] = useState(false);
+    const [undoing, setUndoing] = useState(false);
+
+    const hasSelection = selectedCount > 0;
+    useEffect(() => { setScope(hasSelection ? 'selected' : 'all'); }, [hasSelection]);
+
+    const targetCount = scope === 'selected' ? selectedCount : clipCount;
+    const trimmed = text.trim();
+    const busyAny = busy || undoing;
+    const canInject = trimmed.length > 0 && targetCount > 0 && !disabled && !busyAny;
+    const canUndo = undoDepth > 0 && !disabled && !busyAny;
+
+    const submit = async () => {
+        if (!canInject) return;
+        setBusy(true);
+        try {
+            await onInject({ text: trimmed, mode, scope });
+        } catch (e) {
+            onError(extractError(e, 'Inject failed'));
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const undo = async () => {
+        if (!canUndo) return;
+        setUndoing(true);
+        try {
+            await onUndo();
+        } catch (e) {
+            onError(extractError(e, 'Undo failed'));
+        } finally {
+            setUndoing(false);
+        }
+    };
+
+    return (
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+            <Tooltip title={TIPS.dataset.injectText}>
+                <TextField
+                    size="small"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    // Enter is the natural gesture for a one-line field, and
+                    // this one gets used over and over.
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+                    placeholder="Text to inject into annotations…"
+                    disabled={disabled}
+                    sx={{ flex: 1, minWidth: 220 }}
+                    InputProps={{
+                        startAdornment: (
+                            <Box sx={{ display: 'flex', mr: 1, color: 'text.disabled' }}>
+                                <TextCursorInput size={15} />
+                            </Box>
+                        ),
+                    }}
+                />
+            </Tooltip>
+
+            <Tooltip title={TIPS.dataset.injectMode}>
+                <FormControl size="small" sx={{ minWidth: 116 }}>
+                    <Select
+                        value={mode}
+                        onChange={(e) => setMode(e.target.value)}
+                        disabled={disabled}
+                        renderValue={(v) => (INJECT_MODES.find((m) => m.id === v) || {}).label || v}
+                    >
+                        {INJECT_MODES.map((m) => (
+                            <MenuItem key={m.id} value={m.id}>
+                                <Box>
+                                    <Typography variant="body2">{m.label}</Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                        {m.hint}
+                                    </Typography>
+                                </Box>
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+            </Tooltip>
+
+            <Tooltip title={TIPS.dataset.injectScope}>
+                <FormControl size="small" sx={{ minWidth: 132 }}>
+                    <Select
+                        value={scope}
+                        onChange={(e) => setScope(e.target.value)}
+                        disabled={disabled}
+                    >
+                        <MenuItem value="all">All clips ({clipCount})</MenuItem>
+                        <MenuItem value="selected" disabled={!hasSelection}>
+                            Selected ({selectedCount})
+                        </MenuItem>
+                    </Select>
+                </FormControl>
+            </Tooltip>
+
+            <Button
+                variant="contained"
+                size="small"
+                startIcon={busy
+                    ? <CircularProgress size={16} color="inherit" />
+                    : <PlusIcon size={16} />}
+                onClick={submit}
+                disabled={!canInject}
+            >
+                {busy ? 'Injecting…' : `Inject into ${targetCount}`}
+            </Button>
+
+            {/* Only present once there's something to undo — an always-on
+                dead button next to a live one reads as broken. */}
+            {undoDepth > 0 && (
+                <Tooltip title={TIPS.dataset.injectUndo}>
+                    <span>
+                        <Button
+                            variant="outlined"
+                            size="small"
+                            startIcon={undoing
+                                ? <CircularProgress size={16} color="inherit" />
+                                : <Undo2 size={16} />}
+                            onClick={undo}
+                            disabled={!canUndo}
+                        >
+                            {undoing ? 'Undoing…' : 'Undo'}
+                        </Button>
+                    </span>
+                </Tooltip>
+            )}
+        </Box>
+    );
+}
 
 function ClapVocabAccordion({ disabled }) {
     const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
