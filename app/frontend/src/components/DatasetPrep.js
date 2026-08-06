@@ -63,6 +63,11 @@ import api from '../api';
 import { extractError } from '../utils/errors';
 import { appStyles } from '../theme';
 
+// Shared caveat for the switch/close confirms — the edits aren't lost, they
+// just aren't durable yet, and that distinction is the whole point of asking.
+const UNSAVED_WARNING =
+    "They'll stay in memory until you reload the project — but a backend restart will lose them.";
+
 /**
  * DatasetPrep — sidecar-native dataset surface with a buffered editing model.
  *
@@ -369,12 +374,23 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     function trySelectProject(nextName) {
         // Confirm before switching if there are unsaved or uncommitted edits.
         if (project && (project.dirty || project.has_unsaved_changes) && nextName !== project.name) {
-            const ok = window.confirm(
-                `“${project.name}” has unsaved or uncommitted changes. Switch anyway? They'll stay in memory until you reload the project — but a backend restart will lose them.`,
-            );
-            if (!ok) return;
+            setConfirm({
+                title: 'Switch project',
+                body: `“${project.name}” has unsaved or uncommitted changes. Switch anyway?`,
+                warning: UNSAVED_WARNING,
+                confirmLabel: 'Switch',
+                busyLabel: 'Switching…',
+                onConfirm: () => { setSelectedName(nextName); },
+            });
+            return;
         }
         setSelectedName(nextName);
+    }
+
+    function closeProjectNow() {
+        stopPlayback();
+        setSelectedName('');
+        try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
     }
 
     function handleCloseProject() {
@@ -382,14 +398,17 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         // workbench returns to the empty no-project state.
         if (!project) return;
         if (project.dirty || project.has_unsaved_changes) {
-            const ok = window.confirm(
-                `“${project.name}” has unsaved or uncommitted changes. Close anyway? They'll stay in memory until you reload the project — but a backend restart will lose them.`,
-            );
-            if (!ok) return;
+            setConfirm({
+                title: 'Close project',
+                body: `“${project.name}” has unsaved or uncommitted changes. Close anyway?`,
+                warning: UNSAVED_WARNING,
+                confirmLabel: 'Close',
+                busyLabel: 'Closing…',
+                onConfirm: () => { closeProjectNow(); },
+            });
+            return;
         }
-        stopPlayback();
-        setSelectedName('');
-        try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
+        closeProjectNow();
     }
 
     async function handleAnnotate(scope /* "all" | [file_names] */, opts = {}) {
@@ -614,15 +633,28 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         } catch (e) { setError(extractError(e, 'Failed to save prompt')); }
     }
 
-    async function handleClipDelete(fileName) {
+    function handleClipDelete(fileName) {
         if (!project) return;
-        if (!window.confirm(`Remove ${fileName} from this project? Only the project's copy (or symlink) is deleted — the original source file is never touched. This is immediate and cannot be discarded back.`)) return;
-        try {
-            await api.delete(
-                `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
-            );
-            await refreshProject(project.name);
-        } catch (e) { setError(extractError(e, 'Failed to delete clip')); }
+        setConfirm({
+            title: 'Remove clip',
+            body: `Remove ${fileName} from this project? Only the project's copy (or symlink) is deleted — the original source file is never touched.`,
+            warning: 'Immediate — this one cannot be discarded back.',
+            confirmLabel: 'Remove',
+            busyLabel: 'Removing…',
+            danger: true,
+            onConfirm: async () => {
+                // Stop here rather than at the click, so cancelling the
+                // dialog doesn't leave playback silenced for nothing.
+                if (playingFile === fileName) stopPlayback();
+                setError('');
+                try {
+                    await api.delete(
+                        `/api/projects/${encodeURIComponent(project.name)}/clip/${encodeURIComponent(fileName)}`,
+                    );
+                    await refreshProject(project.name);
+                } catch (e) { setError(extractError(e, 'Failed to delete clip')); }
+            },
+        });
     }
 
     return (
@@ -787,10 +819,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         onSeek={handleSeek}
                         onPromptChange={handleClipPromptChange}
                         onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
-                        onDelete={(fname) => {
-                            if (playingFile === fname) stopPlayback();
-                            return handleClipDelete(fname);
-                        }}
+                        onDelete={handleClipDelete}
                         onSlice={(fname) => {
                             if (playingFile === fname) stopPlayback();
                             setSliceTarget(fname);
@@ -895,7 +924,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                     disabled={annotateBusy}
                                 />
                                 {tier === 'rich' && (
-                                    <ClapVocabAccordion disabled={annotateBusy} />
+                                    <ClapVocabAccordion
+                                        disabled={annotateBusy}
+                                        requestConfirm={setConfirm}
+                                    />
                                 )}
                             </Stack>
                         }
@@ -1239,7 +1271,10 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
     );
 }
 
-function ClapVocabAccordion({ disabled }) {
+// `requestConfirm` is the parent's setConfirm — the confirm dialog lives at
+// the DatasetPrep level, so destructive actions down here route back up to
+// it rather than falling back to a browser-native prompt.
+function ClapVocabAccordion({ disabled, requestConfirm }) {
     const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
     const [overridden, setOverridden] = useState(false);
     const [dirty, setDirty] = useState(false);
@@ -1281,21 +1316,30 @@ function ClapVocabAccordion({ disabled }) {
         }
     }
 
-    async function reset() {
-        if (!window.confirm('Reset vocabulary to the built-in defaults? Your custom tags will be lost.')) return;
-        setBusy(true);
-        setVocabError('');
-        try {
-            await api.delete('/api/annotator-labels');
-            const { data } = await api.get('/api/annotator-labels');
-            setLabels(data.labels || { genre: [], mood: [], instruments: [] });
-            setOverridden(false);
-            setDirty(false);
-        } catch (e) {
-            setVocabError(extractError(e, 'Failed to reset vocabulary'));
-        } finally {
-            setBusy(false);
-        }
+    function reset() {
+        requestConfirm({
+            title: 'Reset vocabulary',
+            body: 'Reset the annotation vocabulary to the built-in defaults?',
+            warning: 'Your custom tags will be lost.',
+            confirmLabel: 'Reset',
+            busyLabel: 'Resetting…',
+            danger: true,
+            onConfirm: async () => {
+                setBusy(true);
+                setVocabError('');
+                try {
+                    await api.delete('/api/annotator-labels');
+                    const { data } = await api.get('/api/annotator-labels');
+                    setLabels(data.labels || { genre: [], mood: [], instruments: [] });
+                    setOverridden(false);
+                    setDirty(false);
+                } catch (e) {
+                    setVocabError(extractError(e, 'Failed to reset vocabulary'));
+                } finally {
+                    setBusy(false);
+                }
+            },
+        });
     }
 
     const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
