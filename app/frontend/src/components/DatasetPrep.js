@@ -7,9 +7,11 @@ import {
     Autocomplete,
     Box,
     Button,
+    ButtonBase,
     Checkbox,
     Chip,
     CircularProgress,
+    Collapse,
     Dialog,
     DialogActions,
     DialogContent,
@@ -746,11 +748,6 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         disabled={annotateBusy}
                     />
 
-                    <HealthStrip
-                        health={health}
-                        onSelectFiles={(files) => setSelectedFiles(new Set(files))}
-                    />
-
                     {annotateStarting && !isAnnotating && (
                         <Box>
                             <LinearProgress />
@@ -810,128 +807,76 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         </Box>
                     )}
 
-                    <ClipTable
-                        projectName={selectedName}
-                        clips={project.clips}
-                        playingFile={playingFile}
-                        playProgress={playProgress}
-                        onPlayToggle={handlePlayToggle}
-                        onSeek={handleSeek}
-                        onPromptChange={handleClipPromptChange}
-                        onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
-                        onDelete={handleClipDelete}
-                        onSlice={(fname) => {
-                            if (playingFile === fname) stopPlayback();
-                            setSliceTarget(fname);
+                    {/* Two columns: the clip table gets the page, the tools get
+                        a rail. Below lg the rail can't hold its width, so it
+                        stacks under the table rather than squeezing the
+                        annotation column. */}
+                    <Box
+                        sx={{
+                            display: 'flex',
+                            flexDirection: { xs: 'column', lg: 'row' },
+                            alignItems: 'flex-start',
+                            gap: 2,
                         }}
-                        selectedFiles={selectedFiles}
-                        onToggleSelected={toggleSelected}
-                        onToggleSelectAll={() => toggleSelectAll(project.clips)}
-                        disabled={annotateBusy}
-                        toolbar={
-                            <Stack spacing={1}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
-                                    <Tooltip title={TIPS.dataset.autoAnnotateAll}>
-                                    {/* span — keeps the tooltip alive while the button is disabled */}
-                                    <span>
-                                    <Button
-                                        variant="contained"
-                                        color="warm"
-                                        size="small"
-                                        startIcon={annotateStarting
-                                            ? <CircularProgress size={16} color="inherit" />
-                                            : <WandSparkles size={16} />}
-                                        onClick={() => handleAnnotate('all')}
-                                        disabled={annotateBusy || project.clip_count === 0}
-                                    >
-                                        {annotateStarting ? 'Starting…' : 'Auto-annotate all'}
-                                    </Button>
-                                    </span>
-                                    </Tooltip>
-                                    <Tooltip title={TIPS.dataset.templatePreset}>
-                                    <FormControl size="small" sx={{ minWidth: 180 }}>
-                                        <Select
-                                            value={project.prompt_template_preset || 'music'}
-                                            onChange={(e) => handleChangeTemplatePreset(e.target.value)}
-                                            disabled={annotateBusy}
-                                            renderValue={(v) => {
-                                                const p = (project.prompt_template_presets || []).find((x) => x.id === v);
-                                                return p ? p.label : v;
-                                            }}
-                                        >
-                                            {(project.prompt_template_presets || []).map((p) => (
-                                                <MenuItem key={p.id} value={p.id}>
-                                                    <Box>
-                                                        <Typography variant="body2">{p.label}</Typography>
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            {p.description}
-                                                        </Typography>
-                                                    </Box>
-                                                </MenuItem>
-                                            ))}
-                                        </Select>
-                                    </FormControl>
-                                    </Tooltip>
-                                    <Tooltip title={TIPS.dataset.richAnnotate}>
-                                        <FormControlLabel
-                                            control={
-                                                <Switch
-                                                    size="small"
-                                                    checked={tier === 'rich'}
-                                                    onChange={(e) => changeTier(e.target.checked ? 'rich' : 'basic')}
-                                                    disabled={annotateBusy}
-                                                />
-                                            }
-                                            label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
-                                            sx={{ mr: 0 }}
-                                        />
-                                    </Tooltip>
-                                    <Tooltip title={TIPS.dataset.skipAnnotated}>
-                                        <FormControlLabel
-                                            control={
-                                                <Switch
-                                                    size="small"
-                                                    checked={skipExisting}
-                                                    onChange={(e) => setSkipExisting(e.target.checked)}
-                                                    disabled={annotateBusy}
-                                                />
-                                            }
-                                            label={<Typography variant="caption" color="text.secondary">Skip already annotated</Typography>}
-                                            sx={{ mr: 0 }}
-                                        />
-                                    </Tooltip>
-                                    <Box sx={{ flex: 1 }} />
-                                    {selectedFiles.size > 0 && (
-                                        <Button
-                                            variant="outlined"
-                                            color="error"
-                                            size="small"
-                                            startIcon={<TrashIcon size={16} />}
-                                            onClick={handleClearSelectedAnnotations}
-                                            disabled={annotateBusy}
-                                        >
-                                            Clear annotations ({selectedFiles.size})
-                                        </Button>
-                                    )}
-                                </Box>
-                                <PromptInjector
-                                    clipCount={project.clips.length}
-                                    selectedCount={selectedFiles.size}
-                                    undoDepth={project.inject_undo_depth || 0}
-                                    onInject={handleInjectPrompts}
-                                    onUndo={handleUndoInject}
-                                    onError={(msg) => setError(msg)}
-                                    disabled={annotateBusy}
-                                />
-                                {tier === 'rich' && (
-                                    <ClapVocabAccordion
-                                        disabled={annotateBusy}
-                                        requestConfirm={setConfirm}
-                                    />
-                                )}
-                            </Stack>
-                        }
-                    />
+                    >
+                        <Box sx={{ flex: 1, minWidth: 0, width: '100%' }}>
+                            <ClipTable
+                                projectName={selectedName}
+                                clips={project.clips}
+                                playingFile={playingFile}
+                                playProgress={playProgress}
+                                onPlayToggle={handlePlayToggle}
+                                onSeek={handleSeek}
+                                onPromptChange={handleClipPromptChange}
+                                onAnnotate={(fname) => handleAnnotate([fname], { skip_existing: false })}
+                                onDelete={handleClipDelete}
+                                onSlice={(fname) => {
+                                    if (playingFile === fname) stopPlayback();
+                                    setSliceTarget(fname);
+                                }}
+                                selectedFiles={selectedFiles}
+                                onToggleSelected={toggleSelected}
+                                onToggleSelectAll={() => toggleSelectAll(project.clips)}
+                                disabled={annotateBusy}
+                            />
+                        </Box>
+
+                        <Paper
+                            variant="outlined"
+                            sx={{
+                                width: { xs: '100%', lg: 300 },
+                                flex: 'none',
+                                borderRadius: 2.5,
+                                overflow: 'hidden',
+                                // Sticky so the tools stay reachable while a
+                                // few hundred clips scroll past.
+                                position: { lg: 'sticky' },
+                                top: { lg: 16 },
+                            }}
+                        >
+                            <InspectorRail
+                                project={project}
+                                health={health}
+                                tier={tier}
+                                skipExisting={skipExisting}
+                                annotateBusy={annotateBusy}
+                                annotateStarting={annotateStarting}
+                                selectedFiles={selectedFiles}
+                                onChangeTier={changeTier}
+                                onChangeSkip={setSkipExisting}
+                                onChangePreset={handleChangeTemplatePreset}
+                                onAnnotateAll={() => handleAnnotate('all')}
+                                onClearSelected={handleClearSelectedAnnotations}
+                                onSelectFiles={(files) => setSelectedFiles(new Set(files))}
+                                onDeselect={clearSelection}
+                                onInject={handleInjectPrompts}
+                                onUndoInject={handleUndoInject}
+                                onError={(msg) => setError(msg)}
+                                requestConfirm={setConfirm}
+                            />
+                        </Paper>
+                    </Box>
+
                     <audio
                         ref={audioRef}
                         style={{ display: 'none' }}
@@ -1136,7 +1081,7 @@ const INJECT_MODES = [
  * button always spells out the exact count it will touch, so the target is
  * never a guess.
  */
-function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo, onError, disabled }) {
+function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo, onError, disabled, vertical = false }) {
     const [text, setText] = useState('');
     const [mode, setMode] = useState('append');
     const [scope, setScope] = useState('all');
@@ -1177,7 +1122,10 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
     };
 
     return (
-        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
+        <Box sx={vertical
+            ? { display: 'flex', flexDirection: 'column', gap: 1.25 }
+            : { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}
+        >
             <Tooltip title={TIPS.dataset.injectText}>
                 <TextField
                     size="small"
@@ -1186,9 +1134,11 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
                     // Enter is the natural gesture for a one-line field, and
                     // this one gets used over and over.
                     onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
-                    placeholder="Text to inject into annotations…"
+                    placeholder={vertical ? 'Text to inject…' : 'Text to inject into annotations…'}
                     disabled={disabled}
-                    sx={{ flex: 1, minWidth: 220 }}
+                    multiline={vertical}
+                    maxRows={vertical ? 4 : undefined}
+                    sx={vertical ? { width: '100%' } : { flex: 1, minWidth: 220 }}
                     InputProps={{
                         startAdornment: (
                             <Box sx={{ display: 'flex', mr: 1, color: 'text.disabled' }}>
@@ -1199,8 +1149,12 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
                 />
             </Tooltip>
 
+            <Box sx={vertical
+                ? { display: 'flex', gap: 1, '& > *': { flex: 1, minWidth: 0 } }
+                : { display: 'contents' }}
+            >
             <Tooltip title={TIPS.dataset.injectMode}>
-                <FormControl size="small" sx={{ minWidth: 116 }}>
+                <FormControl size="small" sx={vertical ? {} : { minWidth: 116 }}>
                     <Select
                         value={mode}
                         onChange={(e) => setMode(e.target.value)}
@@ -1222,7 +1176,7 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
             </Tooltip>
 
             <Tooltip title={TIPS.dataset.injectScope}>
-                <FormControl size="small" sx={{ minWidth: 132 }}>
+                <FormControl size="small" sx={vertical ? {} : { minWidth: 132 }}>
                     <Select
                         value={scope}
                         onChange={(e) => setScope(e.target.value)}
@@ -1235,7 +1189,12 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
                     </Select>
                 </FormControl>
             </Tooltip>
+            </Box>
 
+            <Box sx={vertical
+                ? { display: 'flex', gap: 1, '& > *': { flex: 1, minWidth: 0 } }
+                : { display: 'contents' }}
+            >
             <Button
                 variant="contained"
                 size="small"
@@ -1252,10 +1211,11 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
                 dead button next to a live one reads as broken. */}
             {undoDepth > 0 && (
                 <Tooltip title={TIPS.dataset.injectUndo}>
-                    <span>
+                    <span style={vertical ? { display: 'flex' } : undefined}>
                         <Button
                             variant="outlined"
                             size="small"
+                            fullWidth={vertical}
                             startIcon={undoing
                                 ? <CircularProgress size={16} color="inherit" />
                                 : <Undo2 size={16} />}
@@ -1267,7 +1227,174 @@ function PromptInjector({ clipCount, selectedCount, undoDepth, onInject, onUndo,
                     </span>
                 </Tooltip>
             )}
+            </Box>
         </Box>
+    );
+}
+
+/**
+ * Inspector rail — every annotation tool, docked to the right of the clip
+ * table instead of stacked above it.
+ *
+ * The point is that tools grow sideways rather than pushing the data down the
+ * page: the table now starts at the top of its own card, and adding a tool
+ * later means adding a band here rather than another full-width toolbar row.
+ * Each band also owns its own settings, so configuration sits inside the tool
+ * it configures instead of beside the button that runs it.
+ */
+function InspectorRail({
+    project,
+    health,
+    tier,
+    skipExisting,
+    annotateBusy,
+    annotateStarting,
+    selectedFiles,
+    onChangeTier,
+    onChangeSkip,
+    onChangePreset,
+    onAnnotateAll,
+    onClearSelected,
+    onSelectFiles,
+    onDeselect,
+    onInject,
+    onUndoInject,
+    onError,
+    requestConfirm,
+}) {
+    const selectedCount = selectedFiles.size;
+    const clipCount = project.clips.length;
+
+    return (
+        <>
+            <RailSection title="Auto-annotate" icon={<WandSparkles size={15} />}>
+                <Tooltip title={TIPS.dataset.templatePreset}>
+                    <FormControl size="small" fullWidth>
+                        <Select
+                            value={project.prompt_template_preset || 'music'}
+                            onChange={(e) => onChangePreset(e.target.value)}
+                            disabled={annotateBusy}
+                            renderValue={(v) => {
+                                const p = (project.prompt_template_presets || []).find((x) => x.id === v);
+                                return p ? p.label : v;
+                            }}
+                        >
+                            {(project.prompt_template_presets || []).map((p) => (
+                                <MenuItem key={p.id} value={p.id}>
+                                    <Box>
+                                        <Typography variant="body2">{p.label}</Typography>
+                                        <Typography variant="caption" color="text.secondary">
+                                            {p.description}
+                                        </Typography>
+                                    </Box>
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Tooltip>
+
+                <Tooltip title={TIPS.dataset.richAnnotate}>
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                size="small"
+                                checked={tier === 'rich'}
+                                onChange={(e) => onChangeTier(e.target.checked ? 'rich' : 'basic')}
+                                disabled={annotateBusy}
+                            />
+                        }
+                        label={<Typography variant="caption" color="text.secondary">Rich annotation</Typography>}
+                        sx={{ mr: 0 }}
+                    />
+                </Tooltip>
+
+                <Tooltip title={TIPS.dataset.skipAnnotated}>
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                size="small"
+                                checked={skipExisting}
+                                onChange={(e) => onChangeSkip(e.target.checked)}
+                                disabled={annotateBusy}
+                            />
+                        }
+                        label={<Typography variant="caption" color="text.secondary">Skip already annotated</Typography>}
+                        sx={{ mr: 0 }}
+                    />
+                </Tooltip>
+
+                <Tooltip title={TIPS.dataset.autoAnnotateAll}>
+                    {/* span — keeps the tooltip alive while the button is disabled */}
+                    <span style={{ display: 'flex' }}>
+                        <Button
+                            variant="contained"
+                            color="warm"
+                            size="small"
+                            fullWidth
+                            startIcon={annotateStarting
+                                ? <CircularProgress size={16} color="inherit" />
+                                : <WandSparkles size={16} />}
+                            onClick={onAnnotateAll}
+                            disabled={annotateBusy || project.clip_count === 0}
+                        >
+                            {annotateStarting ? 'Starting…' : `Auto-annotate all ${clipCount}`}
+                        </Button>
+                    </span>
+                </Tooltip>
+            </RailSection>
+
+            {/* Directly under Auto-annotate: the vocabulary only feeds the
+                Rich tier, so it belongs to the band that switched it on
+                rather than sitting at the far end of the rail. */}
+            {tier === 'rich' && (
+                <ClapVocabAccordion disabled={annotateBusy} requestConfirm={requestConfirm} />
+            )}
+
+            <RailSection title="Inject text" icon={<TextCursorInput size={15} />}>
+                <PromptInjector
+                    vertical
+                    clipCount={clipCount}
+                    selectedCount={selectedCount}
+                    undoDepth={project.inject_undo_depth || 0}
+                    onInject={onInject}
+                    onUndo={onUndoInject}
+                    onError={onError}
+                    disabled={annotateBusy}
+                />
+            </RailSection>
+
+            <HealthSection health={health} onSelectFiles={onSelectFiles} />
+
+            {/* Last, and only while something is ticked — a destructive verb
+                shouldn't sit between the tools you reach for constantly, and
+                the rail shouldn't carry a band whose every control is dead. */}
+            {selectedCount > 0 && (
+                <RailSection
+                    title="Selection"
+                    icon={<MusicIcon size={15} />}
+                    badge={
+                        <Typography variant="caption" color="primary.main">
+                            {selectedCount}
+                        </Typography>
+                    }
+                >
+                    <Button
+                        variant="outlined"
+                        color="error"
+                        size="small"
+                        fullWidth
+                        startIcon={<TrashIcon size={16} />}
+                        onClick={onClearSelected}
+                        disabled={annotateBusy}
+                    >
+                        Clear annotations ({selectedCount})
+                    </Button>
+                    <Button size="small" fullWidth onClick={onDeselect} disabled={annotateBusy}>
+                        Deselect all
+                    </Button>
+                </RailSection>
+            )}
+        </>
     );
 }
 
@@ -1532,6 +1659,8 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
                         {' · '}{stateLabel}
                     </Typography>
                 </Box>
+            </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
                 <Button
                     variant="outlined"
                     size="small"
@@ -1541,8 +1670,6 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
                 >
                     Add audio
                 </Button>
-            </Stack>
-            <Stack direction="row" spacing={1}>
                 <Tooltip title={TIPS.dataset.discardChanges}>
                     <span>
                         <Button
@@ -1598,7 +1725,61 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
     );
 }
 
-function HealthStrip({ health, onSelectFiles }) {
+/**
+ * One collapsible band in the inspector rail. Kept deliberately lighter than
+ * MUI's Accordion — the rail holds several of these and the Accordion's own
+ * padding and dividers stack up into exactly the bulk the rail exists to
+ * avoid.
+ */
+function RailSection({ title, icon, defaultOpen = true, badge, children }) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+            <ButtonBase
+                onClick={() => setOpen((o) => !o)}
+                aria-expanded={open}
+                sx={{
+                    width: '100%',
+                    px: 1.5,
+                    py: 1.15,
+                    gap: 1,
+                    justifyContent: 'flex-start',
+                    color: 'text.primary',
+                    '&:hover': { bgcolor: 'action.hover' },
+                }}
+            >
+                <Box component="span" sx={{ display: 'flex', color: 'text.secondary' }}>{icon}</Box>
+                <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, textAlign: 'left' }}>
+                    {title}
+                </Typography>
+                {badge}
+                <Box
+                    component="span"
+                    sx={{
+                        display: 'flex',
+                        color: 'text.disabled',
+                        transform: open ? 'rotate(180deg)' : 'none',
+                        transition: 'transform .18s',
+                    }}
+                >
+                    <ChevronDownIcon size={15} />
+                </Box>
+            </ButtonBase>
+            <Collapse in={open} unmountOnExit>
+                <Stack spacing={1.25} sx={{ px: 1.5, pb: 1.75, pt: 0.25 }}>
+                    {children}
+                </Stack>
+            </Collapse>
+        </Box>
+    );
+}
+
+/**
+ * Health as rail content rather than a full-width card: a status line plus the
+ * chips, each of which selects the clips it counts. Returns null when there's
+ * nothing loaded yet so the rail doesn't show an empty band.
+ */
+function HealthSection({ health, onSelectFiles }) {
     if (!health || health.total_clips === 0) return null;
     const empty = health.empty_prompts || { count: 0, files: [] };
     const tooShort = health.too_short || { count: 0, files: [] };
@@ -1634,14 +1815,10 @@ function HealthStrip({ health, onSelectFiles }) {
     );
 
     return (
-        <Paper variant="outlined" sx={{ borderRadius: 2.5 }}>
-            <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Box component="span" sx={appStyles.sectionCardIcon}>
-                    <HealthIcon size={18} />
-                </Box>
-                <Typography variant="subtitle1" sx={{ fontWeight: 500, flex: 1 }}>
-                    Dataset health
-                </Typography>
+        <RailSection
+            title="Health"
+            icon={<HealthIcon size={15} />}
+            badge={
                 <Box
                     sx={{
                         width: 8,
@@ -1654,20 +1831,17 @@ function HealthStrip({ health, onSelectFiles }) {
                             `0 0 0 3px ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'}`,
                     }}
                 />
-                <Typography variant="caption" sx={{ color: statusColor }}>
-                    {statusText}
-                </Typography>
-            </Box>
+            }
+        >
+            <Typography variant="caption" sx={{ color: statusColor }}>
+                {statusText}
+            </Typography>
 
             {issues > 0 && (
                 <Box
                     sx={{
-                        px: 2,
-                        py: 1.25,
-                        borderTop: 1,
-                        borderColor: 'divider',
                         display: 'flex',
-                        alignItems: 'center',
+                        alignItems: 'flex-start',
                         gap: 0.75,
                         flexWrap: 'wrap',
                     }}
@@ -1718,7 +1892,7 @@ function HealthStrip({ health, onSelectFiles }) {
                     )}
                 </Box>
             )}
-        </Paper>
+        </RailSection>
     );
 }
 
@@ -1801,8 +1975,11 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     }, []);
 
+    // 100px rather than the original 120: the inspector rail took horizontal
+    // room out of the table, and the file name has to survive on one line.
+    // The waveform still reads fine at this size.
     return (
-        <Box sx={{ width: 120, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
+        <Box sx={{ width: 100, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
             <canvas
                 ref={canvasRef}
                 style={{
@@ -1830,18 +2007,16 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
     );
 }
 
-function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selectedFiles, onToggleSelected, onToggleSelectAll, disabled, toolbar }) {
+// The annotation tools used to ride above this table as a `toolbar` prop;
+// they now live in the InspectorRail beside it, so the table renders nothing
+// but the table.
+function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selectedFiles, onToggleSelected, onToggleSelectAll, disabled }) {
     const totalSelected = selectedFiles ? selectedFiles.size : 0;
     const allSelected = clips && clips.length > 0 && totalSelected === clips.length;
     const partiallySelected = totalSelected > 0 && !allSelected;
     if (!clips || clips.length === 0) {
         return (
             <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
-                {toolbar && (
-                    <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
-                        {toolbar}
-                    </Box>
-                )}
                 <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                     <Typography variant="body2">
                         No clips yet. Use “Add audio” to bring in a folder.
@@ -1852,11 +2027,6 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     }
     return (
         <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
-            {toolbar && (
-                <Box sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider' }}>
-                    {toolbar}
-                </Box>
-            )}
             <TableContainer>
                 <Table size="small">
                     <TableHead>
@@ -1870,7 +2040,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                                     disabled={disabled || clips.length === 0}
                                 />
                             </TableCell>
-                            <TableCell sx={{ width: '36%' }}>File</TableCell>
+                            <TableCell sx={{ width: '40%' }}>File</TableCell>
                             <TableCell>Annotation</TableCell>
                             <TableCell sx={{ width: 132, textAlign: 'right' }}>Actions</TableCell>
                         </TableRow>
@@ -1937,7 +2107,14 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                         progress={playProgress}
                         onSeek={onSeek}
                     />
-                    <Typography variant="body2" sx={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+                    {/* overflowWrap rather than break-all: a name only breaks
+                        when it genuinely can't fit, instead of splitting
+                        "…04.wav" across lines the moment it's close. */}
+                    <Typography
+                        variant="body2"
+                        title={clip.file_name}
+                        sx={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}
+                    >
                         {clip.file_name}
                     </Typography>
                 </Stack>
