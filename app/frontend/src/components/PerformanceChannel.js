@@ -205,11 +205,13 @@ export default function PerformanceChannel({
     };
 
     // Per-channel rolling fragment history. Each fragment:
-    //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number }
-    // Oldest-first. Capped at FRAGMENT_CAP via FIFO eviction with star
-    // priority (starred fragments survive until everything is starred, then
-    // oldest go first regardless). `nextFragmentNumberRef` provides a stable
-    // F# even after deletes — so F1 stays F1.
+    //   { id, blob, audioUrl, prompt, duration, createdAt, starred, number,
+    //     label? }
+    // Oldest-first until the user reorders it by hand. Capped at FRAGMENT_CAP
+    // via eviction with star priority (starred fragments survive until
+    // everything is starred, then the oldest goes regardless — by createdAt,
+    // never by list position). `nextFragmentNumberRef` provides a stable F#
+    // even after deletes — so F1 stays F1; `label` overrides it for display.
     const [fragments, setFragments] = useState([]);
     const [auditioningFragmentId, setAuditioningFragmentId] = useState(null);
     const [committedFragmentId, setCommittedFragmentId] = useState(null);
@@ -467,16 +469,27 @@ export default function PerformanceChannel({
         });
 
         // Append to history with FRAGMENT_CAP eviction (oldest unstarred first).
+        // "Oldest" is decided by createdAt, not by list position: the user can
+        // reorder rows by hand, so position no longer implies age and picking
+        // index 0 would silently delete whatever they dragged to the top.
         setFragments((prev) => {
             const combined = [...prev, fragment];
             if (combined.length <= FRAGMENT_CAP) return combined;
             const trimmed = combined.slice();
+            const olderThan = (a, b) => (a.createdAt || 0) < (b.createdAt || 0);
             while (trimmed.length > FRAGMENT_CAP) {
                 let idx = -1;
                 for (let j = 0; j < trimmed.length; j++) {
-                    if (!trimmed[j].starred) { idx = j; break; }
+                    if (trimmed[j].starred) continue;
+                    if (idx < 0 || olderThan(trimmed[j], trimmed[idx])) idx = j;
                 }
-                if (idx < 0) idx = 0;  // all starred → drop oldest
+                if (idx < 0) {
+                    // Everything is starred → drop the oldest regardless.
+                    idx = 0;
+                    for (let j = 1; j < trimmed.length; j++) {
+                        if (olderThan(trimmed[j], trimmed[idx])) idx = j;
+                    }
+                }
                 const dying = trimmed[idx];
                 if (dying.audioUrl?.startsWith('blob:')) {
                     try { URL.revokeObjectURL(dying.audioUrl); } catch { /* ignore */ }
@@ -671,6 +684,36 @@ export default function PerformanceChannel({
         setFragments((prev) => prev.map((f) =>
             f.id === fragmentId ? { ...f, starred: !f.starred } : f,
         ));
+    };
+
+    // Rename — a display label that replaces the F# ordinal in the history
+    // row. Empty (or whitespace) clears it and the ordinal comes back. Stored
+    // on the fragment metadata, so it rides the session mirror into
+    // localStorage and into presets; the IDB blob is untouched.
+    const handleRenameFragment = (fragmentId, label) => {
+        const trimmed = (label || '').trim().slice(0, 40);
+        setFragments((prev) => prev.map((f) => {
+            if (f.id !== fragmentId) return f;
+            const { label: _prev, ...rest } = f;
+            return trimmed ? { ...rest, label: trimmed } : rest;
+        }));
+    };
+
+    // Manual reordering. Purely presentational — the committed clip, the cue,
+    // and every fragment id stay put, so MIDI mappings and the strip's audio
+    // are unaffected. Cap eviction picks by createdAt (see makeOnBlob), not by
+    // position, so moving a row to the top can't make it the next one dropped.
+    const handleMoveFragment = (fragmentId, delta) => {
+        setFragments((prev) => {
+            const from = prev.findIndex((f) => f.id === fragmentId);
+            if (from < 0) return prev;
+            const to = from + delta;
+            if (to < 0 || to >= prev.length) return prev;
+            const next = prev.slice();
+            const [moved] = next.splice(from, 1);
+            next.splice(to, 0, moved);
+            return next;
+        });
     };
 
     const handleDeleteFragment = (fragmentId) => {
@@ -1158,6 +1201,8 @@ export default function PerformanceChannel({
                 onCommit={handleCommitFragment}
                 onToggleStar={handleToggleStar}
                 onDelete={handleDeleteFragment}
+                onRename={handleRenameFragment}
+                onMove={handleMoveFragment}
                 onClearAll={handleClearFragments}
             />
 

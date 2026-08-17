@@ -139,6 +139,9 @@ export const TIPS = {
             starred ? 'Unstar' : 'Star (keep through eviction)',
         commit: (committed) =>
             committed ? 'Currently loaded' : 'Load into channel',
+        rename: 'Double-click to rename (empty resets to F#)',
+        moveUp: 'Move up',
+        moveDown: 'Move down',
     },
 
     // CheckpointRow.js — checkpoint catalog rows.

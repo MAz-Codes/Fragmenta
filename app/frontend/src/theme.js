@@ -3293,8 +3293,38 @@ export const performanceChannelStyles = {
                     ? `${color}1F`
                     : 'action.hover',
         },
+        // Reorder chevrons stay invisible until the row is hovered or holds
+        // focus — the column keeps its width either way, so revealing them
+        // never shifts the row's other controls.
+        '& .frag-reorder': { opacity: 0, transition: 'opacity 120ms ease' },
+        '&:hover .frag-reorder, &:focus-within .frag-reorder': { opacity: 1 },
         transition: 'background-color 120ms',
     }),
+    fragmentReorderCol: {
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        flexShrink: 0,
+        width: 14,
+        // The chevrons sit in <span> wrappers (so hover help still fires on
+        // the disabled first/last button). A span is a block container with
+        // inline content, so it inherits a ~20px line-height strut and would
+        // render 20px tall around a 10px button — doubling the row height and
+        // halving how many fragments fit in the list. Flexing the wrappers
+        // and zeroing the strut keeps the column at the button height.
+        lineHeight: 0,
+        '& > span': { display: 'flex' },
+    },
+    fragmentReorderBtn: {
+        width: 14,
+        height: 10,
+        minWidth: 0,
+        p: 0,
+        borderRadius: 0.5,
+        color: 'text.disabled',
+        '&:hover': { color: 'text.primary', bgcolor: 'action.hover' },
+        '&.Mui-disabled': { color: 'text.disabled', opacity: 0.25 },
+    },
     // fragmentIconBtn — used by audition, star, and commit buttons in the
     // fragment history rows. The optional `filled` flag flips the active
     // state from a ghost (color + transparent bg) to a chip (white glyph on
@@ -3335,6 +3365,31 @@ export const performanceChannelStyles = {
         fontWeight: perfTokens.weight.bold,
         color: 'text.primary',
         flexShrink: 0,
+    },
+    // Renamed fragments print their label in place of the F# ordinal. Unlike
+    // the ordinal it can be arbitrarily long, so it shrinks and ellipsises
+    // rather than pushing the row's buttons out of the channel strip.
+    fragmentLabelText: {
+        ...perfTokens.num,
+        fontWeight: perfTokens.weight.bold,
+        color: 'text.primary',
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        cursor: 'text',
+    },
+    fragmentLabelInput: {
+        ...perfTokens.num,
+        fontWeight: perfTokens.weight.bold,
+        flex: 1,
+        minWidth: 0,
+        '& input': {
+            p: 0,
+            height: 16,
+            font: 'inherit',
+            color: 'text.primary',
+        },
     },
     fragmentDuration: {
         ...perfTokens.num,
