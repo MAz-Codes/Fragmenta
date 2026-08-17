@@ -928,6 +928,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             <IngestDialog
                 open={ingestOpen}
                 projectName={project?.name}
+                ingestMode={project?.ingest_mode}
                 isDocker={isDocker}
                 onClose={() => setIngestOpen(false)}
                 onIngested={async () => {
@@ -2240,9 +2241,30 @@ function CreateProjectDialog({ open, existingNames, onClose, onCreated }) {
     );
 }
 
-function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false }) {
+const fmtBytes = (n) => {
+    if (!n && n !== 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let v = n;
+    let u = 0;
+    while (v >= 1000 && u < units.length - 1) { v /= 1000; u += 1; }
+    return `${v.toFixed(v < 10 && u > 0 ? 1 : 0)} ${units[u]}`;
+};
+
+/**
+ * Add audio.
+ *
+ * Choosing the folder is the whole job, so it's the only thing on screen
+ * until it's done — and once a folder is picked the dialog says what's
+ * actually in it rather than echoing back a path. The copy/symlink choice
+ * follows, prefilled from the project's last ingest (the backend has stored
+ * it all along) and phrased by what it costs you, using the real size of the
+ * folder you just chose.
+ */
+function IngestDialog({ open, projectName, ingestMode, onClose, onIngested, isDocker = false }) {
     const [folder, setFolder] = useState('');
-    const [mode, setMode] = useState('copy');
+    const [mode, setMode] = useState(ingestMode || 'copy');
+    const [scan, setScan] = useState(null);      // { file_count, total_bytes }
+    const [scanning, setScanning] = useState(false);
     const [busy, setBusy] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [uploadInfo, setUploadInfo] = useState('');
@@ -2250,16 +2272,45 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
     const uploadInputRef = useRef(null);
 
     useEffect(() => {
-        if (open) { setFolder(''); setMode('copy'); setDialogError(''); setUploadInfo(''); }
-    }, [open]);
+        if (open) {
+            setFolder('');
+            setScan(null);
+            // The project remembers how you last brought audio in; don't make
+            // the user re-answer a question the backend already stored.
+            setMode(ingestMode || 'copy');
+            setDialogError('');
+            setUploadInfo('');
+        }
+    }, [open, ingestMode]);
+
+    // What's actually in there — counted with the same walker the ingest
+    // uses, so the number on the button is the number you'll get.
+    const scanFolder = useCallback(async (path) => {
+        setScanning(true);
+        try {
+            const { data } = await api.post('/api/folder-scan', { folder_path: path });
+            setScan(data);
+            if (data.file_count === 0) {
+                setDialogError('No audio files in that folder. Pick another one.');
+            }
+        } catch (e) {
+            // A failed count isn't fatal — the ingest can still go ahead.
+            setScan(null);
+        } finally {
+            setScanning(false);
+        }
+    }, []);
 
     async function pick() {
+        setDialogError('');
         try {
             const { data } = await api.post('/api/pick-folder', {});
-            if (data?.path) setFolder(data.path);
+            if (data?.path) {
+                setFolder(data.path);
+                scanFolder(data.path);
             // A response with no path but an error means no picker tool was
             // available (not a user cancel) — show it so the button isn't dead.
-            else if (data?.error) setDialogError(data.error);
+            } else if (data?.error) setDialogError(data.error);
         } catch (e) {
             setDialogError(extractError(e, 'Folder picker failed'));
         }
@@ -2292,6 +2343,10 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
             const { data } = await api.post('/api/upload-folder', form);
             setFolder(data.path);
             setUploadInfo(`${data.file_count} audio file${data.file_count === 1 ? '' : 's'} uploaded`);
+            setScan({
+                file_count: data.file_count,
+                total_bytes: files.reduce((sum, f) => sum + (f.size || 0), 0),
+            });
         } catch (e) {
             setDialogError(extractError(e, 'Folder upload failed'));
         } finally {
@@ -2316,62 +2371,122 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
         }
     }
 
+    const busyAny = busy || uploading || scanning;
+    const count = scan?.file_count;
+    const sizeLabel = scan ? fmtBytes(scan.total_bytes) : '';
+    const hasAudio = !scan || scan.file_count > 0;
+    const chooseLabel = isDocker
+        ? (uploading ? 'Uploading…' : 'Choose a folder to upload')
+        : 'Choose a folder';
+
+    const openPicker = () => {
+        if (isDocker) uploadInputRef.current?.click();
+        else pick();
+    };
+
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>Add audio to {projectName}</DialogTitle>
+            <DialogTitle>Add audio to &ldquo;{projectName}&rdquo;</DialogTitle>
             <DialogContent>
                 <Stack spacing={2} sx={{ pt: 1 }}>
-                    <Stack direction="row" spacing={1.5} alignItems="center">
-                        {isDocker ? (
+                    {isDocker && (
+                        <input
+                            ref={uploadInputRef}
+                            type="file"
+                            webkitdirectory=""
+                            multiple
+                            style={{ display: 'none' }}
+                            onChange={(e) => { uploadFolder(e.target.files); e.target.value = ''; }}
+                        />
+                    )}
+
+                    {/* Picking the folder is the whole job until it's done, so
+                        it gets the full width and the primary weight — not a
+                        small outlined button beside a greyed-out "Add". */}
+                    <ButtonBase
+                        onClick={openPicker}
+                        disabled={busyAny}
+                        sx={{
+                            width: '100%',
+                            flexDirection: 'column',
+                            gap: 0.75,
+                            px: 2,
+                            py: folder ? 2 : 3.5,
+                            borderRadius: 2,
+                            border: '1px dashed',
+                            borderColor: folder ? 'primary.main' : 'divider',
+                            bgcolor: folder ? 'action.selected' : 'transparent',
+                            transition: 'border-color .15s, background-color .15s',
+                            '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
+                        }}
+                    >
+                        <Box sx={{ display: 'flex', color: folder ? 'primary.main' : 'text.secondary' }}>
+                            {uploading || scanning
+                                ? <CircularProgress size={22} />
+                                : <FolderOpenIcon size={22} />}
+                        </Box>
+
+                        {folder ? (
                             <>
-                                <input
-                                    ref={uploadInputRef}
-                                    type="file"
-                                    webkitdirectory=""
-                                    multiple
-                                    style={{ display: 'none' }}
-                                    onChange={(e) => { uploadFolder(e.target.files); e.target.value = ''; }}
-                                />
-                                <Button
-                                    variant="outlined"
-                                    startIcon={<FolderOpenIcon size={18} />}
-                                    disabled={uploading}
-                                    onClick={() => uploadInputRef.current?.click()}
+                                <Typography variant="body2" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                                    {scanning
+                                        ? 'Counting audio…'
+                                        : count != null
+                                            ? `${count} audio file${count === 1 ? '' : 's'}${sizeLabel ? ` · ${sizeLabel}` : ''}`
+                                            : 'Folder selected'}
+                                </Typography>
+                                <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{ wordBreak: 'break-all', textAlign: 'center' }}
                                 >
-                                    {uploading ? 'Uploading…' : 'Upload folder'}
-                                </Button>
-                                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                                    {uploadInfo || 'No folder uploaded'}
+                                    {folder}
+                                </Typography>
+                                <Typography variant="caption" color="text.disabled">
+                                    Click to choose a different folder
                                 </Typography>
                             </>
                         ) : (
                             <>
-                                <Button variant="outlined" startIcon={<FolderOpenIcon size={18} />} onClick={pick}>
-                                    Pick folder
-                                </Button>
-                                <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                                    {folder || 'No folder selected'}
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>{chooseLabel}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                    Every audio file inside it, including subfolders
                                 </Typography>
                             </>
                         )}
-                    </Stack>
+                    </ButtonBase>
 
                     {/* Web uploads are staged copies already — symlinking into the
                         staging dir would break, so the mode choice is desktop-only
                         and Docker always ingests with the default 'copy'. */}
                     {!isDocker && (
-                        <FormControl>
-                            <Typography variant="body2" gutterBottom>How to bring the audio in:</Typography>
+                        <FormControl disabled={busyAny}>
                             <RadioGroup value={mode} onChange={(e) => setMode(e.target.value)}>
                                 <FormControlLabel
                                     value="copy"
                                     control={<Radio size="small" />}
-                                    label={<Typography variant="body2">Copy — duplicates audio into the project (safe, originals untouched)</Typography>}
+                                    label={
+                                        <Typography variant="body2">
+                                            Copy into the project
+                                            <Typography component="span" variant="body2" color="text.secondary">
+                                                {sizeLabel ? ` — uses ${sizeLabel} of disk, originals untouched`
+                                                           : ' — duplicates the audio, originals untouched'}
+                                            </Typography>
+                                        </Typography>
+                                    }
                                 />
                                 <FormControlLabel
                                     value="symlink"
                                     control={<Radio size="small" />}
-                                    label={<Typography variant="body2">Symlink — points at the originals (saves disk, breaks if you move them)</Typography>}
+                                    label={
+                                        <Typography variant="body2">
+                                            Link to the originals
+                                            <Typography component="span" variant="body2" color="text.secondary">
+                                                {sizeLabel ? ` — saves ${sizeLabel}, breaks if you move them`
+                                                           : ' — saves disk, breaks if you move them'}
+                                            </Typography>
+                                        </Typography>
+                                    }
                                 />
                             </RadioGroup>
                         </FormControl>
@@ -2382,8 +2497,16 @@ function IngestDialog({ open, projectName, onClose, onIngested, isDocker = false
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose} disabled={busy || uploading}>Cancel</Button>
-                <Button variant="contained" onClick={submit} disabled={busy || uploading || !folder}>
-                    {busy ? 'Adding…' : 'Add'}
+                <Button
+                    variant="contained"
+                    onClick={submit}
+                    disabled={busyAny || !folder || !hasAudio}
+                >
+                    {busy
+                        ? 'Adding…'
+                        : count != null
+                            ? `Add ${count} clip${count === 1 ? '' : 's'}`
+                            : 'Add'}
                 </Button>
             </DialogActions>
         </Dialog>

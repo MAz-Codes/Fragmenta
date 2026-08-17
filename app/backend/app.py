@@ -2783,6 +2783,56 @@ def delete_project_route(name):
     return jsonify({'name': name, 'deleted': True})
 
 
+@app.route('/api/folder-scan', methods=['POST'])
+def folder_scan_route():
+    """Count the audio in a folder before committing to ingesting it.
+
+    Body: { folder_path }. Uses the same walker as ingest, so the count is
+    exactly what an ingest would bring in — not an estimate. Lets the Add
+    audio dialog say "214 audio files · 1.2 GB" instead of just echoing a
+    path back at the user.
+    """
+    from app.backend.data.auto_annotator import _iter_audio_files
+    payload = request.json or {}
+    folder = (payload.get('folder_path') or '').strip()
+    if not folder:
+        return jsonify({'error': 'folder_path is required'}), 400
+    folder_path = Path(folder).expanduser()
+
+    # Same confinement as ingest: in headless deploys the only legitimate
+    # source is the upload staging dir, and this route would otherwise be a
+    # directory-listing oracle for the whole host.
+    if _is_headless():
+        staging_root = get_config().get_path('uploads').resolve()
+        try:
+            folder_path.resolve().relative_to(staging_root)
+        except ValueError:
+            return jsonify({'error': 'Folder is outside the upload area.'}), 400
+
+    if not folder_path.exists() or not folder_path.is_dir():
+        return jsonify({'error': f'Folder not found: {folder}'}), 404
+
+    try:
+        files = _iter_audio_files(folder_path)
+        total_bytes = 0
+        for f in files:
+            try:
+                total_bytes += f.stat().st_size
+            except OSError:
+                # A dangling symlink or a file yanked mid-scan shouldn't sink
+                # the whole count.
+                continue
+    except Exception as exc:
+        logger.exception("Folder scan failed for %s", folder)
+        return jsonify({'error': str(exc)}), 500
+
+    return jsonify({
+        'folder_path': str(folder_path),
+        'file_count': len(files),
+        'total_bytes': total_bytes,
+    })
+
+
 @app.route('/api/projects/<name>/ingest', methods=['POST'])
 def ingest_into_project_route(name):
     """Body: { folder_path: string, mode: "copy" | "symlink" }"""
