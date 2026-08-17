@@ -28,7 +28,7 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 - **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision — trains directly on a Dataset Workbench project
 - **LoRA adapters** — train LoRA, DoRA, or BoRA adapters (plus low-VRAM `-xs` variants) on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
 - **Text-to-audio generation** — variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
-- **Audio editing (Edit tab)** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation
+- **Audio editing** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation. _Temporarily hidden:_ these are implemented, but the upstream Stable Audio 3 runtime does not yet produce usable results for them, so the controls are switched off rather than shipped broken. They return in a future release once upstream support lands.
 - **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
 - **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance))
 - **Real-time GPU memory monitoring**
