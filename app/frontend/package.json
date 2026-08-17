@@ -1,23 +1,23 @@
 {
-    "name": "fragmenta-desktop",
-    "version": "1.0.0",
-    "description": "Fragmenta",
-    "type": "module",
-    "scripts": {
-        "dev": "vite",
-        "build": "vite build",
-        "preview": "vite preview"
-    },
-    "dependencies": {
-        "@emotion/react": "^11.11.0",
-        "@emotion/styled": "^11.11.0",
-        "@mui/material": "^5.14.0",
-        "lucide-react": "^0.460.0",
-        "react": "^18.2.0",
-        "react-dom": "^18.2.0"
-    },
-    "devDependencies": {
-        "@vitejs/plugin-react": "^4.3.0",
-        "vite": "^5.4.0"
-    }
+  "name": "fragmenta-desktop",
+  "version": "1.1.0",
+  "description": "Fragmenta",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.0",
+    "@emotion/styled": "^11.11.0",
+    "@mui/material": "^5.14.0",
+    "lucide-react": "^0.460.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "vite": "^5.4.0"
+  }
 }
