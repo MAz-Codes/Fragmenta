@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 import requests
 import shutil
 import signal
@@ -308,15 +309,33 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             ensure_desktop_entry()
         CHROMIUM_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Sized and scaled from the display, not baked in — this is the
+        # default launch path on Linux, so a fixed 1400x850 here is what most
+        # users actually get regardless of their monitor.
+        screen = detect_screen_size()
+        scale = ui_scale_for(screen[0]) if screen else 1.0
+        # --window-size is in device-independent pixels, so the geometry has
+        # to be worked out in the scaled coordinate space, not raw pixels.
+        logical = (int(screen[0] / scale), int(screen[1] / scale)) if screen else None
+        win_w, win_h, _, _ = _window_geometry(logical)
+        if screen:
+            print(f"Screen {screen[0]}x{screen[1]} -> scale {scale}, window {win_w}x{win_h} dip")
+
         launch_args_base = [
             chromium_path,
             f"--app={BACKEND_URL}",
-            "--window-size=1400,850",
+            f"--window-size={win_w},{win_h}",
             "--no-first-run",
             "--no-default-browser-check",
             "--log-level=3",
             "--disable-logging",
         ]
+        # Magnify the whole UI natively. This is what actually fixes a 4K
+        # panel on an unscaled desktop — it scales layout, type and hit
+        # targets together, and unlike a CSS zoom in the page it doesn't
+        # depend on the page being able to measure the display.
+        if scale != 1.0:
+            launch_args_base.insert(2, f"--force-device-scale-factor={scale}")
         if sys.platform == "linux":
             launch_args_base.insert(2, f"--class={APP_WM_CLASS}")
 
@@ -535,6 +554,137 @@ def _windows_apply_window_icon() -> None:
         print(f"Could not set Windows window icon: {exc}")
 
 
+DEFAULT_WINDOW_SIZE = (1400, 850)
+DEFAULT_MIN_SIZE = (1000, 700)
+
+
+def ui_scale_for(screen_width: int) -> float:
+    """How much to magnify the interface on a display this wide.
+
+    Deliberately decided here rather than in the web app. The page can't be
+    trusted to measure its own display: Brave — which is what `find_chromium`
+    picks up on plenty of Linux boxes — farbles `window.screen` for
+    fingerprinting resistance and reports a flat 1280x800 no matter what
+    monitor you're on. The launcher can read the real screen, so it decides.
+
+    `screen_width` is physical pixels, so this must only be called with a size
+    from `detect_screen_size` (which already divides out any desktop scaling).
+    """
+    if screen_width >= 3400:
+        return 1.5   # 4K and up, unscaled desktop
+    if screen_width >= 2700:
+        return 1.3   # 3K / ultrawide
+    if screen_width >= 2200:
+        return 1.15  # 1440p
+    return 1.0       # 1080p and below — already the right size
+
+
+def detect_screen_size() -> tuple[int, int] | None:
+    """Best-effort screen size in logical pixels, or None if it can't be read.
+
+    Deliberately avoids importing pywebview: the Chromium launch path is the
+    default on Linux and shouldn't pay for a GTK initialisation just to ask
+    how big the display is.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.SetProcessDPIAware()
+            width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            if width > 0 and height > 0:
+                return width, height
+        except Exception:
+            pass
+
+    if sys.platform == "linux":
+        # Works under X11 and XWayland. "current WxH" is the composed desktop
+        # size across all outputs, so it also covers multi-monitor setups.
+        try:
+            out = subprocess.run(
+                ["xrandr", "--current"], capture_output=True, text=True, timeout=3,
+            ).stdout
+            match = re.search(r"current\s+(\d+)\s*x\s*(\d+)", out)
+            if match:
+                width, height = int(match.group(1)), int(match.group(2))
+                # xrandr reports physical pixels; if the desktop is running
+                # scaled, the toolkit's logical space is smaller by that factor.
+                try:
+                    gdk_scale = int(os.environ.get("GDK_SCALE", "1"))
+                except ValueError:
+                    gdk_scale = 1
+                if gdk_scale > 1:
+                    width, height = width // gdk_scale, height // gdk_scale
+                if width > 0 and height > 0:
+                    return width, height
+        except Exception:
+            pass
+
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True, timeout=6,
+            ).stdout
+            match = re.search(r"Resolution:\s+(\d+)\s*x\s*(\d+)", out)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+        except Exception:
+            pass
+
+    # Portable last resort. Tk isn't always installed, hence the guard.
+    try:
+        import tkinter
+        root = tkinter.Tk()
+        root.withdraw()
+        width, height = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+
+    return None
+
+
+def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int]:
+    """Size the window from the display instead of a baked-in 1400x850.
+
+    A fixed size that looks generous on a 1080p laptop covers about a third
+    of a 4K panel. Open at a share of the screen instead, clamped so it stays
+    sane on both very small and very large displays.
+
+    Returns (width, height, min_width, min_height), falling back to the old
+    fixed size when the screen can't be read.
+    """
+    default_w, default_h = DEFAULT_WINDOW_SIZE
+    min_w, min_h = DEFAULT_MIN_SIZE
+    if not screen:
+        return default_w, default_h, min_w, min_h
+    sw, sh = int(screen[0]), int(screen[1])
+    if sw <= 0 or sh <= 0:
+        return default_w, default_h, min_w, min_h
+
+    # 70% of the screen. Capped because past ~2000px the layout just grows
+    # margins rather than showing more.
+    width = min(int(sw * 0.70), 2000)
+    height = min(int(sh * 0.70), 1300)
+    # Don't shrink below the size we've always shipped — but never grow past
+    # the screen doing it, or a small laptop gets a window it can't display.
+    width = max(width, min(default_w, sw - 40))
+    height = max(height, min(default_h, sh - 60))
+
+    # Never demand a minimum the screen can't satisfy, or the window manager
+    # gets a window that won't fit on the display.
+    min_w = min(min_w, max(640, sw - 80))
+    min_h = min(min_h, max(480, sh - 80))
+    # And never open smaller than the minimum.
+    width, height = max(width, min_w), max(height, min_h)
+
+    print(f"Screen {sw}x{sh} -> window {width}x{height}")
+    return width, height, min_w, min_h
+
+
 def run_pywebview_mode() -> int:
     _macos_set_app_metadata()
     try:
@@ -580,12 +730,13 @@ def run_pywebview_mode() -> int:
         announce_ui_ready()
 
         try:
+            win_w, win_h, min_w, min_h = _window_geometry(detect_screen_size())
             window = webview.create_window(
                 title=WINDOWS_WINDOW_TITLE,
                 url=BACKEND_URL,
-                width=1400,
-                height=850,
-                min_size=(1000, 700),
+                width=win_w,
+                height=win_h,
+                min_size=(min_w, min_h),
                 background_color="#0D1117",
             )
             if sys.platform == "win32":
