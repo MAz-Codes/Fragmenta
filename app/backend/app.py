@@ -3360,22 +3360,6 @@ def pre_encode_cancel_route(name):
     return jsonify({'name': name, 'cancelled': cancelled})
 
 
-@app.route('/api/projects/<name>/pre-encode/prompt', methods=['PATCH'])
-def pre_encode_prompt_route(name):
-    """Persist the 'Don't ask again' choice from the post-commit dialog.
-
-    Body: { "suppress": bool }
-    """
-    from app.backend.data.projects import project_path, update_pre_encode_suppression
-    if not project_path(name).exists():
-        return jsonify({'error': f'Project not found: {name}'}), 404
-    body = request.get_json(silent=True) or {}
-    if 'suppress' not in body:
-        return jsonify({'error': "Body must contain 'suppress': bool."}), 400
-    updated = update_pre_encode_suppression(name, bool(body['suppress']))
-    return jsonify(updated)
-
-
 @app.route('/api/clap/unload', methods=['POST'])
 def clap_unload_route():
     """Free CLAP weights from VRAM (e.g. before starting training or generation)."""

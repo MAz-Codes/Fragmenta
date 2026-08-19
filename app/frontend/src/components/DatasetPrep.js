@@ -107,7 +107,6 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     const [notice, setNotice] = useState(null);  // { severity, message } | null
     // Phase 6 — pre-encoded latents
     const [preEncodeJob, setPreEncodeJob] = useState(null);
-    const [preEncodeOffer, setPreEncodeOffer] = useState(false); // post-commit dialog
     const [tier, setTier] = useState(() => {
         try { return window.localStorage.getItem('fragmenta.datasetPrep.tier') || 'basic'; }
         catch { return 'basic'; }
@@ -454,32 +453,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         } catch (e) { setError(extractError(e, 'Save failed')); }
     }
 
-    async function handleStartPreEncode() {
-        if (!project) return;
-        setError('');
-        try {
-            const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/pre-encode`);
-            setPreEncodeJob(data.job);
-            pollPreEncodeStatus(project.name);
-        } catch (e) { setError(extractError(e, 'Pre-encode failed to start')); }
-    }
-
     async function handleCancelPreEncode() {
         if (!project) return;
         try {
             await api.post(`/api/projects/${encodeURIComponent(project.name)}/pre-encode/cancel`);
         } catch (e) { setError(extractError(e, 'Cancel failed')); }
-    }
-
-    async function persistPreEncodeSuppression(suppress) {
-        if (!project) return;
-        try {
-            const { data } = await api.patch(
-                `/api/projects/${encodeURIComponent(project.name)}/pre-encode/prompt`,
-                { suppress: !!suppress },
-            );
-            setProject(data);
-        } catch (e) { /* non-fatal — dialog still closes */ }
     }
 
     async function handleCommit() {
@@ -489,13 +467,12 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             const { data } = await api.post(`/api/projects/${encodeURIComponent(project.name)}/commit`);
             setProject(data);
             await refreshProjects();
-            // Phase 6 — post-commit pre-encode prompt.
-            // Open the dialog unless: (a) latents already present (re-commit
-            // wiped them but we still avoid re-asking immediately), or
-            // (b) the user previously chose "Don't ask again".
-            if (!data.suppress_pre_encode_prompt && !data.latents_present && data.clip_count > 0) {
-                setPreEncodeOffer(true);
-            }
+            // Pre-encoding is NOT offered here. The correct autoencoder
+            // (same-s vs same-l) depends on the training base model, which is
+            // only chosen on the Training page — offering it at commit time
+            // meant guessing, and a wrong guess silently produced latents the
+            // trainer discards ("falling back to live encoding"). The offer
+            // lives on the Training page, next to the base-model picker.
             setNotice({
                 severity: 'success',
                 message: `Dataset created · ${data.clip_count} clips written to disk`,
@@ -992,49 +969,6 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 </DialogActions>
             </Dialog>
 
-            {/* Phase 6 — post-commit pre-encode dialog. Surfaces after a
-                successful Create Dataset commit unless the user previously
-                chose "Don't ask again". */}
-            <Dialog
-                open={preEncodeOffer}
-                onClose={() => setPreEncodeOffer(false)}
-                maxWidth="xs"
-                fullWidth
-            >
-                <DialogTitle>Pre-encode latents?</DialogTitle>
-                <DialogContent>
-                    <Typography variant="body2" sx={{ mb: 1 }}>
-                        Encode your audio into SA3 latents now to speed up training. The
-                        autoencoder runs once up-front instead of every training step.
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                        Takes a few minutes for ~50 clips. Latents live in
-                        <code> {project?.name}/.latents/</code> and get wiped automatically
-                        when you next commit or edit a clip.
-                    </Typography>
-                </DialogContent>
-                <DialogActions sx={{ flexWrap: 'wrap' }}>
-                    <Button
-                        onClick={() => {
-                            persistPreEncodeSuppression(true);
-                            setPreEncodeOffer(false);
-                        }}
-                        sx={{ mr: 'auto' }}
-                    >
-                        Don't ask again
-                    </Button>
-                    <Button onClick={() => setPreEncodeOffer(false)}>Not now</Button>
-                    <Button
-                        variant="contained"
-                        onClick={() => {
-                            setPreEncodeOffer(false);
-                            handleStartPreEncode();
-                        }}
-                    >
-                        Pre-encode now
-                    </Button>
-                </DialogActions>
-            </Dialog>
 
             <Portal>
                 <Snackbar

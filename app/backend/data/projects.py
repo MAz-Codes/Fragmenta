@@ -363,7 +363,6 @@ class ProjectSession:
             "inject_undo_depth": len(self.inject_undo),
             "latents_present": bool(latents_npy),
             "latents_count": len(latents_npy),
-            "suppress_pre_encode_prompt": bool(self.metadata.get("suppress_pre_encode_prompt")),
         }
 
 
@@ -729,19 +728,6 @@ def _invalidate_latents(name: str) -> None:
     latents_dir = project_path(name) / ".latents"
     if latents_dir.exists():
         shutil.rmtree(latents_dir, ignore_errors=True)
-
-
-def update_pre_encode_suppression(name: str, suppress: bool) -> Dict[str, Any]:
-    """Persist the 'Don't ask again' choice from the post-commit dialog.
-
-    Stored on .project.json so it survives restart. The Training-tab
-    fallback button is always available regardless of this flag.
-    """
-    session = _get_or_load_session(name)
-    with session.lock:
-        session.metadata["suppress_pre_encode_prompt"] = bool(suppress)
-        _write_metadata(name, session.metadata)
-        return session.to_dict()
 
 
 def commit_project(name: str) -> Dict[str, Any]:

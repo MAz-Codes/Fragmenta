@@ -497,12 +497,24 @@ function App() {
     const startTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;
         try {
-            await api.post(`/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`);
+            // Send the autoencoder that matches the selected base. Without it
+            // the backend falls back to DEFAULT_AUTOENCODER ('same-s'), so
+            // pre-encoding for a medium base produced latents the trainer then
+            // rejected — "produced by a different autoencoder … falling back to
+            // live encoding" — silently throwing the whole pass away.
+            // Mapping mirrors latents_match_base() in pre_encoder.py.
+            const autoencoder = (trainingConfig.baseModel || '').includes('medium')
+                ? 'same-l'
+                : 'same-s';
+            await api.post(
+                `/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`,
+                { autoencoder },
+            );
             refreshTrainingPreEncode(trainingProject);
         } catch (e) {
             console.error('Failed to start pre-encode', e);
         }
-    }, [trainingProject, refreshTrainingPreEncode]);
+    }, [trainingProject, trainingConfig.baseModel, refreshTrainingPreEncode]);
 
     const cancelTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;

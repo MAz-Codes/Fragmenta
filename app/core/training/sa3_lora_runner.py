@@ -203,9 +203,14 @@ def build_train_command(
         "--num_workers", str(int(num_workers)),
         "--name", name,
         "--logger", "csv",
-        # demo_every set to a very large number — Fragmenta's training
-        # monitor doesn't surface demo audio, no need to spend cycles.
-        "--demo_every", "1000000",
+        # Fragmenta's training monitor doesn't surface demo audio, so skip
+        # rendering it. --no_demo (not a large --demo_every) is what actually
+        # turns it off: the callback's guard is `(global_step - 1) %
+        # demo_every`, which is 0 at step 1 for EVERY interval, so the step-1
+        # demo fired regardless — several demo_steps=50 passes at the model's
+        # native length (~380s on medium-base), ~10 min before training
+        # reached step 1.
+        "--no_demo",
     ]
     if encoded_dir is not None:
         # Phase 6 — feed pre-encoded latents directory. SA3's train_lora.py

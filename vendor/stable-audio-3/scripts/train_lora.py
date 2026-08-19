@@ -273,36 +273,49 @@ def train(args):
         every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1
     )
 
-    demo_dl = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=4,
-        shuffle=False,
-        num_workers=0,
-        drop_last=True,
-        collate_fn=collation_fn,
-    )
+    callbacks = [ckpt_callback, exc_callback]
 
-    # Pre-fetch the first batch and cycle it so demos always use the same samples
-    demo_batch = next(iter(demo_dl))
-    _, metadata = demo_batch
-    for j in range(min(4, len(metadata))):
-        md = metadata[j]
-        print(
-            f"Demo sample {j}: prompt={md.get('prompt', '')} seconds_total={md.get('seconds_total', '')}"
+    # Fragmenta: --no_demo skips demo rendering entirely.
+    #
+    # A large --demo_every is NOT enough to turn demos off. The callback's
+    # guard is `(global_step - 1) % demo_every != 0`, and at global_step 1
+    # that is `0 % N`, which is 0 for every N — so the step-1 demo fires no
+    # matter how the interval is set. That render is expensive: several
+    # passes of demo_steps=50 at model_config["sample_size"] (the model's
+    # NATIVE length, ~380s on medium-base — not args.duration), which
+    # measured ~10 minutes on medium-base before training reached step 1.
+    # Skipping the callback is the only way to avoid it. Also skips the demo
+    # DataLoader, whose eager first batch decodes 4 clips at startup.
+    if not args.no_demo:
+        demo_dl = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=4,
+            shuffle=False,
+            num_workers=0,
+            drop_last=True,
+            collate_fn=collation_fn,
         )
-    demo_dl = itertools.cycle([demo_batch])
 
-    demo_callback = DiffusionCondInpaintDemoCallback(
-        demo_every=args.demo_every,
-        sample_size=model_config.get("sample_size"),
-        sample_rate=model_config.get("sample_rate"),
-        demo_steps=50,
-        num_demos=4,
-        demo_cfg_scales=[2, 4, 7],
-        demo_dl=demo_dl,
-    )
+        # Pre-fetch the first batch and cycle it so demos always use the same samples
+        demo_batch = next(iter(demo_dl))
+        _, metadata = demo_batch
+        for j in range(min(4, len(metadata))):
+            md = metadata[j]
+            print(
+                f"Demo sample {j}: prompt={md.get('prompt', '')} seconds_total={md.get('seconds_total', '')}"
+            )
+        demo_dl = itertools.cycle([demo_batch])
 
-    callbacks = [ckpt_callback, exc_callback, demo_callback]
+        demo_callback = DiffusionCondInpaintDemoCallback(
+            demo_every=args.demo_every,
+            sample_size=model_config.get("sample_size"),
+            sample_rate=model_config.get("sample_rate"),
+            demo_steps=50,
+            num_demos=4,
+            demo_cfg_scales=[2, 4, 7],
+            demo_dl=demo_dl,
+        )
+        callbacks.append(demo_callback)
 
     # Combine args and config dicts
     args_dict = vars(args)
@@ -434,6 +447,12 @@ def main():
     p.add_argument("--checkpoint_every", type=int, default=500)
     p.add_argument("--log_every", type=int, default=100)
     p.add_argument("--demo_every", type=int, default=500)
+    p.add_argument(
+        "--no_demo",
+        action="store_true",
+        help="Skip demo rendering entirely. A large --demo_every does NOT "
+             "suppress the step-1 demo (its guard is 0 %% demo_every == 0).",
+    )
     p.add_argument("--num_workers", type=int, default=8)
     args = p.parse_args()
     if not args.encoded_dir and not args.data_dir:
