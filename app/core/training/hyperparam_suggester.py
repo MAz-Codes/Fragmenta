@@ -148,21 +148,44 @@ def _model_max_window_sec(base_model: Optional[str]) -> float:
 TARGET_WINDOW_SEC = 64.0
 
 
-def _pick_duration(p25_clip_sec: Optional[float], base_model: Optional[str]) -> float:
+# Hard floor. Below this a window stops being a useful training example.
+MIN_WINDOW_SEC = 5.0
+
+# The p25 cap alone is fine for a roughly uniform dataset but collapses on a
+# lopsided one: 13 three-second stingers mixed into 39 three-minute tracks put
+# p25 at 3s, which floors the window at 5s and trains the 39 long tracks on
+# five-second excerpts. So the p25 cap is not allowed to pull the window below
+# half the median. Half, specifically, because every clip above the median is
+# by definition longer than it — so the floor still guarantees random cropping
+# for at least half the dataset, which is the property the window is chosen
+# for in the first place.
+MEDIAN_FLOOR_FRACTION = 0.5
+
+
+def _pick_duration(p25_clip_sec: Optional[float], median_clip_sec: Optional[float],
+                   base_model: Optional[str]) -> float:
     """Window short enough that the bulk of the dataset still random-crops.
 
     Capped by the 25th-percentile clip length, kept strictly under it so
     clips of exactly that length aren't pinned. A percentile rather than the
     minimum on purpose: one short outlier shouldn't drag a 200-clip run down
-    to its length. Floors at 5s and stays under the model's native length.
+    to its length. A short *quartile* shouldn't either, so the cap is held up
+    by MEDIAN_FLOOR_FRACTION x median. Floors at MIN_WINDOW_SEC and stays
+    under the model's native length.
     """
     model_max = _model_max_window_sec(base_model)
+    ceiling = min(TARGET_WINDOW_SEC, model_max)
     if p25_clip_sec is None or p25_clip_sec <= 0:
-        return float(min(TARGET_WINDOW_SEC, model_max))
+        return float(ceiling)
     cap = math.floor(p25_clip_sec)
     if cap >= p25_clip_sec:      # p25 landed on a whole second — stay under it
         cap -= 1
-    return float(max(5.0, min(TARGET_WINDOW_SEC, model_max, cap)))
+    floor = MIN_WINDOW_SEC
+    if median_clip_sec is not None and median_clip_sec > 0:
+        # Never above the ceiling — this raises a collapsed cap, it doesn't
+        # override the 64s target or the model's native length.
+        floor = max(floor, min(ceiling, math.floor(MEDIAN_FLOOR_FRACTION * median_clip_sec)))
+    return float(max(floor, min(ceiling, cap)))
 
 
 def _pick_batch_size(bucket: str, vram_gb: Optional[float],
@@ -220,7 +243,7 @@ def _heuristic(
     bucket = _bucket(file_count)
     steps = _STEPS_BY_BUCKET[bucket]
     adapter, constrained = _pick_adapter(base_model, vram_gb)
-    duration = _pick_duration(dur_stats.get("p25"), base_model)
+    duration = _pick_duration(dur_stats.get("p25"), dur_stats.get("median"), base_model)
     batch = _pick_batch_size(bucket, vram_gb, base_model)
 
     # Mild dropout for tiny datasets only — extra regularization where overfit
@@ -287,7 +310,7 @@ def _compose_rationale(
         bullets.append(
             f"Clip durations: median {median:.1f}s, p95 {p95:.1f}s. "
             f"Training window set to {config['duration']:.0f}s — kept under the "
-            "shorter clips so every step sees a different random crop."
+            "bulk of the clips so most steps see a fresh random crop."
         )
 
     if vram_gb is not None:
@@ -338,12 +361,14 @@ def _compose_rationale(
             "time rather than corrupting the gradient — but the lost random "
             "cropping is real. Longer source chunks would help."
         )
-    below = sum(1 for d in (dur_stats.get("all") or []) if d <= config["duration"])
+    measured = dur_stats.get("all") or []
+    below = sum(1 for d in measured if d <= config["duration"])
     if below:
         warnings.append(
             f"{below} of {file_count} clip{'s are' if below != 1 else ' is'} shorter "
             f"than the {config['duration']:.0f}s window — those train on the same "
-            "excerpt every step instead of a random crop. The rest crop freely."
+            "excerpt every step instead of a random crop."
+            + (" The rest crop freely." if below < len(measured) else "")
         )
 
     # VRAM × base model crosscheck
