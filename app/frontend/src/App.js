@@ -1404,7 +1404,7 @@ function App() {
                                                 GPU
                                             </Typography>
                                             <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, fontSize: '0.72rem' }}>
-                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {gpuMemoryStatus.cuda.total.toFixed(0)} GB free
+                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {Math.ceil(gpuMemoryStatus.cuda.total)} GB free
                                             </Typography>
                                         </Box>
                                         <Box sx={{ height: 4, borderRadius: 999, bgcolor: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
