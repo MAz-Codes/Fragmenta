@@ -213,10 +213,13 @@ function App() {
         modelName: 'my_lora',
         baseModel: 'sa3-small-music-base',    // only *-base checkpoints are valid targets
         precision: 'bf16',
-        // Training window defaults to the base model's native length (small
-        // ≈120s; medium ≈380s — set on base-model change). Default base is
-        // small-music-base → 120s.
-        duration: 120.0,
+        // Training window. Deliberately short: SA3 only randomises the crop
+        // offset when a clip is LONGER than the window, so a window at the
+        // base's native length (≈120s small / ≈380s medium) pins every clip
+        // to the same excerpt for the whole run. Those native lengths are
+        // ceilings only — the base-model picker clamps to them, never resets
+        // to them. Suggest derives a per-dataset value; 64s is the default.
+        duration: 64.0,
 
         loraRank: 16,
         loraAlpha: 16,
@@ -1610,8 +1613,12 @@ function App() {
                                                             setTrainingConfig({
                                                                 ...trainingConfig,
                                                                 baseModel: e.target.value,
-                                                                // Default the window to the new base's native length.
-                                                                duration: cap,
+                                                                // Clamp to the new base's ceiling, don't reset to it.
+                                                                // Resetting pinned every clip shorter than the window
+                                                                // to the same excerpt — SA3 only randomises the crop
+                                                                // when the clip is longer than the window — and threw
+                                                                // away whatever Suggest or the user had chosen.
+                                                                duration: Math.min(trainingConfig.duration, cap),
                                                             });
                                                         }}
                                                     >

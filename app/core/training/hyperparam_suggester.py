@@ -11,8 +11,8 @@ and detected GPU VRAM, and returns a config that:
     to_local_embed` by default (documented best practices, prevents the
     "conditioner hijacking" failure mode on small datasets)
   * picks a `-XS` adapter family when VRAM is tight for the chosen base
-  * proposes a `duration` derived from the actual clip lengths in the
-    project — not a hardcoded 30s
+  * proposes a `duration` short enough that clips still random-crop
+    (see TARGET_WINDOW_SEC) rather than the model's native length
   * warns when the dataset is below SA3's documented minimum (~20 clips)
     or when clips are too short to learn from
 
@@ -58,7 +58,9 @@ def _duration_stats(audio_files: List[Path]) -> Dict[str, Optional[float]]:
         "count": n,
         "total": float(sum(durations)),
         "median": float(durations[n // 2]),
+        "p25": float(durations[min(n - 1, max(0, int(math.ceil(0.25 * n)) - 1))]),
         "p95": float(durations[min(n - 1, int(math.ceil(0.95 * n)) - 1)]),
+        "all": durations,
         "max": float(durations[-1]),
         "min": float(durations[0]),
     }
@@ -137,20 +139,30 @@ def _model_max_window_sec(base_model: Optional[str]) -> float:
     return 120.0
 
 
-def _pick_duration(p95_clip_sec: Optional[float], base_model: Optional[str]) -> float:
-    """Set training window from the project's actual p95 clip length.
+# Target training window. Short is not a compromise here — it is the point.
+# SampleDataset only randomises the crop offset when the clip is LONGER than
+# the window (PadCrop_Normalized_T: `if randomize and n_samples > self.n_samples`),
+# so a window at or above the clip length pins every clip to the same excerpt
+# for the whole run and removes the only augmentation a small dataset gets.
+# 64s was validated by ear against 380s on a 26-clip set.
+TARGET_WINDOW_SEC = 64.0
 
-    Floors at 5s; caps at — and defaults to — the model's native length
-    (≈120s small / ≈380s medium) rather than an arbitrary 30s. SA3 random-crops
-    longer files, so the only real limits are the model's sequence length and
-    VRAM. Rounds up p95 with 2s headroom so the window isn't cropping the tails
-    of typical clips. With no duration data, defaults to the model max.
+
+def _pick_duration(p25_clip_sec: Optional[float], base_model: Optional[str]) -> float:
+    """Window short enough that the bulk of the dataset still random-crops.
+
+    Capped by the 25th-percentile clip length, kept strictly under it so
+    clips of exactly that length aren't pinned. A percentile rather than the
+    minimum on purpose: one short outlier shouldn't drag a 200-clip run down
+    to its length. Floors at 5s and stays under the model's native length.
     """
     model_max = _model_max_window_sec(base_model)
-    if p95_clip_sec is None or p95_clip_sec <= 0:
-        return model_max
-    suggested = math.ceil(p95_clip_sec + 2.0)
-    return float(max(5, min(model_max, suggested)))
+    if p25_clip_sec is None or p25_clip_sec <= 0:
+        return float(min(TARGET_WINDOW_SEC, model_max))
+    cap = math.floor(p25_clip_sec)
+    if cap >= p25_clip_sec:      # p25 landed on a whole second — stay under it
+        cap -= 1
+    return float(max(5.0, min(TARGET_WINDOW_SEC, model_max, cap)))
 
 
 def _pick_batch_size(bucket: str, vram_gb: Optional[float],
@@ -208,7 +220,7 @@ def _heuristic(
     bucket = _bucket(file_count)
     steps = _STEPS_BY_BUCKET[bucket]
     adapter, constrained = _pick_adapter(base_model, vram_gb)
-    duration = _pick_duration(dur_stats.get("p95"), base_model)
+    duration = _pick_duration(dur_stats.get("p25"), base_model)
     batch = _pick_batch_size(bucket, vram_gb, base_model)
 
     # Mild dropout for tiny datasets only — extra regularization where overfit
@@ -274,7 +286,8 @@ def _compose_rationale(
     if p95 is not None and median is not None:
         bullets.append(
             f"Clip durations: median {median:.1f}s, p95 {p95:.1f}s. "
-            f"Training window set to {config['duration']:.0f}s."
+            f"Training window set to {config['duration']:.0f}s — kept under the "
+            "shorter clips so every step sees a different random crop."
         )
 
     if vram_gb is not None:
@@ -319,15 +332,18 @@ def _compose_rationale(
         )
     if median is not None and median < 2.0:
         warnings.append(
-            f"Median clip is only {median:.1f}s — most of the training window "
-            f"({config['duration']:.0f}s) will be silence-padded. "
-            "Re-slice the source material to longer chunks for better signal."
+            f"Median clip is only {median:.1f}s, under the {config['duration']:.0f}s "
+            "window floor. Those clips get padded and always train on the same "
+            "excerpt. The padding is masked out of the loss, so it costs step "
+            "time rather than corrupting the gradient — but the lost random "
+            "cropping is real. Longer source chunks would help."
         )
-    if config["duration"] > 45:
+    below = sum(1 for d in (dur_stats.get("all") or []) if d <= config["duration"])
+    if below:
         warnings.append(
-            f"Training window is {config['duration']:.0f}s. Longer windows use "
-            "markedly more VRAM and step time (DiT attention scales with length). "
-            "If you hit OOM, lower the window or pre-encode the dataset first."
+            f"{below} of {file_count} clip{'s are' if below != 1 else ' is'} shorter "
+            f"than the {config['duration']:.0f}s window — those train on the same "
+            "excerpt every step instead of a random crop. The rest crop freely."
         )
 
     # VRAM × base model crosscheck
