@@ -140,10 +140,23 @@ def _model_max_window_sec(base_model: Optional[str]) -> float:
 
 
 # Target training window. Short is not a compromise here — it is the point.
-# SampleDataset only randomises the crop offset when the clip is LONGER than
-# the window (PadCrop_Normalized_T: `if randomize and n_samples > self.n_samples`),
-# so a window at or above the clip length pins every clip to the same excerpt
-# for the whole run and removes the only augmentation a small dataset gets.
+# SA3 only randomises the crop offset when the clip is LONGER than the window,
+# on both of its dataset paths, so a window at or above the clip length pins
+# every clip to the same excerpt for the whole run and removes the only
+# augmentation a small dataset gets.
+#
+#   * pre-encoded latents (our default whenever a matching .latents/ cache
+#     exists — see sa3_trainer._encoded_dir): PreEncodedDataset, gated on
+#     `if self.random_crop and last_ix > self.latent_crop_length`
+#     (data/dataset.py). latent_crop_length comes from --duration, and
+#     random_crop=True is set by scripts/train_lora.py. Our pre-encoder
+#     doesn't pass --pad, so latents are trimmed to their natural length and
+#     last_ix is the clip's final frame — making the gate "clip longer than
+#     the window" too, just one latent frame stricter (~93ms: every base runs
+#     a 4096x pretransform at 44.1kHz).
+#   * raw audio (no cache): SampleDataset -> PadCrop_Normalized_T, gated on
+#     `if self.randomize and n_samples > self.n_samples` (data/utils.py).
+#
 # 64s was validated by ear against 380s on a 26-clip set.
 TARGET_WINDOW_SEC = 64.0
 
