@@ -7,6 +7,7 @@ import {
     Button,
     Typography,
     Stack,
+    Menu,
     MenuItem,
     Select,
     Slider,
@@ -22,11 +23,30 @@ import {
     GripVertical as DragIcon,
     Power as BypassIcon,
     ChevronDown as ChevronDownIcon,
+    ChevronRight as ChevronRightIcon,
 } from 'lucide-react';
 import api from '../api';
 import { isLoraCompatible } from '../utils/loraMatch';
 
 const MAX_SLOTS = 4;
+
+// "…/epoch=57-step=1500.safetensors" → "Epoch 57 · step 1500".
+// Matches the label format used on the Generation page elsewhere.
+const parseCheckpointLabel = (filepath) => {
+    const name = (filepath || '').split('/').pop() || filepath || '';
+    const m = name.match(/epoch=(\d+)-step=(\d+)/);
+    if (m) return `Epoch ${m[1]} · step ${m[2]}`;
+    return name.replace(/\.(safetensors|ckpt)$/i, '');
+};
+
+// Every selectable checkpoint for a run, oldest→latest. The API already
+// returns all of them in `all_checkpoints`; `path` is just the latest, so
+// falling back to it keeps single-checkpoint runs working.
+const checkpointsOf = (lora) => (
+    (lora.all_checkpoints && lora.all_checkpoints.length)
+        ? lora.all_checkpoints
+        : [lora.path]
+);
 
 /**
  * Multi-LoRA stack for the Generation panel.
@@ -46,6 +66,10 @@ export default function LoraStack({ selectedModel, value, onChange }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [dragIndex, setDragIndex] = useState(null);
+    // Which slot's Select is open (controlled so a submenu pick can close it),
+    // and the run whose checkpoint submenu is currently showing.
+    const [openSlot, setOpenSlot] = useState(null);
+    const [submenu, setSubmenu] = useState(null);  // { anchorEl, lora } | null
 
     useEffect(() => {
         let cancelled = false;
@@ -128,7 +152,11 @@ export default function LoraStack({ selectedModel, value, onChange }) {
             {slots.length > 0 && (
                 <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                     {slots.map((slot, idx) => {
-                        const choice = available.find(l => l.path === slot.path);
+                        // Match on any checkpoint of the run — a slot can now hold an
+                        // intermediate one, which `l.path === slot.path` would miss.
+                        const choice = available.find(
+                            l => l.path === slot.path || checkpointsOf(l).includes(slot.path)
+                        );
                         const bypassed = !!slot.bypassed;
                         return (
                             <Box
@@ -166,25 +194,69 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                         size="small"
                                         value={slot.path}
                                         displayEmpty
+                                        open={openSlot === idx}
+                                        onOpen={() => setOpenSlot(idx)}
+                                        onClose={() => { setOpenSlot(null); setSubmenu(null); }}
                                         onChange={(e) => setSlot(idx, { path: String(e.target.value) })}
+                                        renderValue={(v) => {
+                                            if (!v) return <em style={{ opacity: 0.6 }}>Pick a LoRA</em>;
+                                            const run = available.find(
+                                                l => l.path === v || checkpointsOf(l).includes(v)
+                                            );
+                                            if (!run) return v;
+                                            return checkpointsOf(run).length > 1
+                                                ? `${run.name} · ${parseCheckpointLabel(v)}`
+                                                : run.name;
+                                        }}
                                         sx={{ flex: 1, minWidth: 0 }}
                                     >
-                                        <MenuItem value="" disabled>
+                                        <MenuItem value="" disabled onMouseEnter={() => setSubmenu(null)}>
                                             <em>Pick a LoRA</em>
                                         </MenuItem>
-                                        {compatible.map(l => (
-                                            <MenuItem key={l.id} value={l.path}>
-                                                <Box>
-                                                    <Typography variant="body2">
-                                                        {l.name} · {l.checkpoint}
-                                                    </Typography>
-                                                    <Stack direction="row" spacing={0.5} sx={{ mt: 0.25 }}>
-                                                        <Chip size="small" label={l.adapter_type || 'lora'} sx={{ height: 16, fontSize: 9 }} />
-                                                        {l.rank && <Chip size="small" label={`r=${l.rank}`} sx={{ height: 16, fontSize: 9 }} />}
-                                                    </Stack>
-                                                </Box>
-                                            </MenuItem>
-                                        ))}
+                                        {/* One row per RUN. Clicking it takes the latest checkpoint
+                                            (the long-standing one-click behaviour); hovering opens a
+                                            submenu to pick an earlier one, since LoRAs often peak
+                                            before the final step. Runs with a single checkpoint have
+                                            nothing to expand and just select. */}
+                                        {compatible.flatMap(l => {
+                                            const ckpts = checkpointsOf(l);
+                                            const multi = ckpts.length > 1;
+                                            // Hidden rows for the earlier checkpoints. The visible list
+                                            // stays one row per run, but Select still finds a matching
+                                            // child for whatever path the slot holds — without these it
+                                            // warns "out-of-range value" whenever a slot holds an
+                                            // intermediate checkpoint picked from the submenu.
+                                            const hidden = ckpts.slice(0, -1).map(ckpt => (
+                                                <MenuItem key={`${l.id}::${ckpt}`} value={ckpt} sx={{ display: 'none' }} />
+                                            ));
+                                            return [(
+                                                <MenuItem
+                                                    key={l.id}
+                                                    value={ckpts[ckpts.length - 1]}
+                                                    // Entering any row retargets the submenu, so moving
+                                                    // down the list never leaves a stale one open. We
+                                                    // deliberately don't close on mouseleave — that would
+                                                    // fight the diagonal travel into the submenu itself.
+                                                    onMouseEnter={(e) => setSubmenu(
+                                                        multi ? { anchorEl: e.currentTarget, lora: l } : null
+                                                    )}
+                                                >
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                                                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                            <Typography variant="body2" noWrap>{l.name}</Typography>
+                                                            <Stack direction="row" spacing={0.5} sx={{ mt: 0.25 }}>
+                                                                <Chip size="small" label={l.adapter_type || 'lora'} sx={{ height: 16, fontSize: 9 }} />
+                                                                {l.rank && <Chip size="small" label={`r=${l.rank}`} sx={{ height: 16, fontSize: 9 }} />}
+                                                                {multi && (
+                                                                    <Chip size="small" label={`${ckpts.length} checkpoints`} variant="outlined" sx={{ height: 16, fontSize: 9 }} />
+                                                                )}
+                                                            </Stack>
+                                                        </Box>
+                                                        {multi && <ChevronRightIcon size={14} style={{ opacity: 0.5, flexShrink: 0 }} />}
+                                                    </Box>
+                                                </MenuItem>
+                                            ), ...hidden];
+                                        })}
                                     </Select>
                                     <Tooltip title={TIPS.lora.bypass(bypassed)}>
                                         <IconButton
@@ -246,6 +318,56 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                     Add LoRA
                 </Button>
             </Stack>
+
+            {/* Checkpoint submenu. Rendered outside the Select (both are
+                portaled, and this mounts later so it paints above) and anchored
+                to whichever run row the pointer is over. autoFocus is off so the
+                Select keeps keyboard focus and the two menus don't fight. */}
+            <Menu
+                open={Boolean(submenu)}
+                anchorEl={submenu?.anchorEl || null}
+                onClose={() => setSubmenu(null)}
+                anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                autoFocus={false}
+                disableAutoFocusItem
+                disableAutoFocus
+                disableEnforceFocus
+                disableRestoreFocus
+                // The submenu opens on top of the Select's own popover, so its
+                // backdrop would stack with that one — the theme's global
+                // MuiBackdrop override (rgba(5,4,3,.6) + blur) beats MUI's
+                // normally-invisible popover backdrop, and two of them read as
+                // a heavy double dim. Keep this one fully transparent so the
+                // page fades exactly once.
+                BackdropProps={{
+                    invisible: true,
+                    sx: { backgroundColor: 'transparent', backdropFilter: 'none' },
+                }}
+                // Instant: the submenu re-targets on every row hover, and a
+                // grow/fade on each one makes scanning the list feel sticky.
+                transitionDuration={0}
+                MenuListProps={{ dense: true, sx: { py: 0.5 } }}
+                PaperProps={{ sx: { maxHeight: 320, ml: 0.5 } }}
+            >
+                {(submenu ? checkpointsOf(submenu.lora) : []).map((ckpt, ci, arr) => (
+                    <MenuItem
+                        key={ckpt}
+                        selected={slots[openSlot]?.path === ckpt}
+                        onClick={() => {
+                            if (openSlot !== null) setSlot(openSlot, { path: ckpt });
+                            setSubmenu(null);
+                            setOpenSlot(null);
+                        }}
+                        sx={{ gap: 1 }}
+                    >
+                        <Typography variant="body2">{parseCheckpointLabel(ckpt)}</Typography>
+                        {ci === arr.length - 1 && (
+                            <Chip size="small" label="latest" color="primary" variant="outlined" sx={{ height: 16, fontSize: 9 }} />
+                        )}
+                    </MenuItem>
+                ))}
+            </Menu>
             </AccordionDetails>
         </Accordion>
     );
