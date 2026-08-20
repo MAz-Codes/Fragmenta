@@ -8,6 +8,7 @@ cancel + progress reporting.
 The Phase 2b frontend (CheckpointManagerWindow.js) consumes the JSON shapes
 returned by the `/api/checkpoints/*` endpoints in `app/backend/app.py`.
 """
+import contextlib
 import json
 import os
 import shutil
@@ -180,6 +181,53 @@ class _DownloadCancelled(Exception):
     """Raised inside the tqdm hook when a job's cancel flag fires."""
 
 
+def _xet_enabled() -> bool:
+    """Whether hf-hub would route this download through the Xet transfer."""
+    from huggingface_hub.utils import _runtime
+    return _runtime.is_xet_available()
+
+
+@contextlib.contextmanager
+def _xet_disabled():
+    """Force hf-hub onto the plain HTTP transfer for the duration of the block.
+
+    `huggingface_hub.constants` snapshots HF_HUB_DISABLE_XET at import time,
+    so setting the env var alone is too late once we're running — the constant
+    has to be patched too. The env var is still worth setting: any subprocess
+    spawned mid-download inherits it. Downloads are single-flight (see
+    `start_download`), so mutating this global is safe here.
+    """
+    from huggingface_hub import constants as _hf_constants
+    prev_const = _hf_constants.HF_HUB_DISABLE_XET
+    prev_env = os.environ.get("HF_HUB_DISABLE_XET")
+    _hf_constants.HF_HUB_DISABLE_XET = True
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    try:
+        yield
+    finally:
+        _hf_constants.HF_HUB_DISABLE_XET = prev_const
+        if prev_env is None:
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
+        else:
+            os.environ["HF_HUB_DISABLE_XET"] = prev_env
+
+
+def _purge_incomplete(root: Path) -> None:
+    """Delete half-written blobs so a retry can't resume onto them.
+
+    hf-hub resumes a download by appending to `<blob>.incomplete`. That is
+    only sound when the partial file was itself written front-to-back, which
+    a Xet transfer does not guarantee.
+    """
+    if not root.is_dir():
+        return
+    for stale in root.rglob("*.incomplete"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
 def _friendly_disk_error(err: OSError) -> str:
     """Translate an OS-level write failure into a plain-language message.
 
@@ -247,6 +295,12 @@ class ModelManager:
         os.environ["HF_HUB_CACHE"] = str(self.hub_dir)
         os.environ["HUGGINGFACE_HUB_CACHE"] = str(self.hub_dir)
         os.environ["TRANSFORMERS_CACHE"] = str(self.hub_dir)
+        # hf-hub 1.x pulls Xet-backed repos (all the SA3 ones) through the
+        # hf_xet extension, whose chunk cache keys off HF_XET_CACHE / HF_HOME
+        # — NOT HF_HUB_CACHE. Left alone it stages GBs of chunks in
+        # ~/.cache/huggingface/xet, i.e. outside the app folder. HF_HOME is
+        # deliberately untouched: it also resolves the stored login token.
+        os.environ["HF_XET_CACHE"] = str(self.models_dir / "sa3" / "xet")
 
         # available_models is exposed for backwards compat with the existing
         # /api/models/available endpoint. New code should use get_catalog().
@@ -573,11 +627,15 @@ class ModelManager:
         # the main snapshot is complete, deleting `target` would throw away
         # the multi-GB download that just finished because the user backed
         # out of the (much smaller) companion fetch.
+        # `sibling_preexisting` is latched on first observation: a retry must
+        # not re-read it after an earlier attempt already created the dir, or
+        # a cancel would treat this run's own leftovers as the user's data.
         main_snapshot_complete = False
         sibling_dir: Optional[Path] = None
-        sibling_preexisting = False
+        sibling_preexisting: Optional[bool] = None
 
-        try:
+        def _fetch() -> None:
+            nonlocal main_snapshot_complete, sibling_dir, sibling_preexisting
             # tqdm hook → cooperative cancel; disk poller → progress that works
             # even when hf-hub's tqdm bar is disabled (1.x / non-TTY).
             with _tqdm_progress_hook(job, progress_callback), \
@@ -609,7 +667,8 @@ class ModelManager:
                 if sibling:
                     sib_repo, sib_subfolder = sibling
                     sibling_dir = cache_dir / ("models--" + sib_repo.replace("/", "--"))
-                    sibling_preexisting = sibling_dir.exists()
+                    if sibling_preexisting is None:
+                        sibling_preexisting = sibling_dir.exists()
                     if progress_callback:
                         progress_callback(
                             min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
@@ -621,6 +680,32 @@ class ModelManager:
                         token=token,
                         allow_patterns=[f"{sib_subfolder}/*"],
                     )
+
+        try:
+            try:
+                _fetch()
+            except OSError as err:
+                # EIO on the *destination* write is the signature of a volume
+                # that can't take Xet's chunked, out-of-order writes: exFAT and
+                # NTFS-via-FUSE external drives and SMB shares on macOS all
+                # report it, and a plain sequential download of the same file
+                # succeeds. Give it exactly one more shot over the classic
+                # HTTP transfer before blaming the user's hardware.
+                import errno as _errno
+                if err.errno != _errno.EIO or not _xet_enabled():
+                    raise
+                if progress_callback:
+                    progress_callback(
+                        min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
+                        "Drive rejected the fast transfer — retrying in compatibility mode…",
+                    )
+                # A half-written Xet blob is not a valid prefix for the
+                # sequential downloader, which resumes by appending to
+                # `<blob>.incomplete`. Drop the partials or the retry
+                # silently assembles a corrupt checkpoint.
+                _purge_incomplete(cache_dir)
+                with _xet_disabled():
+                    _fetch()
             job.status = "complete"
             job.downloaded_bytes = self._dir_size(target)
             if progress_callback:
@@ -701,8 +786,6 @@ class ModelManager:
         return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
 
 # --- tqdm hook ----------------------------------------------------------------
-
-import contextlib
 
 @contextlib.contextmanager
 def _tqdm_progress_hook(
