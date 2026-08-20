@@ -25,6 +25,15 @@ CLAP_REPO = "lukewys/laion_clap"
 # Text-side dependencies laion_clap pulls from HF on construction.
 # We stage these into models/pretrained/clap/hub/ so the rich tier is
 # fully offline after a single download and nothing leaks to ~/.cache.
+#
+# These are laion_clap's own hardcoded ids (see clap_module/model.py), and two
+# of them are legacy aliases: `roberta-base` now redirects to
+# `FacebookAI/roberta-base`, `bert-base-uncased` to
+# `google-bert/bert-base-uncased`. They MUST stay spelled the legacy way — the
+# cache dir is named after the id, and `from_pretrained('roberta-base')` only
+# finds a pre-staged snapshot under `models--roberta-base`. Downloading them
+# under the canonical name would leave laion_clap fetching them again at
+# construction, defeating the offline staging.
 CLAP_TEXT_DEPS = ("roberta-base", "bert-base-uncased", "facebook/bart-base")
 
 # Whole-clip CLAP embedding windowing. laion_clap (enable_fusion=False) only
@@ -486,6 +495,8 @@ def download_clap_checkpoint(
     from huggingface_hub import hf_hub_download, snapshot_download
     import os
 
+    from utils.hf_transfer import xet_disabled
+
     total_phases = 1 + len(CLAP_TEXT_DEPS)
 
     def _emit(phase_index: int, label: str) -> None:
@@ -521,22 +532,28 @@ def download_clap_checkpoint(
     # branch plus bert/bart tokenizers at import time. Pre-stage them into
     # our own cache so the rich tier is fully offline after this step.
     # safetensors only — pytorch_model.bin is a redundant copy.
-    for i, repo_id in enumerate(CLAP_TEXT_DEPS, start=2):
-        if _text_dep_snapshot_present(hub_dir, repo_id):
-            continue
-        _emit(i, f"Text encoder: {repo_id}")
-        snapshot_download(
-            repo_id=repo_id,
-            cache_dir=str(hub_dir),
-            allow_patterns=[
-                "config.json",
-                "tokenizer*",
-                "vocab*",
-                "merges.txt",
-                "special_tokens_map.json",
-                "model.safetensors",
-            ],
-        )
+    # Forced onto the classic HTTP transfer: hf_xet asks for a read token at
+    # /api/models/<repo>/xet-read-token/<sha> without following the 307 that
+    # maps a legacy alias to its canonical id, so `roberta-base` 404s there and
+    # takes the whole CLAP install down with it. The regular transfer follows
+    # the redirect. These are small files, so Xet buys nothing here anyway.
+    with xet_disabled():
+        for i, repo_id in enumerate(CLAP_TEXT_DEPS, start=2):
+            if _text_dep_snapshot_present(hub_dir, repo_id):
+                continue
+            _emit(i, f"Text encoder: {repo_id}")
+            snapshot_download(
+                repo_id=repo_id,
+                cache_dir=str(hub_dir),
+                allow_patterns=[
+                    "config.json",
+                    "tokenizer*",
+                    "vocab*",
+                    "merges.txt",
+                    "special_tokens_map.json",
+                    "model.safetensors",
+                ],
+            )
 
     return target
 

@@ -23,6 +23,8 @@ from typing import Any, Callable, Dict, List, Optional
 from huggingface_hub import get_token, snapshot_download, whoami
 from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
+from utils.hf_transfer import purge_incomplete, xet_disabled, xet_enabled
+
 
 # --- Catalog ------------------------------------------------------------------
 
@@ -179,53 +181,6 @@ class _DownloadJob:
 
 class _DownloadCancelled(Exception):
     """Raised inside the tqdm hook when a job's cancel flag fires."""
-
-
-def _xet_enabled() -> bool:
-    """Whether hf-hub would route this download through the Xet transfer."""
-    from huggingface_hub.utils import _runtime
-    return _runtime.is_xet_available()
-
-
-@contextlib.contextmanager
-def _xet_disabled():
-    """Force hf-hub onto the plain HTTP transfer for the duration of the block.
-
-    `huggingface_hub.constants` snapshots HF_HUB_DISABLE_XET at import time,
-    so setting the env var alone is too late once we're running — the constant
-    has to be patched too. The env var is still worth setting: any subprocess
-    spawned mid-download inherits it. Downloads are single-flight (see
-    `start_download`), so mutating this global is safe here.
-    """
-    from huggingface_hub import constants as _hf_constants
-    prev_const = _hf_constants.HF_HUB_DISABLE_XET
-    prev_env = os.environ.get("HF_HUB_DISABLE_XET")
-    _hf_constants.HF_HUB_DISABLE_XET = True
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-    try:
-        yield
-    finally:
-        _hf_constants.HF_HUB_DISABLE_XET = prev_const
-        if prev_env is None:
-            os.environ.pop("HF_HUB_DISABLE_XET", None)
-        else:
-            os.environ["HF_HUB_DISABLE_XET"] = prev_env
-
-
-def _purge_incomplete(root: Path) -> None:
-    """Delete half-written blobs so a retry can't resume onto them.
-
-    hf-hub resumes a download by appending to `<blob>.incomplete`. That is
-    only sound when the partial file was itself written front-to-back, which
-    a Xet transfer does not guarantee.
-    """
-    if not root.is_dir():
-        return
-    for stale in root.rglob("*.incomplete"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
 
 
 def _friendly_disk_error(err: OSError) -> str:
@@ -692,7 +647,7 @@ class ModelManager:
                 # succeeds. Give it exactly one more shot over the classic
                 # HTTP transfer before blaming the user's hardware.
                 import errno as _errno
-                if err.errno != _errno.EIO or not _xet_enabled():
+                if err.errno != _errno.EIO or not xet_enabled():
                     raise
                 if progress_callback:
                     progress_callback(
@@ -703,8 +658,8 @@ class ModelManager:
                 # sequential downloader, which resumes by appending to
                 # `<blob>.incomplete`. Drop the partials or the retry
                 # silently assembles a corrupt checkpoint.
-                _purge_incomplete(cache_dir)
-                with _xet_disabled():
+                purge_incomplete(cache_dir)
+                with xet_disabled():
                     _fetch()
             job.status = "complete"
             job.downloaded_bytes = self._dir_size(target)
