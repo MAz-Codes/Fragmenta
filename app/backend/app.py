@@ -212,6 +212,23 @@ def health_check():
     return jsonify(status), 200
 
 
+_API_KEY = os.environ.get('FRAGMENTA_API_KEY', '').strip()
+
+
+@app.before_request
+def _require_api_key():
+    """Guard every /api/* endpoint behind a shared-secret key. Set
+    FRAGMENTA_API_KEY in the environment to authorize requests; if it is
+    unset the server fails closed and rejects all API calls (except the
+    unauthenticated health check)."""
+    if not request.path.startswith('/api/') or request.path == '/api/health':
+        return None
+    import hmac
+    supplied = request.headers.get('X-API-Key', '')
+    if not _API_KEY or not hmac.compare_digest(supplied, _API_KEY):
+        return jsonify({'error': 'Unauthorized'}), 401
+
+
 @app.route('/api/version')
 def app_version():
     """Version of the code this process is running (from the VERSION file,
