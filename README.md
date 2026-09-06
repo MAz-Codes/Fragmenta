@@ -8,6 +8,7 @@
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/MAz-Codes)
 
 ![Header Image](app/frontend/public/fragmenta.png)
 
@@ -257,6 +258,17 @@ If you use Fragmenta in your research, please cite it. You can use the **Cite th
 ```
 
 The DOI is a Zenodo concept DOI — it always resolves to the latest release.
+
+---
+
+## Support
+
+Fragmenta is free, open-source, and developed only by me as part of my PhD research on
+artist-first AI music tools. If it inspires you or powers your creativity,
+consider sponsoring its development. It directly funds maintenance,
+testing hardware, and documentation.
+
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/MAz-Codes)
 
 ---
 
