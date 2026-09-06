@@ -272,6 +272,13 @@ testing hardware, and documentation.
 
 ---
 
+## Contribution
+
+Before proposing a substantial change, please read the [contribution guidelines](CONTRIBUTING.md) and file an issue for discussion before opening a pull request.
+
+---
+
+
 ## License
 
 Copyright 2025-2026 Misagh Azimi
