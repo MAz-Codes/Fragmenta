@@ -74,8 +74,14 @@ CORS(app,
      # /api/generate returns the WAV as the body, so the canonical on-disk
      # filename (and resolved seed) ride back in custom headers. They must be
      # whitelisted here or the browser hides them from the cross-origin reader.
-     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+     # X-Bend-Log-Id carries the Bending Log entry id for a bent generation.
+     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed", "X-Bend-Log-Id"],
+     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+
+# Bend tab routes live in their own blueprint (app/backend/bend_routes.py)
+# so this module doesn't grow; everything there is additive.
+from app.backend.bend_routes import bend_bp  # noqa: E402
+app.register_blueprint(bend_bp)
 
 
 @app.errorhandler(413)
@@ -363,6 +369,16 @@ def start_training():
         except ValidationError as e:
             return jsonify({'error': str(e)}), 400
 
+        # Break mode (Bend tab): validate the optional bend block here so a
+        # malformed one is a friendly 400 instead of a failed run.
+        if training_config.get('bend'):
+            from app.core.bending.patch import PatchError, validate_train_bend
+            try:
+                bend_norm, _bend_warnings = validate_train_bend(training_config['bend'])
+                training_config['bend'] = bend_norm or None
+            except PatchError as e:
+                return jsonify({'error': f"bend config invalid: {e}"}), 400
+
         logger.info(
             f"Training request: base={base_model}, name={training_config['modelName']}, "
             f"rank={training_config['loraRank']}, adapter={training_config['adapterType']}, "
@@ -618,6 +634,21 @@ def generate_audio():
                                  'actual': _lora_base})), 400
             loras.append({'path': str(lora_abs), 'strength': strength})
 
+        # Bend tab: optional bend patch. Absent → this endpoint is
+        # byte-for-byte unchanged. Present → normalize/validate here so a
+        # malformed patch is a 400, not a mid-generation failure.
+        bend_patch = None
+        bend_patch_raw = data.get('bend_patch')
+        if bend_patch_raw:
+            from app.core.bending.patch import PatchError, validate_patch
+            try:
+                bend_patch, bend_warnings = validate_patch(bend_patch_raw)
+            except PatchError as e:
+                return jsonify(APIResponse.error(
+                    f"bend_patch invalid: {e}", status_code=400)), 400
+            if bend_warnings:
+                logger.info("bend_patch warnings: %s", "; ".join(bend_warnings))
+
     except ValidationError as e:
         field = e.details.get('field', 'unknown') if e.details else 'unknown'
         logger.warning(f"/api/generate validation failed on '{field}': {e}")
@@ -658,6 +689,7 @@ def generate_audio():
             loop_stitch=loop_stitch,
             loop_bars=int(align_bars) if (loop_stitch and align_bars) else None,
             loop_bpm=float(align_bpm) if (loop_stitch and align_bpm) else None,
+            bend_patch=bend_patch,
         )
 
         if not output_path.exists():
@@ -703,11 +735,29 @@ def generate_audio():
                 "inpaint_starts": list(inpaint_starts) if inpaint_starts else None,
                 "inpaint_ends": list(inpaint_ends) if inpaint_ends else None,
                 "edit_mode": edit_mode,
+                # Any fragment's bend is recoverable from its sidecar.
+                "bend_patch": bend_patch,
             }
             with open(sidecar_path, "w") as f:
                 json.dump(sidecar, f, indent=2)
         except Exception as exc:
             logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
+
+        # Bending Log auto-append (Kotowski & Font's technique): every bent
+        # generation lands as a row the user annotates afterwards. Failure
+        # is non-fatal — the WAV is the only mandatory artifact.
+        bend_log_id = None
+        if bend_patch:
+            try:
+                from app.core.bending.bendlog import BendLog
+                bend_log_id = BendLog(config.project_root / "bends").append(
+                    model_id=model_id, patch=bend_patch, prompt=prompt,
+                    seed=int(seed), duration=float(duration),
+                    steps=int(steps) if steps is not None else None,
+                    fragment=output_path.name,
+                )
+            except Exception as exc:
+                logger.warning(f"Bending Log append failed: {exc}")
 
         resp = send_file(
             str(output_path),
@@ -722,6 +772,8 @@ def generate_audio():
         # back so the UI's fragment.filename always points at a real file.
         resp.headers['X-Fragment-Filename'] = output_path.name
         resp.headers['X-Fragment-Seed'] = str(int(seed))
+        if bend_log_id:
+            resp.headers['X-Bend-Log-Id'] = bend_log_id
         return resp
 
     except (ModelNotFoundError, GenerationError, ValidationError) as e:
@@ -884,6 +936,20 @@ def list_loras():
 
                     entry = loras_by_name.get(run_dir.name)
                     if entry is None:
+                        # Bend tab: a run is "bent" when it was trained with
+                        # Break-mode interventions (bend.json in the run dir /
+                        # training_metadata bend block) or produced by the
+                        # LoRA bender (bend record in safetensors metadata).
+                        # The picker marks these with the warm accent.
+                        bent = bool(meta.get("bend")) or (run_dir / "bend.json").exists()
+                        if not bent:
+                            run_meta_path = run_dir / "training_metadata.json"
+                            if run_meta_path.exists():
+                                try:
+                                    bent = bool(json.loads(
+                                        run_meta_path.read_text()).get("bend"))
+                                except Exception:
+                                    pass
                         entry = {
                             "id": run_dir.name,
                             "name": run_dir.name,
@@ -891,6 +957,7 @@ def list_loras():
                             "rank": rank,
                             "alpha": alpha,
                             "adapter_type": adapter_type,
+                            "bent": bent,
                             "all_checkpoints": [],
                         }
                         loras_by_name[run_dir.name] = entry

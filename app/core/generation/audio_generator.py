@@ -470,6 +470,10 @@ class AudioGenerator:
         loop_stitch: Optional[str] = None,       # "inpaint" | "crossfade" | None
         loop_bars: Optional[int] = None,
         loop_bpm: Optional[float] = None,
+        # Bend tab: a normalized bend patch (see app/core/bending/). Applied
+        # to the model for exactly this generation and removed in finally —
+        # requests without it are byte-for-byte unaffected.
+        bend_patch: Optional[Dict[str, Any]] = None,
         **_ignored_legacy_kwargs: Any,
     ) -> Path:
         # `loop_stitch` / `loop_bars` / `loop_bpm` are accepted for API
@@ -521,11 +525,26 @@ class AudioGenerator:
             _set_progress(phase="idle", is_generating=False, ended_at=time.time())
             raise GenerationStopped()
 
+        # Bend tab: arm the session AFTER model load + LoRA application so
+        # weight bends see the final base weights and hooks attach to the
+        # live modules. Teardown is unconditional (finally below) — a bent
+        # run can never leak hooks or bent weights into the next request.
+        bend_session = None
+        if bend_patch:
+            from app.core.bending.session import BendSession
+            bend_session = BendSession(self.model, bend_patch)
+            bend_session.set_total_steps(effective_steps)
+            bend_warnings = bend_session.apply()
+            if bend_warnings:
+                logger.warning("Bend patch degraded: %s", "; ".join(bend_warnings))
+
         # Sampler callback — fires per ODE step. Also gives us a cheap
         # cancellation hook: raising mid-callback aborts the sampler.
         def _cb(info: Dict[str, Any]) -> None:
             if stop_event.is_set():
                 raise GenerationStopped()
+            if bend_session is not None:
+                bend_session.on_sampler_step(info)
             i = info.get("i")
             if isinstance(i, int):
                 _set_progress(step=min(i + 1, total_steps_logical))
@@ -569,6 +588,9 @@ class AudioGenerator:
             _set_progress(phase="failed", is_generating=False,
                           error=str(exc), ended_at=time.time())
             raise
+        finally:
+            if bend_session is not None:
+                bend_session.remove()
 
         # Seamless-loop processing (quantize, inpaint, crossfade) was
         # removed: the user A/B-compared raw SA3 output against the full

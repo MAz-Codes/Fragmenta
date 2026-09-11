@@ -142,6 +142,7 @@ main.py
 debug_binaries.py
 phd
 *.whl
+BEND_PLAN.md
 
 # Desktop packaging build output
 packaging/build/
