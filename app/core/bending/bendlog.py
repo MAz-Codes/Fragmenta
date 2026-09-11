@@ -53,7 +53,8 @@ class BendLog:
 
     def append(self, *, model_id: str, patch: Dict[str, Any], prompt: str,
                seed: int, duration: float, steps: Optional[int],
-               fragment: Optional[str]) -> str:
+               fragment: Optional[str],
+               warnings: Optional[List[str]] = None) -> str:
         entry = {
             "id": uuid.uuid4().hex[:12],
             "ts": time.time(),
@@ -64,6 +65,7 @@ class BendLog:
             "duration": float(duration),
             "steps": int(steps) if steps else None,
             "fragment": fragment,
+            "warnings": list(warnings or []),
             "note": "",
         }
         with self._lock:

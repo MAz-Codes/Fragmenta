@@ -58,12 +58,16 @@ def _norm_features(raw: Any, warnings: List[str], mid: str) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         return {"mode": "all"}
     mode = str(raw.get("mode", "all"))
-    if mode not in ("all", "random", "indices"):
+    if mode not in ("all", "random", "indices", "cluster"):
         warnings.append(f"{mid}: unknown feature mode {mode!r}; using 'all'.")
         return {"mode": "all"}
     out: Dict[str, Any] = {"mode": mode}
     if mode == "random":
         out["fraction"] = _clamp(float(raw.get("fraction", 0.5)), 0.0, 1.0)
+        out["seed"] = int(raw.get("seed", 0))
+    elif mode == "cluster":
+        out["k"] = int(_clamp(int(raw.get("k", 4)), 2, 16))
+        out["index"] = int(_clamp(int(raw.get("index", 0)), 0, 15))
         out["seed"] = int(raw.get("seed", 0))
     elif mode == "indices":
         idx = raw.get("indices") or []

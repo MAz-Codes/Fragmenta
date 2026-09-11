@@ -102,23 +102,43 @@ class BendSession:
 
     def on_sampler_step(self, info: Dict[str, Any]) -> None:
         """Called from the generator's per-ODE-step callback. Updates the
-        step gate and applies latent bends in place."""
+        step gate and applies latent bends in place.
+
+        Latent bends act on the model's current *denoised estimate*, not on
+        the noisy state, because that is the only quantity every SA3
+        sampler carries forward: pingpong (the distilled models' default)
+        rebuilds the next state from `denoised` alone and never reads `x`
+        again, while euler/rk4 read only `x` (their `denoised` is computed
+        just for the callback). Bending `denoised` to d' and shifting `x`
+        by the same delta (x = d + t·v, so x' = d' + t·v) gives identical
+        semantics under all of them.
+        """
         i = info.get("i")
         if isinstance(i, int):
             self._step = i + 1
+        if not self._latent_mods:
+            return
         x = info.get("x")
-        if x is None or not self._latent_mods:
+        d = info.get("denoised")
+        target = d if torch.is_tensor(d) else x
+        if not torch.is_tensor(target):
             return
         progress = self._progress()
+        cur = target
         for mod in self._latent_mods:
             lo, hi = mod["steps"]["from"], mod["steps"]["to"]
             if not (lo <= progress <= hi):
                 continue
             try:
-                bent = self._bend_tensor(x, mod, "latent")
-                x.copy_(bent)
+                cur = self._bend_tensor(cur, mod, "latent")
             except Exception as exc:                     # never kill the run
                 self._warn_once(f"latent bend {mod['id']} failed: {exc}")
+        if cur is target:
+            return
+        delta = cur - target
+        target.copy_(cur)
+        if target is d and torch.is_tensor(x) and x is not d:
+            x.add_(delta.to(x.dtype))
 
     def _progress(self) -> float:
         return self._step / max(self._total_steps, 1)
@@ -232,17 +252,54 @@ class BendSession:
         return out
 
     # ------------------------------------------------------- tensor plumbing
-    def _feature_mask(self, mod: Dict[str, Any], size: int,
-                      device, dtype) -> Optional[torch.Tensor]:
+    @staticmethod
+    def _cluster_mask(t: torch.Tensor, f_ax: int, k: int, index: int,
+                      seed: int) -> torch.Tensor:
+        """Broad et al.'s clustered feature selection: group the features
+        by how they behave (k-means over each feature's activation profile)
+        and select one cluster, so a bend hits a set of features that act
+        together rather than a random scatter. Computed from the first
+        tensor seen and then frozen, so the selection is stable across
+        sampling steps and chunks."""
+        size = t.shape[f_ax]
+        # CPU first: MPS's adaptive pooling rejects non-divisible sizes.
+        feats = t.detach().float().cpu().movedim(f_ax, 0).reshape(size, -1)
+        # Downsample each profile to ≤64 dims — enough to separate
+        # behaviours, cheap enough to run inside a hook.
+        if feats.shape[1] > 64:
+            feats = torch.nn.functional.adaptive_avg_pool1d(
+                feats.unsqueeze(0), 64).squeeze(0)
+        feats = feats - feats.mean(dim=1, keepdim=True)
+        feats = feats / feats.norm(dim=1, keepdim=True).clamp(min=1e-6)
+        k = max(2, min(int(k), size))
+        g = torch.Generator().manual_seed(int(seed) & 0x7FFFFFFF)
+        centroids = feats[torch.randperm(size, generator=g)[:k]].clone()
+        assign = torch.zeros(size, dtype=torch.long)
+        for _ in range(12):
+            assign = torch.cdist(feats, centroids).argmin(dim=1)
+            for c in range(k):
+                members = feats[assign == c]
+                if len(members):
+                    centroids[c] = members.mean(dim=0)
+        return (assign == (int(index) % k)).float()
+
+    def _feature_mask(self, mod: Dict[str, Any], t: torch.Tensor,
+                      f_ax: int, tag: Any = None) -> Optional[torch.Tensor]:
         feats = mod["target"].get("features") or {"mode": "all"}
         if feats.get("mode") == "all":
             return None
-        key = (mod["id"], size)
+        size = t.shape[f_ax]
+        device, dtype = t.device, t.dtype
+        key = (mod["id"], size, tag)
         cached = self._mask_cache.get(key)
         if cached is not None:
             return cached.to(device=device, dtype=dtype)
         mask = torch.zeros(size)
-        if feats["mode"] == "random":
+        if feats["mode"] == "cluster":
+            mask = self._cluster_mask(
+                t, f_ax, feats.get("k", 4), feats.get("index", 0),
+                feats.get("seed", 0))
+        elif feats["mode"] == "random":
             k = int(round(size * float(feats.get("fraction", 0.5))))
             if k > 0:
                 g = torch.Generator().manual_seed(int(feats.get("seed", 0)) & 0x7FFFFFFF)
@@ -256,16 +313,23 @@ class BendSession:
         return mask.to(device=device, dtype=dtype)
 
     def _bend_tensor(self, t: torch.Tensor, mod: Dict[str, Any],
-                     stage: str, feature_axis: Optional[int] = None) -> torch.Tensor:
+                     stage: str, feature_axis: Optional[int] = None,
+                     tag: Any = None) -> torch.Tensor:
+        """`tag` scopes the cached feature mask: one mask per bent module
+        (activations) or parameter (weights), so clustered selection is
+        computed from the tensor it is applied to."""
         f_ax, t_ax = _STAGE_AXES.get(stage, (-1, None))
         if feature_axis is not None:
+            # Weight tensors: rows are the features; for 2-D weights the
+            # "time"-style axis is the input dimension, 1-D biases have none.
             f_ax = feature_axis
+            t_ax = 1 if t.ndim >= 2 else None
         ctx = OpContext(feature_axis=f_ax, time_axis=t_ax, generator=self._generator)
         bent = apply_operator(mod["operator"], t, mod.get("params"), ctx)
 
         mix = float(mod.get("mix", 1.0))
         f_ax_n = f_ax % t.ndim
-        mask = self._feature_mask(mod, t.shape[f_ax_n], t.device, t.dtype)
+        mask = self._feature_mask(mod, t, f_ax_n, tag)
         if mask is not None:
             shape = [1] * t.ndim
             shape[f_ax_n] = t.shape[f_ax_n]
@@ -282,7 +346,7 @@ class BendSession:
         targets = self._stage_modules(mod)
         step_gate = mod.get("steps")
 
-        def make_hook(entry):
+        def make_hook(entry, path):
             def hook(_module, _inputs, output):
                 if step_gate is not None:
                     p = self._progress()
@@ -292,19 +356,19 @@ class BendSession:
                     if isinstance(output, tuple):
                         if not output or not torch.is_tensor(output[0]):
                             return output
-                        return (self._bend_tensor(output[0], entry, stage),
+                        return (self._bend_tensor(output[0], entry, stage, tag=path),
                                 *output[1:])
                     if not torch.is_tensor(output):
                         return output
-                    return self._bend_tensor(output, entry, stage)
+                    return self._bend_tensor(output, entry, stage, tag=path)
                 except Exception as exc:
                     self._warn_once(
                         f"activation bend {entry['id']} failed mid-run: {exc}")
                     return output
             return hook
 
-        for _path, m in targets:
-            self._hooks.append(m.register_forward_hook(make_hook(mod)))
+        for path, m in targets:
+            self._hooks.append(m.register_forward_hook(make_hook(mod, path)))
 
     # ---------------------------------------------------------------- weight
     def _iter_bendable_params(self, module: nn.Module, which: str):
@@ -345,7 +409,7 @@ class BendSession:
                     # cast back to the parameter's dtype.
                     bent = self._bend_tensor(
                         p.data.float(), mod, mod["target"]["stage"],
-                        feature_axis=0)
+                        feature_axis=0, tag=id(p))
                     p.data.copy_(bent.to(p.dtype))
                 self._saved_params.append((p, backup))
                 bent_any = True

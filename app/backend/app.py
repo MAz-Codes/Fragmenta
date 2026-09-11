@@ -75,7 +75,8 @@ CORS(app,
      # filename (and resolved seed) ride back in custom headers. They must be
      # whitelisted here or the browser hides them from the cross-origin reader.
      # X-Bend-Log-Id carries the Bending Log entry id for a bent generation.
-     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed", "X-Bend-Log-Id"],
+     expose_headers=["X-Fragment-Filename", "X-Fragment-Seed", "X-Bend-Log-Id",
+                     "X-Bend-Warnings"],
      methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 
 # Bend tab routes live in their own blueprint (app/backend/bend_routes.py)
@@ -707,6 +708,10 @@ def generate_audio():
         # Sidecar metadata — lets the frontend restore the "Generated
         # Fragments" panel across page reloads. Failure to write is non-
         # fatal (the WAV is the only mandatory artifact).
+        # Bend report (hearing-safety level changes, silenced output, targets
+        # that didn't resolve) — keyed by output file, so it's ours.
+        bend_report = generator.pop_bend_report(output_path.name) if bend_patch else None
+
         sidecar_path = output_path.with_suffix(output_path.suffix + ".json")
         try:
             edit_mode = None
@@ -737,6 +742,7 @@ def generate_audio():
                 "edit_mode": edit_mode,
                 # Any fragment's bend is recoverable from its sidecar.
                 "bend_patch": bend_patch,
+                "bend_warnings": bend_report,
             }
             with open(sidecar_path, "w") as f:
                 json.dump(sidecar, f, indent=2)
@@ -755,6 +761,7 @@ def generate_audio():
                     seed=int(seed), duration=float(duration),
                     steps=int(steps) if steps is not None else None,
                     fragment=output_path.name,
+                    warnings=bend_report,
                 )
             except Exception as exc:
                 logger.warning(f"Bending Log append failed: {exc}")
@@ -774,6 +781,9 @@ def generate_audio():
         resp.headers['X-Fragment-Seed'] = str(int(seed))
         if bend_log_id:
             resp.headers['X-Bend-Log-Id'] = bend_log_id
+        if bend_report:
+            # ensure_ascii: headers are latin-1 and the messages aren't.
+            resp.headers['X-Bend-Warnings'] = json.dumps(bend_report[:8])
         return resp
 
     except (ModelNotFoundError, GenerationError, ValidationError) as e:

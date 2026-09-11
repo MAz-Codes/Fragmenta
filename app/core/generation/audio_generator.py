@@ -104,6 +104,31 @@ class GenerationStopped(Exception):
     """Raised when an in-flight generation is interrupted by a stop request."""
 
 
+# Bent output can be brutal — the first real test of a late-DiT scale bend
+# came back at an RMS ~0.5 dB below full scale. Bent generations (and only
+# those; clean output is never touched) are gain-reduced to this RMS
+# ceiling and soft-clipped below 0 dBFS. Reduce-only: quiet bends stay quiet.
+_BEND_RMS_CEILING = 10 ** (-16 / 20)     # -16 dBFS
+_BEND_PEAK_CEILING = 10 ** (-1 / 20)     # -1 dBFS
+
+
+def _bend_output_safety(audio: torch.Tensor, report: list) -> torch.Tensor:
+    a = torch.nan_to_num(audio.detach().float(), nan=0.0, posinf=1.0, neginf=-1.0)
+    peak = float(a.abs().max()) if a.numel() else 0.0
+    if peak < 1e-4:
+        report.append("This bend collapsed the signal to silence — lower the "
+                      "mix, narrow the blocks, or try another stage.")
+        return a
+    rms = float(a.pow(2).mean().sqrt())
+    if rms > _BEND_RMS_CEILING:
+        a = a * (_BEND_RMS_CEILING / rms)
+        report.append(
+            f"Bent output was very loud ({20 * np.log10(rms):.1f} dBFS RMS); "
+            f"level reduced to -16 dBFS for hearing safety.")
+    # tanh is ~linear at low levels, so this only rounds off the peaks.
+    return torch.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING
+
+
 def _slugify(text: str, max_len: int = 40) -> str:
     s = re.sub(r"[^a-zA-Z0-9_-]+", "_", text or "")
     return s[:max_len].strip("_").lower() or "audio"
@@ -138,6 +163,8 @@ class AudioGenerator:
         self._gen_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._current_stop: Optional[threading.Event] = None
+        # Bend tab: per-output-file warning reports (see pop_bend_report).
+        self._bend_reports: Dict[str, list] = {}
 
     # --- cooperative cancel ---------------------------------------------------
     def request_stop(self) -> bool:
@@ -610,12 +637,31 @@ class AudioGenerator:
             _set_progress(phase="idle", is_generating=False, ended_at=time.time())
             raise GenerationStopped()
 
+        bend_report = None
+        if bend_session is not None:
+            bend_report = list(bend_session.warnings)
+            audio = _bend_output_safety(audio, bend_report)
+
         _set_progress(phase="decoding", step=total_steps_logical)
         try:
-            return self._finalize(audio, prompt=prompt, model_id=model_id)
+            out_path = self._finalize(audio, prompt=prompt, model_id=model_id)
+            if bend_report is not None:
+                with self._state_lock:
+                    self._bend_reports[out_path.name] = bend_report
+                    # Reports are popped by the request that produced them;
+                    # cap so an unread one can't accumulate forever.
+                    while len(self._bend_reports) > 32:
+                        self._bend_reports.pop(next(iter(self._bend_reports)))
+            return out_path
         finally:
             _set_progress(phase="complete", is_generating=False,
                           step=total_steps_logical, ended_at=time.time())
+
+    def pop_bend_report(self, filename: str) -> Optional[list]:
+        """Warnings from the bent generation that wrote `filename` (keyed by
+        output file so a concurrent generation can't swap reports)."""
+        with self._state_lock:
+            return self._bend_reports.pop(filename, None)
 
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod

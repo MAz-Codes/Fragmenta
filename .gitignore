@@ -146,3 +146,6 @@ BEND_PLAN.md
 
 # Desktop packaging build output
 packaging/build/
+
+# ===== Bend tab runtime data (presets, Bending Log) =====
+bends/
