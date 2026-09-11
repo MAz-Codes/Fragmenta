@@ -437,6 +437,21 @@ class SA3Trainer:
 
         adapter_type = self.config.get("adapterType") or DEFAULT_ADAPTER
 
+        # Break mode (Bend tab): an optional `bend` block of training
+        # interventions. Validated + written as bend.json in the run dir so
+        # the run is reproducible and identifiable; absent → the invocation
+        # is exactly the stock train_lora.py one.
+        bend_config_path = None
+        bend_raw = self.config.get("bend")
+        if bend_raw:
+            from app.core.bending.patch import validate_train_bend
+            bend_norm, bend_warnings = validate_train_bend(bend_raw)
+            for w in bend_warnings:
+                logger.warning("train bend config: %s", w)
+            if bend_norm:
+                bend_config_path = self.run_dir / "bend.json"
+                bend_config_path.write_text(json.dumps(bend_norm, indent=2))
+
         # -XS adapters can reuse a precomputed SVD-bases cache keyed by base
         # model, skipping the per-layer SVD at startup. SA3 only loads (never
         # writes) this file, so we pass it only when present; population is a
@@ -478,6 +493,7 @@ class SA3Trainer:
             seed=(int(self.config["seed"]) if self.config.get("seed") is not None else 42),
             checkpoint_every=int(self.config.get("checkpointSteps") or DEFAULT_CHECKPOINT_STEPS),
             name=self.config.get("modelName") or "fragmenta-lora",
+            bend_config=bend_config_path,
         )
         env = build_train_env(sa3_vendor, self._hub_dir)
         return cmd, env
@@ -504,6 +520,8 @@ class SA3Trainer:
             "steps": int(self.config.get("steps") or DEFAULT_STEPS),
             "lr": float(self.config.get("learningRate") or DEFAULT_LR),
             "batch_size": int(self.config.get("batchSize") or DEFAULT_BATCH_SIZE),
+            # Bent runs are tagged so the LoRA picker can mark them.
+            "bend": self.config.get("bend") or None,
         }, indent=2))
 
         self.status.update({

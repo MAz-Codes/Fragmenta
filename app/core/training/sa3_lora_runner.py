@@ -181,11 +181,27 @@ def build_train_command(
     log_every: int = 50,
     num_workers: int = 2,
     name: str = "fragmenta-lora",
+    bend_config: Optional[Path] = None,
 ) -> List[str]:
-    """Construct the train_lora.py subprocess argv."""
+    """Construct the train_lora.py subprocess argv.
+
+    With `bend_config` set (Break mode), the entry point becomes
+    app/core/bending/train_bend.py — a wrapper that runs the identical
+    vendor pipeline with the bend.json interventions injected. Every other
+    argument is passed through unchanged.
+    """
+    train_script = sa3_vendor_dir / "scripts" / "train_lora.py"
+    if bend_config is not None:
+        entry = [
+            str(Path(__file__).resolve().parents[1] / "bending" / "train_bend.py"),
+            "--bend_config", str(bend_config),
+            "--train_script", str(train_script),
+        ]
+    else:
+        entry = [str(train_script)]
     cmd = [
         venv_python,
-        str(sa3_vendor_dir / "scripts" / "train_lora.py"),
+        *entry,
         "--model", sa3_model_name,
         "--data_dir", str(data_dir),
         "--save_dir", str(save_dir),
