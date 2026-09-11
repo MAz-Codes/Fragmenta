@@ -45,6 +45,16 @@ const DARK = {
     warm:      '#FDA22B',      // golden amber-orange
     warmHi:    '#FFB855',
     warmLo:    '#D17F1A',
+    // Prism — the Bend tab's accent: bent light. Marks bending and chance
+    // (a module is bent, a stage is patched, Chance / Generate bent),
+    // keeping warm reserved for the automatic (wand) actions. The flat
+    // orchid is for borders, text and sliders; buttons get the refraction
+    // gradient (blue-violet → orchid → magenta).
+    prism:     '#C27CF2',
+    prismHi:   '#DBA6F8',
+    prismLo:   '#9550D0',
+    prismBlue: '#8C8CFF',
+    prismRose: '#E97CC6',
     // Deep blue used for moon-icon / night cues on dark mode.
     night:     '#3D6FA8',
     blue:      '#5BA9E8',      // secondary — selected-file cue
@@ -75,6 +85,12 @@ const LIGHT = {
     warm:      '#C97A1A',      // deeper golden amber for cream
     warmHi:    '#E59334',
     warmLo:    '#9C5C0F',
+    // Prism on cream — deeper so text and borders hold ~4.5:1.
+    prism:     '#8A3FC4',
+    prismHi:   '#A45FDB',
+    prismLo:   '#6B2C9E',
+    prismBlue: '#5A5FD6',
+    prismRose: '#B5408F',
     // Deep navy for moon-icon / night cues on light mode — needs strong
     // contrast against the warm cream paper.
     night:     '#1F3A5F',
@@ -123,6 +139,7 @@ let theme = createTheme({
         success: { main: DARK.success },
         info: { main: DARK.blue },
         warm: { main: DARK.warm, light: DARK.warmHi, dark: DARK.warmLo },
+        prism: { main: DARK.prism, light: DARK.prismHi, dark: DARK.prismLo, contrastText: '#14061F' },
         night: { main: DARK.night },
     },
     shape: {
@@ -324,6 +341,17 @@ let theme = createTheme({
                         color: '#1A0F00',
                         '&:hover': {
                             backgroundImage: `linear-gradient(135deg, ${DARK.warmHi} 0%, ${DARK.warmHi} 55%, ${DARK.warm} 100%)`,
+                        },
+                    },
+                },
+                {
+                    props: { color: 'prism', variant: 'contained' },
+                    style: {
+                        backgroundImage: `linear-gradient(135deg, ${DARK.prismBlue} 0%, ${DARK.prism} 52%, ${DARK.prismRose} 100%)`,
+                        color: '#14061F',
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${DARK.prismHi} 0%, ${DARK.prismHi} 45%, ${DARK.prismRose} 100%)`,
+                            boxShadow: '0 5px 12px rgba(0, 0, 0, 0.5), 0 16px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(194, 124, 242, 0.45)',
                         },
                     },
                 },
@@ -903,6 +931,7 @@ export const lightTheme = createTheme(theme, {
         success: { main: LIGHT.success },
         info: { main: LIGHT.blue },
         warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
+        prism: { main: LIGHT.prism, light: LIGHT.prismHi, dark: LIGHT.prismLo, contrastText: '#FFFBF1' },
         night: { main: LIGHT.night },
     },
     components: {
@@ -1001,6 +1030,16 @@ export const lightTheme = createTheme(theme, {
                         color: '#FFFBF1',
                         '&:hover': {
                             backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warmHi} 55%, ${LIGHT.warm} 100%)`,
+                        },
+                    },
+                },
+                {
+                    props: { color: 'prism', variant: 'contained' },
+                    style: {
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.prismBlue} 0%, ${LIGHT.prism} 52%, ${LIGHT.prismRose} 100%)`,
+                        color: '#FFFBF1',
+                        '&:hover': {
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.prismHi} 0%, ${LIGHT.prismHi} 45%, ${LIGHT.prismRose} 100%)`,
                         },
                     },
                 },

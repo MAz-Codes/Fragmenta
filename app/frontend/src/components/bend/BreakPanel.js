@@ -72,7 +72,7 @@ const RECIPES = {
     custom: { label: 'Custom', hint: 'Start from the defaults and shape every intervention yourself.', train: {}, bend: {} },
 };
 
-function InterventionSlider({ label, hint, value, onChange, min, max, step, format, warm }) {
+function InterventionSlider({ label, hint, value, onChange, min, max, step, format, prism }) {
     const active = value !== null && value !== undefined;
     return (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -80,13 +80,13 @@ function InterventionSlider({ label, hint, value, onChange, min, max, step, form
                     onChange={(e) => onChange(e.target.checked ? ((min + max) / 2) : null)} />
             <Tooltip title={hint}>
                 <Typography variant="caption" sx={{
-                    minWidth: 110, color: active ? warm : 'text.secondary',
+                    minWidth: 110, color: active ? prism : 'text.secondary',
                 }}>{label}</Typography>
             </Tooltip>
             <Slider size="small" disabled={!active}
                     value={active ? value : min} min={min} max={max} step={step}
                     onChange={(_, v) => onChange(v)} valueLabelDisplay="auto"
-                    color={active ? 'warm' : 'primary'} sx={active ? undefined : { opacity: 0.3 }} />
+                    color={active ? 'prism' : 'primary'} sx={active ? { color: 'prism.main' } : { opacity: 0.3 }} />
             <Typography variant="caption" sx={{ minWidth: 42, textAlign: 'right' }}>
                 {active ? (format ? format(value) : value) : '—'}
             </Typography>
@@ -96,7 +96,7 @@ function InterventionSlider({ label, hint, value, onChange, min, max, step, form
 
 export default function BreakPanel({ defaultBase }) {
     const theme = useTheme();
-    const warm = theme.palette.warm?.main || '#FDA22B';
+    const prism = theme.palette.prism?.main || '#C27CF2';
 
     const [projects, setProjects] = useState([]);
     const [project, setProject] = useState('');
@@ -250,8 +250,8 @@ export default function BreakPanel({ defaultBase }) {
             <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                 Break trains adapters wrong on purpose — underfit them, overfit
                 them, corrupt the lessons. Runs use the same pipeline and
-                appear in the same LoRA picker as normal training, marked with
-                the warm accent.
+                appear in the same LoRA picker as normal training, tagged
+                “bent”.
             </Typography>
 
             {/* recipes */}
@@ -321,37 +321,37 @@ export default function BreakPanel({ defaultBase }) {
             </Typography>
 
             {/* interventions */}
-            <Typography variant="subtitle2" sx={{ mb: 1, color: interventionsOn ? warm : 'text.secondary' }}>
+            <Typography variant="subtitle2" sx={{ mb: 1, color: interventionsOn ? prism : 'text.secondary' }}>
                 Bent backprop
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 2 }}>
-                <InterventionSlider label="Gradient noise" warm={warm}
+                <InterventionSlider label="Gradient noise" prism={prism}
                     hint="Gaussian noise added to every gradient, scaled to its own level — learning that never settles."
                     value={gradNoise} onChange={setGradNoise} min={0.1} max={3} step={0.05} />
-                <InterventionSlider label="Gradient flip" warm={warm}
+                <InterventionSlider label="Gradient flip" prism={prism}
                     hint="This fraction of the adapter's parameters gets its gradients negated — those layers learn away from the data."
                     value={gradFlip} onChange={setGradFlip} min={0.05} max={1} step={0.05}
                     format={(v) => `${Math.round(v * 100)}%`} />
-                <InterventionSlider label="Amnesia" warm={warm}
+                <InterventionSlider label="Amnesia" prism={prism}
                     hint="Periodic windows of negative learning rate — learn, then audibly unlearn. Value = fraction of each 200-step period spent unlearning."
                     value={amnesiaDuty} onChange={setAmnesiaDuty} min={0.05} max={0.9} step={0.05}
                     format={(v) => `${Math.round(v * 100)}%`} />
-                <InterventionSlider label="Caption shuffle" warm={warm}
+                <InterventionSlider label="Caption shuffle" prism={prism}
                     hint="Probability a clip trains against a random other clip's caption — wrong word–sound associations."
                     value={captionShuffle} onChange={setCaptionShuffle} min={0.05} max={1} step={0.05}
                     format={(v) => `${Math.round(v * 100)}%`} />
-                <InterventionSlider label="Loss scale" warm={warm}
+                <InterventionSlider label="Loss scale" prism={prism}
                     hint="Global loss multiplier. Negative = pure anti-learning."
                     value={lossScale} onChange={setLossScale} min={-2} max={2} step={0.1}
                     format={(v) => v.toFixed(1)} />
-                <InterventionSlider label="Split brain" warm={warm}
+                <InterventionSlider label="Split brain" prism={prism}
                     hint="Every 100 steps a different random fraction of the adapter is frozen."
                     value={freezeFraction} onChange={setFreezeFraction} min={0.1} max={0.9} step={0.05}
                     format={(v) => `${Math.round(v * 100)}%`} />
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pl: 5 }}>
                     <Tooltip title="Train only one denoising regime: texture = the fine-detail steps, structure = the composition-defining steps.">
                         <Typography variant="caption" sx={{
-                            minWidth: 110, color: timestepSkew !== 'none' ? warm : 'text.secondary',
+                            minWidth: 110, color: timestepSkew !== 'none' ? prism : 'text.secondary',
                         }}>Timestep skew</Typography>
                     </Tooltip>
                     <ToggleButtonGroup size="small" exclusive value={timestepSkew}
@@ -365,7 +365,7 @@ export default function BreakPanel({ defaultBase }) {
             </Box>
 
             <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 2 }}>
-                <Button variant="contained" color="warm" disabled={starting || status?.is_training}
+                <Button variant="contained" color="prism" disabled={starting || status?.is_training}
                         onClick={() => start(false)} startIcon={<HammerIcon size={16} />}>
                     {status?.is_training ? 'Training…' : 'Start bent training'}
                 </Button>
@@ -430,7 +430,7 @@ export default function BreakPanel({ defaultBase }) {
                         <Typography variant="caption" color="textSecondary">A</Typography>
                         <Slider size="small" value={blendK} min={0} max={1} step={0.01}
                                 onChange={(_, v) => setBlendK(v)} valueLabelDisplay="auto"
-                                color="warm" sx={{ maxWidth: 220 }} />
+                                color="prism" sx={{ maxWidth: 220, color: 'prism.main' }} />
                         <Typography variant="caption" color="textSecondary">B</Typography>
                         <TextField size="small" label="New adapter name" value={labName}
                                    onChange={(e) => setLabName(e.target.value)} sx={{ flex: 1, minWidth: 140 }} />
