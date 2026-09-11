@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import {
     Container,
     Box,
@@ -56,6 +56,7 @@ import {
     Moon as MoonIcon,
     Sun as SunIcon,
     Piano as PerformanceIcon,
+    CircuitBoard as BendIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
     Trash2 as DeleteIcon,
@@ -81,19 +82,33 @@ import theme, { appStyles, lightTheme } from './theme';
 import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
+// Bend tab — lazy chunk so non-users pay zero JS cost for it.
+const BendPanel = lazy(() => import('./components/bend/BendPanel'));
+
 const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
-// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance.
-const TAB_STORAGE_KEY = 'fragmenta.lastTab';
-const TAB_COUNT = 4;
+// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Bend, 4=Performance.
+// The Bend tab's insertion shifted Performance from 3 to 4, so the stored
+// index moved to a v2 key; a legacy value is migrated once (old 3 → 4,
+// everything else maps unchanged).
+const TAB_STORAGE_KEY = 'fragmenta.lastTab.v2';
+const LEGACY_TAB_STORAGE_KEY = 'fragmenta.lastTab';
+const TAB_COUNT = 5;
 const readStoredTab = () => {
     try {
         const raw = window.localStorage.getItem(TAB_STORAGE_KEY);
-        const n = Number(raw);
-        return Number.isFinite(n) && n >= 0 && n < TAB_COUNT ? n : 0;
+        if (raw !== null) {
+            const n = Number(raw);
+            return Number.isFinite(n) && n >= 0 && n < TAB_COUNT ? n : 0;
+        }
+        const legacy = Number(window.localStorage.getItem(LEGACY_TAB_STORAGE_KEY));
+        if (Number.isFinite(legacy) && legacy >= 0 && legacy <= 3) {
+            return legacy === 3 ? 4 : legacy;   // old Performance index
+        }
+        return 0;
     } catch {
         return 0;
     }
@@ -1446,6 +1461,7 @@ function App() {
                                 <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
                                 <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
                                 <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
+                                <Tab icon={<BendIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Bend'} />
                                 <Tab
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
@@ -2621,9 +2637,20 @@ function App() {
                                 </Grid>
                             </TabPanel>
 
-                            <TabPanel value={displayedTab} index={3} keepMounted>
+                            {/* Bend Tab — lazy chunk; mounts on first visit. */}
+                            <TabPanel value={displayedTab} index={3}>
+                                <Suspense fallback={
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                                        <CircularProgress size={28} />
+                                    </Box>
+                                }>
+                                    <BendPanel models={baseModels} />
+                                </Suspense>
+                            </TabPanel>
+
+                            <TabPanel value={displayedTab} index={4} keepMounted>
                                 {envReady && <PerformancePanel
-                                    active={displayedTab === 3}
+                                    active={displayedTab === 4}
                                     selectedModel={selectedModel}
                                     availableModels={availableModels}
                                     baseModels={baseModels}

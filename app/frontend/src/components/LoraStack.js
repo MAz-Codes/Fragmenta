@@ -250,6 +250,11 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                                                 {multi && (
                                                                     <Chip size="small" label={`${ckpts.length} checkpoints`} variant="outlined" sx={{ height: 16, fontSize: 9 }} />
                                                                 )}
+                                                                {/* Trained in Break mode or made in the Adapter Lab. */}
+                                                                {l.bent && (
+                                                                    <Chip size="small" label="bent" variant="outlined"
+                                                                          sx={{ height: 16, fontSize: 9, color: 'warm.main', borderColor: 'warm.main' }} />
+                                                                )}
                                                             </Stack>
                                                         </Box>
                                                         {multi && <ChevronRightIcon size={14} style={{ opacity: 0.5, flexShrink: 0 }} />}

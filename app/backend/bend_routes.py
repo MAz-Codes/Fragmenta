@@ -160,7 +160,7 @@ def _resolve_lora_path(raw: str) -> Path:
     fine_tuned = config.get_path("models_fine_tuned").resolve()
     # Only adapters inside models/fine_tuned/ may be read — this endpoint
     # takes client-supplied paths and must not become a file oracle.
-    if not str(p).startswith(str(fine_tuned)):
+    if not p.is_relative_to(fine_tuned):
         raise LoraBendError("LoRA paths must live under models/fine_tuned/.")
     if not p.exists():
         raise LoraBendError(f"LoRA not found: {raw}")

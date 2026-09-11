@@ -38,20 +38,21 @@ in the training subprocess and must not import Fragmenta app modules.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import sys
 from pathlib import Path
 
 
 def _load_train_lora(script_path: Path):
-    spec = importlib.util.spec_from_file_location("train_lora", str(script_path))
-    module = importlib.util.module_from_spec(spec)
-    # Registered under its own name so dill-serialized dataset fns that
-    # reference the module can resolve inside DataLoader workers.
-    sys.modules["train_lora"] = module
-    spec.loader.exec_module(module)
-    return module
+    # Import by name from its own directory, not by file path: spawned
+    # DataLoader workers unpickle references into `train_lora` (e.g. its
+    # worker_init_fn) and must be able to re-import it. multiprocessing's
+    # spawn hands the parent's sys.path to each child, so this is enough.
+    scripts_dir = str(script_path.resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    return importlib.import_module(script_path.stem)
 
 
 def make_shuffled_caption_fn(probability: float):
@@ -66,11 +67,14 @@ def make_shuffled_caption_fn(probability: float):
     def caption_metadata_fn(info, audio, _p=float(probability)):
         from pathlib import Path
         import random
+        import zlib
         path = Path(info["path"])
         txt = path.with_suffix(".txt")
         if not txt.exists():
             return {"__reject__": True}
-        rng = random.Random(hash(str(path)) & 0xFFFFFFFF)
+        # crc32, not hash(): str hashes are salted per process, and every
+        # DataLoader worker is its own process.
+        rng = random.Random(zlib.crc32(str(path).encode()))
         if rng.random() < _p:
             others = sorted(p for p in path.parent.glob("*.txt") if p != txt)
             if others:
@@ -115,6 +119,16 @@ def make_bent_wrapper(base_cls, bend: dict):
             self._bend_grad_gen = torch.Generator().manual_seed(flip_seed or 1)
             self._bend_base_lrs = None
             self._bend_frozen_names = set()
+            self._bend_announced = set()
+            if skew in ("texture", "structure"):
+                self._bend_announce("skew", f"timestep skew: training only the {skew} regime")
+
+        def _bend_announce(self, key, msg):
+            # One line per intervention, the first time it acts — a readable
+            # trail in training.log that the bend is really happening.
+            if key not in self._bend_announced:
+                self._bend_announced.add(key)
+                print(f"[bend] {msg}", flush=True)
 
         # -- helpers -----------------------------------------------------
         def _trainable_names(self):
@@ -141,6 +155,8 @@ def make_bent_wrapper(base_cls, bend: dict):
                     self._bend_base_lrs = [
                         [g["lr"] for g in opt.param_groups] for opt in optimizers]
                 in_window = (step % amnesia_period) >= amnesia_period * (1 - amnesia_duty)
+                if in_window:
+                    self._bend_announce("amnesia", f"amnesia: lr x{amnesia_scale} from step {step}")
                 for oi, opt in enumerate(optimizers):
                     for gi, group in enumerate(opt.param_groups):
                         base = self._bend_base_lrs[oi][gi]
@@ -159,11 +175,16 @@ def make_bent_wrapper(base_cls, bend: dict):
                 for n, p in self.named_parameters():
                     if n in self._bend_frozen_names:
                         p.requires_grad_(False)
+                self._bend_announce(
+                    f"freeze{rotation}",
+                    f"split brain: froze {len(self._bend_frozen_names)} of "
+                    f"{len(names)} trainable tensors at step {step}")
             return out
 
         def training_step(self, batch, batch_idx):
             loss = super().training_step(batch, batch_idx)
             if loss_scale != 1.0:
+                self._bend_announce("loss", f"loss scale: x{loss_scale}")
                 if torch.is_tensor(loss):
                     loss = loss * loss_scale
                 elif isinstance(loss, dict) and torch.is_tensor(loss.get("loss")):
@@ -179,6 +200,11 @@ def make_bent_wrapper(base_cls, bend: dict):
                 self._bend_flip_names = self._pick(
                     [n for n, p in self.named_parameters() if p.requires_grad],
                     flip_fraction, flip_seed)
+                if flip_fraction > 0.0:
+                    self._bend_announce(
+                        "flip", f"gradient flip: {len(self._bend_flip_names)} tensors learn away")
+            if grad_noise > 0.0:
+                self._bend_announce("noise", f"gradient noise: {grad_noise} x grad std")
             with torch.no_grad():
                 for n, p in self.named_parameters():
                     if p.grad is None:
@@ -215,6 +241,7 @@ def main():
     shuffle_p = float(bend.get("caption_shuffle") or 0.0)
     if shuffle_p > 0.0:
         train_lora.caption_metadata_fn = make_shuffled_caption_fn(shuffle_p)
+        print(f"[bend] caption shuffle: p={shuffle_p}", flush=True)
 
     sys.argv = [str(Path(args.train_script))] + passthrough
     train_lora.main()

@@ -63,6 +63,8 @@ export const TIPS = {
 
     // PerformanceChannel.js — per-channel strip.
     channel: {
+        bendPreset: 'Generate this channel through a bend preset saved in the Bend tab. The bend applies to that generation only.',
+        bendAmount: 'Bend amount — scales every module of the preset from clean (left) to full (right). Structural bends switch on past halfway. MIDI-mappable.',
         mute: 'Mute',
         solo: 'Solo',
         sidechain: (active, locked) =>
@@ -200,5 +202,21 @@ export const TIPS = {
         lossChart: 'Training loss per step, lower is better. A curve that falls then flattens means the LoRA is converging; a flat or rising curve suggests the learning rate or data needs attention.',
         steps: 'Progress through the run, counted in optimizer steps (SA3 trains by steps, not epochs).',
         checkpoints: 'How many LoRA snapshots have been written so far. Each is a usable adapter you can generate with or keep training from.',
+    },
+
+    // Bend tab — network bending (Bend) + model bending (Break). In the
+    // lineage of circuit bending: intervene in the model itself and listen.
+    bend: {
+        modeBend: 'Bend: intervene inside the frozen model while it generates — its activations, weights, latents and structure. Reversible, per-generation.',
+        modeBreak: 'Break: train adapters wrong on purpose — underfit, overfit, corrupted lessons. Produces bent LoRA files.',
+        model: 'The model to bend. The distilled Small models audition fastest (8 steps) — keep the modify→listen loop tight; bends carry over conceptually to the base models.',
+        chance: "Ghazala's anti-theory protocol as a button: randomize the rack and listen, no hypothesis required. Nudge is subtle, Break is not.",
+        unbend: 'Clear the rack. (The model itself is never left bent — every bend is applied for exactly one generation and fully removed.)',
+        presets: 'Save the current rack as a named patch, or load one. A patch + seed reproduces a bent sound exactly — a bend saved is an instrument kept.',
+        generate: 'Generate with the rack applied. The bend exists only for this generation; the fragment and its patch land in the Bending Log below.',
+        abCompare: 'Regenerate the same seed with the rack bypassed — bending is only legible against the un-bent baseline.',
+        duration: 'Short clips keep the modify→listen loop immediate. Stretch it out once a bend is worth living inside.',
+        signalPath: 'The model, drawn as a signal path. Click a stage to attach a bend module there. Early DiT blocks shape structure; late blocks shape timbre; the VAE decoder is closest to the loudspeaker.',
+        log: 'The Bending Log: every bent generation is recorded with its full patch and seed. Add a one-line note of what it did to the sound — the log becomes your instrument vocabulary, and any row recalls its bend.',
     },
 };

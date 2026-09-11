@@ -154,6 +154,16 @@ function PerformancePanelInner({
         session, updateGlobal, updateChannel, cancelPendingPersist,
     } = usePerformanceSession(CHANNEL_COUNT);
 
+    // Bend-tab presets a channel can generate through. Re-read whenever the
+    // tab becomes active so a preset saved in Bend shows up on switching.
+    const [bendPresets, setBendPresets] = useState([]);
+    useEffect(() => {
+        if (!active) return;
+        api.get('/api/bend/presets')
+            .then(({ data }) => setBendPresets(data?.presets || []))
+            .catch(() => { /* Bend backend absent — no bend row */ });
+    }, [active]);
+
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
     const peakHoldRef = useRef({ db: METER_FLOOR_DB, decayedAt: performance.now() });
@@ -803,7 +813,21 @@ function PerformancePanelInner({
         return () => window.removeEventListener('keydown', onKey);
     }, [midi?.learnMode, midi?.exitLearnMode]);
 
-    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, initAudioPath, initNoiseLevel, onBlob }) => {
+    // A channel's bend = its saved preset with every module's dry/wet scaled
+    // by the channel's amount. Structural modules have no dry/wet — they are
+    // all-or-nothing, so they drop out below half amount. Null = clean.
+    const bendPatchFor = (presetName, amount) => {
+        const preset = bendPresets.find(p => p.name === presetName);
+        const a = Math.max(0, Math.min(1, Number(amount) || 0));
+        if (!preset?.patch?.modules?.length || a === 0) return null;
+        const modules = preset.patch.modules
+            .filter(m => m.enabled !== false)
+            .filter(m => m.target?.domain !== 'structure' || a >= 0.5)
+            .map(m => (m.target?.domain === 'structure' ? m : { ...m, mix: (m.mix ?? 1) * a }));
+        return modules.length ? { ...preset.patch, modules } : null;
+    };
+
+    const generateForChannel = async ({ prompt, duration, alignBars, alignBpm, loopStitch, batchSize = 1, initAudioPath, initNoiseLevel, bendPreset, bendAmount, onBlob }) => {
         setError(null);
         if (!selectedModel) {
             const msg = 'Pick a model first.';
@@ -844,6 +868,7 @@ function PerformancePanelInner({
             baseSeed = parsed;
         }
 
+        const bendPatch = bendPreset ? bendPatchFor(bendPreset, bendAmount) : null;
         const count = Math.max(1, Math.min(4, batchSize | 0));
         for (let i = 0; i < count; i++) {
             // Sequential rather than parallel — the backend serves one
@@ -879,6 +904,7 @@ function PerformancePanelInner({
                 ...(loopStitch && alignBars && alignBpm ? { loop_stitch: loopStitch } : {}),
                 // Phase 8 Variation: re-roll from a prior clip as init_audio.
                 ...(initAudioPath ? { init_audio_path: initAudioPath, init_noise_level: initNoiseLevel ?? 0.9 } : {}),
+                ...(bendPatch ? { bend_patch: { ...bendPatch, seed } } : {}),
             };
             const response = await api.post('/api/generate', requestData, { responseType: 'blob' });
             // Stream: hand each blob to the caller as it arrives so the fragment
@@ -1594,6 +1620,7 @@ function PerformancePanelInner({
                             maxDuration={maxDuration}
                             bpm={bpm}
                             panelActive={active}
+                            bendPresets={bendPresets}
                         />
                     ))}
                 </Box>

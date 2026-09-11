@@ -103,6 +103,9 @@ export default function PerformanceChannel({
     // False while the Performance tab is hidden (panel stays mounted via
     // keepMounted) — pauses this channel's meter RAF loop.
     panelActive = true,
+    // Saved Bend-tab presets ([{name, ...}]). Empty → the bend row is not
+    // rendered at all.
+    bendPresets = [],
 }) {
     const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
     const canvasRef = useRef(null);
@@ -140,6 +143,10 @@ export default function PerformanceChannel({
     const [muted, setMuted] = useState(init.muted ?? false);
     const [soloed, setSoloed] = useState(init.soloed ?? false);
     const [batchSize, setBatchSize] = useState(init.batchSize ?? 1);
+    // Bend tab integration: generate through a saved bend preset, with a
+    // MIDI-mappable amount (0 = clean, 1 = the preset as saved).
+    const [bendPreset, setBendPreset] = useState(init.bendPreset ?? '');
+    const [bendAmount, setBendAmount] = useState(init.bendAmount ?? 1);
     // Live progress for the Generate pill while a generation is in flight.
     // 0–100; polled from /api/generation-progress. Resets on each new run.
     const [progress, setProgress] = useState(0);
@@ -276,12 +283,14 @@ export default function PerformanceChannel({
         const fragmentsMeta = fragments.map(({ blob, audioUrl, ...rest }) => rest);
         onFormStateChange?.(index, {
             prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
+            bendPreset, bendAmount,
             fragments: fragmentsMeta,
             committedFragmentId,
             trimStart: trim.start,
             trimEnd: trim.end,
         });
     }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
+        bendPreset, bendAmount,
         fragments, committedFragmentId, trim, index, onFormStateChange]);
 
     // Hydrate fragments on mount from the session metadata + IDB blobs. Runs
@@ -541,6 +550,7 @@ export default function PerformanceChannel({
                 // Phase 7: bars-mode + channel-looping ⇒ ask the backend
                 // to wrap-inpaint the seam so the clip loops seamlessly.
                 ...(inBarsMode && looping ? { loopStitch: 'inpaint' } : {}),
+                ...(bendPreset ? { bendPreset, bendAmount } : {}),
                 onBlob: makeOnBlob(promptSnap, effectiveDuration),
             });
         } catch (err) {
@@ -1066,6 +1076,60 @@ export default function PerformanceChannel({
                     </MidiMappable>
                     )}
                 </Box>
+
+                {/* Bend row — only when presets exist (saved in the Bend
+                    tab). The amount scales every module's dry/wet, so one
+                    knob (or MIDI CC) sweeps the channel from clean to the
+                    full bend on the next generation. */}
+                {bendPresets.length > 0 && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5, width: '100%' }}>
+                        <Tooltip title={TIPS.channel.bendPreset} placement="top">
+                            <Select
+                                value={bendPresets.some(p => p.name === bendPreset) ? bendPreset : ''}
+                                onChange={(e) => setBendPreset(e.target.value)}
+                                disabled={generating}
+                                size="small"
+                                displayEmpty
+                                sx={{
+                                    ...styles.channelPillControl, flex: 1, minWidth: 0,
+                                    ...(bendPreset ? { color: 'warm.main' } : {}),
+                                }}
+                                renderValue={(v) => (v ? `Bend · ${v}` : 'No bend')}
+                            >
+                                <MenuItem value="" sx={{ fontSize: perfTokens.fontSize.sm }}>No bend</MenuItem>
+                                {bendPresets.map((p) => (
+                                    <MenuItem key={p.name} value={p.name} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                        {p.name}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </Tooltip>
+                        <MidiMappable
+                            id={ctrlId('bendAmount')}
+                            label={ctrlLabel('Bend amount')}
+                            kind="continuous"
+                            min={0}
+                            max={1}
+                            value={bendAmount}
+                            onChange={setBendAmount}
+                            sx={{ width: 84, flexShrink: 0 }}
+                        >
+                            <Tooltip title={TIPS.channel.bendAmount} placement="top">
+                                <Slider
+                                    size="small"
+                                    value={bendAmount}
+                                    min={0}
+                                    max={1}
+                                    step={0.01}
+                                    disabled={!bendPreset}
+                                    onChange={(_, v) => setBendAmount(v)}
+                                    color="warm"
+                                    sx={{ py: 1, ...(bendPreset ? {} : { opacity: 0.3 }) }}
+                                />
+                            </Tooltip>
+                        </MidiMappable>
+                    </Box>
+                )}
 
                 {channelError && (
                     <Typography

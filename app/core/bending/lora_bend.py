@@ -55,11 +55,14 @@ def _save(path: Path, tensors: Dict[str, torch.Tensor], meta: Dict[str, str]) ->
 
 
 def _output_path(fine_tuned_dir: Path, name: str) -> Path:
-    if not _NAME_RE.match(name or ""):
+    # The name becomes a directory: a leading dot would allow "..".
+    if not _NAME_RE.match(name or "") or name.startswith("."):
         raise LoraBendError(
             "Output name must be 1-80 chars of letters, digits, dot, dash, "
-            "underscore or space.")
+            "underscore or space, and must not start with a dot.")
     run_dir = fine_tuned_dir / name / "checkpoints"
+    if not run_dir.resolve().is_relative_to(Path(fine_tuned_dir).resolve()):
+        raise LoraBendError("Output name resolves outside models/fine_tuned/.")
     out = run_dir / "bent.safetensors"
     counter = 2
     while out.exists():
