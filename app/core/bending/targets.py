@@ -41,7 +41,8 @@ _HUB_DIRNAMES = {
 # verified from the shipped config (depth 20); medium's is an estimate and
 # is corrected the moment its config is on disk.
 _FALLBACK_DIT_DEPTH = {"small": 20, "medium": 24}
-_FALLBACK_DECODER_BLOCKS = 4
+# The SA3 VAE (taae_v2) decodes in a single resampling stage (c_mults=[6]).
+_FALLBACK_DECODER_BLOCKS = 1
 
 
 def _local_model_config(model_id: str, pretrained_root: Path) -> Optional[dict]:

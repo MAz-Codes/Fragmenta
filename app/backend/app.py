@@ -639,6 +639,7 @@ def generate_audio():
         # byte-for-byte unchanged. Present → normalize/validate here so a
         # malformed patch is a 400, not a mid-generation failure.
         bend_patch = None
+        bend_warnings = []
         bend_patch_raw = data.get('bend_patch')
         if bend_patch_raw:
             from app.core.bending.patch import PatchError, validate_patch
@@ -710,7 +711,12 @@ def generate_audio():
         # fatal (the WAV is the only mandatory artifact).
         # Bend report (hearing-safety level changes, silenced output, targets
         # that didn't resolve) — keyed by output file, so it's ours.
-        bend_report = generator.pop_bend_report(output_path.name) if bend_patch else None
+        # Validation-time warnings (a bad param replaced by its default, …)
+        # go first so the user sees why the bend differs from the rack.
+        bend_report = (
+            (bend_warnings + (generator.pop_bend_report(output_path.name) or []))
+            or None
+        ) if bend_patch else None
 
         sidecar_path = output_path.with_suffix(output_path.suffix + ".json")
         try:

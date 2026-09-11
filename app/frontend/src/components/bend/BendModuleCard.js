@@ -24,7 +24,10 @@ function BlockGrid({ count, value, onChange, accent }) {
     const toggle = (i) => {
         const next = new Set(allSelected ? Array.from({ length: count }, (_, k) => k) : selected);
         if (next.has(i)) next.delete(i); else next.add(i);
-        onChange(next.size === 0 ? null : [...next].sort((a, b) => a - b));
+        // Deselecting the last block would read as "none" but mean "all"
+        // (null); keep at least one instead.
+        if (next.size === 0) return;
+        onChange(next.size === count ? null : [...next].sort((a, b) => a - b));
     };
     return (
         <Box>
@@ -292,7 +295,8 @@ export default function BendModuleCard({
                         </ToggleButtonGroup>
                     )}
 
-                    {stageInfo?.kind === 'blocks' && (
+                    {/* Reorder takes an explicit order, not a selection. */}
+                    {stageInfo?.kind === 'blocks' && mod.structure?.type !== 'reorder' && (
                         <BlockGrid
                             count={stageInfo.count || 4}
                             value={mod.target?.blocks}
@@ -378,7 +382,9 @@ export default function BendModuleCard({
                         </Box>
                     )}
 
-                    {mod.steps && (
+                    {/* The step gate only acts on per-step bends: weights are
+                        bent once before sampling, structure is fixed. */}
+                    {mod.steps && (domain === 'activation' || domain === 'latent') && (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                             <Tooltip title="Which part of the denoising the bend is active in — early steps shape structure, late steps shape texture.">
                                 <Typography variant="caption" color="textSecondary"

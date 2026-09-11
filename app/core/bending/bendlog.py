@@ -22,11 +22,16 @@ from typing import Any, Dict, List, Optional
 MAX_ENTRIES = 500
 _NOTE_MAX = 500
 
+# Module-level, not per instance: every request builds its own BendLog, so
+# a per-instance lock would serialize nothing (a note PATCH racing a bent
+# generation's append would drop one of the two writes).
+_LOCK = threading.Lock()
+
 
 class BendLog:
     def __init__(self, bends_dir: Path):
         self.path = Path(bends_dir) / "log.json"
-        self._lock = threading.Lock()
+        self._lock = _LOCK
 
     def _read(self) -> List[Dict[str, Any]]:
         try:

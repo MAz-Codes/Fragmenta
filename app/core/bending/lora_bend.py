@@ -45,6 +45,17 @@ def _load(path: Path) -> Tuple[Dict[str, torch.Tensor], Dict[str, str]]:
         meta = dict(f.metadata() or {})
         for key in f.keys():
             tensors[key] = f.get_tensor(key)
+    if not (meta.get("base_model") or meta.get("base_model_id")):
+        # Legacy checkpoints carry base_model only in their run's
+        # training_metadata.json. The output lands in a new run dir without
+        # one, and the LoRA picker skips adapters it can't place — so embed it.
+        run_meta = Path(path).parent.parent / "training_metadata.json"
+        try:
+            base = json.loads(run_meta.read_text()).get("base_model")
+            if base:
+                meta["base_model"] = str(base)
+        except Exception:
+            pass
     return tensors, meta
 
 
@@ -63,6 +74,11 @@ def _output_path(fine_tuned_dir: Path, name: str) -> Path:
     run_dir = fine_tuned_dir / name / "checkpoints"
     if not run_dir.resolve().is_relative_to(Path(fine_tuned_dir).resolve()):
         raise LoraBendError("Output name resolves outside models/fine_tuned/.")
+    if (fine_tuned_dir / name / "training_metadata.json").exists():
+        # Mixing a lab output into a real run's checkpoints would mislabel
+        # the run and be deleted by that run's next overwrite.
+        raise LoraBendError(
+            f"“{name}” is the name of a training run — pick another name.")
     out = run_dir / "bent.safetensors"
     counter = 2
     while out.exists():

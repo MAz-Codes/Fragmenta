@@ -18,6 +18,7 @@ import SignalPath from './SignalPath';
 import BendModuleCard from './BendModuleCard';
 import BendingLogPanel from './BendingLogPanel';
 import BreakPanel from './BreakPanel';
+import BendTakes from './BendTakes';
 import { buildPatch, chancePatch, newModule, nextId } from './bendUtils';
 
 /**
@@ -36,6 +37,15 @@ import { buildPatch, chancePatch, newModule, nextId } from './bendUtils';
 
 const STORE_KEY = 'fragmenta.bend.v1';
 
+// /api/generate errors arrive as APIResponse.error — {error: {message, …}} —
+// while the bend routes return {error: "…"}. Always hand React a string.
+const errorText = (err, fallback) => {
+    const e = err?.response?.data?.error;
+    if (typeof e === 'string') return e;
+    if (e && typeof e.message === 'string') return e.message;
+    return fallback;
+};
+
 const readStore = () => {
     try {
         const raw = window.localStorage.getItem(STORE_KEY);
@@ -43,7 +53,7 @@ const readStore = () => {
     } catch { return {}; }
 };
 
-export default function BendPanel({ models }) {
+export default function BendPanel({ models, active = true, isDocker = false }) {
     const theme = useTheme();
     const accent = theme.palette.bend?.main || '#AEB9C4';
     const stored = useMemo(readStore, []);
@@ -64,8 +74,10 @@ export default function BendPanel({ models }) {
     const [bendWarnings, setBendWarnings] = useState([]);
     const [bentAudio, setBentAudio] = useState(null);  // {url, seed, filename}
     const [cleanAudio, setCleanAudio] = useState(null);
-    const [lastRunSeed, setLastRunSeed] = useState(null);
-    const [lastRunPatch, setLastRunPatch] = useState(null);
+    // The last bent request minus its patch: Clean A/B replays exactly this
+    // (model, prompt, duration, steps, seed), so editing the prompt after a
+    // bent take can't make the comparison apples-to-oranges.
+    const [lastRunBody, setLastRunBody] = useState(null);
 
     const [presets, setPresets] = useState([]);
     const [presetAnchor, setPresetAnchor] = useState(null);
@@ -81,19 +93,24 @@ export default function BendPanel({ models }) {
 
     // Default model: first downloaded, preferring distilled small (fast
     // audition loop — the modify→listen cycle must stay tight).
+    // Also replaces a remembered model that is no longer downloaded.
     useEffect(() => {
-        if (modelId || !downloadedModels.length) return;
+        if (!downloadedModels.length) return;
+        if (modelId && downloadedModels.some(m => m.name === modelId)) return;
         const preferred = downloadedModels.find(m => m.name === 'sa3-small-music')
             || downloadedModels[0];
         setModelId(preferred.name);
     }, [downloadedModels, modelId]);
 
-    // Registry per model.
+    // Registry per model. A slow response for a model the user has already
+    // switched away from must not overwrite the current one.
     useEffect(() => {
+        let stale = false;
         const id = modelId || 'sa3-small-music-base';
         api.get(`/api/bend/targets?model_id=${encodeURIComponent(id)}`)
-            .then(({ data }) => setRegistry(data))
+            .then(({ data }) => { if (!stale) setRegistry(data); })
             .catch(() => {});
+        return () => { stale = true; };
     }, [modelId]);
 
     const refreshLog = useCallback(() => {
@@ -102,14 +119,19 @@ export default function BendPanel({ models }) {
             .then(({ data }) => setLogEntries(data.entries || []))
             .catch(() => {});
     }, [modelId]);
-    useEffect(() => { refreshLog(); }, [refreshLog]);
 
     const refreshPresets = useCallback(() => {
         api.get('/api/bend/presets')
             .then(({ data }) => setPresets(data.presets || []))
             .catch(() => {});
     }, []);
-    useEffect(() => { refreshPresets(); }, [refreshPresets]);
+    // The panel stays mounted across tab switches; re-read on return, since
+    // Performance channels generating through a preset append to the log.
+    useEffect(() => {
+        if (!active) return;
+        refreshLog();
+        refreshPresets();
+    }, [active, refreshLog, refreshPresets]);
 
     // Persist the session (per-viewer convenience only).
     useEffect(() => {
@@ -141,12 +163,13 @@ export default function BendPanel({ models }) {
     const randomizeModule = (id) => {
         setModules(m => m.map(x => {
             if (x.id !== id) return x;
-            const [replacement] = chancePatch(registry, 'bend');
-            return { ...replacement, id: x.id, target: { ...replacement.target, stage: x.target.stage } };
+            const [replacement] = chancePatch(registry, 'bend', { stage: x.target?.stage });
+            return replacement ? { ...replacement, id: x.id, enabled: x.enabled } : x;
         }));
     };
     const doChance = (level) => {
         setChanceAnchor(null);
+        if (!registry) return;
         setModules(chancePatch(registry, level).map(m => ({ ...m, id: nextId() })));
     };
     const unbend = () => {
@@ -161,19 +184,37 @@ export default function BendPanel({ models }) {
     useEffect(() => () => { stopTicker(); abortRef.current?.abort?.(); }, []);
 
     const generate = async (withBend) => {
-        if (!modelId) { setStatusMsg('Pick a model first.'); return; }
-        if (!prompt.trim()) { setStatusMsg('Write a prompt.'); return; }
+        if (!withBend && !lastRunBody) return;
+        if (withBend && !modelId) { setStatusMsg('Pick a model first.'); return; }
+        if (withBend && !prompt.trim()) { setStatusMsg('Write a prompt.'); return; }
         const activeModules = modules.filter(m => m.enabled !== false);
         if (withBend && !activeModules.length) {
             setStatusMsg('The rack is empty — attach a module on the signal path, or hit Chance.');
             return;
         }
-        // A/B contract: "clean" reuses the last bent run's seed so the
-        // comparison is exact; a fresh bent run resolves its seed here.
-        const runSeed = withBend
-            ? (randomSeed ? Math.floor(Math.random() * 0xffffffff) : (parseInt(seed, 10) || 0))
-            : (lastRunSeed ?? (parseInt(seed, 10) || 0));
-        const patch = withBend ? buildPatch(activeModules, modelId, runSeed) : null;
+        // A/B contract: "clean" replays the last bent request verbatim
+        // (same seed, prompt, model, duration, steps) with the patch
+        // removed; a fresh bent run resolves its seed here.
+        let body;
+        let patch = null;
+        if (withBend) {
+            const freshSeed = randomSeed
+                ? Math.floor(Math.random() * 0xffffffff) : (parseInt(seed, 10) || 0);
+            body = {
+                model_id: modelId,
+                prompt: prompt.trim(),
+                duration: Number(duration),
+                seed: freshSeed,
+                batch_size: 1,
+            };
+            // Steps is only shown (and meaningful) for base models; a value
+            // left over from one must not push a distilled model to 50 steps.
+            if (steps && modelId.endsWith('-base')) body.steps = Number(steps);
+            patch = buildPatch(activeModules, modelId, freshSeed);
+        } else {
+            body = { ...lastRunBody };
+        }
+        const runSeed = body.seed;
 
         const controller = new AbortController();
         abortRef.current = controller;
@@ -190,18 +231,10 @@ export default function BendPanel({ models }) {
         }, 250);
 
         try {
-            const body = {
-                model_id: modelId,
-                prompt: prompt.trim(),
-                duration: Number(duration),
-                seed: runSeed,
-                batch_size: 1,
-            };
-            if (steps) body.steps = Number(steps);
-            if (patch) body.bend_patch = patch;
-            const response = await api.post('/api/generate', body, {
-                responseType: 'blob', signal: controller.signal,
-            });
+            const response = await api.post('/api/generate',
+                patch ? { ...body, bend_patch: patch } : body, {
+                    responseType: 'blob', signal: controller.signal,
+                });
             stopTicker();
             setProgress(100);
             const url = URL.createObjectURL(response.data);
@@ -210,20 +243,22 @@ export default function BendPanel({ models }) {
                 const w = JSON.parse(response.headers?.['x-bend-warnings'] || '[]');
                 setBendWarnings(Array.isArray(w) ? w : []);
             } catch { setBendWarnings([]); }
-            const result = { url, seed: runSeed, filename };
+            const result = {
+                url, blob: response.data, seed: runSeed, filename, body, key: JSON.stringify(body),
+            };
             if (withBend) {
                 if (bentAudio?.url?.startsWith('blob:')) URL.revokeObjectURL(bentAudio.url);
                 setBentAudio(result);
                 setCleanAudio(prev => {
-                    // A clean take from an older seed is no longer comparable.
-                    if (prev && prev.seed !== runSeed) {
+                    // A clean take of a different request (seed, prompt,
+                    // model, duration, steps) is no longer comparable.
+                    if (prev && prev.key !== result.key) {
                         if (prev.url?.startsWith('blob:')) URL.revokeObjectURL(prev.url);
                         return null;
                     }
                     return prev;
                 });
-                setLastRunSeed(runSeed);
-                setLastRunPatch(patch);
+                setLastRunBody(body);
                 refreshLog();
                 setStatusMsg(`Bent fragment ready (seed ${runSeed}). Note what it did in the log below.`);
             } else {
@@ -238,7 +273,7 @@ export default function BendPanel({ models }) {
             if (err?.name === 'AbortError') {
                 setStatusMsg('Stopped.');
             } else {
-                setStatusMsg(err.response?.data?.error || `Generation failed: ${err.message}`);
+                setStatusMsg(errorText(err, `Generation failed: ${err.message}`));
             }
         } finally {
             stopTicker();
@@ -255,16 +290,27 @@ export default function BendPanel({ models }) {
     // --- presets -------------------------------------------------------------
     const savePreset = async () => {
         setPresetAnchor(null);
-        const name = window.prompt('Preset name:');
+        if (!modules.length) {
+            setStatusMsg('The rack is empty — nothing to save yet.');
+            return;
+        }
+        const name = window.prompt('Preset name:')?.trim();
         if (!name) return;
+        if (presets.some(p => p.name === name)
+            && !window.confirm(`A preset named “${name}” exists. Replace it?`)) return;
+        // Record the seed of the take the user just heard, not a stale
+        // manual-seed field that random-seed mode never used.
+        const presetSeed = bentAudio?.seed ?? (parseInt(seed, 10) || 0);
         try {
             await api.post('/api/bend/presets', {
-                name, patch: buildPatch(modules, modelId, parseInt(seed, 10) || 0, name),
+                name,
+                patch: buildPatch(modules, modelId, presetSeed, name,
+                                  { keepDisabled: true }),
             });
             refreshPresets();
             setStatusMsg(`Preset “${name}” saved.`);
         } catch (err) {
-            setStatusMsg(err.response?.data?.error || 'Preset save failed.');
+            setStatusMsg(errorText(err, 'Preset save failed.'));
         }
     };
     const loadPreset = (p) => {
@@ -284,6 +330,11 @@ export default function BendPanel({ models }) {
     const recallLogEntry = (entry) => {
         setModules((entry.patch?.modules || []).map(m => ({ ...m, id: nextId() })));
         if (entry.prompt) setPrompt(entry.prompt);
+        // Duration and steps shape the noise and the schedule: without them
+        // the same patch + seed is a different sound.
+        // Kept exact even past the slider's range (Performance entries).
+        if (entry.duration) setDuration(entry.duration);
+        setSteps(entry.steps || null);
         setRandomSeed(false);
         setSeed(entry.seed);
         setMode('bend');
@@ -359,11 +410,14 @@ export default function BendPanel({ models }) {
                         ))}
                     </Menu>
                     <Tooltip title={TIPS.bend.chance}>
-                        <Button size="small" variant="contained" color="bend"
-                                startIcon={<DicesIcon size={14} />}
-                                onClick={(e) => setChanceAnchor(e.currentTarget)}>
-                            Chance
-                        </Button>
+                        <span>
+                            <Button size="small" variant="contained" color="bend"
+                                    startIcon={<DicesIcon size={14} />}
+                                    disabled={!registry}
+                                    onClick={(e) => setChanceAnchor(e.currentTarget)}>
+                                Chance
+                            </Button>
+                        </span>
                     </Tooltip>
                     <Menu anchorEl={chanceAnchor} open={!!chanceAnchor}
                           onClose={() => setChanceAnchor(null)}>
@@ -491,28 +545,19 @@ export default function BendPanel({ models }) {
                     </Typography>
                 )}
 
-                {/* results / A-B */}
+                {/* results / A-B — the app's fragment-player idiom */}
                 {(bentAudio || cleanAudio) && (
-                    <Box sx={{ display: 'grid', gap: 1.5, mb: 1.5,
-                               gridTemplateColumns: { xs: '1fr', sm: bentAudio && cleanAudio ? '1fr 1fr' : '1fr' } }}>
-                        {bentAudio && (
-                            <Box sx={{ p: 1.5, borderRadius: 2.5, border: `1px solid ${accent}66` }}>
-                                <Typography variant="caption" sx={{ color: accent, display: 'block', mb: 0.5 }}>
-                                    BENT · seed {bentAudio.seed}
-                                </Typography>
-                                <audio controls src={bentAudio.url} style={{ width: '100%', height: 36 }} />
-                            </Box>
-                        )}
-                        {cleanAudio && (
-                            <Box sx={{ p: 1.5, borderRadius: 2.5, border: '1px solid', borderColor: 'divider' }}>
-                                <Typography variant="caption" color="textSecondary"
-                                            sx={{ display: 'block', mb: 0.5 }}>
-                                    CLEAN · seed {cleanAudio.seed}
-                                </Typography>
-                                <audio controls src={cleanAudio.url} style={{ width: '100%', height: 36 }} />
-                            </Box>
-                        )}
-                    </Box>
+                    <BendTakes
+                        isDocker={isDocker}
+                        onMessage={setStatusMsg}
+                        takes={[
+                            bentAudio && {
+                                ...bentAudio, key: 'bent', title: 'Bent',
+                                color: accent, titleColor: accent,
+                            },
+                            cleanAudio && { ...cleanAudio, key: 'clean', title: 'Clean' },
+                        ].filter(Boolean)}
+                    />
                 )}
 
                 {/* Bending Log */}
