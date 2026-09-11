@@ -82,6 +82,8 @@ import theme, { appStyles, lightTheme } from './theme';
 import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
+import BetaBadge from './components/bend/BetaBadge';
+
 // Bend tab — lazy chunk so non-users pay zero JS cost for it.
 const BendPanel = lazy(() => import('./components/bend/BendPanel'));
 
@@ -1461,7 +1463,21 @@ function App() {
                                 <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
                                 <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
                                 <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
-                                <Tab icon={<BendIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Bend'} />
+                                <Tab
+                                    icon={(isIconOnlySidebar || isMobileLayout) ? (
+                                        <Box component="span" sx={{ position: 'relative', display: 'inline-flex' }}>
+                                            <BendIcon size={20} />
+                                            <BetaBadge compact sx={{ position: 'absolute', top: -8, right: -16 }} />
+                                        </Box>
+                                    ) : <BendIcon size={20} />}
+                                    iconPosition={isIconOnlySidebar ? 'top' : 'start'}
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : (
+                                        <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+                                            Bend
+                                            <BetaBadge />
+                                        </Box>
+                                    )}
+                                />
                                 <Tab
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
