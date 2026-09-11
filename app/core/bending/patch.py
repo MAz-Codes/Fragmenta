@@ -146,82 +146,98 @@ def validate_patch(patch: Any) -> Tuple[Dict[str, Any], List[str]]:
     norm_modules: List[Dict[str, Any]] = []
     for i, m in enumerate(modules_raw):
         mid = str(m.get("id") or f"module[{i}]") if isinstance(m, dict) else f"module[{i}]"
-        if not isinstance(m, dict):
-            raise PatchError(f"{mid}: module entries must be objects.")
-        target = m.get("target")
-        if not isinstance(target, dict):
-            raise PatchError(f"{mid}: missing target.")
-        stage = str(target.get("stage", ""))
-        if stage not in _STAGES:
-            raise PatchError(f"{mid}: unknown stage {stage!r}.")
-        domain = str(target.get("domain") or
-                     ("latent" if stage == "latent" else "activation"))
-        if domain not in _DOMAINS or domain not in _STAGE_DOMAINS[stage]:
-            raise PatchError(f"{mid}: domain {domain!r} not valid for stage {stage!r}.")
+        try:
+            norm_modules.append(_norm_module(m, mid, warnings))
+        except PatchError:
+            raise
+        except (TypeError, ValueError) as e:
+            # A non-numeric mix/fraction/index is a bad patch (400), not a
+            # server error (500).
+            raise PatchError(f"{mid}: malformed value ({e}).")
 
-        nm: Dict[str, Any] = {
-            "id": mid,
-            "enabled": bool(m.get("enabled", True)),
-            "target": {"stage": stage, "domain": domain},
-            "mix": _clamp(float(m.get("mix", 1.0)), 0.0, 1.0),
-        }
-
-        if stage in ("dit", "decoder"):
-            blocks = target.get("blocks")
-            if blocks is None:
-                nm["target"]["blocks"] = None      # None = all blocks
-            else:
-                try:
-                    nm["target"]["blocks"] = sorted({int(b) for b in blocks if int(b) >= 0})[:256]
-                except (TypeError, ValueError):
-                    raise PatchError(f"{mid}: target.blocks must be a list of indices.")
-                if not nm["target"]["blocks"]:
-                    raise PatchError(f"{mid}: target.blocks is empty.")
-
-        if domain == "structure":
-            nm["structure"] = _norm_structure(m.get("structure"), warnings, mid)
-        else:
-            op = str(m.get("operator", ""))
-            if op not in OPERATORS:
-                raise PatchError(f"{mid}: unknown operator {op!r}.")
-            spec_domains = OPERATORS[op].domains
-            op_domain = "latent" if domain == "latent" else domain
-            if op_domain not in spec_domains:
-                raise PatchError(
-                    f"{mid}: operator {op!r} does not support the "
-                    f"{op_domain!r} domain.")
-            nm["operator"] = op
-            nm["params"] = _norm_params(op, m.get("params"), warnings, mid)
-            nm["target"]["features"] = _norm_features(
-                target.get("features"), warnings, mid)
-            if domain == "weight":
-                param = str(target.get("param", "weight"))
-                if param not in ("weight", "bias", "both"):
-                    warnings.append(f"{mid}: unknown param {param!r}; using 'weight'.")
-                    param = "weight"
-                nm["target"]["param"] = param
-                slot = target.get("weight_slot")
-                nm["target"]["weight_slot"] = str(slot) if slot else None
-
-        # Step gating applies to anything inside the sampling loop.
-        if stage in ("dit", "latent") and domain != "structure":
-            steps = m.get("steps") if isinstance(m.get("steps"), dict) else {}
-            s_from = _clamp(float(steps.get("from", 0.0)), 0.0, 1.0)
-            s_to = _clamp(float(steps.get("to", 1.0)), 0.0, 1.0)
-            if s_to < s_from:
-                s_from, s_to = s_to, s_from
-            nm["steps"] = {"from": s_from, "to": s_to}
-
-        norm_modules.append(nm)
-
+    try:
+        seed = int(patch.get("seed", 0))
+        version = int(patch.get("version", 1))
+    except (TypeError, ValueError):
+        raise PatchError("bend_patch.seed and .version must be integers.")
     normalized = {
-        "version": int(patch.get("version", 1)),
+        "version": version,
         "name": str(patch.get("name") or "")[:120],
         "model_id": str(patch.get("model_id") or "")[:64],
-        "seed": int(patch.get("seed", 0)),
+        "seed": seed,
         "modules": norm_modules,
     }
     return normalized, warnings
+
+
+def _norm_module(m: Any, mid: str, warnings: List[str]) -> Dict[str, Any]:
+    if not isinstance(m, dict):
+        raise PatchError(f"{mid}: module entries must be objects.")
+    target = m.get("target")
+    if not isinstance(target, dict):
+        raise PatchError(f"{mid}: missing target.")
+    stage = str(target.get("stage", ""))
+    if stage not in _STAGES:
+        raise PatchError(f"{mid}: unknown stage {stage!r}.")
+    domain = str(target.get("domain") or
+                 ("latent" if stage == "latent" else "activation"))
+    if domain not in _DOMAINS or domain not in _STAGE_DOMAINS[stage]:
+        raise PatchError(f"{mid}: domain {domain!r} not valid for stage {stage!r}.")
+
+    nm: Dict[str, Any] = {
+        "id": mid,
+        "enabled": bool(m.get("enabled", True)),
+        "target": {"stage": stage, "domain": domain},
+        "mix": _clamp(float(m.get("mix", 1.0)), 0.0, 1.0),
+    }
+
+    if stage in ("dit", "decoder"):
+        blocks = target.get("blocks")
+        if blocks is None:
+            nm["target"]["blocks"] = None      # None = all blocks
+        else:
+            try:
+                nm["target"]["blocks"] = sorted({int(b) for b in blocks if int(b) >= 0})[:256]
+            except (TypeError, ValueError):
+                raise PatchError(f"{mid}: target.blocks must be a list of indices.")
+            if not nm["target"]["blocks"]:
+                raise PatchError(f"{mid}: target.blocks is empty.")
+
+    if domain == "structure":
+        nm["structure"] = _norm_structure(m.get("structure"), warnings, mid)
+    else:
+        op = str(m.get("operator", ""))
+        if op not in OPERATORS:
+            raise PatchError(f"{mid}: unknown operator {op!r}.")
+        spec_domains = OPERATORS[op].domains
+        op_domain = "latent" if domain == "latent" else domain
+        if op_domain not in spec_domains:
+            raise PatchError(
+                f"{mid}: operator {op!r} does not support the "
+                f"{op_domain!r} domain.")
+        nm["operator"] = op
+        nm["params"] = _norm_params(op, m.get("params"), warnings, mid)
+        nm["target"]["features"] = _norm_features(
+            target.get("features"), warnings, mid)
+        if domain == "weight":
+            param = str(target.get("param", "weight"))
+            if param not in ("weight", "bias", "both"):
+                warnings.append(f"{mid}: unknown param {param!r}; using 'weight'.")
+                param = "weight"
+            nm["target"]["param"] = param
+            slot = target.get("weight_slot")
+            nm["target"]["weight_slot"] = str(slot) if slot else None
+
+    # Step gating applies to anything inside the sampling loop.
+    if stage in ("dit", "latent") and domain != "structure":
+        steps = m.get("steps") if isinstance(m.get("steps"), dict) else {}
+        s_from = _clamp(float(steps.get("from", 0.0)), 0.0, 1.0)
+        s_to = _clamp(float(steps.get("to", 1.0)), 0.0, 1.0)
+        if s_to < s_from:
+            s_from, s_to = s_to, s_from
+        nm["steps"] = {"from": s_from, "to": s_to}
+
+    return nm
 
 
 # --- Break mode: training-bend config --------------------------------------
@@ -230,6 +246,15 @@ def validate_train_bend(raw: Any) -> Tuple[Dict[str, Any], List[str]]:
     """Normalize a Break-mode bend config (see train_bend.py's docstring).
     Unknown keys are dropped with a warning; values are clamped to sane
     creative ranges. An empty result means no interventions."""
+    try:
+        return _validate_train_bend(raw)
+    except PatchError:
+        raise
+    except (TypeError, ValueError) as e:
+        raise PatchError(f"malformed value ({e}).")
+
+
+def _validate_train_bend(raw: Any) -> Tuple[Dict[str, Any], List[str]]:
     if not isinstance(raw, dict):
         raise PatchError("bend must be a JSON object.")
     warnings: List[str] = []

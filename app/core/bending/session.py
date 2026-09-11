@@ -87,9 +87,15 @@ class BendSession:
         self._swapped_acts: List[Tuple[nn.Module, str, nn.Module]] = []
         self._mask_cache: Dict[Tuple[str, int], torch.Tensor] = {}
 
-        # Sampling-step gate state, fed by on_sampler_step().
+        # Sampling-step gate state, fed by on_sampler_step(). `_step` is the
+        # 0-based index of the step the model is currently computing.
         self._step = 0
         self._total_steps = 1
+        # Per-step modules (activation hooks, latent bends) and which of them
+        # actually acted — a step range that falls between the sampler's
+        # steps would otherwise be a silent no-op.
+        self._per_step_mods: Dict[str, Dict[str, Any]] = {}
+        self._fired: set = set()
 
         # One seeded CPU generator per session: patch seed drives every
         # stochastic op, so patch+seed reproduces bit-exactly.
@@ -115,7 +121,16 @@ class BendSession:
         """
         i = info.get("i")
         if isinstance(i, int):
-            self._step = i + 1
+            self._step = i
+        try:
+            self._bend_latent(info)
+        finally:
+            # The callback fires after step i's model call: every forward
+            # from here on belongs to step i+1.
+            if isinstance(i, int):
+                self._step = i + 1
+
+    def _bend_latent(self, info: Dict[str, Any]) -> None:
         if not self._latent_mods:
             return
         x = info.get("x")
@@ -131,6 +146,7 @@ class BendSession:
                 continue
             try:
                 cur = self._bend_tensor(cur, mod, "latent")
+                self._fired.add(mod["id"])
             except Exception as exc:                     # never kill the run
                 self._warn_once(f"latent bend {mod['id']} failed: {exc}")
         if cur is target:
@@ -141,7 +157,10 @@ class BendSession:
             x.add_(delta.to(x.dtype))
 
     def _progress(self) -> float:
-        return self._step / max(self._total_steps, 1)
+        """Normalized position of the current step: 0.0 on the first step,
+        1.0 on the last, so a step range of 90-100% always includes the
+        final step even on the 8-step distilled models."""
+        return min(1.0, self._step / max(self._total_steps - 1, 1))
 
     def _warn_once(self, msg: str) -> None:
         if msg not in self.warnings:
@@ -165,6 +184,7 @@ class BendSession:
                     self._apply_structure(mod)
                 elif domain == "latent":
                     self._latent_mods.append(mod)
+                    self._per_step_mods[mod["id"]] = mod
                 elif domain == "weight":
                     self._apply_weight(mod)
                 else:
@@ -177,27 +197,48 @@ class BendSession:
 
     # ---------------------------------------------------------------- remove
     def remove(self) -> None:
-        """Idempotent full teardown — the model must come back pristine."""
+        """Idempotent full teardown — the model must come back pristine.
+
+        Restores run in reverse (LIFO): when two modules touch the same
+        parameter or layer list, the later backup holds the *already bent*
+        state, so it must be undone first and the earliest backup — the
+        pristine one — written last."""
+        if self._step > 0:                     # sampling ran: report no-ops
+            for mid, mod in self._per_step_mods.items():
+                if mid in self._fired:
+                    continue
+                gate = mod.get("steps")
+                if gate is not None and (gate["from"] > 0.0 or gate["to"] < 1.0):
+                    self._warn_once(
+                        f"{mid}: never acted — its step range "
+                        f"({gate['from']:.0%}–{gate['to']:.0%}) falls between "
+                        f"the {self._total_steps} sampling steps; widen it.")
+                else:
+                    self._warn_once(
+                        f"{mid}: never acted — its target didn't run "
+                        f"(bypassed by a structural module?).")
+        self._per_step_mods = {}
+        self._fired = set()
         for h in self._hooks:
             try:
                 h.remove()
             except Exception:
                 pass
         self._hooks = []
-        for param, backup in self._saved_params:
+        for param, backup in reversed(self._saved_params):
             try:
                 with torch.no_grad():
                     param.data.copy_(backup)
             except Exception as exc:
                 logger.error(f"weight restore failed: {exc}")
         self._saved_params = []
-        for transformer, orig in self._layers_backup:
+        for transformer, orig in reversed(self._layers_backup):
             try:
                 transformer.layers = orig
             except Exception as exc:
                 logger.error(f"layer-order restore failed: {exc}")
         self._layers_backup = []
-        for parent, attr, orig in self._swapped_acts:
+        for parent, attr, orig in reversed(self._swapped_acts):
             try:
                 setattr(parent, attr, orig)
             except Exception as exc:
@@ -219,17 +260,20 @@ class BendSession:
         elif stage == "timestep":
             paths = ["model.model.to_timestep_embed"]
         elif stage == "dit":
-            layers = resolve_module_path(self.inner, "model.model.transformer.layers")
-            if layers is None:
+            transformer = self._transformer()
+            if transformer is None or not hasattr(transformer, "layers"):
                 self._warn_once("DiT transformer.layers not found on this model.")
                 return []
+            layers = self._pristine_layers(transformer)
             n = len(layers)
             idxs = range(n) if blocks is None else [b for b in blocks if b < n]
             skipped = [] if blocks is None else [b for b in blocks if b >= n]
             if skipped:
                 self._warn_once(
                     f"{mod['id']}: DiT blocks {skipped} beyond depth {n}; skipped.")
-            paths = [f"model.model.transformer.layers.{i}" for i in idxs]
+            # Resolved from the pristine list, not by path: an earlier
+            # structural module may have rebuilt transformer.layers.
+            return [(f"model.model.transformer.layers.{i}", layers[i]) for i in idxs]
         elif stage == "decoder":
             layers = resolve_module_path(self.inner, "pretransform.model.decoder.layers")
             if layers is None:
@@ -356,11 +400,14 @@ class BendSession:
                     if isinstance(output, tuple):
                         if not output or not torch.is_tensor(output[0]):
                             return output
-                        return (self._bend_tensor(output[0], entry, stage, tag=path),
+                        bent = (self._bend_tensor(output[0], entry, stage, tag=path),
                                 *output[1:])
-                    if not torch.is_tensor(output):
+                    elif torch.is_tensor(output):
+                        bent = self._bend_tensor(output, entry, stage, tag=path)
+                    else:
                         return output
-                    return self._bend_tensor(output, entry, stage, tag=path)
+                    self._fired.add(entry["id"])
+                    return bent
                 except Exception as exc:
                     self._warn_once(
                         f"activation bend {entry['id']} failed mid-run: {exc}")
@@ -369,6 +416,8 @@ class BendSession:
 
         for path, m in targets:
             self._hooks.append(m.register_forward_hook(make_hook(mod, path)))
+        if targets:
+            self._per_step_mods[mod["id"]] = mod
 
     # ---------------------------------------------------------------- weight
     def _iter_bendable_params(self, module: nn.Module, which: str):
@@ -420,6 +469,13 @@ class BendSession:
     def _transformer(self):
         return resolve_module_path(self.inner, "model.model.transformer")
 
+    def _pristine_layers(self, transformer):
+        """The transformer's own block list, before any structural module
+        in this patch rebuilt it. Block indices in a patch always mean this
+        numbering — the one the UI's block grid shows — so a bypass earlier
+        in the rack never shifts which blocks later modules hit."""
+        return self._layers_backup[0][1] if self._layers_backup else transformer.layers
+
     def _apply_structure(self, mod: Dict[str, Any]) -> None:
         transformer = self._transformer()
         if transformer is None or not hasattr(transformer, "layers"):
@@ -432,38 +488,50 @@ class BendSession:
             self._swap_nonlinearity(mod, transformer)
             return
 
-        orig = transformer.layers
-        n = len(orig)
+        # Structural modules chain: each rebuilds the current list (so a
+        # bypass followed by a repeat composes), selecting blocks by
+        # identity from the pristine numbering.
+        pristine = self._pristine_layers(transformer)
+        current = transformer.layers
+        n = len(pristine)
         blocks = mod["target"].get("blocks")
-        selected = set(range(n)) if blocks is None else {b for b in blocks if b < n}
+        idxs = range(n) if blocks is None else [b for b in blocks if b < n]
+        selected = {id(pristine[i]) for i in idxs}
 
         if stype == "bypass":
-            new_list = [orig[i] for i in range(n) if i not in selected]
+            new_list = [m for m in current if id(m) not in selected]
             if not new_list:
                 self._warn_once(f"{mod['id']}: bypass would remove every block; skipped.")
                 return
         elif stype == "repeat":
             times = struct.get("times", 2)
             new_list = []
-            for i in range(n):
-                new_list.append(orig[i])
-                if i in selected:
-                    new_list.extend(orig[i] for _ in range(times - 1))
+            for m in current:
+                new_list.append(m)
+                if id(m) in selected:
+                    new_list.extend(m for _ in range(times - 1))
         else:  # reorder — explicit full or partial order of block indices
-            order = [i for i in struct.get("order", []) if 0 <= i < n]
-            if not order:
+            present = {id(m) for m in current}
+            new_list = [pristine[i] for i in struct.get("order", [])
+                        if 0 <= i < n and id(pristine[i]) in present]
+            if not new_list:
                 self._warn_once(f"{mod['id']}: reorder order resolves to nothing; skipped.")
                 return
-            new_list = [orig[i] for i in order]
+            listed = len({id(m) for m in new_list})
+            if listed < len(present):
+                # E.g. a reversed order built for a shallower model.
+                self._warn_once(
+                    f"{mod['id']}: reorder lists {listed} of {len(present)} "
+                    f"blocks; the unlisted ones are skipped.")
 
-        self._layers_backup.append((transformer, orig))
+        self._layers_backup.append((transformer, current))
         transformer.layers = nn.ModuleList(new_list)
 
     def _swap_nonlinearity(self, mod: Dict[str, Any], transformer) -> None:
         factory = _SWAP_FN_FACTORY.get(mod["structure"].get("fn", "sin"))
         if factory is None:
             return
-        orig_layers = transformer.layers
+        orig_layers = self._pristine_layers(transformer)
         n = len(orig_layers)
         blocks = mod["target"].get("blocks")
         selected = range(n) if blocks is None else [b for b in blocks if b < n]

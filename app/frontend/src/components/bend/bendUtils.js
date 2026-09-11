@@ -91,12 +91,19 @@ function randomParams(opSpec, spread) {
 
 /**
  * The Chance button: modify and listen, no hypothesis required.
- * Returns a fresh list of modules at the given intensity.
+ * Returns a fresh list of modules at the given intensity. With `stage`,
+ * returns exactly one module rolled for that stage (the per-card re-roll) —
+ * domain, blocks and step range are only valid for the stage they were
+ * rolled against, so a module can't be re-rolled on one stage and moved.
  */
-export function chancePatch(registry, level = 'bend') {
+export function chancePatch(registry, level = 'bend', { stage: onlyStage = null } = {}) {
     const cfg = CHANCE_LEVELS[level] || CHANCE_LEVELS.bend;
-    const stages = (registry?.stages || []).filter(s => s.stage !== 'timestep' || Math.random() < 0.3);
-    const count = Math.round(rand(cfg.modules[0], cfg.modules[1]));
+    const allStages = registry?.stages || [];
+    const stages = onlyStage
+        ? allStages.filter(s => s.stage === onlyStage)
+        : allStages.filter(s => s.stage !== 'timestep' || Math.random() < 0.3);
+    if (!stages.length) return [];
+    const count = onlyStage ? 1 : Math.round(rand(cfg.modules[0], cfg.modules[1]));
     const modules = [];
     for (let i = 0; i < count; i++) {
         const stageInfo = pick(stages);
@@ -140,14 +147,16 @@ export function chancePatch(registry, level = 'bend') {
     return modules;
 }
 
-/** Assemble the request patch from rack state. */
-export function buildPatch(modules, modelId, seed, name = '') {
+/** Assemble the request patch from rack state. Generation sends only the
+ *  enabled modules; presets keep disabled ones (`keepDisabled`) so a saved
+ *  rack comes back exactly as it was, switches included. */
+export function buildPatch(modules, modelId, seed, name = '', { keepDisabled = false } = {}) {
     return {
         version: 1,
         name,
         model_id: modelId || '',
         seed: Number.isFinite(seed) ? seed : 0,
-        modules: modules.filter(m => m.enabled !== false),
+        modules: keepDisabled ? modules : modules.filter(m => m.enabled !== false),
     };
 }
 

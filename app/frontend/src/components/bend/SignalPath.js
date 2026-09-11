@@ -16,6 +16,7 @@ import { STAGE_ORDER, STAGE_SHORT } from './bendUtils';
 export default function SignalPath({ registry, modules, onAddModule }) {
     const theme = useTheme();
     const accent = theme.palette.bend?.main || '#AEB9C4';
+    const accentInk = theme.palette.bend?.contrastText || '#0E1318';
 
     const countFor = (stage) =>
         modules.filter(m => m.target?.stage === stage && m.enabled !== false).length;
@@ -58,7 +59,7 @@ export default function SignalPath({ registry, modules, onAddModule }) {
                             <Badge
                                 badgeContent={n || null}
                                 sx={{ '& .MuiBadge-badge': {
-                                    backgroundColor: accent, color: '#1A0F00',
+                                    backgroundColor: accent, color: accentInk,
                                     fontWeight: 600,
                                 } }}
                             >

@@ -132,14 +132,17 @@ export default function BreakPanel({ defaultBase }) {
     const [bendScale, setBendScale] = useState(1.0);
     const [bendNoise, setBendNoise] = useState(0.0);
 
-    useEffect(() => {
-        api.get('/api/projects')
-            .then(({ data }) => setProjects(data.projects || []))
-            .catch(() => {});
+    const refreshLoras = useCallback(() => {
         api.get('/api/loras')
             .then(({ data }) => setLoras(data.loras || []))
             .catch(() => {});
     }, []);
+    useEffect(() => {
+        api.get('/api/projects')
+            .then(({ data }) => setProjects(data.projects || []))
+            .catch(() => {});
+        refreshLoras();
+    }, [refreshLoras]);
 
     const applyRecipe = (key) => {
         setRecipe(key);
@@ -172,6 +175,18 @@ export default function BreakPanel({ defaultBase }) {
     };
     useEffect(() => stopPolling, []);
 
+    // Break unmounts when the user flips to Bend or leaves the tab; pick a
+    // run that is still going back up on return instead of offering to
+    // start a second one.
+    useEffect(() => {
+        api.get('/api/training-status')
+            .then(({ data }) => {
+                if (data?.is_training) { setStatus(data); startPolling(); }
+            })
+            .catch(() => {});
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const startPolling = () => {
         stopPolling();
         pollRef.current = setInterval(async () => {
@@ -179,7 +194,10 @@ export default function BreakPanel({ defaultBase }) {
                 const { data } = await api.get('/api/training-status');
                 setStatus(data);
                 setHistory(h => [...h.slice(-400), data]);
-                if (!data.is_training) stopPolling();
+                if (!data.is_training) {
+                    stopPolling();
+                    refreshLoras();     // the run's checkpoints, for the Adapter Lab
+                }
             } catch { /* keep polling */ }
         }, 2000);
     };
@@ -234,8 +252,7 @@ export default function BreakPanel({ defaultBase }) {
             const { data } = await api.post('/api/bend/lora', payload);
             setLabMsg(`Saved: ${data.output?.split('/').slice(-3).join('/')}${
                 data.warnings?.length ? ` (${data.warnings.length} keys kept from A)` : ''}`);
-            const r = await api.get('/api/loras');
-            setLoras(r.data.loras || []);
+            refreshLoras();
         } catch (err) {
             setLabMsg(err.response?.data?.error || String(err.message));
         } finally {
@@ -250,8 +267,8 @@ export default function BreakPanel({ defaultBase }) {
             <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
                 Break trains adapters wrong on purpose — underfit them, overfit
                 them, corrupt the lessons. Runs use the same pipeline and
-                appear in the same LoRA picker as normal training, tagged
-                “bent”.
+                appear in the same LoRA picker as normal training; runs with
+                bent-backprop interventions are tagged “bent”.
             </Typography>
 
             {/* recipes */}

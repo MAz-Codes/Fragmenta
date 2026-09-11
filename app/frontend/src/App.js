@@ -122,6 +122,10 @@ function App() {
     // while the panel is invisible (cross-fade between pages).
     const [displayedTab, setDisplayedTab] = useState(readStoredTab);
     const TAB_FADE_MS = 180;
+    // The Bend chunk loads on first visit, then stays mounted so a tab
+    // switch doesn't discard the A/B takes or an in-flight generation.
+    const [bendVisited, setBendVisited] = useState(false);
+    useEffect(() => { if (displayedTab === 3) setBendVisited(true); }, [displayedTab]);
 
     // Persist the active tab so a reload returns the user to it.
     useEffect(() => {
@@ -2653,15 +2657,18 @@ function App() {
                                 </Grid>
                             </TabPanel>
 
-                            {/* Bend Tab — lazy chunk; mounts on first visit. */}
-                            <TabPanel value={displayedTab} index={3}>
-                                <Suspense fallback={
-                                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-                                        <CircularProgress size={28} />
-                                    </Box>
-                                }>
-                                    <BendPanel models={baseModels} />
-                                </Suspense>
+                            {/* Bend Tab — lazy chunk; mounts on first visit, kept after. */}
+                            <TabPanel value={displayedTab} index={3} keepMounted>
+                                {(bendVisited || displayedTab === 3) && (
+                                    <Suspense fallback={
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                                            <CircularProgress size={28} />
+                                        </Box>
+                                    }>
+                                        <BendPanel models={baseModels} active={displayedTab === 3}
+                                                   isDocker={isDocker} />
+                                    </Suspense>
+                                )}
                             </TabPanel>
 
                             <TabPanel value={displayedTab} index={4} keepMounted>
