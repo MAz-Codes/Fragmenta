@@ -1092,7 +1092,7 @@ export default function PerformanceChannel({
                                 displayEmpty
                                 sx={{
                                     ...styles.channelPillControl, flex: 1, minWidth: 0,
-                                    ...(bendPreset ? { color: "prism.main" } : {}),
+                                    ...(bendPreset ? { color: "bend.main" } : {}),
                                 }}
                                 renderValue={(v) => (v ? `Bend · ${v}` : 'No bend')}
                             >
@@ -1123,8 +1123,8 @@ export default function PerformanceChannel({
                                     step={0.01}
                                     disabled={!bendPreset}
                                     onChange={(_, v) => setBendAmount(v)}
-                                    color="prism"
-                                    sx={{ py: 1, color: 'prism.main', ...(bendPreset ? {} : { opacity: 0.3 }) }}
+                                    color="bend"
+                                    sx={{ py: 1, color: 'bend.main', ...(bendPreset ? {} : { opacity: 0.3 }) }}
                                 />
                             </Tooltip>
                         </MidiMappable>

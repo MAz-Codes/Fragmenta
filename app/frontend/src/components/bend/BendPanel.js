@@ -45,7 +45,7 @@ const readStore = () => {
 
 export default function BendPanel({ models }) {
     const theme = useTheme();
-    const prism = theme.palette.prism?.main || '#C27CF2';
+    const accent = theme.palette.bend?.main || '#AEB9C4';
     const stored = useMemo(readStore, []);
 
     const [mode, setMode] = useState(stored.mode || 'bend');
@@ -359,7 +359,7 @@ export default function BendPanel({ models }) {
                         ))}
                     </Menu>
                     <Tooltip title={TIPS.bend.chance}>
-                        <Button size="small" variant="contained" color="prism"
+                        <Button size="small" variant="contained" color="bend"
                                 startIcon={<DicesIcon size={14} />}
                                 onClick={(e) => setChanceAnchor(e.currentTarget)}>
                             Chance
@@ -465,7 +465,7 @@ export default function BendPanel({ models }) {
                             </Tooltip>
                             <Tooltip title={TIPS.bend.generate}>
                                 <span>
-                                    <Button variant="contained" color="prism"
+                                    <Button variant="contained" color="bend"
                                             disabled={!activeCount || !modelId}
                                             onClick={() => generate(true)}>
                                         Generate bent
@@ -496,8 +496,8 @@ export default function BendPanel({ models }) {
                     <Box sx={{ display: 'grid', gap: 1.5, mb: 1.5,
                                gridTemplateColumns: { xs: '1fr', sm: bentAudio && cleanAudio ? '1fr 1fr' : '1fr' } }}>
                         {bentAudio && (
-                            <Box sx={{ p: 1.5, borderRadius: 2.5, border: `1px solid ${prism}66` }}>
-                                <Typography variant="caption" sx={{ color: prism, display: 'block', mb: 0.5 }}>
+                            <Box sx={{ p: 1.5, borderRadius: 2.5, border: `1px solid ${accent}66` }}>
+                                <Typography variant="caption" sx={{ color: accent, display: 'block', mb: 0.5 }}>
                                     BENT · seed {bentAudio.seed}
                                 </Typography>
                                 <audio controls src={bentAudio.url} style={{ width: '100%', height: 36 }} />
