@@ -16,7 +16,7 @@ import { defaultParams, describeModule } from './bendUtils';
  */
 
 /** Compact block-grid selector for DiT / decoder stages. */
-function BlockGrid({ count, value, onChange, prism }) {
+function BlockGrid({ count, value, onChange, accent }) {
     const selected = useMemo(
         () => new Set(value === null || value === undefined ? [] : value),
         [value]);
@@ -41,11 +41,11 @@ function BlockGrid({ count, value, onChange, prism }) {
                                 fontSize: '0.55rem', cursor: 'pointer', userSelect: 'none',
                                 fontFamily: 'inherit',
                                 border: '1px solid',
-                                borderColor: on ? prism : 'divider',
-                                backgroundColor: on ? `${prism}33` : 'transparent',
-                                color: on ? prism : 'text.disabled',
+                                borderColor: on ? accent : 'divider',
+                                backgroundColor: on ? `${accent}33` : 'transparent',
+                                color: on ? accent : 'text.disabled',
                                 transition: 'all 120ms ease',
-                                '&:hover': { borderColor: prism },
+                                '&:hover': { borderColor: accent },
                             }}
                         >
                             {i}
@@ -77,7 +77,7 @@ function BlockGrid({ count, value, onChange, prism }) {
  *  as an abstract bend curve over labelled index axes — deliberately NOT
  *  waveform-styled (Brave: weight arrays that look like waveforms confuse
  *  musicians). Y range 0..2 (1 = unity for scale mode). */
-function CurveEditor({ points, onChange, prism }) {
+function CurveEditor({ points, onChange, accent }) {
     const N = 24;
     const H = 64;
     const ref = useRef(null);
@@ -123,7 +123,7 @@ function CurveEditor({ points, onChange, prism }) {
                      style={{ display: 'block' }}>
                     <line x1="0" y1={H / 2} x2="100" y2={H / 2}
                           stroke="currentColor" strokeOpacity="0.15" strokeDasharray="2 3" />
-                    <path d={path} fill="none" stroke={prism} strokeWidth="1.6"
+                    <path d={path} fill="none" stroke={accent} strokeWidth="1.6"
                           vectorEffect="non-scaling-stroke" />
                 </svg>
             </Box>
@@ -143,7 +143,7 @@ function CurveEditor({ points, onChange, prism }) {
     );
 }
 
-function ParamControls({ opSpec, params, onChange, prism }) {
+function ParamControls({ opSpec, params, onChange, accent }) {
     if (!opSpec) return null;
     return (
         <>
@@ -176,7 +176,7 @@ function ParamControls({ opSpec, params, onChange, prism }) {
                 if (desc.type === 'curve') {
                     return <CurveEditor key={name} points={value}
                                         onChange={(pts) => onChange({ ...params, [name]: pts })}
-                                        prism={prism} />;
+                                        accent={accent} />;
                 }
                 return (
                     <Box key={name} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -207,7 +207,7 @@ export default function BendModuleCard({
     onMoveUp, onMoveDown, isFirst, isLast,
 }) {
     const theme = useTheme();
-    const prism = theme.palette.prism?.main || '#C27CF2';
+    const accent = theme.palette.bend?.main || '#AEB9C4';
     const stageInfo = (registry?.stages || []).find(s => s.stage === mod.target?.stage);
     const domain = mod.target?.domain || 'activation';
     const isStructure = domain === 'structure';
@@ -225,8 +225,8 @@ export default function BendModuleCard({
         <Box sx={{
             borderRadius: 2.5, p: { xs: 1.25, sm: 1.75 }, mb: 1.25,
             border: '1px solid',
-            borderColor: enabled ? `${prism}66` : 'divider',
-            backgroundColor: enabled ? `${prism}0A` : 'transparent',
+            borderColor: enabled ? `${accent}66` : 'divider',
+            backgroundColor: enabled ? `${accent}0A` : 'transparent',
             opacity: enabled ? 1 : 0.55,
             transition: 'all 220ms ease',
         }}>
@@ -236,7 +236,7 @@ export default function BendModuleCard({
                         onChange={(e) => set({ enabled: e.target.checked })} />
                 <Typography variant="subtitle2" sx={{
                     flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap', color: enabled ? prism : 'text.secondary',
+                    whiteSpace: 'nowrap', color: enabled ? accent : 'text.secondary',
                     textTransform: 'none', fontSize: '0.8rem',
                 }}>
                     {describeModule(mod, registry)}
@@ -297,7 +297,7 @@ export default function BendModuleCard({
                             count={stageInfo.count || 4}
                             value={mod.target?.blocks}
                             onChange={(blocks) => setTarget({ blocks })}
-                            prism={prism}
+                            accent={accent}
                         />
                     )}
 
@@ -460,7 +460,7 @@ export default function BendModuleCard({
                                 ))}
                             </Select>
                             <ParamControls opSpec={opSpec} params={mod.params}
-                                           onChange={(params) => set({ params })} prism={prism} />
+                                           onChange={(params) => set({ params })} accent={accent} />
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                                 <Tooltip title="Dry/wet: crossfade between the original signal and the bent one.">
                                     <Typography variant="caption" color="textSecondary"
@@ -469,7 +469,7 @@ export default function BendModuleCard({
                                 <Slider size="small" value={mod.mix ?? 1}
                                         min={0} max={1} step={0.01}
                                         onChange={(_, v) => set({ mix: v })}
-                                        valueLabelDisplay="auto" color="prism" sx={{ color: 'prism.main' }} />
+                                        valueLabelDisplay="auto" color="bend" sx={{ color: 'bend.main' }} />
                                 <Typography variant="caption" sx={{ minWidth: 34, textAlign: 'right' }}>
                                     {Math.round((mod.mix ?? 1) * 100)}%
                                 </Typography>

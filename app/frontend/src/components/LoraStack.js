@@ -253,7 +253,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                                                 {/* Trained in Break mode or made in the Adapter Lab. */}
                                                                 {l.bent && (
                                                                     <Chip size="small" label="bent" variant="outlined"
-                                                                          sx={{ height: 16, fontSize: 9, color: 'prism.main', borderColor: 'prism.main' }} />
+                                                                          sx={{ height: 16, fontSize: 9, color: 'bend.main', borderColor: 'bend.main' }} />
                                                                 )}
                                                             </Stack>
                                                         </Box>

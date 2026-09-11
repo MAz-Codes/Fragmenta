@@ -8,14 +8,14 @@ import { STAGE_ORDER, STAGE_SHORT } from './bendUtils';
  * SignalPath — the model drawn as a horizontal pipeline the user patches
  * into. Always visible, so the user always knows WHERE they are in the
  * network (Brave's user study: people got lost without a location
- * indicator). Stages with attached modules glow with the prism accent —
+ * indicator). Stages with attached modules glow with the bend accent —
  * the app-wide "something is armed/active" color.
  *
  *   Prompt → [Text enc] → [Cond ●] → [DiT ▦] → [Sampler] → [VAE] → Audio
  */
 export default function SignalPath({ registry, modules, onAddModule }) {
     const theme = useTheme();
-    const prism = theme.palette.prism?.main || '#C27CF2';
+    const accent = theme.palette.bend?.main || '#AEB9C4';
 
     const countFor = (stage) =>
         modules.filter(m => m.target?.stage === stage && m.enabled !== false).length;
@@ -58,7 +58,7 @@ export default function SignalPath({ registry, modules, onAddModule }) {
                             <Badge
                                 badgeContent={n || null}
                                 sx={{ '& .MuiBadge-badge': {
-                                    backgroundColor: prism, color: '#1A0F00',
+                                    backgroundColor: accent, color: '#1A0F00',
                                     fontWeight: 600,
                                 } }}
                             >
@@ -68,18 +68,18 @@ export default function SignalPath({ registry, modules, onAddModule }) {
                                         flexDirection: 'column', px: 1.25, py: 0.75,
                                         borderRadius: 2.5, minWidth: 64,
                                         border: '1px solid',
-                                        borderColor: active ? prism : 'divider',
-                                        boxShadow: active ? `0 0 12px ${prism}55, inset 0 0 6px ${prism}22` : 'none',
+                                        borderColor: active ? accent : 'divider',
+                                        boxShadow: active ? `0 0 12px ${accent}55, inset 0 0 6px ${accent}22` : 'none',
                                         transition: 'border-color 220ms ease, box-shadow 220ms ease',
                                         '&:hover': {
-                                            borderColor: active ? prism : 'primary.main',
+                                            borderColor: active ? accent : 'primary.main',
                                             '& .bend-add-icon': { opacity: 1 },
                                         },
                                     }}
                                 >
                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                         <Typography variant="subtitle2" sx={{
-                                            color: active ? prism : 'text.primary',
+                                            color: active ? accent : 'text.primary',
                                             lineHeight: 1.3, textTransform: 'none',
                                             fontSize: '0.85rem',
                                         }}>
