@@ -171,12 +171,25 @@ export class ChannelStrip {
         this.sourceFade = null;  // per-source fade gain — see stop() for why
         this.isPlaying = false;
         this.isLooping = false;
-        // DJ-style in/out points, normalized 0..1 over the buffer. Playback
-        // starts at regionStart; loops cycle [start, end); one-shots stop at
-        // end. Reset to full on every new buffer (a region picked for one
-        // clip is meaningless on different audio).
+        // DJ-style in/out points, normalized 0..1 over the buffer. Loops cycle
+        // [start, end); one-shots stop at end. Reset to full on every new
+        // buffer (a region picked for one clip is meaningless on different
+        // audio).
         this.regionStart = 0;
         this.regionEnd = 1;
+        // DJ cue point, normalized 0..1 — where the FIRST pass (and every
+        // retrigger) enters the buffer. null = coincident with regionStart,
+        // i.e. the pre-cue-marker behaviour. Constrained to
+        // [regionStart, regionEnd): the cue drops into the loop, it never
+        // precedes it, so the start offset always lands inside the loop
+        // bounds where Web Audio's behaviour is unambiguous.
+        this.launchStart = null;
+        // Playhead projection. Web Audio exposes no read cursor, so we record
+        // when the live source starts and where in the buffer it entered, then
+        // project forward from ctx.currentTime (see getPlayPosition). Rebased
+        // whenever the loop bounds move under a playing source.
+        this._startedAt = null;
+        this._startOffset = 0;
         this.isMuted = false;
         this.isSoloed = false;
 
@@ -263,6 +276,7 @@ export class ChannelStrip {
         this.buffer = await this.ctx.decodeAudioData(arrayBuffer);
         this.regionStart = 0;
         this.regionEnd = 1;
+        this.launchStart = null;
     }
 
     /** Set the playable region (normalized 0..1). Applies to the next launch
@@ -273,13 +287,44 @@ export class ChannelStrip {
         const s = Math.min(Math.max(0, Number(startNorm) || 0), 1);
         const e = Math.min(Math.max(0, Number(endNorm) || 0), 1);
         if (!(e > s)) return;  // degenerate — keep the previous region
+        // Freeze the playhead against the OLD bounds before they move: the
+        // projection assumes one set of loop points for the whole trajectory,
+        // so retargeting a live loop has to restart that projection from here.
+        this._rebasePlayhead();
         this.regionStart = s;
         this.regionEnd = e;
+        // The cue lives inside the loop, so moving either bracket can evict
+        // it. Re-clamp rather than leave a cue pointing outside the bounds.
+        if (this.launchStart !== null) this.setLaunchStart(this.launchStart);
         if (this.source && this.source.loop && this.buffer) {
             const [rs, re] = this._regionSeconds();
             this.source.loopStart = rs;
             this.source.loopEnd = re;
         }
+    }
+
+    /** Minimum playable gap, normalized — 50 ms of audio (or 2% when nothing
+     *  is loaded). Mirrors PerformanceChannel's minTrimGap so the engine and
+     *  the drag handles agree on how tight a region may get. */
+    _minGapNorm() {
+        const dur = this.buffer ? this.buffer.duration : 0;
+        return dur > 0 ? Math.max(0.005, Math.min(0.5, 0.05 / dur)) : 0.02;
+    }
+
+    /** Set the cue point (normalized 0..1), or null to pin it back to the
+     *  region's in-point. Clamped into [regionStart, regionEnd - gap];
+     *  collapsing onto regionStart stores null so the cue re-couples to the
+     *  loop bracket instead of drifting alongside it. Applies to the next
+     *  launch only — the live source has already entered the buffer. */
+    setLaunchStart(norm) {
+        if (norm === null || norm === undefined || !Number.isFinite(Number(norm))) {
+            this.launchStart = null;
+            return;
+        }
+        const gap = this._minGapNorm();
+        const hi = this.regionEnd - gap;
+        const v = Math.min(Math.max(Number(norm), this.regionStart), Math.max(this.regionStart, hi));
+        this.launchStart = v <= this.regionStart ? null : v;
     }
 
     /** Current region in seconds, falling back to the full buffer when the
@@ -290,6 +335,50 @@ export class ChannelStrip {
         let re = this.regionEnd * dur;
         if (!(re > rs)) { rs = 0; re = dur; }
         return [rs, re];
+    }
+
+    /** Current playhead as a normalized 0..1 position in the buffer, or null
+     *  when nothing is sounding. Projected from the launch time rather than
+     *  read from the node — Web Audio has no cursor to read. A source
+     *  scheduled for a future boundary reports its entry point, so the
+     *  playhead parks at the cue until the launch actually lands. */
+    getPlayPosition() {
+        const dur = this.buffer ? this.buffer.duration : 0;
+        if (!this.isPlaying || this._startedAt === null || dur <= 0) return null;
+        const now = this.ctx.currentTime;
+        if (now < this._startedAt) return this._startOffset / dur;
+        const [rs, re] = this._regionSeconds();
+        let pos = this._startOffset + (now - this._startedAt);
+        if (this.isLooping) {
+            const len = re - rs;
+            if (len > 0 && pos >= re) pos = rs + ((pos - re) % len);
+        } else if (pos > re) {
+            return null;   // one-shot already past its out-point
+        }
+        return Math.min(1, Math.max(0, pos / dur));
+    }
+
+    /** Pin the projection to where the playhead is right now, so a later
+     *  change of loop bounds doesn't retroactively rewrite the trajectory. */
+    _rebasePlayhead() {
+        if (this._startedAt === null || !this.buffer) return;
+        const now = this.ctx.currentTime;
+        if (now < this._startedAt) return;   // still scheduled — nothing to rebase
+        const pos = this.getPlayPosition();
+        if (pos === null) return;
+        this._startOffset = pos * this.buffer.duration;
+        this._startedAt = now;
+    }
+
+    /** Where a launch enters the buffer, in seconds. Falls back to the
+     *  region's in-point when no cue is set or the cue sits outside the
+     *  current region (which setRegion normally prevents, but a stale
+     *  restored value could still land there). */
+    _launchSeconds() {
+        const [rs, re] = this._regionSeconds();
+        if (this.launchStart === null) return rs;
+        const ls = this.launchStart * (this.buffer ? this.buffer.duration : 0);
+        return (ls > rs && ls < re) ? ls : rs;
     }
 
     play(loop = this.isLooping, startTime = 0) {
@@ -312,20 +401,28 @@ export class ChannelStrip {
                 this.source = null;
                 this.sourceFade = null;
                 this.isPlaying = false;
+                this._startedAt = null;
             }
         };
 
-        // Start from the region's in-point at the scheduled (quantized)
-        // time. Loops cycle the region; one-shots stop at the out-point.
+        // Enter at the cue point at the scheduled (quantized) time, but loop
+        // the region: the first pass runs cue → out-point, then every repeat
+        // cycles in-point → out-point. Cue == in-point unless the user moved
+        // it. One-shots just play cue → out-point and stop.
         const [regionStart, regionEnd] = this._regionSeconds();
+        const launch = this._launchSeconds();
         if (loop) {
             src.loopStart = regionStart;
             src.loopEnd = regionEnd;
-            src.start(Math.max(0, startTime), regionStart);
+            src.start(Math.max(0, startTime), launch);
         } else {
-            src.start(Math.max(0, startTime), regionStart,
-                      Math.max(0.01, regionEnd - regionStart));
+            src.start(Math.max(0, startTime), launch,
+                      Math.max(0.01, regionEnd - launch));
         }
+        // `startTime` of 0 means "now"; anything in the past does too.
+        const at = Math.max(0, startTime);
+        this._startedAt = at > this.ctx.currentTime ? at : this.ctx.currentTime;
+        this._startOffset = launch;
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -378,16 +475,20 @@ export class ChannelStrip {
                 this.source = null;
                 this.sourceFade = null;
                 this.isPlaying = false;
+                this._startedAt = null;
             }
         };
         const [regionStart, regionEnd] = this._regionSeconds();
+        const launch = this._launchSeconds();
         if (loop) {
             src.loopStart = regionStart;
             src.loopEnd = regionEnd;
-            src.start(when, regionStart);
+            src.start(when, launch);
         } else {
-            src.start(when, regionStart, Math.max(0.01, regionEnd - regionStart));
+            src.start(when, launch, Math.max(0.01, regionEnd - launch));
         }
+        this._startedAt = when;
+        this._startOffset = launch;
         this.source = src;
         this.sourceFade = fadeGain;
         this.isPlaying = true;
@@ -421,6 +522,7 @@ export class ChannelStrip {
             this.sourceFade = null;
         }
         this.isPlaying = false;
+        this._startedAt = null;
     }
 
     setGain(value) { this.channelGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01); }
@@ -465,32 +567,60 @@ export class ChannelStrip {
         return peak;
     }
 
+    /** Draw the loaded buffer into `canvas`. One min/max column per CSS pixel
+     *  on a devicePixelRatio-scaled backing store — the approach AudioWaveform
+     *  (the Edit panel's canvas) uses, which is the highest-resolution
+     *  waveform in the app; the dataset bench's clip rows are themselves
+     *  bucketed to 80 server-side peaks. The old version bucketed to a fixed
+     *  80 bars into a 140 px backing store that CSS then stretched to the
+     *  strip's real width, which is what made these read as blurry blocks.
+     *  Sizing is derived from the element's layout box, so the caller must
+     *  redraw on resize (PerformanceChannel does, via ResizeObserver). */
     drawWaveform(canvas, color) {
         if (!canvas || !this.buffer) return;
-        const ctx2d = canvas.getContext('2d');
-        const w = canvas.width;
-        const h = canvas.height;
-        ctx2d.clearRect(0, 0, w, h);
-        const data = this.buffer.getChannelData(0);
-        // Fixed low resolution (80 buckets) rendered as bars — matches the
-        // dataset-page and Generated-Fragments waveforms.
-        const PEAK_COUNT = 80;
-        const bucket = Math.max(1, Math.floor(data.length / PEAK_COUNT));
-        const xStep = w / PEAK_COUNT;
-        const barW = Math.max(1, xStep - 1);
-        ctx2d.fillStyle = color || '#279FBB';
-        for (let i = 0; i < PEAK_COUNT; i++) {
-            let min = 1.0, max = -1.0;
-            const start = i * bucket;
-            const end = Math.min(data.length, start + bucket);
-            for (let j = start; j < end; j++) {
-                const v = data[j];
-                if (v < min) min = v;
-                if (v > max) max = v;
+        const cssW = canvas.clientWidth || canvas.width;
+        const cssH = canvas.clientHeight || canvas.height;
+        if (!(cssW > 0 && cssH > 0)) return;
+        const dpr = window.devicePixelRatio || 1;
+        // Assigning width/height also clears the canvas; only do it when the
+        // backing store is actually the wrong size, so repeated redraws at a
+        // steady size don't thrash the buffer.
+        const bw = Math.max(1, Math.round(cssW * dpr));
+        const bh = Math.max(1, Math.round(cssH * dpr));
+        if (canvas.width !== bw || canvas.height !== bh) {
+            canvas.width = bw;
+            canvas.height = bh;
+        }
+        const g = canvas.getContext('2d');
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.clearRect(0, 0, cssW, cssH);
+
+        // Faint centre line, so near-silent audio still shows its axis.
+        g.fillStyle = 'rgba(255, 255, 255, 0.06)';
+        g.fillRect(0, cssH / 2 - 0.5, cssW, 1);
+
+        // Mono-summed min/max per column. Stereo is averaged rather than
+        // taking channel 0 alone, so hard-panned material doesn't vanish.
+        const ch0 = this.buffer.getChannelData(0);
+        const ch1 = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : null;
+        const cols = Math.max(1, Math.floor(cssW));
+        const bucket = Math.max(1, Math.floor(ch0.length / cols));
+        const mid = cssH / 2;
+        const scale = (cssH - 2) / 2;
+        g.fillStyle = color || '#279FBB';
+        for (let i = 0; i < cols; i++) {
+            const s = i * bucket;
+            const e = Math.min(ch0.length, s + bucket);
+            if (s >= e) break;
+            let mn = 0, mx = 0;
+            for (let j = s; j < e; j++) {
+                const v = ch1 ? (ch0[j] + ch1[j]) * 0.5 : ch0[j];
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
             }
-            const yA = (1 + min) * 0.5 * h;
-            const yB = (1 + max) * 0.5 * h;
-            ctx2d.fillRect(i * xStep, yA, barW, Math.max(1, yB - yA));
+            const y0 = mid - mx * scale;
+            const y1 = mid - mn * scale;
+            g.fillRect(i, y0, 1, Math.max(1, y1 - y0));
         }
     }
 
