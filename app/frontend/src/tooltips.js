@@ -210,7 +210,7 @@ export const TIPS = {
         modeBend: 'Bend: intervene inside the frozen model while it generates — its activations, weights, latents and structure. Reversible, per-generation.',
         modeBreak: 'Break: train adapters wrong on purpose — underfit, overfit, corrupted lessons. Produces bent LoRA files.',
         model: 'The model to bend. The distilled Small models audition fastest (8 steps) — keep the modify→listen loop tight; bends carry over conceptually to the base models.',
-        chance: "Ghazala's anti-theory protocol as a button: randomize the rack and listen, no hypothesis required. Nudge is subtle, Break is not.",
+        chance: "Ghazala's anti-theory protocol as a button: randomize the rack and listen, no hypothesis required. Nudge is subtle, Snap is not.",
         unbend: 'Clear the rack. (The model itself is never left bent — every bend is applied for exactly one generation and fully removed.)',
         presets: 'Save the current rack as a named patch, or load one. A patch + seed reproduces a bent sound exactly — a bend saved is an instrument kept.',
         generate: 'Generate with the rack applied. The bend exists only for this generation; the fragment and its patch land in the Bending Log below.',

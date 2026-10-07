@@ -62,7 +62,7 @@ export function newModule(stage, registry, domain = null) {
 const CHANCE_LEVELS = {
     nudge: { modules: [1, 1], mixRange: [0.3, 0.6], paramSpread: 0.35, weightChance: 0.15, structureChance: 0.0 },
     bend:  { modules: [1, 2], mixRange: [0.5, 1.0], paramSpread: 0.7,  weightChance: 0.3,  structureChance: 0.15 },
-    break: { modules: [2, 3], mixRange: [0.8, 1.0], paramSpread: 1.0,  weightChance: 0.4,  structureChance: 0.3 },
+    snap:  { modules: [2, 3], mixRange: [0.8, 1.0], paramSpread: 1.0,  weightChance: 0.4,  structureChance: 0.3 },
 };
 
 const rand = (lo, hi) => lo + Math.random() * (hi - lo);

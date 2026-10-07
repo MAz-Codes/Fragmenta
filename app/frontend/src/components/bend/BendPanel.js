@@ -423,7 +423,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                           onClose={() => setChanceAnchor(null)}>
                         <MenuItem onClick={() => doChance('nudge')}>Nudge — one gentle bend</MenuItem>
                         <MenuItem onClick={() => doChance('bend')}>Bend — a couple, committed</MenuItem>
-                        <MenuItem onClick={() => doChance('break')}>Break — no hypothesis, all in</MenuItem>
+                        <MenuItem onClick={() => doChance('snap')}>Snap — no hypothesis, all in</MenuItem>
                     </Menu>
                     <Tooltip title={TIPS.bend.unbend}>
                         <Button size="small" variant="outlined" startIcon={<UnbendIcon size={14} />}
