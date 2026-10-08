@@ -4,7 +4,7 @@ import {
 } from '@mui/material';
 import {
     RotateCcw as RecallIcon, Trash2 as TrashIcon, Check as CheckIcon,
-    Pencil as PencilIcon,
+    Pencil as PencilIcon, Layers as LoraIcon,
 } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import api from '../../api';
@@ -17,7 +17,18 @@ import { describeModule } from './bendUtils';
  * into a reusable vocabulary. Any row recalls its full patch into the
  * rack.
  */
-export default function BendingLogPanel({ entries, registry, onRecall, onChanged }) {
+/** "models/fine_tuned/my_lora1/checkpoints/epoch=83-step=500.safetensors"
+ *  → "my_lora1 · ep 83": the run, and which checkpoint of it. */
+function loraLabel(path) {
+    const parts = String(path || '').split(/[\\/]/);
+    const file = parts[parts.length - 1] || '';
+    const i = parts.indexOf('fine_tuned');
+    const run = i >= 0 && parts[i + 1] ? parts[i + 1] : file.replace(/\.(safetensors|ckpt)$/i, '');
+    const ep = file.match(/epoch=(\d+)/);
+    return ep ? `${run} · ep ${ep[1]}` : run;
+}
+
+export default function BendingLogPanel({ entries, registry, onRecall, onChanged, showWiring = true }) {
     const [editing, setEditing] = useState(null);      // entry id
     const [draft, setDraft] = useState('');
 
@@ -56,10 +67,26 @@ export default function BendingLogPanel({ entries, registry, onRecall, onChanged
                 }}>
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.25 }}>
-                            {(e.patch?.modules || []).map((m, i) => (
+                            {/* Board finds stay unlabelled unless the wiring is shown. */}
+                            {e.patch?.probe && !showWiring ? (
+                                <Chip size="small" variant="outlined"
+                                      label={`board · ${e.patch.probe.pads.length} contact${e.patch.probe.pads.length === 1 ? '' : 's'}`}
+                                      sx={{ fontSize: '0.62rem', height: 20 }} />
+                            ) : (e.patch?.modules || []).map((m, i) => (
                                 <Chip key={i} size="small" variant="outlined"
                                       label={describeModule(m, registry)}
                                       sx={{ fontSize: '0.62rem', height: 20 }} />
+                            ))}
+                            {/* The adapters the bend ran on top of: the same bend
+                                sounds different without them. Strength 0 =
+                                a bypassed slot. */}
+                            {(e.loras || []).map((l, i) => (
+                                <Tooltip key={`lora${i}`} title={l.path}>
+                                    <Chip size="small" variant="outlined" color="secondary"
+                                          icon={<LoraIcon size={11} />}
+                                          label={`${loraLabel(l.path)} · ${l.strength ? `×${Number(l.strength).toFixed(2)}` : 'bypassed'}`}
+                                          sx={{ fontSize: '0.62rem', height: 20, '& .MuiChip-icon': { ml: '6px' } }} />
+                                </Tooltip>
                             ))}
                             <Typography variant="caption" sx={{ color: 'text.disabled', ml: 0.5 }}>
                                 seed {e.seed}{e.fragment ? ` · ${e.fragment}` : ''}

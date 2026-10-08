@@ -59,7 +59,8 @@ class BendLog:
     def append(self, *, model_id: str, patch: Dict[str, Any], prompt: str,
                seed: int, duration: float, steps: Optional[int],
                fragment: Optional[str],
-               warnings: Optional[List[str]] = None) -> str:
+               warnings: Optional[List[str]] = None,
+               loras: Optional[List[Dict[str, Any]]] = None) -> str:
         entry = {
             "id": uuid.uuid4().hex[:12],
             "ts": time.time(),
@@ -71,6 +72,9 @@ class BendLog:
             "steps": int(steps) if steps else None,
             "fragment": fragment,
             "warnings": list(warnings or []),
+            # A bend on top of adapters only sounds the same with them.
+            "loras": [{"path": str(l.get("path")), "strength": float(l.get("strength", 1.0))}
+                      for l in (loras or []) if isinstance(l, dict)],
             "note": "",
         }
         with self._lock:

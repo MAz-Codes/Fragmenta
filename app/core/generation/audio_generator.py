@@ -107,9 +107,33 @@ class GenerationStopped(Exception):
 # Bent output can be brutal — the first real test of a late-DiT scale bend
 # came back at an RMS ~0.5 dB below full scale. Bent generations (and only
 # those; clean output is never touched) are gain-reduced to this RMS
-# ceiling and soft-clipped below 0 dBFS. Reduce-only: quiet bends stay quiet.
+# ceiling and soft-clipped below 0 dBFS.
 _BEND_RMS_CEILING = 10 ** (-16 / 20)     # -16 dBFS
 _BEND_PEAK_CEILING = 10 ** (-1 / 20)     # -1 dBFS
+# Quiet bends are brought up toward where clean SA3 renders sit (measured
+# -16…-21 dBFS RMS), so an A/B compares the bend, not its loudness — a
+# quieter take always sounds worse. The boost is capped, so a bend that all
+# but silenced the music stays near-silent instead of pumping up its floor.
+_BEND_RMS_TARGET = 10 ** (-18 / 20)      # -18 dBFS
+_BEND_MAX_BOOST = 10 ** (12 / 20)        # +12 dB
+# A bend that "blew up": near full scale AND spectrally flat like noise.
+# Clean SA3 output sits around -16 dBFS RMS with a median spectral flatness
+# below ~0.37 (bright hi-hat-heavy material included); blown takes measured
+# -0.5…-5 dBFS at 0.44…0.74.
+_BLOWN_RMS = 10 ** (-8 / 20)             # -8 dBFS
+_BLOWN_FLATNESS = 0.42
+
+
+def _spectral_flatness(a: torch.Tensor) -> float:
+    """Median spectral flatness of the mono mix (0 = tonal, 1 = white noise)."""
+    mono = a.reshape(-1, a.shape[-1]).mean(0)
+    if mono.numel() < 4096:
+        return 0.0
+    spec = torch.stft(mono, n_fft=2048, hop_length=1024,
+                      window=torch.hann_window(2048, device=mono.device),
+                      return_complex=True).abs() + 1e-10
+    flat = torch.exp(torch.log(spec).mean(0)) / spec.mean(0)
+    return float(flat.median())
 
 
 def _bend_output_safety(audio: torch.Tensor, report: list) -> torch.Tensor:
@@ -121,10 +145,16 @@ def _bend_output_safety(audio: torch.Tensor, report: list) -> torch.Tensor:
         return a
     rms = float(a.pow(2).mean().sqrt())
     if rms > _BEND_RMS_CEILING:
+        blown = rms > _BLOWN_RMS and _spectral_flatness(a.cpu()) > _BLOWN_FLATNESS
         a = a * (_BEND_RMS_CEILING / rms)
         report.append(
+            "This bend blew up into noise — the model was pushed further than "
+            "it can recover from. Lower the dry/wet or try another contact."
+            if blown else
             f"Bent output was very loud ({20 * np.log10(rms):.1f} dBFS RMS); "
             f"level reduced to -16 dBFS for hearing safety.")
+    elif rms < _BEND_RMS_TARGET:
+        a = a * min(_BEND_RMS_TARGET / rms, _BEND_MAX_BOOST)
     # tanh is ~linear at low levels, so this only rounds off the peaks.
     return torch.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING
 

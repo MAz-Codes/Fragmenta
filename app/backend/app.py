@@ -768,6 +768,9 @@ def generate_audio():
                     steps=int(steps) if steps is not None else None,
                     fragment=output_path.name,
                     warnings=bend_report,
+                    # Project-relative, as the LoRA picker lists them, so a
+                    # recalled row shows its adapters selected.
+                    loras=[{**l, 'path': _project_relative(l['path'])} for l in loras],
                 )
             except Exception as exc:
                 logger.warning(f"Bending Log append failed: {exc}")
@@ -3503,6 +3506,13 @@ def midi_stream():
     resp.headers['Cache-Control'] = 'no-cache'
     resp.headers['X-Accel-Buffering'] = 'no'
     return resp
+
+
+def _project_relative(path: str) -> str:
+    try:
+        return str(Path(path).resolve().relative_to(get_config().project_root.resolve()))
+    except ValueError:
+        return path
 
 
 if __name__ == '__main__':

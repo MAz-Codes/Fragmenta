@@ -12,11 +12,14 @@ Routes:
     PATCH  /api/bend/log/<id>             set the sonic-result note
     DELETE /api/bend/log/<id>             remove one entry
     POST   /api/bend/lora                 bend / blend adapter files (Phase 2)
+    GET    /api/bend/boards/<model_id>    the Probe board's names (user's finds)
+    PUT    /api/bend/boards/<model_id>    save them
 """
 from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
@@ -44,6 +47,12 @@ def _bends_dir() -> Path:
 
 def _presets_dir() -> Path:
     d = _bends_dir() / "presets"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _boards_dir() -> Path:
+    d = _bends_dir() / "boards"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -124,6 +133,35 @@ def bend_presets_delete(name):
 
 # --- Bending Log ------------------------------------------------------------
 
+def _fill_loras(entries):
+    """Every entry's LoRAs, project-relative as the LoRA picker lists them.
+    Entries logged before the log recorded LoRAs get them from the
+    fragment's own sidecar, which has always recorded them."""
+    root = get_config().project_root.resolve()
+    out_dir = get_config().get_path("output")
+
+    def rel(path):
+        p = Path(str(path))
+        try:
+            return str(p.resolve().relative_to(root))
+        except ValueError:
+            return str(p)
+
+    for e in entries:
+        raw = e.get("loras")
+        if raw is None:
+            raw = []
+            if e.get("fragment"):
+                try:
+                    with open(out_dir / (e["fragment"] + ".json")) as fh:
+                        raw = json.load(fh).get("loras") or []
+                except (OSError, ValueError):
+                    pass
+        e["loras"] = [{"path": rel(l["path"]), "strength": float(l.get("strength", 1.0))}
+                      for l in raw if isinstance(l, dict) and l.get("path")]
+    return entries
+
+
 @bend_bp.route("/api/bend/log", methods=["GET"])
 def bend_log_list():
     model_id = (request.args.get("model_id") or "").strip() or None
@@ -131,7 +169,7 @@ def bend_log_list():
         limit = int(request.args.get("limit", 200))
     except ValueError:
         limit = 200
-    return jsonify({"entries": _log().list(model_id=model_id, limit=limit)})
+    return jsonify({"entries": _fill_loras(_log().list(model_id=model_id, limit=limit))})
 
 
 @bend_bp.route("/api/bend/log/<entry_id>", methods=["PATCH"])
@@ -196,3 +234,58 @@ def bend_lora_route():
     except Exception as e:
         logger.exception("LoRA bend failed")
         return jsonify({"error": f"LoRA bend failed: {e}"}), 500
+
+
+# --- Probe boards -----------------------------------------------------------
+# What each contact on the board does is fixed (bendUtils.padModule on the
+# client), so all that is stored is what the user found: the names they gave
+# contacts and wires after listening, one board per model. Plain JSON in
+# bends/boards/, readable and portable outside the app.
+
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_PAD_ID_RE = re.compile(r"^[a-z0-9._-]{1,32}$")
+_PAD_NAME_MAX = 60
+_MAX_PADS = 512
+
+
+def _board_file(model_id: str) -> Path:
+    return _boards_dir() / f"{model_id}.json"
+
+
+@bend_bp.route("/api/bend/boards/<model_id>", methods=["GET"])
+def bend_board_get(model_id):
+    if not _MODEL_ID_RE.match(model_id):
+        return jsonify({"error": "Bad model_id."}), 400
+    try:
+        with open(_board_file(model_id)) as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("pads"), dict):
+            return jsonify(data)
+    except (FileNotFoundError, ValueError):
+        pass
+    return jsonify({"model_id": model_id, "pads": {}})
+
+
+@bend_bp.route("/api/bend/boards/<model_id>", methods=["PUT"])
+def bend_board_put(model_id):
+    if not _MODEL_ID_RE.match(model_id):
+        return jsonify({"error": "Bad model_id."}), 400
+    raw = (request.json or {}).get("pads")
+    if not isinstance(raw, dict):
+        return jsonify({"error": "pads must be an object."}), 400
+    pads = {}
+    for pad_id, entry in list(raw.items())[:_MAX_PADS]:
+        name = str((entry or {}).get("name", "")).strip()[:_PAD_NAME_MAX] \
+            if isinstance(entry, dict) else ""
+        if _PAD_ID_RE.match(str(pad_id)) and name:
+            pads[str(pad_id)] = {"name": name}
+    board = {"model_id": model_id, "pads": pads, "updated": time.time()}
+    path = _board_file(model_id)
+    if not pads:
+        path.unlink(missing_ok=True)
+        return jsonify(board)
+    tmp = path.with_suffix(".json.tmp")
+    with open(tmp, "w") as fh:
+        json.dump(board, fh, indent=2)
+    tmp.replace(path)
+    return jsonify(board)

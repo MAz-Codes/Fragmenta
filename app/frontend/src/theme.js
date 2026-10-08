@@ -118,6 +118,36 @@ export const PERF_BTN_SHEEN = 'linear-gradient(135deg, rgba(255,255,255,0.22) 0%
 export const PERF_BTN_SHADOW = '0 1px 2px rgba(0,0,0,0.16), 0 2px 5px rgba(0,0,0,0.12)';
 export const PERF_BTN_SHADOW_HOVER = '0 2px 4px rgba(0,0,0,0.18), 0 4px 9px rgba(0,0,0,0.15)';
 
+// Bend → Probe board: the model drawn as a circuit board. Each stage is a
+// zone with its own hue, kept clear of the reserved accents (cyan primary,
+// warm amber wand actions, Titanium bend controls, secondary blue, the red
+// error); contrast ≥ 7:1 on the dark board and ≥ 4.6:1 on the light one.
+const BOARD_DARK = {
+    surface: '#17201D',            // dark solder-mask green-charcoal
+    grid: 'rgba(255,255,255,0.028)',
+    trace: 'rgba(205,220,212,0.16)',
+    cond: '#C29BFF',               // violet
+    timestep: '#8FA8FF',           // periwinkle
+    dit: '#62D9AE',                // mint — the main chip
+    latent: '#FF8CC6',             // pink
+    decoder: '#C3DC64',            // lime
+    // Jumper wires, like a kit of coloured hookup wire. Red is left out (a
+    // wire turns red only when alt/option-hover says it will be removed), and
+    // so is mint, which would vanish on the mint DiT zone.
+    wires: ['#EEF2F4', '#FFD84D', '#5FB4FF', '#C792FF', '#FF8FD1', '#B5E35A', '#9DAAB7'],
+};
+const BOARD_LIGHT = {
+    surface: '#EDF0E6',
+    grid: 'rgba(30,45,38,0.045)',
+    trace: 'rgba(30,45,38,0.18)',
+    cond: '#7A45C7',
+    timestep: '#3D5BC2',
+    dit: '#167A5A',
+    latent: '#B5367A',
+    decoder: '#56700C',
+    wires: ['#2F363B', '#7A5E00', '#1F6FC2', '#7A45C7', '#B5367A', '#56700C', '#56616D'],
+};
+
 // Base slider color — the saturated cyan.
 // Sliders now take their color from the root `color` (slots use currentColor),
 // so this is the default and any caller can recolor a slider via `color` in sx.
@@ -137,6 +167,7 @@ let theme = createTheme({
         info: { main: DARK.blue },
         warm: { main: DARK.warm, light: DARK.warmHi, dark: DARK.warmLo },
         bend: { main: DARK.bend, light: DARK.bendHi, dark: DARK.bendLo, contrastText: DARK.bendInk },
+        board: BOARD_DARK,
         night: { main: DARK.night },
     },
     shape: {
@@ -928,6 +959,7 @@ export const lightTheme = createTheme(theme, {
         info: { main: LIGHT.blue },
         warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
         bend: { main: LIGHT.bend, light: LIGHT.bendHi, dark: LIGHT.bendLo, contrastText: LIGHT.bendInk },
+        board: BOARD_LIGHT,
         night: { main: LIGHT.night },
     },
     components: {

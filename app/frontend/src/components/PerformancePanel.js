@@ -815,15 +815,17 @@ function PerformancePanelInner({
 
     // A channel's bend = its saved preset with every module's dry/wet scaled
     // by the channel's amount. Structural modules have no dry/wet — they are
-    // all-or-nothing, so they drop out below half amount. Null = clean.
+    // all-or-nothing, so they drop out below half amount — except jumpers,
+    // which cross-fade like any other bend. Null = clean.
     const bendPatchFor = (presetName, amount) => {
         const preset = bendPresets.find(p => p.name === presetName);
         const a = Math.max(0, Math.min(1, Number(amount) || 0));
         if (!preset?.patch?.modules?.length || a === 0) return null;
+        const allOrNothing = m => m.target?.domain === 'structure' && m.structure?.type !== 'jumper';
         const modules = preset.patch.modules
             .filter(m => m.enabled !== false)
-            .filter(m => m.target?.domain !== 'structure' || a >= 0.5)
-            .map(m => (m.target?.domain === 'structure' ? m : { ...m, mix: (m.mix ?? 1) * a }));
+            .filter(m => !allOrNothing(m) || a >= 0.5)
+            .map(m => (allOrNothing(m) ? m : { ...m, mix: (m.mix ?? 1) * a }));
         return modules.length ? { ...preset.patch, modules } : null;
     };
 

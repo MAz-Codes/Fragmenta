@@ -20,8 +20,10 @@ import { generatedFragmentsWindowStyles as fragStyles } from '../../theme';
  * moment, bent against clean.
  *
  * takes: [{ key, title, titleColor, color, url, blob, filename, seed, body }]
+ * autoPlay: { key, token } — play that take as soon as it lands; a new
+ *   token replays (the Probe board: touch = hear, no second click).
  */
-export default function BendTakes({ takes, isDocker = false, onMessage }) {
+export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay = null }) {
     const audioRefs = useRef({});
     const [playing, setPlaying] = useState(null);      // take key
     const [time, setTime] = useState(0);
@@ -44,6 +46,12 @@ export default function BendTakes({ takes, isDocker = false, onMessage }) {
             setTime(0);
             return;
         }
+        play(key);
+    };
+
+    const play = (key) => {
+        const audio = audioRefs.current[key];
+        if (!audio) return;
         let from = 0;
         Object.entries(audioRefs.current).forEach(([k, el]) => {
             if (!el || k === key) return;
@@ -60,6 +68,18 @@ export default function BendTakes({ takes, isDocker = false, onMessage }) {
             setPlaying(p => (p === key ? null : p));
         });
     };
+
+    useEffect(() => {
+        if (!autoPlay?.key) return;
+        const audio = audioRefs.current[autoPlay.key];
+        if (!audio) return;
+        // A fresh take starts from the top, not from the previous one's position.
+        Object.values(audioRefs.current).forEach((el) => {
+            if (el) { el.pause(); el.currentTime = 0; }
+        });
+        play(autoPlay.key);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoPlay?.token]);
 
     const reveal = (t) => {
         api.post('/api/reveal-fragment', { filename: t.filename })

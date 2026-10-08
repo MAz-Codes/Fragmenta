@@ -7,7 +7,7 @@ import {
     Dices as DicesIcon, X as XIcon, ChevronUp, ChevronDown,
 } from 'lucide-react';
 import Tooltip from '../Tooltip';
-import { defaultParams, describeModule } from './bendUtils';
+import { defaultParams, describeModule, PART_LABEL, wireIsForward, isNoopWire } from './bendUtils';
 
 /**
  * One module in the bend rack. Declarative: the card edits the patch
@@ -295,8 +295,9 @@ export default function BendModuleCard({
                         </ToggleButtonGroup>
                     )}
 
-                    {/* Reorder takes an explicit order, not a selection. */}
-                    {stageInfo?.kind === 'blocks' && mod.structure?.type !== 'reorder' && (
+                    {/* Reorder takes an explicit order and a jumper two
+                        endpoints, not a selection. */}
+                    {stageInfo?.kind === 'blocks' && !['reorder', 'jumper'].includes(mod.structure?.type) && (
                         <BlockGrid
                             count={stageInfo.count || 4}
                             value={mod.target?.blocks}
@@ -384,7 +385,8 @@ export default function BendModuleCard({
 
                     {/* The step gate only acts on per-step bends: weights are
                         bent once before sampling, structure is fixed. */}
-                    {mod.steps && (domain === 'activation' || domain === 'latent') && (
+                    {mod.steps && (domain === 'activation' || domain === 'latent'
+                                   || mod.structure?.type === 'jumper') && (
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                             <Tooltip title="Which part of the denoising the bend is active in — early steps shape structure, late steps shape texture.">
                                 <Typography variant="caption" color="textSecondary"
@@ -416,6 +418,13 @@ export default function BendModuleCard({
                                             const n = stageInfo?.count || 4;
                                             structure.order = Array.from({ length: n }, (_, i) => n - 1 - i);
                                         }
+                                        if (type === 'jumper') {
+                                            const n = stageInfo?.count || 4;
+                                            structure.from = 0;
+                                            structure.to = Math.min(n - 1, 2);
+                                            set({ structure, mix: mod.mix ?? 1, steps: mod.steps || { from: 0, to: 1 } });
+                                            return;
+                                        }
                                         set({ structure });
                                     }}
                                     sx={{ '& .MuiSelect-select': { py: 0.5 } }}>
@@ -423,7 +432,59 @@ export default function BendModuleCard({
                                 <MenuItem value="repeat">Repeat — run them again</MenuItem>
                                 <MenuItem value="reorder">Reorder — reversed order</MenuItem>
                                 <MenuItem value="swap_nonlinearity">Swap nonlinearity</MenuItem>
+                                <MenuItem value="jumper">Jumper — wire one block into another</MenuItem>
                             </Select>
+                            {mod.structure?.type === 'jumper' && (
+                                <>
+                                    {['from', 'to'].map(end => (
+                                        <Box key={end} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Typography variant="caption" color="textSecondary"
+                                                        sx={{ minWidth: 28 }}>{end}</Typography>
+                                            <Select size="small" value={mod.structure[end] ?? 0}
+                                                    onChange={(e) => set({ structure: { ...mod.structure, [end]: e.target.value } })}
+                                                    sx={{ '& .MuiSelect-select': { py: 0.4 } }}>
+                                                {Array.from({ length: stageInfo?.count || 4 }, (_, i) => (
+                                                    <MenuItem key={i} value={i}>block {i}</MenuItem>
+                                                ))}
+                                            </Select>
+                                            <Select size="small" value={mod.structure[`${end}_part`] || 'block'}
+                                                    onChange={(e) => set({ structure: { ...mod.structure, [`${end}_part`]: e.target.value } })}
+                                                    sx={{ '& .MuiSelect-select': { py: 0.4 } }}>
+                                                {Object.entries(PART_LABEL).map(([part, label]) => (
+                                                    <MenuItem key={part} value={part}>{label}</MenuItem>
+                                                ))}
+                                            </Select>
+                                        </Box>
+                                    ))}
+                                    <Typography variant="caption" color="textSecondary">
+                                        {isNoopWire(mod.structure.from ?? 0, mod.structure.from_part,
+                                                    mod.structure.to ?? 0, mod.structure.to_part)
+                                            ? 'These two points are already connected — this wire changes nothing.'
+                                            : wireIsForward(mod.structure.from ?? 0, mod.structure.from_part,
+                                                            mod.structure.to ?? 0, mod.structure.to_part)
+                                                ? 'Forward: shorts out what lies in between.'
+                                                : 'Feedback: carries the previous step back in.'}
+                                    </Typography>
+                                    <Tooltip title="Match level: scale the wire's signal to the level the destination expects (levels inside a block differ by up to ~270×). Off, the raw signal mostly blows the model up into noise.">
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Switch size="small" checked={(mod.structure.level || 'match') === 'match'}
+                                                    onChange={(e) => set({ structure: { ...mod.structure, level: e.target.checked ? 'match' : 'raw' } })} />
+                                            <Typography variant="caption" color="textSecondary">match level</Typography>
+                                        </Box>
+                                    </Tooltip>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                        <Typography variant="caption" color="textSecondary"
+                                                    sx={{ minWidth: 52 }}>mix</Typography>
+                                        <Slider size="small" value={mod.mix ?? 1}
+                                                min={0} max={1} step={0.01}
+                                                onChange={(_, v) => set({ mix: v })}
+                                                valueLabelDisplay="auto" color="bend" sx={{ color: 'bend.main' }} />
+                                        <Typography variant="caption" sx={{ minWidth: 34, textAlign: 'right' }}>
+                                            {Math.round((mod.mix ?? 1) * 100)}%
+                                        </Typography>
+                                    </Box>
+                                </>
+                            )}
                             {mod.structure?.type === 'repeat' && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                                     <Typography variant="caption" color="textSecondary">times</Typography>
@@ -480,6 +541,13 @@ export default function BendModuleCard({
                                     {Math.round((mod.mix ?? 1) * 100)}%
                                 </Typography>
                             </Box>
+                            <Tooltip title="Keep level: after the bend, scale the result back to the original's level — it changes the shape, not the energy. Probe-board contacts always keep their level.">
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Switch size="small" checked={!!mod.keep_level}
+                                            onChange={(e) => set({ keep_level: e.target.checked })} />
+                                    <Typography variant="caption" color="textSecondary">keep level</Typography>
+                                </Box>
+                            </Tooltip>
                         </>
                     )}
                 </Box>

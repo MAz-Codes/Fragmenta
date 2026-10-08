@@ -19,6 +19,10 @@ Mechanisms (all zero-vendor-edit):
                          ModuleList for a rebuilt one (bypass / repeat /
                          reorder) and/or swap activation-function submodules
                          (swap_nonlinearity); originals restored on remove()
+  * jumpers           -> a forward hook taps the output of one block (or its
+                         attention / feed-forward) and a forward pre-hook
+                         feeds it into the input of another (removed with
+                         the other hooks)
 
 The session is created and torn down inside AudioGenerator's generation
 lock, so it can never race another generation. remove() is idempotent and
@@ -55,6 +59,25 @@ _SWAP_FN_FACTORY = {
     "square": lambda: _Lambda(lambda x: x * x, "square"),
     "step": lambda: _Lambda(lambda x: (x > 0).to(x.dtype), "step"),
 }
+
+
+def _match_level(x: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    """Scale `x` to `ref`'s overall RMS: same energy, new shape. A signal
+    the bend silenced stays silent rather than amplifying rounding noise."""
+    rx = x.detach().float().pow(2).mean().sqrt()
+    rr = ref.detach().float().pow(2).mean().sqrt()
+    if not torch.isfinite(rx) or float(rx) < 1e-8:
+        return x
+    return x * (rr / rx).to(x.dtype)
+
+
+def _match_level_per_token(x: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+    """Scale every token (last-axis vector) of `x` to the RMS of the same
+    token in `ref`: a wire's signal arrives at the level the destination
+    expects, with the source's shape."""
+    rx = x.float().pow(2).mean(-1, keepdim=True).sqrt().clamp_min(1e-6)
+    rr = ref.float().pow(2).mean(-1, keepdim=True).sqrt()
+    return (x.float() * (rr / rx)).to(x.dtype)
 
 
 class _Lambda(nn.Module):
@@ -378,11 +401,14 @@ class BendSession:
             shape = [1] * t.ndim
             shape[f_ax_n] = t.shape[f_ax_n]
             amount = mask.view(shape) * mix
+            out = t * (1 - amount) + bent * amount
         elif mix >= 1.0:
-            return bent
+            out = bent
         else:
-            amount = mix
-        return t * (1 - amount) + bent * amount
+            out = t * (1 - mix) + bent * mix
+        if mod.get("keep_level"):
+            out = _match_level(out, t)
+        return out
 
     # ------------------------------------------------------------ activation
     def _apply_activation(self, mod: Dict[str, Any]) -> None:
@@ -487,6 +513,9 @@ class BendSession:
         if stype == "swap_nonlinearity":
             self._swap_nonlinearity(mod, transformer)
             return
+        if stype == "jumper":
+            self._jumper(mod, transformer)
+            return
 
         # Structural modules chain: each rebuilds the current list (so a
         # bypass followed by a repeat composes), selecting blocks by
@@ -546,3 +575,62 @@ class BendSession:
                         swapped += 1
         if swapped == 0:
             self._warn_once(f"{mod['id']}: no activation functions found to swap.")
+
+    _JUMPER_PART_ATTR = {"attn": "self_attn", "ff": "ff"}
+
+    def _jumper(self, mod: Dict[str, Any], transformer) -> None:
+        """Circuit bending's jumper wire: the output of `from_part` in block
+        `from` is cross-faded (by the module's mix) into the input of
+        `to_part` in block `to` — a whole block, or its attention or
+        feed-forward. When the source runs first the wire carries this
+        call's signal and whatever lies between is partly shorted out;
+        otherwise it is feedback — the source's output from the previous
+        model call — so the very first call passes clean."""
+        layers = self._pristine_layers(transformer)
+        n = len(layers)
+        struct = mod["structure"]
+        src_i, dst_i = struct["from"], struct["to"]
+        if src_i >= n or dst_i >= n:
+            self._warn_once(
+                f"{mod['id']}: jumper {src_i}→{dst_i} is beyond depth {n}; skipped.")
+            return
+        ends = []
+        for i, part in ((src_i, struct.get("from_part", "block")),
+                        (dst_i, struct.get("to_part", "block"))):
+            attr = self._JUMPER_PART_ATTR.get(part)
+            m = getattr(layers[i], attr, None) if attr else layers[i]
+            if not isinstance(m, nn.Module):
+                self._warn_once(f"{mod['id']}: block {i} has no {part}; jumper skipped.")
+                return
+            ends.append(m)
+        src, dst = ends
+        mix = float(mod.get("mix", 1.0))
+        gate = mod.get("steps")
+        level_match = struct.get("level", "match") == "match"
+        wire: Dict[str, Any] = {"x": None}
+
+        def tap(_module, _inputs, output):
+            out = output[0] if isinstance(output, tuple) else output
+            if torch.is_tensor(out):
+                wire["x"] = out.detach()
+
+        def inject(_module, args):
+            src = wire["x"]
+            if src is None or not args or not torch.is_tensor(args[0]):
+                return None
+            if gate is not None and not (gate["from"] <= self._progress() <= gate["to"]):
+                return None
+            x = args[0]
+            if src.shape != x.shape:
+                # E.g. a feedback wire across calls with different batch
+                # layouts; the signal can't land, so the wire stays open.
+                return None
+            src = src.to(x.dtype)
+            if level_match:
+                src = _match_level_per_token(src, x)
+            self._fired.add(mod["id"])
+            return (x * (1 - mix) + src * mix, *args[1:])
+
+        self._hooks.append(src.register_forward_hook(tap))
+        self._hooks.append(dst.register_forward_pre_hook(inject))
+        self._per_step_mods[mod["id"]] = mod

@@ -22,7 +22,28 @@ Module:
                              "fraction": 0.3, "seed": 7, "indices": []}},
      "operator": "scale", "params": {...}, "mix": 1.0,
      "steps": {"from": 0.0, "to": 1.0},     # sampling-step gate
-     "structure": {"type": "bypass|repeat|reorder|swap_nonlinearity", ...}}
+     "structure": {"type": "bypass|repeat|reorder|swap_nonlinearity|jumper", ...}}
+
+Jumper (circuit bending's jumper wire between two points):
+    "structure": {"type": "jumper", "from": 3, "to": 9,      # DiT block indices
+                  "from_part": "ff", "to_part": "block",     # block | attn | ff
+                  "level": "match"}                          # match | raw
+    The wire taps the output of `from_part` in block `from` and feeds it into
+    the input of `to_part` in block `to`. The module's mix and steps gate
+    apply to it like any per-step bend. Levels inside a DiT block differ by
+    up to ~270x (normalised attention/FF inputs ~0.2-0.5, their outputs
+    ~3-28, the residual stream ~8-60), so by default the signal is scaled to
+    the destination's own level, like a resistor in series with the jumper;
+    "raw" passes it through as is.
+
+Optional `keep_level` (bool) on any operator module: after the bend, scale
+the result back to the original tensor's RMS — the bend changes the shape
+of the signal (or weights), not its energy. The Probe board sets it on every
+contact; the Rack leaves it off unless asked.
+
+Optional top-level `probe` records which Probe-board contacts a patch came
+from, so a Bending Log row can be recalled onto the board:
+    "probe": {"pads": ["dit.4", "j.3-9"], "wet": 0.8}
 """
 from __future__ import annotations
 
@@ -42,8 +63,11 @@ _STAGE_DOMAINS = {
     "latent": {"latent"},
     "decoder": {"activation", "weight"},
 }
-_STRUCTURE_TYPES = {"bypass", "repeat", "reorder", "swap_nonlinearity"}
+_STRUCTURE_TYPES = {"bypass", "repeat", "reorder", "swap_nonlinearity", "jumper"}
+MAX_PROBE_PADS = 64
 SWAP_FNS = ("sin", "tanh", "relu", "abs", "square", "step")
+JUMPER_PARTS = ("block", "attn", "ff")
+JUMPER_LEVELS = ("match", "raw")
 
 
 class PatchError(ValueError):
@@ -127,6 +151,44 @@ def _norm_structure(raw: Any, warnings: List[str], mid: str) -> Dict[str, Any]:
             warnings.append(f"{mid}: unknown swap fn {fn!r}; using 'sin'.")
             fn = "sin"
         out["fn"] = fn
+    elif stype == "jumper":
+        try:
+            out["from"] = int(_clamp(int(raw["from"]), 0, 255))
+            out["to"] = int(_clamp(int(raw["to"]), 0, 255))
+        except (KeyError, TypeError, ValueError):
+            raise PatchError(f"{mid}: jumper needs integer 'from' and 'to' block indices.")
+        for end in ("from_part", "to_part"):
+            part = str(raw.get(end) or "block")
+            if part not in JUMPER_PARTS:
+                warnings.append(f"{mid}: unknown jumper {end} {part!r}; using 'block'.")
+                part = "block"
+            out[end] = part
+        level = str(raw.get("level") or "match")
+        if level not in JUMPER_LEVELS:
+            warnings.append(f"{mid}: unknown jumper level {level!r}; using 'match'.")
+            level = "match"
+        out["level"] = level
+        if (out["from_part"] == out["to_part"] == "block"
+                and out["to"] == out["from"] + 1):
+            warnings.append(
+                f"{mid}: block {out['from']}'s output already is block "
+                f"{out['to']}'s input — this wire changes nothing.")
+    return out
+
+
+def _norm_probe(raw: Any) -> Any:
+    """Keep a Probe-board origin record if it is well formed; drop it
+    silently otherwise — it is provenance, never needed to apply a bend."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("pads"), list):
+        return None
+    pads = [str(p)[:32] for p in raw["pads"] if isinstance(p, str)]
+    if not pads:
+        return None
+    out = {"pads": pads[:MAX_PROBE_PADS]}
+    try:
+        out["wet"] = _clamp(float(raw["wet"]), 0.0, 1.0)
+    except (KeyError, TypeError, ValueError):
+        pass
     return out
 
 
@@ -167,6 +229,9 @@ def validate_patch(patch: Any) -> Tuple[Dict[str, Any], List[str]]:
         "seed": seed,
         "modules": norm_modules,
     }
+    probe = _norm_probe(patch.get("probe"))
+    if probe is not None:
+        normalized["probe"] = probe
     return normalized, warnings
 
 
@@ -217,6 +282,8 @@ def _norm_module(m: Any, mid: str, warnings: List[str]) -> Dict[str, Any]:
                 f"{op_domain!r} domain.")
         nm["operator"] = op
         nm["params"] = _norm_params(op, m.get("params"), warnings, mid)
+        if m.get("keep_level"):
+            nm["keep_level"] = True
         nm["target"]["features"] = _norm_features(
             target.get("features"), warnings, mid)
         if domain == "weight":
@@ -228,8 +295,10 @@ def _norm_module(m: Any, mid: str, warnings: List[str]) -> Dict[str, Any]:
             slot = target.get("weight_slot")
             nm["target"]["weight_slot"] = str(slot) if slot else None
 
-    # Step gating applies to anything inside the sampling loop.
-    if stage in ("dit", "latent") and domain != "structure":
+    # Step gating applies to anything inside the sampling loop — including
+    # a jumper, which carries signal on every model call.
+    per_step = domain != "structure" or nm["structure"]["type"] == "jumper"
+    if stage in ("dit", "latent") and per_step:
         steps = m.get("steps") if isinstance(m.get("steps"), dict) else {}
         s_from = _clamp(float(steps.get("from", 0.0)), 0.0, 1.0)
         s_to = _clamp(float(steps.get("to", 1.0)), 0.0, 1.0)
