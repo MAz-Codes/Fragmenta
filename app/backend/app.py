@@ -3427,7 +3427,39 @@ def midi_stream():
     return resp
 
 
+class _TolerantStream:
+    """stdout/stderr that survive their terminal. The backend outlives the
+    terminal that launched it (start.py reuses a running backend), and once
+    that terminal closes every write raises EIO — which would crash whatever
+    printed, mid-request. After the first failure, console output is
+    dropped; the log file keeps everything."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._dead = False
+
+    def write(self, data):
+        if not self._dead:
+            try:
+                return self._stream.write(data)
+            except OSError:
+                self._dead = True
+        return len(data)
+
+    def flush(self):
+        if not self._dead:
+            try:
+                self._stream.flush()
+            except OSError:
+                self._dead = True
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 if __name__ == '__main__':
+    sys.stdout = _TolerantStream(sys.stdout)
+    sys.stderr = _TolerantStream(sys.stderr)
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
     port = int(os.environ.get('FLASK_PORT', '5001'))
     # threaded=True so the long-lived MIDI SSE stream (/api/midi/stream) doesn't
