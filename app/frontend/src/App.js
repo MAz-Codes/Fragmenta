@@ -92,11 +92,12 @@ const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
-// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Bend, 4=Performance.
-// The Bend tab's insertion shifted Performance from 3 to 4, so the stored
-// index moved to a v2 key; a legacy value is migrated once (old 3 → 4,
-// everything else maps unchanged).
-const TAB_STORAGE_KEY = 'fragmenta.lastTab.v2';
+// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance, 4=Bend.
+// The v2 key stored Bend at 3 and Performance at 4, so moving Bend below
+// Performance moved the index to a v3 key; a v2 value is migrated once
+// (3 ↔ 4), and a pre-Bend legacy value maps unchanged.
+const TAB_STORAGE_KEY = 'fragmenta.lastTab.v3';
+const V2_TAB_STORAGE_KEY = 'fragmenta.lastTab.v2';
 const LEGACY_TAB_STORAGE_KEY = 'fragmenta.lastTab';
 const TAB_COUNT = 5;
 const readStoredTab = () => {
@@ -106,9 +107,15 @@ const readStoredTab = () => {
             const n = Number(raw);
             return Number.isFinite(n) && n >= 0 && n < TAB_COUNT ? n : 0;
         }
+        const v2Raw = window.localStorage.getItem(V2_TAB_STORAGE_KEY);
+        if (v2Raw !== null) {
+            const n = Number(v2Raw);
+            if (!Number.isFinite(n) || n < 0 || n >= TAB_COUNT) return 0;
+            return n === 3 ? 4 : n === 4 ? 3 : n;   // swap Bend / Performance
+        }
         const legacy = Number(window.localStorage.getItem(LEGACY_TAB_STORAGE_KEY));
         if (Number.isFinite(legacy) && legacy >= 0 && legacy <= 3) {
-            return legacy === 3 ? 4 : legacy;   // old Performance index
+            return legacy;
         }
         return 0;
     } catch {
@@ -125,7 +132,7 @@ function App() {
     // The Bend chunk loads on first visit, then stays mounted so a tab
     // switch doesn't discard the A/B takes or an in-flight generation.
     const [bendVisited, setBendVisited] = useState(false);
-    useEffect(() => { if (displayedTab === 3) setBendVisited(true); }, [displayedTab]);
+    useEffect(() => { if (displayedTab === 4) setBendVisited(true); }, [displayedTab]);
 
     // Persist the active tab so a reload returns the user to it.
     useEffect(() => {
@@ -1468,6 +1475,11 @@ function App() {
                                 <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
                                 <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
                                 <Tab
+                                    icon={<PerformanceIcon size={20} />}
+                                    iconPosition={isIconOnlySidebar ? 'top' : 'start'}
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
+                                />
+                                <Tab
                                     icon={(isIconOnlySidebar || isMobileLayout) ? (
                                         <Box component="span" sx={{ position: 'relative', display: 'inline-flex' }}>
                                             <BendIcon size={20} />
@@ -1481,11 +1493,6 @@ function App() {
                                             <BetaBadge />
                                         </Box>
                                     )}
-                                />
-                                <Tab
-                                    icon={<PerformanceIcon size={20} />}
-                                    iconPosition={isIconOnlySidebar ? 'top' : 'start'}
-                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
                                 />
                             </Tabs>
                         </Paper>
@@ -2658,22 +2665,22 @@ function App() {
                             </TabPanel>
 
                             {/* Bend Tab — lazy chunk; mounts on first visit, kept after. */}
-                            <TabPanel value={displayedTab} index={3} keepMounted>
-                                {(bendVisited || displayedTab === 3) && (
+                            <TabPanel value={displayedTab} index={4} keepMounted>
+                                {(bendVisited || displayedTab === 4) && (
                                     <Suspense fallback={
                                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
                                             <CircularProgress size={28} />
                                         </Box>
                                     }>
-                                        <BendPanel models={baseModels} active={displayedTab === 3}
+                                        <BendPanel models={baseModels} active={displayedTab === 4}
                                                    isDocker={isDocker} />
                                     </Suspense>
                                 )}
                             </TabPanel>
 
-                            <TabPanel value={displayedTab} index={4} keepMounted>
+                            <TabPanel value={displayedTab} index={3} keepMounted>
                                 {envReady && <PerformancePanel
-                                    active={displayedTab === 4}
+                                    active={displayedTab === 3}
                                     selectedModel={selectedModel}
                                     availableModels={availableModels}
                                     baseModels={baseModels}
