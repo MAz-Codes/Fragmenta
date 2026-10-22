@@ -40,7 +40,7 @@ function updateLine(s) {
     if (s.available) return `Update available: ${s.latest}`;
     if (s.checked_at) return 'Up to date';
     if (s.last_error) return "Couldn't check for updates (offline?)";
-    return 'Not checked yet';
+    return 'Not checked for updates yet';
 }
 
 function SettingRow({ label, hint, checked, disabled, onChange }) {
@@ -163,13 +163,6 @@ export default function AboutDialog({
                                     hint="Asks GitHub once a day. No personal data is sent."
                                     checked={Boolean(us.enabled)}
                                     onChange={(v) => update.setSettings({ enabled: v })}
-                                />
-                                <SettingRow
-                                    label="Include pre-releases (beta)"
-                                    hint="Also tell me about test versions before they're released."
-                                    checked={Boolean(us.include_prereleases)}
-                                    disabled={!us.enabled}
-                                    onChange={(v) => update.setSettings({ include_prereleases: v })}
                                 />
                             </Box>
                         )}
