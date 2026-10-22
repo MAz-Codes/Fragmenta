@@ -5,6 +5,7 @@ from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.generation.provenance import recording_tags, tag_existing_wav
+from app.backend import update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -218,6 +219,60 @@ def app_version():
     """Version of the code this process is running (from the VERSION file,
     read at import — see _APP_VERSION). Also exposed on /api/health."""
     return jsonify({'version': _APP_VERSION})
+
+
+# --- Update notices (app/backend/update_check.py) -----------------------------
+# Bodies are read with get_json() and no force=True: a cross-site "simple"
+# form/text POST then gets a 415 instead of acting (CORS + the JSON preflight
+# are the protection; there is no origin guard).
+
+@app.route('/api/update/status')
+def update_status():
+    """Cached update state for the UI — never does network I/O."""
+    return jsonify(update_check.status())
+
+
+@app.route('/api/update/check', methods=['POST'])
+def update_check_now():
+    """Forced check, rate-limited to once a minute server-side."""
+    return jsonify(update_check.manual_check())
+
+
+@app.route('/api/update/dismiss', methods=['POST'])
+def update_dismiss():
+    body = request.get_json() or {}
+    try:
+        return jsonify(update_check.dismiss(str(body.get('action'))))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/update/settings', methods=['POST'])
+def update_settings():
+    body = request.get_json() or {}
+    return jsonify(update_check.update_settings(
+        enabled=body.get('enabled'), include_prereleases=body.get('include_prereleases')))
+
+
+@app.route('/api/update/open', methods=['POST'])
+def update_open():
+    """Open the notes / download / upgrade-guide page in the system browser.
+    The URL comes from validated state, never from the client."""
+    body = request.get_json() or {}
+    if update_check.is_disabled() == 'hf_space':
+        return jsonify({'error': 'not available here'}), 403
+    url = update_check.resolve_url(str(body.get('target')))
+    if not url:
+        return jsonify({'error': 'nothing to open'}), 404
+    import webbrowser
+    webbrowser.open(url)
+    return jsonify({'success': True})
+
+
+@app.route('/api/update/whats-new')
+def update_whats_new():
+    """Highlights for the version just installed, once after an upgrade."""
+    return jsonify(update_check.whats_new())
 
 
 @app.route('/')
@@ -3471,4 +3526,6 @@ if __name__ == '__main__':
     # debug defaults OFF: shipped builds must not expose Werkzeug's interactive
     # debugger / verbose tracebacks. Opt in for local dev with FRAGMENTA_DEBUG=true.
     flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
+    # Only the real server checks for updates (not imports or test clients).
+    update_check.start_background_checker()
     app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)
