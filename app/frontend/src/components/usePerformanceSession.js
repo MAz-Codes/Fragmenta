@@ -90,10 +90,6 @@ const CHANNEL_DEFAULT = {
     // Full clip by default; reset whenever different audio is loaded.
     trimStart: 0,
     trimEnd: 1,
-    // DJ cue point — where the first pass and every retrigger enter the clip.
-    // null = pinned to trimStart (pre-cue-marker behaviour), so older saves
-    // and presets keep playing exactly as they did.
-    launchStart: null,
 };
 
 function defaultSession(channelCount) {

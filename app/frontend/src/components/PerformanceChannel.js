@@ -44,15 +44,6 @@ const CHANNEL_COLORS = [
     '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
 ];
 
-// Cue-point marker. Deliberately NOT the theme's success green: ch3 is already
-// green (#53C18A), so a green cue disappeared on that strip and read as washed
-// out on the others. Red is unused by the four rendering channels and sits far
-// enough from teal/violet/green in hue to stay unambiguous; these are tuned for
-// legibility both over the dimmed out-of-region overlays and over a bright
-// waveform peak. Paired with a dark drop-shadow for the same reason.
-const CUE_COLOR = { dark: '#FF453A', light: '#D92D20' };
-const CUE_SHADOW = 'drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9))';
-
 // Channel gain runs on the same dBFS scale as the master fader so the two
 // scales line up: -60 dB floor, 0 dB ceiling, default at -6 dB. The knob's
 // dB value is converted to linear before reaching the audio graph.
@@ -117,7 +108,6 @@ export default function PerformanceChannel({
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
-    const playheadRef = useRef(null);
     // IDB scope key for this channel's fragment blobs. Stable across the
     // component's lifetime since the channel index doesn't change.
     const scope = channelScope(index);
@@ -175,38 +165,15 @@ export default function PerformanceChannel({
     });
     const trimRef = useRef(trim);
     useEffect(() => { trimRef.current = trim; }, [trim]);
-
-    // DJ cue point over the loaded clip, normalized 0..1, or null when pinned
-    // to the in-point. The first pass and every retrigger enter here; repeats
-    // cycle the trim region as before. Constrained to sit inside the region.
-    const [launchStart, setLaunchStartState] = useState(() => {
-        const ls = Number(init.launchStart);
-        return Number.isFinite(ls) && ls > 0 ? Math.min(1, ls) : null;
-    });
-    const launchRef = useRef(launchStart);
-    useEffect(() => { launchRef.current = launchStart; }, [launchStart]);
-
     const applyTrim = useCallback((next) => {
         setTrimState(next);
         strip?.setRegion(next.start, next.end);
-        // setRegion may have evicted the cue (either bracket can squeeze it
-        // out) — mirror whatever the strip settled on back into the UI.
-        if (strip && launchRef.current !== strip.launchStart) {
-            setLaunchStartState(strip.launchStart);
-        }
-    }, [strip]);
-    const applyLaunch = useCallback((next) => {
-        strip?.setLaunchStart(next);
-        // Read back rather than trusting `next`: the strip clamps into the
-        // region and collapses a cue sitting on the in-point back to null.
-        setLaunchStartState(strip ? strip.launchStart : next);
     }, [strip]);
     const resetTrim = useCallback(() => {
-        // loadBufferFromBlob already reset the strip's region and cue; this
-        // re-syncs the UI (and is harmless when called redundantly).
+        // loadBufferFromBlob already reset the strip's region; this re-syncs
+        // the UI (and is harmless when called redundantly).
         applyTrim({ start: 0, end: 1 });
-        applyLaunch(null);
-    }, [applyTrim, applyLaunch]);
+    }, [applyTrim]);
     // Min handle gap: at least 50 ms of audio (or 2% when nothing is loaded).
     const minTrimGap = useCallback(() => {
         const dur = strip?.buffer?.duration || 0;
@@ -222,12 +189,6 @@ export default function PerformanceChannel({
         const rect = wrap.getBoundingClientRect();
         const move = (ev) => {
             const x = (ev.clientX - rect.left) / Math.max(1, rect.width);
-            if (which === 'cue') {
-                // The strip clamps into [regionStart, regionEnd - gap] and
-                // nulls a cue that lands on the in-point, so pass x raw.
-                applyLaunch(x);
-                return;
-            }
             const gap = minTrimGap();
             const cur = trimRef.current;
             const next = which === 'start'
@@ -319,10 +280,9 @@ export default function PerformanceChannel({
             committedFragmentId,
             trimStart: trim.start,
             trimEnd: trim.end,
-            launchStart,
         });
     }, [prompt, duration, durationMode, bars, looping, muted, soloed, batchSize, knobs,
-        fragments, committedFragmentId, trim, launchStart, index, onFormStateChange]);
+        fragments, committedFragmentId, trim, index, onFormStateChange]);
 
     // Hydrate fragments on mount from the session metadata + IDB blobs. Runs
     // once, tolerates missing blobs (skips the entry), and rewinds the
@@ -412,18 +372,6 @@ export default function PerformanceChannel({
                 const level = strip.getLevel();
                 el.style.width = `${Math.min(100, level * 140)}%`;
             }
-            // Playhead rides the same frame as the meter, written straight to
-            // style so a 60 Hz cursor never re-renders the strip.
-            const ph = playheadRef.current;
-            if (ph && strip) {
-                const pos = strip.getPlayPosition();
-                if (pos === null) {
-                    ph.style.opacity = '0';
-                } else {
-                    ph.style.opacity = '1';
-                    ph.style.left = `${pos * 100}%`;
-                }
-            }
             meterRafRef.current = requestAnimationFrame(tick);
         };
         meterRafRef.current = requestAnimationFrame(tick);
@@ -441,17 +389,6 @@ export default function PerformanceChannel({
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
-    // The canvas is sized from its layout box now, so a width change (window
-    // resize, strip reflow, DPR change on monitor switch) leaves the backing
-    // store stale until it's redrawn.
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => drawWave());
-        ro.observe(canvas);
-        return () => ro.disconnect();
-    }, [drawWave]);
-
     // Auto-load the persisted committed fragment into the strip once Tone.js
     // is ready. Runs at most once per mount; the ref guards against re-trigger
     // when the user later commits a different fragment (handled by
@@ -463,12 +400,9 @@ export default function PerformanceChannel({
         if (!fragment) return;
         autoLoadDoneRef.current = true;
         strip.loadBlob(fragment.blob).then(() => {
-            // Restore the persisted in/out points and cue for the restored
-            // clip — the decode reset both to their defaults. Region first:
-            // setLaunchStart clamps against the region bounds.
+            // Restore the persisted in/out points for the restored clip —
+            // the decode reset the strip's region to full.
             strip.setRegion(trimRef.current.start, trimRef.current.end);
-            strip.setLaunchStart(launchRef.current);
-            setLaunchStartState(strip.launchStart);
             requestAnimationFrame(drawWave);
         }).catch(err => {
             console.warn(`Channel ${index + 1} auto-load failed:`, err);
@@ -1183,10 +1117,9 @@ export default function PerformanceChannel({
                     </Typography>
                 )}
                 {/* DJ-style in/out points: drag the brackets to choose where
-                    the clip loops (bounds retarget live while playing). The
-                    cue triangle on the bottom edge sets where a launch/retrigger
-                    enters — repeats still come back to the in-point. Double-
-                    click the waveform to reset to the full clip. */}
+                    the clip starts and stops (loops cycle the region —
+                    bounds retarget live while playing). Double-click the
+                    waveform to reset to the full clip. */}
                 {loaded && (
                     <>
                         <Box sx={{
@@ -1201,19 +1134,7 @@ export default function PerformanceChannel({
                             backgroundColor: 'rgba(0, 0, 0, 0.55)',
                             pointerEvents: 'none',
                         }} />
-                        {/* In-point → cue: inside the loop, so heard on every
-                            repeat, but skipped on the launch pass. Tinted so
-                            that skip is visible rather than baffling. */}
-                        {launchStart !== null && (
-                            <Box sx={{
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `${trim.start * 100}%`,
-                                width: `${Math.max(0, launchStart - trim.start) * 100}%`,
-                                backgroundColor: 'rgba(0, 0, 0, 0.3)',
-                                pointerEvents: 'none',
-                            }} />
-                        )}
-                        <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
+                        <Tooltip title="Start point — drag to set where the clip launches. Double-click the waveform to reset." placement="top" enterDelay={600}>
                             <Box
                                 onPointerDown={startTrimDrag('start')}
                                 sx={{
@@ -1261,67 +1182,6 @@ export default function PerformanceChannel({
                                 }}
                             />
                         </Tooltip>
-                        {/* Cue guide — only drawn once the cue is off the
-                            in-point, where the loop bracket's own line
-                            already marks the spot. Red like the handle
-                            (CUE_COLOR), so the two read as one marker rather
-                            than a third loop bracket. */}
-                        {launchStart !== null && (
-                            <Box sx={(t) => ({
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `calc(${launchStart * 100}% - 1px)`,
-                                width: 2,
-                                backgroundColor: CUE_COLOR[t.palette.mode] || CUE_COLOR.dark,
-                                filter: CUE_SHADOW,
-                                pointerEvents: 'none',
-                                zIndex: 2,
-                            })} />
-                        )}
-                        {/* Cue handle. Head on the BOTTOM edge and red, so it
-                            stays legible where it starts life — sitting exactly
-                            on the loop-start bracket, whose own nub is top-left
-                            in the channel colour. Right-pointing, like a play
-                            button: it marks where playback enters and which way
-                            it runs. Hit zone is the bottom 12 px only, so the
-                            full-height loop brackets keep the rest. */}
-                        <Tooltip title="Cue point — drag to set where a launch or retrigger enters the clip. Repeats still return to the loop start. Double-click to pin it back." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('cue')}
-                                onDoubleClick={(e) => { e.stopPropagation(); applyLaunch(null); }}
-                                sx={(t) => ({
-                                    position: 'absolute', bottom: 0, height: 12,
-                                    left: `calc(${(launchStart !== null ? launchStart : trim.start) * 100}% - 4px)`,
-                                    width: 11,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 3,
-                                    filter: CUE_SHADOW,
-                                    '&::before': {
-                                        content: '""', position: 'absolute',
-                                        bottom: 0, left: 3,
-                                        borderTop: '4px solid transparent',
-                                        borderBottom: '4px solid transparent',
-                                        borderLeft: `7px solid ${CUE_COLOR[t.palette.mode] || CUE_COLOR.dark}`,
-                                        opacity: launchStart !== null ? 1 : 0.85,
-                                    },
-                                })}
-                            />
-                        </Tooltip>
-                        {/* Playhead. Positioned by the meter rAF loop writing
-                            style directly; starts hidden and is revealed only
-                            while the strip reports a position. */}
-                        <Box
-                            ref={playheadRef}
-                            sx={{
-                                position: 'absolute', top: 0, bottom: 0, left: 0,
-                                width: 1,
-                                backgroundColor: 'rgba(255, 255, 255, 0.45)',
-                                boxShadow: '0 0 3px rgba(255, 255, 255, 0.18)',
-                                opacity: 0,
-                                pointerEvents: 'none',
-                                zIndex: 4,
-                            }}
-                        />
                     </>
                 )}
             </Box>
