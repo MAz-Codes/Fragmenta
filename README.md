@@ -294,7 +294,7 @@ If you want to use Fragmenta under different terms (e.g. embedded in a closed-so
 
 ### AI-Generated Output
 
-Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). Please keep these tags when you share the files.
+Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). Please keep these tags when you share the files. Details, limits and why there is no audio watermark: [docs/AI_TRANSPARENCY.md](docs/AI_TRANSPARENCY.md).
 
 ### Third-Party Software
 
