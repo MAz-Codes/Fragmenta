@@ -292,6 +292,10 @@ Licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](
 
 If you want to use Fragmenta under different terms (e.g. embedded in a closed-source commercial product), please reach out — as the sole copyright holder I'm open to discussing alternative licensing.
 
+### AI-Generated Output
+
+Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). Please keep these tags when you share the files.
+
 ### Third-Party Software
 
 Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3) model family.
