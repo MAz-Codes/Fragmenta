@@ -1184,7 +1184,7 @@ export default function PerformanceChannel({
                 )}
                 {/* DJ-style in/out points: drag the brackets to choose where
                     the clip loops (bounds retarget live while playing). The
-                    cue triangle on the top edge sets where a launch/retrigger
+                    cue triangle on the bottom edge sets where a launch/retrigger
                     enters — repeats still come back to the in-point. Double-
                     click the waveform to reset to the full clip. */}
                 {loaded && (
@@ -1263,8 +1263,9 @@ export default function PerformanceChannel({
                         </Tooltip>
                         {/* Cue guide — only drawn once the cue is off the
                             in-point, where the loop bracket's own line
-                            already marks the spot. Green, to pair with the
-                            handle rather than read as a third loop bracket. */}
+                            already marks the spot. Red like the handle
+                            (CUE_COLOR), so the two read as one marker rather
+                            than a third loop bracket. */}
                         {launchStart !== null && (
                             <Box sx={(t) => ({
                                 position: 'absolute', top: 0, bottom: 0,
@@ -1276,7 +1277,7 @@ export default function PerformanceChannel({
                                 zIndex: 2,
                             })} />
                         )}
-                        {/* Cue handle. Head on the BOTTOM edge and green, so it
+                        {/* Cue handle. Head on the BOTTOM edge and red, so it
                             stays legible where it starts life — sitting exactly
                             on the loop-start bracket, whose own nub is top-left
                             in the channel colour. Right-pointing, like a play

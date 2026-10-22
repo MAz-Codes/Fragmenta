@@ -1094,10 +1094,11 @@ export class PerformanceEngine {
     playChannel(index, loop) {
         const ch = this.channels[index];
         if (!ch || !ch.buffer) return;
-        // Clip-launch semantics (like Ableton Session View): start from the
-        // clip's head on the quantized boundary. Phase coherence comes from the
-        // clips being downbeat-anchored + exact-bar-length (Stage A) and
-        // launched on bar boundaries — NOT from entering the buffer mid-way.
+        // Clip-launch semantics (like Ableton Session View): start on the
+        // quantized boundary, entering at the channel's cue point (the loop
+        // in-point unless the user moved the cue). Phase coherence comes from
+        // the clips being downbeat-anchored + exact-bar-length (Stage A) and
+        // launched on bar boundaries — moving the cue deliberately shifts it.
         const { when } = this.getNextQuantizedAudioTime();
         ch.play(loop, when);
     }
