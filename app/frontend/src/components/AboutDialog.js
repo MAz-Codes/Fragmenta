@@ -15,10 +15,14 @@ import {
 import { appStyles } from '../theme';
 import { APP_VERSION } from '../version';
 
+const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/tree/main/licenses';
+const NOTICE_SX = { display: 'block', fontSize: '0.65rem', lineHeight: 1.5, mt: 0.5 };
+const LINK_SX = { color: 'primary.main', textDecoration: 'underline', fontSize: '0.65rem' };
+
 /**
  * "About Fragmenta" dialog — logo + title, short intro, three doc buttons
- * (About / Documentation / Tutorials), and the Stability AI Community
- * License attribution footer.
+ * (About / Documentation / Tutorials), and the model-license attribution
+ * footer (Stability AI + Gemma notices).
  *
  * Props:
  *   open:                       bool
@@ -95,30 +99,34 @@ export default function AboutDialog({
                     </Button>
                 </Box>
 
+                {/* Attribution the model licenses require: "Powered by Stability AI"
+                    verbatim and visible (Community License §IV(a)), its notice
+                    sentence, and Google's Gemma notice for the bundled T5Gemma
+                    text encoder. Full texts: licenses/ in the repo. */}
                 <Box sx={{ mt: 3, pt: 1.5, borderTop: '1px solid', borderColor: 'divider', textAlign: 'center' }}>
-                    <Typography variant="caption" color="textSecondary" sx={{ display: 'block', fontStyle: 'italic', fontSize: '0.6rem', lineHeight: 1.5 }}>
-                        Powered by{' '}
-                        <Typography
-                            component="a"
-                            variant="caption"
-                            href="https://github.com/Stability-AI/stable-audio-3"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ color: 'primary.main', textDecoration: 'underline', fontStyle: 'italic', fontSize: '0.6rem' }}
-                        >
-                            Stable Audio 3
-                        </Typography>{' '}by Stability AI. "This Stability AI Model is licensed under the{' '}
-                        <Typography
-                            component="a"
-                            variant="caption"
-                            href="https://stability.ai/license"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            sx={{ color: 'primary.main', textDecoration: 'underline', fontStyle: 'italic', fontSize: '0.6rem' }}
-                        >
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        Powered by Stability AI
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary" sx={NOTICE_SX}>
+                        "This Stability AI Model is licensed under the{' '}
+                        <Typography component="a" variant="caption" href="https://stability.ai/community-license-agreement"
+                            target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
                             Stability AI Community License
-                        </Typography>,{' '}
-                        Copyright © Stability AI Ltd. All Rights Reserved"
+                        </Typography>, Copyright © Stability AI Ltd. All Rights Reserved"
+                    </Typography>
+                    <Typography variant="caption" color="textSecondary" sx={NOTICE_SX}>
+                        Includes Google's T5Gemma text encoder. Gemma is provided under and subject to the
+                        Gemma Terms of Use found at{' '}
+                        <Typography component="a" variant="caption" href="https://ai.google.dev/gemma/terms"
+                            target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
+                            ai.google.dev/gemma/terms
+                        </Typography>
+                    </Typography>
+                    <Typography variant="caption" sx={NOTICE_SX}>
+                        <Typography component="a" variant="caption" href={LICENSES_URL}
+                            target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
+                            Licenses and use policies
+                        </Typography>
                     </Typography>
                 </Box>
             </DialogContent>

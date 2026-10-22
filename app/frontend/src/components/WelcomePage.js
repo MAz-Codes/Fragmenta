@@ -65,6 +65,9 @@ export default function WelcomePage({ open, onClose, hideDontShowAgain = false }
                             <Typography variant="body3" color="text.secondary">
                                 Version {APP_VERSION}
                             </Typography>
+                            <Typography variant="body3" color="text.secondary" sx={{ mt: 1 }}>
+                                Powered by Stability AI
+                            </Typography>
 
                         </Stack>
                         <Box mt={5}>

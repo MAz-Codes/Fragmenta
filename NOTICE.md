@@ -5,7 +5,7 @@ Fragmenta is licensed under the **GNU Affero General Public License v3.0** (see 
 Two categories matter for licensing:
 
 - **Redistributed** — shipped inside this repository and/or the Docker images (vendored code, the pre-built frontend, the flash-attn wheels, and the Python packages baked into the images).
-- **Downloaded at runtime** — the model weights. These are **not** redistributed by Fragmenta; you download them yourself from Hugging Face and accept their license at that point.
+- **Downloaded at runtime** — the model weights. These are **not** redistributed by Fragmenta; you download them yourself from Hugging Face, and by using them you accept their licenses (full texts in [`licenses/`](licenses/)).
 
 ---
 
@@ -16,7 +16,7 @@ Two categories matter for licensing:
 - **Copyright**: Copyright (c) 2026 Stability AI
 - **License**: MIT License
 - **Location**: `vendor/stable-audio-3/` (pinned snapshot — see `vendor/stable-audio-3/UPSTREAM.md`)
-- **Modifications**: Minor changes for integration with Fragmenta (CPU/MPS device gating, packaging).
+- **Modifications**: Integration changes for Fragmenta (training-script and LoRA fixes, MPS support, optional wandb), and loading the `*-base` checkpoints' T5Gemma text encoder from their own snapshot — see `vendor/stable-audio-3/UPSTREAM.md` and the modification notice under Model Weights.
 
 The MIT License text is in [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio-3/LICENSE).
 
@@ -46,7 +46,7 @@ BSD-3-Clause permits binary redistribution provided the copyright notice, licens
 
 ## Model Weights (downloaded at runtime — NOT redistributed)
 
-Fragmenta orchestrates the download and use of the following models. They are fetched from Hugging Face under the user's own account, and the user accepts each model's license at download time. Fragmenta does **not** ship these weights.
+Fragmenta orchestrates the download and use of the following models. They are fetched from Hugging Face — the `*-base` checkpoints without an account (they are not gated), the distilled ones under the user's own account after accepting their terms there. Fragmenta does **not** ship these weights.
 
 ### Stable Audio 3 model family — Stability AI Community License
 - **Models**: `stabilityai/stable-audio-3-small-music`, `-small-sfx`, `-medium`, and the matching `-base` checkpoints; `stabilityai/SAME-S` and `stabilityai/SAME-L` (autoencoders).
@@ -57,11 +57,17 @@ Required attribution (per the Community License):
 
 > "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
 
+Required notice (per the Gemma Terms of Use):
+
+> Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms
+
+**Modification notice:** Fragmenta does not modify the model weights or the downloaded files. When loading a `*-base` checkpoint it reads the T5Gemma text encoder from that checkpoint's own `t5gemma-b-b-ul2/` folder — byte-identical to the copy in the gated post-trained repository its configuration points at — instead of fetching the latter. This changes the loading path in memory only.
+
 **Powered by Stability AI** ([stability.ai](https://stability.ai)).
 
 Notes on the Community License obligations:
 - Use is permitted for individuals/organizations with **up to USD $1,000,000** in annual revenue; above that threshold an Enterprise license from Stability AI is required.
-- Use must comply with Stability AI's Acceptable Use Policy.
+- Use must comply with Stability AI's Acceptable Use Policy and the Gemma Prohibited Use Policy (snapshots in [`licenses/`](licenses/)).
 - **LoRA adapters trained in Fragmenta** (on the `*-base` checkpoints) are *Derivative Works* under the same Community License. If you distribute one, distribute it under that license, retain the attribution notice above, and do **not** brand it with Stability AI names/marks (e.g. "Stable Audio 3").
 
 ### LAION-CLAP tagger (Rich auto-annotation)
@@ -135,11 +141,13 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 
 - **This project**: [`LICENSE`](LICENSE) (AGPL-3.0).
 - **Vendored Stable Audio 3 code**: [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio-3/LICENSE) (MIT).
-- **Stable Audio 3 weights**: Stability AI Community License — https://stability.ai/community-license-agreement
+- **Stable Audio 3 weights**: Stability AI Community License — [`licenses/STABILITY_AI_COMMUNITY_LICENSE.md`](licenses/STABILITY_AI_COMMUNITY_LICENSE.md) (official: https://stability.ai/community-license-agreement)
+- **T5Gemma text encoder**: Gemma Terms of Use — [`licenses/GEMMA_TERMS_OF_USE.md`](licenses/GEMMA_TERMS_OF_USE.md)
+- **Use policies**: [`licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md`](licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md), [`licenses/GEMMA_PROHIBITED_USE_POLICY.md`](licenses/GEMMA_PROHIBITED_USE_POLICY.md)
 - **Python / npm packages**: see each package's metadata or upstream repository.
 
 ---
 
-**Last Updated**: 2026-06-10
+**Last Updated**: 2026-10-22
 
 For licensing questions, open an issue on the project repository or contact the maintainer.
