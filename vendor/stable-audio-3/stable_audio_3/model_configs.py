@@ -1,6 +1,23 @@
+import os
 from dataclasses import dataclass
 
 from huggingface_hub import hf_hub_download, try_to_load_from_cache
+
+
+# Fragmenta: every *-base model_config.json points its T5Gemma conditioner at
+# the gated post-trained sibling repo, but each base snapshot ships its own
+# byte-identical t5gemma-b-b-ul2/. Loading that local copy makes the base
+# models work without a Hugging Face token. In-memory only; the cache is
+# untouched. Call right after json-loading a config.
+def localize_conditioners(model_config: dict, local_config_path: str) -> dict:
+    root = os.path.dirname(os.path.abspath(local_config_path))
+    configs = model_config.get("model", {}).get("conditioning", {}).get("configs", [])
+    for cond in configs:
+        cfg = cond.get("config", {})
+        subfolder = cfg.get("subfolder")
+        if cond.get("type") == "t5gemma" and subfolder and os.path.isdir(os.path.join(root, subfolder)):
+            cfg["model_path"] = root
+    return model_config
 
 
 @dataclass(frozen=True)

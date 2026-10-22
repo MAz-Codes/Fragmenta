@@ -32,6 +32,9 @@ SA3_BASE_MODELS: Dict[str, Tuple[str, str]] = {
 # in the cache, training crashes inside the conditioner constructor when SA3
 # does `AutoTokenizer.from_pretrained(repo_id, subfolder=...)`.
 # Keep in sync with model_config.json's `conditioning.configs[0].config.repo_id`.
+# Fallback only: every base snapshot ships its own byte-identical copy, which
+# localize_conditioners() (vendored model_configs.py) loads instead — so the
+# gated sibling is fetched only when a snapshot lacks it.
 SA3_T5GEMMA_SIBLINGS: Dict[str, Tuple[str, str]] = {
     "sa3-small-music-base": ("stabilityai/stable-audio-3-small-music", "t5gemma-b-b-ul2"),
     "sa3-small-sfx-base":   ("stabilityai/stable-audio-3-small-sfx",   "t5gemma-b-b-ul2"),
@@ -47,6 +50,13 @@ SA3_AUDIO_EXTENSIONS: Tuple[str, ...] = (".wav", ".mp3", ".flac", ".ogg", ".aif"
 
 
 # --- Base model pre-staging -------------------------------------------------
+
+def snapshot_has_conditioner(snapshot_dir: Path, subfolder: str) -> bool:
+    """True when a snapshot ships its own T5Gemma conditioner subfolder, so
+    the gated sibling repo isn't needed."""
+    d = Path(snapshot_dir) / subfolder
+    return d.is_dir() and any(d.iterdir())
+
 
 def prestage_base_model(
     sa3_model_id: str,
@@ -87,11 +97,12 @@ def prestage_base_model(
     # check the model's revision — wasteful and noisy when the user just
     # downloaded the weights through the Checkpoint Manager. If anything's
     # missing, fall back to an online fetch.
+    # Base repos are ungated: token=False so a stale stored token can't 401.
     try:
         local_snap = snapshot_download(
             repo_id=repo_id,
             cache_dir=str(hub_dir),
-            token=token,
+            token=False,
             allow_patterns=allow_patterns,
             local_files_only=True,
         )
@@ -103,20 +114,19 @@ def prestage_base_model(
         local_snap = snapshot_download(
             repo_id=repo_id,
             cache_dir=str(hub_dir),
-            token=token,
+            token=False,
             allow_patterns=allow_patterns,
         )
         if progress_callback:
             progress_callback(15, "Base model ready.")
 
-    # Pre-stage the T5Gemma conditioner from the post-trained sibling repo.
-    # SA3's *-base model_config.json points the prompt conditioner at
-    # e.g. stabilityai/stable-audio-3-medium / t5gemma-b-b-ul2/, NOT at the
-    # base repo. Without this subtree in the cache, the training subprocess
-    # (HF_HUB_OFFLINE=1) crashes when AutoTokenizer.from_pretrained tries
-    # to phone home.
+    # Fallback: stage the T5Gemma conditioner from the gated post-trained
+    # sibling repo, which SA3's *-base model_config.json points at. Only
+    # needed when the base snapshot lacks its own copy — otherwise
+    # localize_conditioners() loads that one. Without either, the training
+    # subprocess (HF_HUB_OFFLINE=1) crashes in AutoTokenizer.from_pretrained.
     sibling = SA3_T5GEMMA_SIBLINGS.get(sa3_model_id)
-    if sibling:
+    if sibling and not snapshot_has_conditioner(Path(local_snap), sibling[1]):
         sib_repo, sib_subfolder = sibling
         sib_patterns = [f"{sib_subfolder}/*"]
         if progress_callback:

@@ -70,11 +70,11 @@ The installer verifies Python 3.11 is available, sets up a virtual environment, 
 
 ## Usage
 
-### 0. Authenticate & Download Models 
+### 0. Download Models
 
-The app guides you through downloading models and authenticating with HuggingFace.
+The Checkpoint Manager downloads models for you. The **Base** models (e.g. Small - Music (Base)) need no account — they download straight away.
 
-> **HuggingFace Token Requirement:** the Stable Audio 3 weights are gated. You must:
+> **HuggingFace token (distilled models only):** the faster distilled models are gated. To use them:
 > 1. Accept their license on the model page (while logged into your HF account).
 > 2. Create a classic **Read** token and copy it into Fragmenta.
 >
@@ -303,7 +303,7 @@ Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://git
 > "This Stability AI Model is licensed under the Stability AI Community License, Copyright © Stability AI Ltd. All Rights Reserved"
 
 - **Vendored code** — the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI — see [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
-- **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face and accept their license then. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
+- **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face (the Base models without an account, the distilled ones after accepting their terms there), and by using them you accept their license. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
 - **Impulse responses** — the bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, with no external licensing.
 
 Fragmenta also depends on many open-source libraries. See [NOTICE.md](NOTICE.md) for the complete attribution and license list.

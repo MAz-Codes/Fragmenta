@@ -147,6 +147,8 @@ export const TIPS = {
     // CheckpointRow.js — checkpoint catalog rows.
     checkpoints: {
         gatedAccess: "Open on HuggingFace to accept the model's gated-access terms",
+        openOnHf: 'Open the model page on HuggingFace',
+        noAccount: 'Not gated on HuggingFace — downloads without an account or token.',
     },
 
     // App.js — main Audio Generation tab (the primary "create" surface).
