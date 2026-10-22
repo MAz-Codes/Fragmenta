@@ -4,6 +4,7 @@ from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
+from app.core.generation.provenance import recording_tags, tag_existing_wav
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -1029,6 +1030,10 @@ def save_performance_recording():
     except Exception:
         dest.unlink(missing_ok=True)
         raise
+
+    # The browser encodes the capture, so no server-side writer has tagged it:
+    # add the AI-output marking (EU AI Act Art. 50) now — lossless rewrite.
+    tag_existing_wav(dest, recording_tags())
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None

@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
-import soundfile as sf
 import torch
 
+from app.core.generation.provenance import generation_tags, write_tagged_wav
 from utils.logger import get_logger
 
 logger = get_logger("AudioGenerator")
@@ -636,5 +636,9 @@ class AudioGenerator:
         while out_path.exists():
             out_path = out_dir / f"{base}_{counter}.wav"
             counter += 1
-        sf.write(str(out_path), pcm, 44100, subtype="PCM_16")
+        # Machine-readable AI-output marking (EU AI Act Art. 50) — see provenance.py.
+        write_tagged_wav(
+            out_path, pcm, 44100,
+            generation_tags(model_id, [l["path"] for l in self._loaded_loras]),
+        )
         return out_path
