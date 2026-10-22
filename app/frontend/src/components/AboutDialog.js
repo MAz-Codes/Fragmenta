@@ -6,7 +6,6 @@ import {
     DialogActions,
     DialogContent,
     DialogTitle,
-    FormControlLabel,
     Switch,
     Typography,
 } from '@mui/material';
@@ -42,6 +41,19 @@ function updateLine(s) {
     if (s.checked_at) return 'Up to date';
     if (s.last_error) return "Couldn't check for updates (offline?)";
     return 'Not checked yet';
+}
+
+function SettingRow({ label, hint, checked, disabled, onChange }) {
+    return (
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, pt: 1 }}>
+            <Box sx={{ minWidth: 0, opacity: disabled ? 0.5 : 1 }}>
+                <Typography variant="body2">{label}</Typography>
+                <Typography variant="caption" color="text.secondary">{hint}</Typography>
+            </Box>
+            <Switch size="small" checked={checked} disabled={disabled}
+                onChange={(e) => onChange(e.target.checked)} inputProps={{ 'aria-label': label }} />
+        </Box>
+    );
 }
 
 export default function AboutDialog({
@@ -116,42 +128,50 @@ export default function AboutDialog({
                     </Button>
                 </Box>
 
+                {/* Updates card: status + actions on one row, then each
+                    setting on its own row (label left, switch right). */}
                 {showUpdates && (
-                    <Box sx={{ mt: 3, textAlign: 'center' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {updateLine(us)}
-                            {us.available && (
-                                <Button size="small" onClick={onShowUpdate} sx={{ ml: 1 }}>Details</Button>
-                            )}
-                        </Typography>
-                        {us.checked_at && (
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                Last checked {new Date(us.checked_at * 1000).toLocaleString()}
-                            </Typography>
-                        )}
-                        {us.disabled_reason !== 'env' && (
-                            <>
-                                <Button size="small" variant="outlined" sx={{ mt: 1 }}
-                                    onClick={update.checkNow} disabled={update.checking || !us.enabled}>
-                                    {update.checking ? 'Checking…' : 'Check now'}
-                                </Button>
-                                <Box sx={{ mt: 1 }}>
-                                    <FormControlLabel
-                                        control={<Switch size="small" checked={Boolean(us.enabled)}
-                                            onChange={(e) => update.setSettings({ enabled: e.target.checked })} />}
-                                        label={<Typography variant="caption">Check for updates automatically</Typography>}
-                                    />
-                                    <FormControlLabel
-                                        control={<Switch size="small" checked={Boolean(us.include_prereleases)}
-                                            disabled={!us.enabled}
-                                            onChange={(e) => update.setSettings({ include_prereleases: e.target.checked })} />}
-                                        label={<Typography variant="caption">Include pre-releases (beta)</Typography>}
-                                    />
-                                </Box>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                    Fragmenta asks GitHub once a day whether a newer version exists. No personal data is sent.
+                    <Box sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+                            <Box sx={{ minWidth: 0 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                    {updateLine(us)}
                                 </Typography>
-                            </>
+                                {us.checked_at && (
+                                    <Typography variant="caption" color="text.secondary">
+                                        Last checked {new Date(us.checked_at * 1000).toLocaleString(undefined,
+                                            { dateStyle: 'medium', timeStyle: 'short' })}
+                                    </Typography>
+                                )}
+                            </Box>
+                            <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+                                {us.available && (
+                                    <Button size="small" variant="contained" onClick={onShowUpdate}>Details</Button>
+                                )}
+                                {us.disabled_reason !== 'env' && (
+                                    <Button size="small" variant="outlined"
+                                        onClick={update.checkNow} disabled={update.checking || !us.enabled}>
+                                        {update.checking ? 'Checking…' : 'Check now'}
+                                    </Button>
+                                )}
+                            </Box>
+                        </Box>
+                        {us.disabled_reason !== 'env' && (
+                            <Box sx={{ mt: 1.5, pt: 0.5, borderTop: '1px solid', borderColor: 'divider' }}>
+                                <SettingRow
+                                    label="Check for updates automatically"
+                                    hint="Asks GitHub once a day. No personal data is sent."
+                                    checked={Boolean(us.enabled)}
+                                    onChange={(v) => update.setSettings({ enabled: v })}
+                                />
+                                <SettingRow
+                                    label="Include pre-releases (beta)"
+                                    hint="Also tell me about test versions before they're released."
+                                    checked={Boolean(us.include_prereleases)}
+                                    disabled={!us.enabled}
+                                    onChange={(v) => update.setSettings({ include_prereleases: v })}
+                                />
+                            </Box>
                         )}
                     </Box>
                 )}
