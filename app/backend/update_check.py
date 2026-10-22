@@ -204,7 +204,7 @@ def validate(manifest: Any) -> Optional[Dict[str, Any]]:
         out["released_at"] = released
     highlights = manifest.get("highlights")
     if isinstance(highlights, list):
-        out["highlights"] = [h for h in (_clip(x) for x in highlights[:5]) if h]
+        out["highlights"] = [h for h in (_clip(x, 300) for x in highlights[:5]) if h]
     out["critical"] = manifest.get("critical") is True
     out["reinstall_required"] = manifest.get("reinstall_required") is True
     try:

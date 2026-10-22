@@ -292,6 +292,10 @@ Licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](
 
 If you want to use Fragmenta under different terms (e.g. embedded in a closed-source commercial product), please reach out — as the sole copyright holder I'm open to discussing alternative licensing.
 
+### Update Notices
+
+Fragmenta asks GitHub once a day whether a newer version exists and shows a small notice if there is one. Nothing personal is sent — it's a plain request with no identifiers — and nothing is downloaded or installed automatically. Turn it off in About, or start Fragmenta with `FRAGMENTA_NO_UPDATE_CHECK=1`.
+
 ### AI-Generated Output
 
 Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). Please keep these tags when you share the files. Details, limits and why there is no audio watermark: [docs/AI_TRANSPARENCY.md](docs/AI_TRANSPARENCY.md).

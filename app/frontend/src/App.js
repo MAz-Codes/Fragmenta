@@ -61,9 +61,12 @@ import {
     Trash2 as DeleteIcon,
     Menu as MenuIcon,
     CheckCircle2 as CheckCircleIcon,
+    ArrowUpCircle as UpdateIcon,
 } from 'lucide-react';
 import api from './api';
 import AboutDialog from './components/AboutDialog';
+import UpdateDialog from './components/UpdateDialog';
+import useUpdateStatus from './components/useUpdateStatus';
 import { InfoViewProvider } from './components/InfoView';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
@@ -110,6 +113,20 @@ function App() {
     useEffect(() => {
         try { window.localStorage.setItem(TAB_STORAGE_KEY, String(tabValue)); } catch {}
     }, [tabValue]);
+
+    // Update notices: a dock button while a newer version is available, and a
+    // snackbar once per version per launch — held back while the Performance
+    // tab (index 3) is open so it never interrupts a live set.
+    const updates = useUpdateStatus();
+    const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+    const [updateToastOpen, setUpdateToastOpen] = useState(false);
+    const updateToastShownForRef = useRef(null);
+    useEffect(() => {
+        const latest = updates.status?.latest;
+        if (!updates.visible || tabValue === 3 || updateToastShownForRef.current === latest) return;
+        updateToastShownForRef.current = latest;
+        setUpdateToastOpen(true);
+    }, [updates.visible, updates.status, tabValue]);
     // Header sticky chrome only kicks in once the page has scrolled.
     const [isScrolled, setIsScrolled] = useState(false);
     // Measure the header's actual rendered height so the fixed nav
@@ -2735,6 +2752,32 @@ function App() {
                 </Alert>
             </Snackbar>
 
+            <Snackbar
+                open={updateToastOpen}
+                autoHideDuration={10000}
+                onClose={(_e, reason) => { if (reason !== 'clickaway') setUpdateToastOpen(false); }}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            >
+                <Alert
+                    onClose={() => setUpdateToastOpen(false)}
+                    severity={updates.status?.critical ? 'warning' : 'info'}
+                    variant="filled"
+                    sx={{ minWidth: 280, boxShadow: 6 }}
+                    action={(
+                        <Button color="inherit" size="small"
+                            onClick={() => { setUpdateToastOpen(false); setShowUpdateDialog(true); }}>
+                            Details
+                        </Button>
+                    )}
+                >
+                    {updates.status?.upgrade_kind === 'major'
+                        ? `Fragmenta ${updates.status?.latest} is available — major upgrade`
+                        : `Fragmenta ${updates.status?.latest} is available`}
+                </Alert>
+            </Snackbar>
+
+            <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
+
             {isDockCollapsed ? (
                 <>
                     <IconButton
@@ -2783,6 +2826,14 @@ function App() {
                             </ListItemIcon>
                             <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
                         </MenuItem>
+                        {updates.visible && (
+                            <MenuItem
+                                onClick={() => { setDockMenuAnchor(null); setShowUpdateDialog(true); }}
+                            >
+                                <ListItemIcon><UpdateIcon size={18} /></ListItemIcon>
+                                <ListItemText>Update available</ListItemText>
+                            </MenuItem>
+                        )}
                         <MenuItem
                             onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
                         >
@@ -2896,6 +2947,21 @@ function App() {
                         </Typography>
                     </Box>
 
+                    {updates.visible && (
+                        <Box sx={appStyles.dockItem}>
+                            <IconButton
+                                aria-label="Update available"
+                                onClick={() => setShowUpdateDialog(true)}
+                                sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
+                            >
+                                <UpdateIcon size={18} />
+                            </IconButton>
+                            <Typography className="dock-label" sx={appStyles.dockLabel}>
+                                Update
+                            </Typography>
+                        </Box>
+                    )}
+
                     <Box sx={appStyles.dockItem}>
                         <IconButton
                             aria-label="Open about and documentation"
@@ -2917,6 +2983,8 @@ function App() {
                 onClose={() => setShowInfoDialog(false)}
                 onOpenDocumentation={handleOpenDocumentation}
                 isOpeningDocumentation={isOpeningDocumentation}
+                update={updates}
+                onShowUpdate={() => { setShowInfoDialog(false); setShowUpdateDialog(true); }}
             />
 
             <Dialog
