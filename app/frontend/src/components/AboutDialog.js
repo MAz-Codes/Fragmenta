@@ -83,7 +83,11 @@ export default function AboutDialog({
             <DialogContent>
                 <Typography sx={appStyles.infoDialogIntro}>
                     Fragmenta is an open source, local-first suit to prepare datasets, train, generate and perform with text-to-audio diffusion models.
-                    Made by the composer and researcher Misagh Azimi.
+                    Made by the composer and researcher{' '}
+                    <Typography component="a" href="https://www.misaghazimi.com" target="_blank" rel="noopener noreferrer"
+                        sx={{ font: 'inherit', color: 'primary.main', textDecoration: 'underline' }}>
+                        Misagh Azimi
+                    </Typography>.
                 </Typography>
 
                 <Box sx={appStyles.infoDialogActionStack}>

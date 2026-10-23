@@ -750,9 +750,12 @@ class ModelManager:
 
     @staticmethod
     def _dir_size(path: Path) -> int:
+        # Skip symlinks: in the HF cache layout every snapshot file is a link
+        # to its blob, so following them counts each file twice.
         if not path.exists():
             return 0
-        return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+        return sum(p.stat().st_size for p in path.rglob("*")
+                   if p.is_file() and not p.is_symlink())
 
 # --- tqdm hook ----------------------------------------------------------------
 
@@ -826,7 +829,10 @@ def _disk_progress_poller(
         try:
             if not target.exists():
                 return 0
-            return sum(p.stat().st_size for p in target.rglob("*") if p.is_file())
+            # Links are the snapshot side of finished blobs; following them
+            # double-counts (the bar ran past 100%, e.g. 3.99 / 3.49 GB).
+            return sum(p.stat().st_size for p in target.rglob("*")
+                       if p.is_file() and not p.is_symlink())
         except Exception:
             return 0
 
