@@ -6,14 +6,17 @@ import {
     DialogActions,
     DialogContent,
     DialogTitle,
-    Switch,
+    Checkbox,
+    FormControlLabel,
     Typography,
 } from '@mui/material';
 import {
     Info as InfoIcon,
     BookOpen as BookOpenIcon,
+    PlayCircle as PlayIcon,
 } from 'lucide-react';
 import { appStyles } from '../theme';
+import Tooltip from './Tooltip';
 import { APP_VERSION } from '../version';
 
 const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/tree/main/licenses';
@@ -28,7 +31,7 @@ const LINK_SX = { color: 'primary.main', textDecoration: 'underline', fontSize: 
  * Props:
  *   open:                       bool
  *   onClose:                    () => void
- *   onOpenDocumentation:        ('about' | 'documentation') => void
+ *   onOpenDocumentation:        ('about' | 'documentation' | 'tutorials') => void
  *   isOpeningDocumentation:     bool — disables the doc buttons while a
  *                               native open-file call is in flight
  *   update:                     useUpdateStatus() result (optional)
@@ -36,24 +39,10 @@ const LINK_SX = { color: 'primary.main', textDecoration: 'underline', fontSize: 
  */
 function updateLine(s) {
     if (s.disabled_reason === 'env') return 'Update checks are turned off (FRAGMENTA_NO_UPDATE_CHECK).';
-    if (s.disabled_reason === 'user') return 'Automatic update checks are off.';
     if (s.available) return `Update available: ${s.latest}`;
     if (s.checked_at) return 'Up to date';
     if (s.last_error) return "Couldn't check for updates (offline?)";
     return 'Not checked for updates yet';
-}
-
-function SettingRow({ label, hint, checked, disabled, onChange }) {
-    return (
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, pt: 1 }}>
-            <Box sx={{ minWidth: 0, opacity: disabled ? 0.5 : 1 }}>
-                <Typography variant="body2">{label}</Typography>
-                <Typography variant="caption" color="text.secondary">{hint}</Typography>
-            </Box>
-            <Switch size="small" checked={checked} disabled={disabled}
-                onChange={(e) => onChange(e.target.checked)} inputProps={{ 'aria-label': label }} />
-        </Box>
-    );
 }
 
 export default function AboutDialog({
@@ -121,49 +110,54 @@ export default function AboutDialog({
                     <Button
                         variant="outlined"
                         size="small"
-                        disabled
+                        startIcon={<PlayIcon size={16} />}
+                        onClick={() => onOpenDocumentation('tutorials')}
+                        disabled={isOpeningDocumentation}
                         sx={appStyles.infoDocButton}
                     >
-                        Tutorials (Coming soon...)
+                        Tutorials
                     </Button>
                 </Box>
 
-                {/* Updates card: status + actions on one row, then each
-                    setting on its own row (label left, switch right). */}
+                {/* Updates: status on the left; the automatic-check box and
+                    Check now on the right. Unticking only stops the daily
+                    check — Check now always works. */}
                 {showUpdates && (
-                    <Box sx={{ mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
-                            <Box sx={{ minWidth: 0 }}>
-                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                    {updateLine(us)}
-                                </Typography>
-                                {us.checked_at && (
-                                    <Typography variant="caption" color="text.secondary">
-                                        Last checked {new Date(us.checked_at * 1000).toLocaleString(undefined,
-                                            { dateStyle: 'medium', timeStyle: 'short' })}
-                                    </Typography>
-                                )}
-                            </Box>
-                            <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+                    <Box sx={{
+                        mt: 3, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1,
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap',
+                    }}>
+                        <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                {updateLine(us)}
                                 {us.available && (
-                                    <Button size="small" variant="contained" onClick={onShowUpdate}>Details</Button>
-                                )}
-                                {us.disabled_reason !== 'env' && (
-                                    <Button size="small" variant="outlined"
-                                        onClick={update.checkNow} disabled={update.checking || !us.enabled}>
-                                        {update.checking ? 'Checking…' : 'Check now'}
+                                    <Button size="small" onClick={onShowUpdate}
+                                        sx={{ ml: 1, minWidth: 0, py: 0, px: 0.5, verticalAlign: 'baseline' }}>
+                                        Details
                                     </Button>
                                 )}
-                            </Box>
+                            </Typography>
+                            {us.checked_at && (
+                                <Typography variant="caption" color="text.secondary">
+                                    Last checked {new Date(us.checked_at * 1000).toLocaleString(undefined,
+                                        { dateStyle: 'medium', timeStyle: 'short' })}
+                                </Typography>
+                            )}
                         </Box>
                         {us.disabled_reason !== 'env' && (
-                            <Box sx={{ mt: 1.5, pt: 0.5, borderTop: '1px solid', borderColor: 'divider' }}>
-                                <SettingRow
-                                    label="Check for updates automatically"
-                                    hint="Asks GitHub once a day. No personal data is sent."
-                                    checked={Boolean(us.enabled)}
-                                    onChange={(v) => update.setSettings({ enabled: v })}
-                                />
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+                                <Tooltip title="Asks GitHub once a day. No personal data is sent.">
+                                    <FormControlLabel
+                                        sx={{ mr: 0 }}
+                                        control={<Checkbox size="small" checked={Boolean(us.enabled)}
+                                            onChange={(e) => update.setSettings({ enabled: e.target.checked })} />}
+                                        label={<Typography variant="caption">Check automatically</Typography>}
+                                    />
+                                </Tooltip>
+                                <Button size="small" variant="outlined"
+                                    onClick={update.checkNow} disabled={update.checking}>
+                                    {update.checking ? 'Checking…' : 'Check now'}
+                                </Button>
                             </Box>
                         )}
                     </Box>

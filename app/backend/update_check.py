@@ -143,14 +143,15 @@ def _update_state(**changes: Any) -> Dict[str, Any]:
 # --- disabled reasons --------------------------------------------------------
 
 def is_disabled(state: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Why update checks can't run at all, or None. The user's switch in
+    About is not one of these: it only turns off the *automatic* daily
+    check — "Check now" still works (see check())."""
     if os.environ.get("FRAGMENTA_HF_SPACE") == "1" or os.environ.get("SPACE_ID"):
         return "hf_space"
     if os.environ.get("FRAGMENTA_NO_UPDATE_CHECK") == "1":
         return "env"
     if current_version() is None:
         return "unknown_version"
-    if not (state or load_state()).get("enabled", True):
-        return "user"
     return None
 
 
@@ -296,8 +297,9 @@ def check(force: bool = False) -> Dict[str, Any]:
     state = load_state()
     if is_disabled(state):
         return state
-    if not force and time.time() - state.get("last_checked", 0) < CHECK_INTERVAL:
-        return state
+    if not force and (not state.get("enabled", True)
+                      or time.time() - state.get("last_checked", 0) < CHECK_INTERVAL):
+        return state   # automatic checks off, or checked recently
     try:
         raw = fetch_prerelease_manifest() if state.get("include_prereleases") else fetch_manifest()
         latest = validate(raw)
@@ -485,11 +487,11 @@ _stop = threading.Event()
 
 def start_background_checker() -> Optional[threading.Thread]:
     """First check ~30 s after start, then hourly wake-ups; check() itself
-    enforces the 24 h interval and the user's on/off switch (so turning it
-    back on works without a restart). Not started at all in the HF Space,
-    with FRAGMENTA_NO_UPDATE_CHECK=1, or without a readable VERSION."""
+    enforces the 24 h interval and the user's automatic-check switch (so
+    turning it back on works without a restart). Not started at all in the HF
+    Space, with FRAGMENTA_NO_UPDATE_CHECK=1, or without a readable VERSION."""
     reason = is_disabled()
-    if reason in ("hf_space", "env", "unknown_version"):
+    if reason:
         logger.info(f"Update check disabled ({reason})")
         return None
 
