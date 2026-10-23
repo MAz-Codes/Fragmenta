@@ -23,6 +23,7 @@ import {
     DialogContent,
     DialogActions,
     InputAdornment,
+    Popover,
 } from '@mui/material';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
@@ -168,6 +169,13 @@ function PerformancePanelInner({
     const [linkEnabled, setLinkEnabled] = useState(session.linkEnabled ?? false);
     const [linkPeers, setLinkPeers] = useState(0);
     const [linkInstalling, setLinkInstalling] = useState(false);
+    // Link sync: Fragmenta schedules Link launches early by its measured
+    // output latency (performanceAudio.js); this per-output-device trim covers
+    // what the browser doesn't report. Per-viewer convenience → localStorage.
+    const [linkOffsetMs, setLinkOffsetMs] = useState(0);
+    const [syncAnchor, setSyncAnchor] = useState(null);
+    const [calibrating, setCalibrating] = useState(false);
+    const [measuredLatencyMs, setMeasuredLatencyMs] = useState(null);
     const [launchQuantum, setLaunchQuantum] = useState(session.launchQuantum ?? LAUNCH_Q_DEFAULT);
     const wasPlayingRef = useRef(false);
     const bpmOriginRef = useRef('user');
@@ -736,6 +744,45 @@ function PerformancePanelInner({
         api.post('/api/link/bpm', { bpm }).catch(() => {});
     }, [bpm, linkEnabled]);
 
+    const linkOffsetKey = `fragmenta.linkOffsetMs:${outputDeviceId || 'default'}`;
+    useEffect(() => {
+        let stored = 0;
+        try { stored = Number(window.localStorage.getItem(linkOffsetKey)) || 0; } catch { /* private mode */ }
+        setLinkOffsetMs(stored);
+    }, [linkOffsetKey]);
+    useEffect(() => { engineRef.current?.setLinkOffsetMs(linkOffsetMs); }, [linkOffsetMs]);
+    const updateLinkOffset = useCallback((ms) => {
+        setLinkOffsetMs(ms);
+        try { window.localStorage.setItem(linkOffsetKey, String(ms)); } catch { /* private mode */ }
+    }, [linkOffsetKey]);
+
+    // Refresh the measured latency while Link is on (it changes with the device).
+    useEffect(() => {
+        if (!linkEnabled) { setMeasuredLatencyMs(null); return undefined; }
+        const read = () => {
+            const ms = engineRef.current?.getOutputLatencyMs?.();
+            setMeasuredLatencyMs(Number.isFinite(ms) ? Math.round(ms) : null);
+        };
+        read();
+        const t = setInterval(read, 2000);
+        return () => clearInterval(t);
+    }, [linkEnabled, outputDeviceId]);
+
+    const stopCalibration = useCallback(() => {
+        engineRef.current?.stopCalibrationClicks();
+        setCalibrating(false);
+    }, []);
+    const toggleCalibration = useCallback(async () => {
+        const engine = engineRef.current;
+        if (!engine) return;
+        if (calibrating) { stopCalibration(); return; }
+        try { await engine.ctx.resume(); } catch { /* already running */ }
+        engine.startCalibrationClicks();
+        setCalibrating(true);
+    }, [calibrating, stopCalibration]);
+    useEffect(() => { if (!linkEnabled) stopCalibration(); }, [linkEnabled, stopCalibration]);
+    useEffect(() => () => engineRef.current?.stopCalibrationClicks(), []);
+
     const handleToggleLink = useCallback(async () => {
         // First click when Link isn't installed: offer to install it.
         if (!linkAvailable) {
@@ -1036,6 +1083,73 @@ function PerformancePanelInner({
                         </ButtonBase>
                     </span>
                 </Tooltip>
+
+                {/* Link sync — latency compensation + calibrate by ear. */}
+                {linkEnabled && (
+                    <>
+                        <Tooltip title={TIPS.perf.linkSync}>
+                            <ButtonBase
+                                onClick={(e) => setSyncAnchor(e.currentTarget)}
+                                sx={{
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: 600,
+                                    px: 0.75,
+                                    height: perfTokens.height.compact,
+                                    borderRadius: '2px',
+                                    border: '1px solid',
+                                    borderColor: 'divider',
+                                    color: 'text.secondary',
+                                    '&:hover': { color: 'text.primary' },
+                                }}
+                            >
+                                {measuredLatencyMs === null
+                                    ? 'Sync'
+                                    : `${measuredLatencyMs + linkOffsetMs} ms`}
+                            </ButtonBase>
+                        </Tooltip>
+                        <Popover
+                            open={Boolean(syncAnchor)}
+                            anchorEl={syncAnchor}
+                            onClose={() => { setSyncAnchor(null); stopCalibration(); }}
+                            anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+                            transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                        >
+                            <Box sx={{ p: 2, width: 300 }}>
+                                <Typography variant="subtitle2">Link sync</Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                                    This output adds {measuredLatencyMs ?? '…'} ms of delay. Fragmenta plays that
+                                    much earlier so its beats land with your Link peers.
+                                </Typography>
+                                <Typography variant="caption">
+                                    Fine-tune: {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
+                                    {' '}<Typography component="span" variant="caption" color="text.secondary">
+                                        (saved for this output)
+                                    </Typography>
+                                </Typography>
+                                <Slider
+                                    size="small" min={-50} max={150} step={1}
+                                    value={linkOffsetMs}
+                                    onChange={(_, v) => updateLinkOffset(v)}
+                                    aria-label="Link offset in milliseconds"
+                                />
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button size="small" variant={calibrating ? 'contained' : 'outlined'} onClick={toggleCalibration}>
+                                        {calibrating ? 'Stop clicks' : 'Calibrate by ear'}
+                                    </Button>
+                                    <Button size="small" onClick={() => updateLinkOffset(0)} disabled={linkOffsetMs === 0}>
+                                        Reset
+                                    </Button>
+                                </Box>
+                                {calibrating && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                                        Turn on Live's metronome and press play. Move the slider until
+                                        Fragmenta's click and Live's sound as one.
+                                    </Typography>
+                                )}
+                            </Box>
+                        </Popover>
+                    </>
+                )}
 
                 {/* MIDI learn toggle — same compact rectangle style as Link. */}
                 <Tooltip

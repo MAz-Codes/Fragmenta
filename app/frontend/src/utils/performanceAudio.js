@@ -820,6 +820,13 @@ export class PerformanceEngine {
 
         this.linkSnapshot = null;
         this.launchQuantum = 0;
+        // Link latency compensation. Link wants every peer's beats *heard* at
+        // the same moment, and audio scheduled at context time t reaches the
+        // speakers only after the device's output latency — so Link launches
+        // are scheduled that much earlier (see _audioTimeHeardAt), plus this
+        // per-device user trim (ms; positive = play earlier).
+        this.linkOffsetMs = 0;
+        this._clickTimer = null;
 
         // Internal transport: an always-running beat clock anchored in audio
         // time. Used for launch quantization when Ableton Link isn't active,
@@ -1033,6 +1040,83 @@ export class PerformanceEngine {
         this.linkSnapshot = snapshot;
     }
 
+    setLinkOffsetMs(ms) {
+        const v = Number(ms);
+        this.linkOffsetMs = Number.isFinite(v) ? v : 0;
+    }
+
+    /** Context time whose audio will be *heard* at `perfMs` (performance.now()
+     *  clock). getOutputTimestamp() pairs the frame leaving the device with a
+     *  performance time, so the output latency is built in; it reads zeros
+     *  until the device has started, and some engines lack it — then fall back
+     *  to the latency the context reports. */
+    _audioTimeHeardAt(perfMs) {
+        const ts = typeof this.ctx.getOutputTimestamp === 'function' ? this.ctx.getOutputTimestamp() : null;
+        if (ts && ts.contextTime > 0 && ts.performanceTime > 0) {
+            return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+        }
+        const reported = (this.ctx.baseLatency || 0) + (this.ctx.outputLatency || 0);
+        return this.ctx.currentTime + (perfMs - performance.now()) / 1000 - reported;
+    }
+
+    /** Measured output latency in ms: how long after it's rendered audio is
+     *  heard. Shown in the Link sync panel; compensated automatically. */
+    getOutputLatencyMs() {
+        const now = performance.now();
+        return Math.max(0, (this.ctx.currentTime - this._audioTimeHeardAt(now)) * 1000);
+    }
+
+    /** Link beat → performance.now() time at which that beat happens. */
+    _linkBeatPerfMs(beat) {
+        const s = this.linkSnapshot;
+        return s.capturedAt + (beat - s.beat) * 60000 / s.bpm;
+    }
+
+    /** Audio time at which Link `beat` must be scheduled to be heard on time. */
+    _linkBeatAudioTime(beat) {
+        return this._audioTimeHeardAt(this._linkBeatPerfMs(beat)) - this.linkOffsetMs / 1000;
+    }
+
+    /** Calibration click on every Link beat (accent on the bar), routed
+     *  through the master bus so it takes the same path as the music. Line it
+     *  up with Live's metronome by adjusting the Link offset. */
+    startCalibrationClicks() {
+        this.stopCalibrationClicks();
+        let lastBeat = null;
+        const tick = () => {
+            const s = this.linkSnapshot;
+            if (!s || !s.bpm) return;
+            // Look ahead ~250 ms in *audio* time: with a large output latency
+            // the beats that are due now lie well ahead on Link's timeline.
+            let beat = lastBeat === null
+                ? Math.ceil(s.beat + ((performance.now() - s.capturedAt) / 1000) * (s.bpm / 60))
+                : lastBeat + 1;
+            for (;; beat += 1) {
+                const t = this._linkBeatAudioTime(beat);
+                if (t > this.ctx.currentTime + 0.25) break;
+                lastBeat = beat;
+                if (t < this.ctx.currentTime) continue;                // too late for this one
+                const osc = this.ctx.createOscillator();
+                const env = this.ctx.createGain();
+                osc.frequency.value = (((beat % 4) + 4) % 4) === 0 ? 1500 : 1000;
+                env.gain.setValueAtTime(0.0001, t);
+                env.gain.exponentialRampToValueAtTime(0.5, t + 0.001);
+                env.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+                osc.connect(env).connect(this.masterBus);
+                osc.start(t);
+                osc.stop(t + 0.05);
+                osc.onended = () => { osc.disconnect(); env.disconnect(); };
+            }
+        };
+        tick();
+        this._clickTimer = window.setInterval(tick, 25);
+    }
+
+    stopCalibrationClicks() {
+        if (this._clickTimer) window.clearInterval(this._clickTimer);
+        this._clickTimer = null;
+    }
+
     setLaunchQuantum(beats) {
         const v = Number(beats);
         this.launchQuantum = Number.isFinite(v) && v > 0 ? v : 0;
@@ -1052,7 +1136,12 @@ export class PerformanceEngine {
         let bpm = 0;
         if (snap && snap.bpm) {
             bpm = snap.bpm;
-            currentBeat = snap.beat + ((performance.now() - snap.capturedAt) / 1000) * (bpm / 60);
+            // The beat that sound started now will be *heard* on: Link time
+            // runs ahead by our output latency (+ the user's trim). Phase-lock
+            // and quantize against that, not the beat being rendered.
+            const nowMs = performance.now();
+            const leadSec = this.getOutputLatencyMs() / 1000 + this.linkOffsetMs / 1000;
+            currentBeat = snap.beat + ((nowMs - snap.capturedAt) / 1000 + leadSec) * (bpm / 60);
         } else {
             const tr = this.internalTransport;
             if (tr.bpm) {
@@ -1087,6 +1176,15 @@ export class PerformanceEngine {
         // exactly nextBeat.
         let nextBeat = Math.ceil(currentBeat / quantum) * quantum;
         if (nextBeat - currentBeat < 1e-6) nextBeat += quantum;
+        if (snap && snap.bpm) {
+            // Link: schedule so the boundary is heard on Link's beat.
+            let when = this._linkBeatAudioTime(nextBeat);
+            if (when < this.ctx.currentTime + 0.005) {            // missed it — take the next one
+                nextBeat += quantum;
+                when = this._linkBeatAudioTime(nextBeat);
+            }
+            return { when, beat: nextBeat, bpm };
+        }
         const secondsUntil = (nextBeat - currentBeat) * 60 / bpm;
         return { when: this.ctx.currentTime + secondsUntil, beat: nextBeat, bpm };
     }
