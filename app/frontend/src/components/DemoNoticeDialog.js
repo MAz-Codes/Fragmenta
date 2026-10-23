@@ -14,6 +14,7 @@ import {
 import { appStyles, demoNoticeStyles } from '../theme';
 
 export const FRAGMENTA_SITE_URL = 'https://www.misaghazimi.com/fragmenta';
+const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/blob/main/licenses';
 
 /**
  * Demo notice — shown once per session on the Hugging Face Spaces deployment
@@ -79,6 +80,16 @@ export default function DemoNoticeDialog({ open, onClose }) {
                         misaghazimi.com/fragmenta
                     </Button>
                 </Box>
+
+                {/* The Space is a hosted service of the models, so the Gemma
+                    Terms (§3.1) want the use restrictions agreed to by its
+                    users; continuing is that agreement. */}
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2.5, lineHeight: 1.6, textAlign: 'center', '& a': { color: 'primary.main' } }}>
+                    By continuing you agree to the{' '}
+                    <a href={`${LICENSES_URL}/STABILITY_AI_COMMUNITY_LICENSE.md`} target="_blank" rel="noopener noreferrer">Stability AI Community License</a>,
+                    the <a href={`${LICENSES_URL}/GEMMA_TERMS_OF_USE.md`} target="_blank" rel="noopener noreferrer">Gemma Terms of Use</a> and
+                    their use policies. Audio made here is AI-generated and marked as such. Powered by Stability AI.
+                </Typography>
             </DialogContent>
 
             <DialogActions sx={demoNoticeStyles.actions}>
