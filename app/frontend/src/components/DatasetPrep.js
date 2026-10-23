@@ -280,6 +280,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             refreshHealth(name);
         } catch (e) {
             if (e?.response?.status === 404) {
+                // Remembered project is gone (deleted, or this is a different
+                // install sharing the same webview storage): drop it quietly
+                // so the next launch doesn't try again.
+                try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
                 setSelectedName('');
                 setProject(null);
                 setHealth(null);
@@ -313,6 +317,9 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 pollHandleRef.current = window.setTimeout(() => poll(name), 500);
             }
         } catch (e) {
+            // 404 = the project itself is missing; refreshProject handles that
+            // without an error, and this poll races it on startup.
+            if (e?.response?.status === 404) return;
             if (epoch === pollEpochRef.current) setError(extractError(e, 'Status poll failed'));
         }
     }, [refreshProject]);

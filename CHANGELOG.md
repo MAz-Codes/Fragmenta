@@ -28,6 +28,8 @@ All notable changes to Fragmenta are listed here. The format follows
 
 ### Fixed
 - The backend no longer crashes when the terminal that launched it is closed.
+- The Dataset tab no longer shows "Project not found" when the last project
+  you opened is gone; it opens empty instead.
 
 ## [1.1.1] - 2026-10-22
 
