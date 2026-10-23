@@ -33,7 +33,7 @@ import {
     clearScope as clearFragmentScope,
 } from '../utils/fragmentStorage';
 import api from '../api';
-import { VENDOR_AUDIO_EDIT_READY } from '../features';
+import { PERFORMANCE_VARIATION } from '../features';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 
 const CHANNEL_COLORS = [
@@ -1103,11 +1103,9 @@ export default function PerformanceChannel({
                     {/* Variation — re-roll from the current fragment as
                         init_audio (Phase 8). Disabled until a fragment exists.
 
-                        Hidden while VENDOR_AUDIO_EDIT_READY is false: it runs
-                        through the same vendor audio-to-audio path as the
-                        Generation page's Edit existing mode, which currently
-                        can't produce usable output. See features.js. */}
-                    {VENDOR_AUDIO_EDIT_READY && (
+                        Hidden while PERFORMANCE_VARIATION is false. See
+                        features.js. */}
+                    {PERFORMANCE_VARIATION && (
                     <MidiMappable id={ctrlId('variation')} label={ctrlLabel('Variation')} kind="trigger" onChange={handleVariation}>
                         <Tooltip
                             title={TIPS.channel.variation(loaded)}

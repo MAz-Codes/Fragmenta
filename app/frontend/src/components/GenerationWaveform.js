@@ -13,34 +13,32 @@ const PEAK_COUNT = 80;
  *
  * Decodes `blob` once per width and renders min/max peaks on a canvas.
  * Played portion is rendered in `color`; unplayed in a dim version of it,
- * with a thin playhead line at the current position. The whole element is
- * draggable: dragstart sets a DownloadURL on the dataTransfer so the user
- * can drag the fragment onto their desktop or into a DAW as a .wav file.
+ * with a thin playhead line at the current position. Click or drag on it to
+ * scrub (same gesture as the dataset-page waveforms); the row's prompt text
+ * is the drag handle, not this.
  *
  * Props:
- *   blob:        Blob | null     — audio source (Blob is required for the
- *                                   native drag-to-OS file write).
- *   audioUrl:    string          — blob: URL for the same audio. Used in
- *                                   the dataTransfer; we fall back to
- *                                   createObjectURL(blob) if it's missing.
- *   filename:    string          — file name the OS sees when the drag
- *                                   resolves.
+ *   blob:        Blob | null     — audio source (preferred; no fetch).
+ *   audioUrl:    string          — URL for the same audio, fetched when
+ *                                   there's no blob.
  *   currentTime: number          — playback head position in seconds.
  *   duration:    number          — total length in seconds.
  *   height:      number          — canvas height in px (default 28).
  *   color:       string          — accent color (default theme amber).
+ *   onSeek:      (fraction) => void — called with 0..1 on click / drag.
  */
 export default function GenerationWaveform({
     blob,
     audioUrl,
-    filename = 'fragment.wav',
     currentTime = 0,
     duration = 0,
     height = 28,
     color = DEFAULT_COLOR,
+    onSeek,
 }) {
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
+    const scrubbingRef = useRef(false);
     // Start at a sensible non-zero width so the decode useEffect (gated on
     // width > 0) runs on first mount instead of waiting for the async
     // ResizeObserver callback — which is what was leaving the canvas blank.
@@ -174,29 +172,37 @@ export default function GenerationWaveform({
 
     useEffect(() => { draw(); }, [draw]);
 
-    // Native drag-to-OS as a file. The DownloadURL mime type is a Chromium
-    // extension the OS interprets as "this drag is a file the browser can
-    // serve from URL X with mime/name Y". Source is whichever URL we have:
-    // a blob: URL for in-memory fragments, or the backend /api/fragments/
-    // path for disk-hydrated ones. The OS needs an ABSOLUTE URL, so we
-    // resolve relative paths against window.location.origin.
-    const canDrag = !!(audioUrl || blob);
-    const handleDragStart = (e) => {
-        if (!canDrag) return;
-        const raw = audioUrl || URL.createObjectURL(blob);
-        const absolute = (raw.startsWith('http') || raw.startsWith('blob:'))
-            ? raw
-            : `${window.location.origin}${raw.startsWith('/') ? '' : '/'}${raw}`;
-        e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${absolute}`);
-        e.dataTransfer.effectAllowed = 'copy';
+    // Translate a pointer position into a 0..1 offset in the clip.
+    const seekTo = (clientX) => {
+        const el = containerRef.current;
+        if (!el || !onSeek) return;
+        const rect = el.getBoundingClientRect();
+        if (!rect.width) return;
+        onSeek(Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)));
+    };
+
+    const endScrub = (e) => {
+        scrubbingRef.current = false;
+        // Capture is already gone if the pointer was cancelled by the browser.
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     };
 
     return (
         <Box
             ref={containerRef}
-            draggable={canDrag}
-            onDragStart={handleDragStart}
-            title={canDrag ? 'Drag to save or drop into a DAW' : undefined}
+            title={onSeek ? 'Click or drag to scrub' : undefined}
+            onPointerDown={(e) => {
+                if (!onSeek || e.button !== 0) return;
+                // Stops text selection from kicking in mid-drag.
+                e.preventDefault();
+                // Pointer capture keeps the scrub alive past the canvas edges.
+                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
+                scrubbingRef.current = true;
+                seekTo(e.clientX);
+            }}
+            onPointerMove={(e) => { if (scrubbingRef.current) seekTo(e.clientX); }}
+            onPointerUp={endScrub}
+            onPointerCancel={endScrub}
             sx={{
                 // Floor the width so the container is never zero — without
                 // this, a tight flex row could collapse it before
@@ -204,8 +210,8 @@ export default function GenerationWaveform({
                 flex: 1,
                 minWidth: 120,
                 height,
-                cursor: canDrag ? 'grab' : 'default',
-                '&:active': { cursor: canDrag ? 'grabbing' : 'default' },
+                cursor: onSeek ? 'pointer' : 'default',
+                touchAction: 'none',
             }}
         >
             <canvas

@@ -20,7 +20,7 @@ import { generatedFragmentsWindowStyles } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
 import api from '../api';
 import { setFragmentDragPayload, clearFragmentDragPayload } from '../utils/fragmentDrag';
-import { VENDOR_AUDIO_EDIT_READY } from '../features';
+import { GENERATION_AUDIO_EDIT } from '../features';
 import { extractError } from '../utils/errors';
 
 // Compact human-readable "X ago" with absolute fallback for stale items.
@@ -82,6 +82,22 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     // fragment) — re-entering load() would abort the first play() and
     // both attempts would fail with AbortError.
     const playInFlightRef = useRef(null);
+    // Where the next start lands, 0..1 (set by Play = 0 or a waveform click).
+    const startFracRef = useRef(0);
+
+    // `timeupdate` only fires ~4x a second, which makes the playhead jump.
+    // Follow the playing element every frame instead.
+    useEffect(() => {
+        if (!playingFragment) return undefined;
+        let raf = 0;
+        const tick = () => {
+            const el = audioRefs.current[playingFragment];
+            if (el && !el.paused) setPlayingTime(el.currentTime);
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [playingFragment]);
 
     // Background-preload of disk-hydrated fragments. On app reload the parent
     // gives us fragment metadata + the backend URL (/api/fragments/...) but
@@ -174,9 +190,10 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     //      the first with AbortError. playInFlightRef tracks the active
     //      request: same-fragment second click is a no-op; different
     //      fragment cleanly cancels the prior load timer/listener.
-    const handlePlayPause = (fragment) => {
+    const handlePlayPause = (fragment, startFrac = 0) => {
         const audio = audioRefs.current[fragment.id];
         if (!audio) return;
+        startFracRef.current = startFrac;
 
         // Stop case: this fragment is currently playing → pause it.
         if (!audio.paused) {
@@ -211,7 +228,14 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
         setPlayingTime(0);
 
         const startPlayback = () => {
-            audio.currentTime = 0;
+            // Start where the waveform was clicked (0 for the Play button).
+            // Read at start time, so a scrub during loading still lands.
+            const d = audio.duration;
+            const frac = startFracRef.current;
+            audio.currentTime = (frac > 0 && d && isFinite(d))
+                ? Math.min(frac * d, Math.max(0, d - 0.05))
+                : 0;
+            setPlayingTime(audio.currentTime);
             Promise.resolve(audio.play())
                 .then(() => {
                     // Successfully playing — clear the in-flight marker so
@@ -265,6 +289,27 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 clearTimeout(timer);
             },
         };
+    };
+
+    // Click / drag on a fragment's waveform. On the playing fragment it jumps
+    // there; on any other it starts playback from that spot (same gesture as
+    // the dataset page). A scrub during loading just moves the start point.
+    const handleSeek = (fragment, frac) => {
+        const audio = audioRefs.current[fragment.id];
+        if (!audio) return;
+        if (playInFlightRef.current?.fragmentId === fragment.id) {
+            startFracRef.current = frac;
+            return;
+        }
+        if (audio.paused) {
+            handlePlayPause(fragment, frac);
+            return;
+        }
+        const d = audio.duration;
+        if (!d || !isFinite(d)) return;
+        // Nudge off the very end so the last pixel doesn't fire `ended`.
+        audio.currentTime = Math.min(frac * d, Math.max(0, d - 0.05));
+        setPlayingTime(audio.currentTime);
     };
 
     // Reveal a fragment in the OS file manager (folder opens with the file
@@ -426,27 +471,39 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
                                 </IconButton>
 
-                                {/* The drag source exists only to feed EditPanel's drop
-                                    zone, so it's gated with it — otherwise the grab
-                                    cursor and tooltip advertise an Edit tab that isn't
-                                    there. The waveform's separate OS drag-out below is
-                                    untouched either way. See features.js. */}
+                                {/* The prompt text is the row's drag handle (the waveform
+                                    next to it scrubs). One drag carries both payloads:
+                                    the in-app one for Edit existing's drop zone (gated
+                                    with it, see features.js) and a DownloadURL so
+                                    engines that support it (Chrome-based, Windows/macOS)
+                                    can drop the WAV on the desktop or into a DAW. */}
                                 <Box
                                     sx={{
                                         ...generatedFragmentsWindowStyles.fragmentMeta,
-                                        ...(VENDOR_AUDIO_EDIT_READY && { cursor: 'grab' }),
+                                        ...(effectiveUrl(fragment) && { cursor: 'grab' }),
                                     }}
-                                    {...(VENDOR_AUDIO_EDIT_READY ? {
+                                    {...(effectiveUrl(fragment) ? {
                                         draggable: true,
                                         onDragStart: (e) => {
+                                            e.dataTransfer.effectAllowed = 'copy';
+                                            // The OS needs an absolute URL: blob: as is, the
+                                            // backend's /api/fragments/... path resolved
+                                            // against this origin.
+                                            const raw = effectiveUrl(fragment);
+                                            const absolute = (raw.startsWith('http') || raw.startsWith('blob:'))
+                                                ? raw
+                                                : `${window.location.origin}${raw.startsWith('/') ? '' : '/'}${raw}`;
+                                            e.dataTransfer.setData(
+                                                'DownloadURL',
+                                                `audio/wav:${fragment.filename || 'fragment.wav'}:${absolute}`,
+                                            );
+                                            if (!GENERATION_AUDIO_EDIT) return;
                                             // In-app payload consumed by EditPanel's drop zone
-                                            // ("drag a clip into the Edit tab"). Keeps the
-                                            // waveform's separate OS drag-out untouched.
+                                            // ("drag a clip into Edit existing").
                                             e.dataTransfer.setData(
                                                 'application/x-fragmenta-fragment',
                                                 fragment.filename || '',
                                             );
-                                            e.dataTransfer.effectAllowed = 'copy';
                                             // Hand off the in-memory blob too so the drop can
                                             // use it directly — no disk fetch, immune to any
                                             // name mismatch. Falls back to the filename when
@@ -460,7 +517,9 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                             }
                                         },
                                         onDragEnd: () => clearFragmentDragPayload(),
-                                        title: 'Drag into the Edit tab to use as a source clip',
+                                        title: GENERATION_AUDIO_EDIT
+                                            ? 'Drag into Edit existing to use as a source clip'
+                                            : 'Drag to save the file',
                                     } : {})}
                                 >
                                     <Typography
@@ -480,9 +539,9 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 <GenerationWaveform
                                     blob={effectiveBlob(fragment)}
                                     audioUrl={effectiveUrl(fragment)}
-                                    filename={fragment.filename || 'fragment.wav'}
                                     currentTime={isPlaying ? playingTime : 0}
-                                    duration={fragment.duration || 0}
+                                    duration={audioRefs.current[fragment.id]?.duration || fragment.duration || 0}
+                                    onSeek={(frac) => handleSeek(fragment, frac)}
                                 />
 
                                 <Tooltip

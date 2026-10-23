@@ -74,7 +74,7 @@ import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
-import { VENDOR_AUDIO_EDIT_READY } from './features';
+import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
@@ -264,11 +264,10 @@ function App() {
     // Generation panel top-level mode: 'create' (text → audio) or
     // 'edit' (audio → audio: style transfer, inpaint, extend).
     const [generationMode, setGenerationMode] = useState('create');
-    // Audio-to-audio is hidden while the vendor runtime can't do it — see
-    // features.js. Deriving the mode rather than reading state directly means
-    // there's no way to land in the edit panel while the flag is off, however
-    // the state got set.
-    const effectiveGenerationMode = VENDOR_AUDIO_EDIT_READY ? generationMode : 'create';
+    // Gated by GENERATION_AUDIO_EDIT (features.js). Deriving the mode rather
+    // than reading state directly means there's no way to land in the edit
+    // panel while the flag is off, however the state got set.
+    const effectiveGenerationMode = GENERATION_AUDIO_EDIT ? generationMode : 'create';
     const [generationPrompt, setGenerationPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
@@ -2328,11 +2327,11 @@ function App() {
                                                     model picker and LoRA picker above stay visible in
                                                     both modes.
 
-                                                    Hidden while VENDOR_AUDIO_EDIT_READY is false: with
+                                                    Hidden while GENERATION_AUDIO_EDIT is false: with
                                                     only one reachable mode a switch is just a dead
                                                     control, so the page opens straight into Generate
-                                                    new. See features.js for the roll-back condition. */}
-                                                {VENDOR_AUDIO_EDIT_READY && (
+                                                    new. See features.js. */}
+                                                {GENERATION_AUDIO_EDIT && (
                                                 <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
                                                     <Tooltip title={TIPS.generate.mode}>
                                                     <ToggleButtonGroup

@@ -21,6 +21,10 @@ All notable changes to Fragmenta are listed here. The format follows
   screen show "Powered by Stability AI".
 - AI transparency note (`docs/AI_TRANSPARENCY.md`): how outputs are marked
   and how to check a file.
+- Edit existing is back on the Generation page: style transfer, inpaint and
+  extend. Drag a fragment's name onto it to use it as the source.
+- Generated Fragments: click or drag a waveform to scrub, with a smooth
+  playhead.
 
 ### Fixed
 - The backend no longer crashes when the terminal that launched it is closed.
