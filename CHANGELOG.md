@@ -10,6 +10,9 @@ All notable changes to Fragmenta are listed here. The format follows
 - Cue point for Performance channels: set where a launch or retrigger enters
   the clip, while repeats return to the loop start. Sharper waveforms and a
   playhead too.
+- Tighter Ableton Link sync: Fragmenta now plays early by its own output
+  latency, so launches land on your peers' beat. Fine-tune per output, or
+  calibrate by ear against Live's metronome.
 - Base models download and run without a Hugging Face account; the Checkpoint
   Manager marks them "No account needed" and shows correct download sizes.
 - Update notices: Fragmenta checks GitHub once a day and tells you when a new
