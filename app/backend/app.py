@@ -226,6 +226,24 @@ def app_version():
 # form/text POST then gets a 415 instead of acting (CORS + the JSON preflight
 # are the protection; there is no origin guard).
 
+def _open_in_browser(url: str) -> None:
+    """Open a URL in the user's browser without wiring that browser's console
+    into ours. webbrowser.open lets the launched browser inherit the backend's
+    stderr, so a snap Chromium's GTK and graphics-driver chatter lands in
+    Fragmenta's terminal and log. On Linux, xdg-open with its output discarded;
+    an explicit BROWSER override and other platforms keep webbrowser."""
+    if sys.platform.startswith('linux') and not os.environ.get('BROWSER'):
+        import subprocess
+        try:
+            subprocess.Popen(['xdg-open', url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            return
+        except OSError:
+            pass
+    import webbrowser
+    webbrowser.open(url)
+
+
 @app.route('/api/update/status')
 def update_status():
     """Cached update state for the UI — never does network I/O."""
@@ -264,8 +282,7 @@ def update_open():
     url = update_check.resolve_url(str(body.get('target')))
     if not url:
         return jsonify({'error': 'nothing to open'}), 404
-    import webbrowser
-    webbrowser.open(url)
+    _open_in_browser(url)
     return jsonify({'success': True})
 
 
@@ -2284,8 +2301,6 @@ def reveal_fragment():
 @app.route('/api/open-documentation', methods=['POST'])
 def open_documentation():
     try:
-        import webbrowser
-
         payload = request.get_json(silent=True) or {}
         doc_key = payload.get('doc_key', 'about')
 
@@ -2302,7 +2317,7 @@ def open_documentation():
                 "error": f"Unsupported documentation target: {doc_key}"
             }), 400
 
-        webbrowser.open(target_url)
+        _open_in_browser(target_url)
 
         return jsonify({
             "success": True,

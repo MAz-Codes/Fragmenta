@@ -313,7 +313,9 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         # default launch path on Linux, so a fixed 1400x850 here is what most
         # users actually get regardless of their monitor.
         screen = detect_screen_size()
-        scale = ui_scale_for(screen[0]) if screen else 1.0
+        # A desktop that already scales (GNOME at 125%/200%, GDK_SCALE) tells
+        # Chromium so itself — forcing our own factor on top shrinks the UI.
+        scale = ui_scale_for(screen[0]) if screen and desktop_scale() == 1.0 else 1.0
         # --window-size is in device-independent pixels, so the geometry has
         # to be worked out in the scaled coordinate space, not raw pixels.
         logical = (int(screen[0] / scale), int(screen[1] / scale)) if screen else None
@@ -579,6 +581,34 @@ def ui_scale_for(screen_width: int) -> float:
     return 1.0       # 1080p and below — already the right size
 
 
+def desktop_scale() -> float:
+    """How much the desktop already magnifies X11/Xwayland apps, or 1.0.
+
+    GNOME on Wayland with fractional scaling (e.g. 125%) gives Xwayland apps a
+    doubled screen (a 3840x2160 panel reads as 6144x3456 in xrandr) and sets
+    Xft.dpi to 192 so they render at 2x; plain X11 scaling sets Xft.dpi or
+    GDK_SCALE. Ignoring that made the launcher mistake a scaled 4K desktop for
+    an unscaled 6K one and force a smaller zoom over the desktop's own.
+    """
+    if sys.platform != "linux":
+        return 1.0
+    scale = 1.0
+    try:
+        scale = max(scale, float(os.environ.get("GDK_SCALE", "1")))
+    except ValueError:
+        pass
+    try:
+        out = subprocess.run(
+            ["xrdb", "-query"], capture_output=True, text=True, timeout=3,
+        ).stdout
+        match = re.search(r"^Xft\.dpi:\s*([\d.]+)", out, re.M)
+        if match:
+            scale = max(scale, float(match.group(1)) / 96.0)
+    except Exception:
+        pass
+    return scale
+
+
 def detect_screen_size() -> tuple[int, int] | None:
     """Best-effort screen size in logical pixels, or None if it can't be read.
 
@@ -607,14 +637,11 @@ def detect_screen_size() -> tuple[int, int] | None:
             match = re.search(r"current\s+(\d+)\s*x\s*(\d+)", out)
             if match:
                 width, height = int(match.group(1)), int(match.group(2))
-                # xrandr reports physical pixels; if the desktop is running
-                # scaled, the toolkit's logical space is smaller by that factor.
-                try:
-                    gdk_scale = int(os.environ.get("GDK_SCALE", "1"))
-                except ValueError:
-                    gdk_scale = 1
-                if gdk_scale > 1:
-                    width, height = width // gdk_scale, height // gdk_scale
+                # xrandr reports X pixels; if the desktop is running scaled,
+                # the toolkit's logical space is smaller by that factor.
+                factor = desktop_scale()
+                if factor > 1:
+                    width, height = int(width / factor), int(height / factor)
                 if width > 0 and height > 0:
                     return width, height
         except Exception:
@@ -665,10 +692,11 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # 70% of the screen. Capped because past ~2000px the layout just grows
-    # margins rather than showing more.
-    width = min(int(sw * 0.70), 2000)
-    height = min(int(sh * 0.70), 1300)
+    # 75% of the screen, in the screen's own shape — independent width and
+    # height caps gave a ~3:2 box on 16:9 panels. Capped because past ~2000px
+    # the layout just grows margins rather than showing more.
+    width = min(int(sw * 0.75), 2000)
+    height = int(width * sh / sw)
     # Don't shrink below the size we've always shipped — but never grow past
     # the screen doing it, or a small laptop gets a window it can't display.
     width = max(width, min(default_w, sw - 40))
