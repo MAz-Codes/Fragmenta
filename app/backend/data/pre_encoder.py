@@ -201,12 +201,17 @@ def start_pre_encode(
         if existing and existing.get("state") in ("queued", "running"):
             return dict(existing)
 
-        # Count source clips (sidecars committed) so we know the denominator.
-        sidecars = list(proj_dir.glob("*.txt"))
+        # The denominator is what the encoder will step through: its dataset
+        # scan (fast_scandir) takes every non-hidden file in the formats it
+        # reads, in subfolders too. Counting only .wav made a FLAC dataset
+        # report 0 clips; counting only captioned files undercounts, since an
+        # uncaptioned file still costs a batch (it's swapped for another clip).
+        from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
         clip_count = sum(
-            1 for p in sidecars
-            if p.read_text(encoding="utf-8").strip()
-            and p.with_suffix(".wav").exists()  # cheap & accurate enough
+            1 for _dir, _subdirs, files in os.walk(proj_dir)
+            for name in files
+            if not name.startswith(".")
+            and os.path.splitext(name)[1].lower() in SA3_AUDIO_EXTENSIONS
         )
 
         job: Dict[str, Any] = {

@@ -26,7 +26,8 @@ All notable changes to Fragmenta are listed here. The format follows
 - Generated Fragments: click or drag a waveform to scrub, with a smooth
   playhead.
 - Pre-encoding shows what it's doing: loading the encoder, which clip, time
-  elapsed and time left, on both the Training and Dataset pages.
+  elapsed and time left, on both the Training and Dataset pages. FLAC
+  and other formats are counted too, not just WAV.
 
 ### Fixed
 - The backend no longer crashes when the terminal that launched it is closed.
