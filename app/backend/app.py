@@ -2307,7 +2307,7 @@ def open_documentation():
         docs_map = {
             'about': 'https://www.misaghazimi.com/fragmenta',
             'documentation': 'https://github.com/MAz-Codes/Fragmenta',
-            'tutorials': 'https://www.youtube.com/watch?v=RPJU6xcQwAA&t=3709s',
+            'tutorials': 'https://www.youtube.com/watch?v=RPJU6xcQwAA',
         }
 
         target_url = docs_map.get(doc_key)

@@ -337,6 +337,15 @@ class ProjectSession:
             [p for p in latents_dir.glob("*.npy") if p.name != "silence.npy"]
             if latents_dir.exists() else []
         )
+        # _meta.json is written only when a run completes; without it the
+        # files are a cancelled or failed run's leftovers and don't count.
+        latents_ae = None
+        try:
+            latents_ae = json.loads(
+                (latents_dir / "_meta.json").read_text(encoding="utf-8")
+            ).get("autoencoder")
+        except (OSError, ValueError, AttributeError):
+            pass
         return {
             "name": self.name,
             "created_at": self.metadata.get("created_at"),
@@ -361,8 +370,11 @@ class ProjectSession:
             # button's enabled state, and survives a page refresh because it
             # rides along with every project fetch.
             "inject_undo_depth": len(self.inject_undo),
-            "latents_present": bool(latents_npy),
+            "latents_present": bool(latents_npy) and latents_ae is not None,
             "latents_count": len(latents_npy),
+            # same-s (small models) or same-l (medium) — the UI only offers
+            # the cache as ready when it matches the chosen base.
+            "latents_autoencoder": latents_ae,
         }
 
 

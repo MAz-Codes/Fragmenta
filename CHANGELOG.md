@@ -32,6 +32,10 @@ All notable changes to Fragmenta are listed here. The format follows
   you opened is gone; it opens empty instead.
 - Download progress and the Checkpoint Manager's storage sizes no longer
   count files twice (the bar could run past 100%).
+- Pre-encoding for the medium model works after a cancelled or small-model
+  run; the Training page only shows "Pre-encoded" for latents that match the
+  chosen base.
+- Windows: the taskbar shows the Fragmenta icon instead of Python's.
 
 ## [1.1.1] - 2026-10-22
 

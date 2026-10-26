@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import os
 import re
 import requests
@@ -775,7 +776,15 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _macos_apply_dock_icon
 
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-            webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
+            start_kwargs = {"private_mode": False, "storage_path": str(WEBVIEW_STORAGE_DIR)}
+            # pywebview 6's Windows backend builds the form icon from `icon`
+            # (its docstring still says GTK/QT only); without it the form takes
+            # python.exe's icon, which is what the taskbar showed. Up to 5.0
+            # start() has no `icon` parameter at all, hence the check.
+            if (sys.platform == "win32" and _ensure_windows_icon()
+                    and "icon" in inspect.signature(webview.start).parameters):
+                start_kwargs["icon"] = str(WINDOWS_ICON_PATH)
+            webview.start(**start_kwargs)
             return 0 if window else 1
         except Exception as exc:
             print(

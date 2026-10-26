@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -241,7 +242,6 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     cfg = get_config()
     proj_dir = project_path(project_name)
     out_dir = latents_dir(project_name)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     sa3_vendor = cfg.get_path("stable_audio_3")
     venv_python = sys.executable
@@ -276,6 +276,12 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     if snapshot and snapshot.get("cancelled"):
         _update_job(project_name, state="cancelled", finished_at=time.time())
         return
+
+    # Start from an empty folder. A cancelled run, or one for the other
+    # autoencoder, leaves files behind, and the vendor script keeps an existing
+    # silence.npy — so the new latents would pad with the wrong model's silence.
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     _update_job(project_name, state="running")
     logger.info(

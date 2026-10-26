@@ -389,10 +389,11 @@ function App() {
         catch { return ''; }
     });
     // Phase 6 — pre-encode state for the selected training project.
-    // { latents_count, latents_present, job: {state, current, total, ...} | null }
+    // { latents_count, latents_present, latents_autoencoder, job: {state, current, total, ...} | null }
     const [trainingPreEncode, setTrainingPreEncode] = useState({
         latents_count: 0,
         latents_present: false,
+        latents_autoencoder: null,
         job: null,
     });
     const preEncodePollRef = useRef(null);
@@ -471,7 +472,7 @@ function App() {
     // they're training on, and keep polling while a job is in flight.
     const refreshTrainingPreEncode = useCallback(async (name) => {
         if (!name) {
-            setTrainingPreEncode({ latents_count: 0, latents_present: false, job: null });
+            setTrainingPreEncode({ latents_count: 0, latents_present: false, latents_autoencoder: null, job: null });
             return;
         }
         try {
@@ -482,6 +483,7 @@ function App() {
             setTrainingPreEncode({
                 latents_count: proj.data.latents_count ?? 0,
                 latents_present: !!proj.data.latents_present,
+                latents_autoencoder: proj.data.latents_autoencoder ?? null,
                 job: status.data.job ?? null,
             });
         } catch { /* non-fatal */ }
@@ -513,6 +515,12 @@ function App() {
         };
     }, [trainingProject, trainingPreEncode.job, refreshTrainingPreEncode]);
 
+    // The SAME autoencoder the selected base trains on. Mapping mirrors
+    // latents_match_base() in pre_encoder.py.
+    const trainingAutoencoder = (trainingConfig.baseModel || '').includes('medium')
+        ? 'same-l'
+        : 'same-s';
+
     const startTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;
         try {
@@ -521,19 +529,15 @@ function App() {
             // pre-encoding for a medium base produced latents the trainer then
             // rejected — "produced by a different autoencoder … falling back to
             // live encoding" — silently throwing the whole pass away.
-            // Mapping mirrors latents_match_base() in pre_encoder.py.
-            const autoencoder = (trainingConfig.baseModel || '').includes('medium')
-                ? 'same-l'
-                : 'same-s';
             await api.post(
                 `/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`,
-                { autoencoder },
+                { autoencoder: trainingAutoencoder },
             );
             refreshTrainingPreEncode(trainingProject);
         } catch (e) {
             console.error('Failed to start pre-encode', e);
         }
-    }, [trainingProject, trainingConfig.baseModel, refreshTrainingPreEncode]);
+    }, [trainingProject, trainingAutoencoder, refreshTrainingPreEncode]);
 
     const cancelTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;
@@ -1552,11 +1556,16 @@ function App() {
                                                     {/* Phase 6 — pre-encode latents button. State machine:
                                                         no latents → "Pre-encode latents · N clips" (clickable, outlined)
                                                         running   → "Encoding… X / Y" (disabled, with Stop button)
-                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint). */}
+                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint).
+                                                        "present" means a finished run for the selected base's autoencoder;
+                                                        a cancelled run, or latents for the other model size, offer a
+                                                        fresh pre-encode instead. */}
                                                     {trainingProject && (() => {
                                                         const job = trainingPreEncode.job;
                                                         const inFlight = job && (job.state === 'queued' || job.state === 'running');
-                                                        const ready = trainingPreEncode.latents_present && !inFlight;
+                                                        const ready = trainingPreEncode.latents_present
+                                                            && trainingPreEncode.latents_autoencoder === trainingAutoencoder
+                                                            && !inFlight;
                                                         const project = trainingProjects.find(p => p.name === trainingProject);
                                                         const clipCount = project?.clip_count ?? 0;
                                                         let label = `Pre-encode latents · ${clipCount} clip${clipCount === 1 ? '' : 's'}`;
