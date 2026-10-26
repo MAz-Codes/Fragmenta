@@ -74,6 +74,7 @@ import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
+import PreEncodeProgress from './components/PreEncodeProgress';
 import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
@@ -1555,7 +1556,8 @@ function App() {
 
                                                     {/* Phase 6 — pre-encode latents button. State machine:
                                                         no latents → "Pre-encode latents · N clips" (clickable, outlined)
-                                                        running   → "Encoding… X / Y" (disabled, with Stop button)
+                                                        running   → PreEncodeProgress (phase, moving bar, elapsed / time left, Stop)
+                                                        failed    → the button again, with the encoder's error under it
                                                         present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint).
                                                         "present" means a finished run for the selected base's autoencoder;
                                                         a cancelled run, or latents for the other model size, offer a
@@ -1569,21 +1571,26 @@ function App() {
                                                         const project = trainingProjects.find(p => p.name === trainingProject);
                                                         const clipCount = project?.clip_count ?? 0;
                                                         let label = `Pre-encode latents · ${clipCount} clip${clipCount === 1 ? '' : 's'}`;
-                                                        if (inFlight) {
-                                                            label = job.total > 0
-                                                                ? `Encoding… ${job.current} / ${job.total}`
-                                                                : 'Encoding…';
-                                                        } else if (ready) {
+                                                        if (ready) {
                                                             label = `Pre-encoded · ${trainingPreEncode.latents_count} latent${trainingPreEncode.latents_count === 1 ? '' : 's'}`;
                                                         }
+                                                        if (inFlight) {
+                                                            return (
+                                                                <Box sx={{ mt: 1 }}>
+                                                                    <PreEncodeProgress job={job} onStop={cancelTrainingPreEncode} />
+                                                                </Box>
+                                                            );
+                                                        }
+                                                        const failed = job && job.state === 'failed';
                                                         return (
+                                                            <>
                                                             <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
                                                                 <Button
                                                                     fullWidth
                                                                     size="small"
                                                                     variant="outlined"
                                                                     onClick={startTrainingPreEncode}
-                                                                    disabled={inFlight || ready || clipCount === 0}
+                                                                    disabled={ready || clipCount === 0}
                                                                     color={ready ? 'success' : 'primary'}
                                                                     startIcon={ready ? <CheckCircleIcon size={14} /> : null}
                                                                     sx={{
@@ -1606,18 +1613,13 @@ function App() {
                                                                 >
                                                                     {label}
                                                                 </Button>
-                                                                {inFlight && (
-                                                                    <Button
-                                                                        size="small"
-                                                                        variant="text"
-                                                                        color="error"
-                                                                        onClick={cancelTrainingPreEncode}
-                                                                        sx={{ minWidth: 0, textTransform: 'none' }}
-                                                                    >
-                                                                        Stop
-                                                                    </Button>
-                                                                )}
                                                             </Box>
+                                                            {failed && (
+                                                                <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5, wordBreak: 'break-word' }}>
+                                                                    Pre-encoding failed: {job.error || 'unknown error'}
+                                                                </Typography>
+                                                            )}
+                                                            </>
                                                         );
                                                     })()}
                                                 </Box>

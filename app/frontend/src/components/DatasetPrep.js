@@ -62,6 +62,7 @@ import {
     Undo2,
 } from 'lucide-react';
 import api from '../api';
+import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
 import { appStyles } from '../theme';
 
@@ -768,27 +769,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                     )}
 
                     {isPreEncoding && preEncodeJob && (
-                        <Box>
-                            <LinearProgress
-                                variant={preEncodeJob.total > 0 ? 'determinate' : 'indeterminate'}
-                                value={preEncodeJob.total > 0 ? (preEncodeJob.current / preEncodeJob.total) * 100 : undefined}
-                            />
-                            <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-                                    Pre-encoding latents · {preEncodeJob.current} / {preEncodeJob.total}
-                                    {preEncodeJob.autoencoder ? ` · ${preEncodeJob.autoencoder}` : ''}
-                                </Typography>
-                                <Button
-                                    size="small"
-                                    variant="outlined"
-                                    color="error"
-                                    startIcon={<StopIcon size={14} />}
-                                    onClick={handleCancelPreEncode}
-                                >
-                                    Stop
-                                </Button>
-                            </Box>
-                        </Box>
+                        <PreEncodeProgress job={preEncodeJob} onStop={handleCancelPreEncode} />
                     )}
 
                     {/* Two columns: the clip table gets the page, the tools get

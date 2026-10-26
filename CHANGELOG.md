@@ -25,6 +25,8 @@ All notable changes to Fragmenta are listed here. The format follows
   extend. Drag a fragment's name onto it to use it as the source.
 - Generated Fragments: click or drag a waveform to scrub, with a smooth
   playhead.
+- Pre-encoding shows what it's doing: loading the encoder, which clip, time
+  elapsed and time left, on both the Training and Dataset pages.
 
 ### Fixed
 - The backend no longer crashes when the terminal that launched it is closed.
@@ -38,7 +40,8 @@ All notable changes to Fragmenta are listed here. The format follows
 - Windows: the taskbar shows the Fragmenta icon instead of Python's.
 - The launcher restarts a backend left running from another Fragmenta folder
   or from before an update, instead of reusing its old code.
-- A failed pre-encode shows the encoder's actual error.
+- A failed pre-encode shows the encoder's actual error, on the Training page
+  too.
 
 ## [1.1.1] - 2026-10-22
 

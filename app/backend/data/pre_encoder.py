@@ -59,9 +59,11 @@ def get_pre_encode_job(project_name: str) -> Dict[str, Any]:
     well-formed dict so the frontend can render against it without guards."""
     with _pre_encode_jobs_lock:
         job = _pre_encode_jobs.get(project_name)
-        if job is None:
-            return _idle_job()
-        return dict(job)
+        snap = _idle_job() if job is None else dict(job)
+    # The server clock, so the UI can show elapsed time with timestamps from
+    # this machine even when its own clock differs (a remote browser).
+    snap["now"] = time.time()
+    return snap
 
 
 def count_running_pre_encode_jobs() -> int:
@@ -77,11 +79,14 @@ def count_running_pre_encode_jobs() -> int:
 def _idle_job() -> Dict[str, Any]:
     return {
         "state": "idle",          # idle | queued | running | complete | failed | cancelled
-        "current": 0,             # batch index (0-based)
+        "phase": None,            # loading (encoder + data) | encoding, while running
+        "current": 0,             # clip being encoded, 1-based (0 = none started)
         "total": 0,               # total batches (derived from clip count)
         "current_file": "",
         "error": None,
         "started_at": None,
+        "encoding_started_at": None,   # first clip began
+        "clip_started_at": None,       # current clip began
         "finished_at": None,
         "autoencoder": None,
     }
@@ -210,7 +215,10 @@ def start_pre_encode(
             "total": clip_count,
             "current_file": "",
             "error": None,
+            "phase": None,
             "started_at": time.time(),
+            "encoding_started_at": None,
+            "clip_started_at": None,
             "finished_at": None,
             "autoencoder": ae,
             "cancelled": False,
@@ -284,7 +292,7 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    _update_job(project_name, state="running")
+    _update_job(project_name, state="running", phase="loading")
     logger.info(
         "Pre-encoding started · project=%s · autoencoder=%s · clips=%d · sample_size=%d",
         project_name, ae, get_pre_encode_job(project_name)["total"], sample_size,
@@ -316,7 +324,10 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
                     tail.append(line)
                 m = batch_pat.search(line)
                 if m:
-                    _update_job(project_name, current=int(m.group(1)) + 1)
+                    now = time.time()
+                    first = get_pre_encode_job(project_name).get("encoding_started_at")
+                    _update_job(project_name, phase="encoding", current=int(m.group(1)) + 1,
+                                encoding_started_at=first or now, clip_started_at=now)
 
         rc = process.wait() if process else 1
 
