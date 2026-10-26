@@ -35,6 +35,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -290,6 +291,9 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     )
 
     batch_pat = re.compile(r"Processing batch (\d+)")
+    # The child's own output is the only record of why it failed (a
+    # traceback, or Python dying at startup); keep the end of it.
+    tail: deque = deque(maxlen=40)
     process: Optional[subprocess.Popen] = None
     try:
         process = subprocess.Popen(
@@ -308,6 +312,8 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
         if process.stdout is not None:
             for line in process.stdout:
                 line = line.rstrip()
+                if line:
+                    tail.append(line)
                 m = batch_pat.search(line)
                 if m:
                     _update_job(project_name, current=int(m.group(1)) + 1)
@@ -325,15 +331,18 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
             return
 
         if rc != 0:
+            # Last unindented line: the exception line of a traceback.
+            reason = next((ln for ln in reversed(tail) if not ln.startswith((" ", "\t"))), "")
             _update_job(
                 project_name,
                 state="failed",
-                error=f"pre_encode_dataset.py exited with code {rc}",
+                error=f"pre_encode_dataset.py exited with code {rc}"
+                      + (f": {reason[:300]}" if reason else ""),
                 finished_at=time.time(),
             )
             logger.error(
-                "Pre-encoding failed (exit %s) · project=%s",
-                rc, project_name,
+                "Pre-encoding failed (exit %s) · project=%s\n%s",
+                rc, project_name, "\n".join(tail),
             )
             return
 

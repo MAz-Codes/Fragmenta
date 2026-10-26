@@ -99,6 +99,12 @@ try:
     _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
 except Exception:
     _APP_VERSION = None
+# Same idea for an update that keeps the version (a `git pull` between
+# releases) or a second install in another folder: the launcher compares
+# these against its own folder and code before reusing this process.
+from app.core.code_stamp import code_stamp as _code_stamp
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+_CODE_STAMP = _code_stamp(_CODE_ROOT)
 
 config = None
 generator = None
@@ -206,6 +212,8 @@ def health_check():
         'components_ready': _components_initialised,
         'init_error': _init_error,
         'version': _APP_VERSION,
+        'root': str(_CODE_ROOT),
+        'code_stamp': _CODE_STAMP,
         'gpu_available': torch.cuda.is_available(),
         'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }

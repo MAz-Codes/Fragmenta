@@ -36,6 +36,9 @@ All notable changes to Fragmenta are listed here. The format follows
   run; the Training page only shows "Pre-encoded" for latents that match the
   chosen base.
 - Windows: the taskbar shows the Fragmenta icon instead of Python's.
+- The launcher restarts a backend left running from another Fragmenta folder
+  or from before an update, instead of reusing its old code.
+- A failed pre-encode shows the encoder's actual error.
 
 ## [1.1.1] - 2026-10-22
 

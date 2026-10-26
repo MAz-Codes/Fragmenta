@@ -12,6 +12,8 @@ import time
 import webbrowser
 from pathlib import Path
 
+from app.core.code_stamp import code_stamp
+
 PROJECT_ROOT = Path(__file__).parent
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 5001
@@ -133,15 +135,26 @@ def _maybe_replace_stale_backend(port: int) -> None:
         resp = requests.get(
             f"http://{BACKEND_HOST}:{port}/api/health", timeout=1.5
         )
-        running_version = (resp.json() or {}).get("version")
+        health = resp.json() or {}
     except Exception:
         return
-    if running_version == ABOUT_VERSION:
+    running_version = health.get("version")
+    running_root = health.get("root")
+    running_stamp = health.get("code_stamp")
+    if running_version != ABOUT_VERSION:
+        reason = (f"is version {running_version or 'unknown (older build)'}, but this "
+                  f"installation is {ABOUT_VERSION}")
+    elif running_root is None or running_stamp is None:
+        reason = "is an older build of this version"
+    elif Path(running_root).resolve() != PROJECT_ROOT.resolve():
+        reason = f"belongs to another Fragmenta folder ({running_root})"
+    elif code_stamp(PROJECT_ROOT) > float(running_stamp) + 1:
+        reason = "predates the code on disk (it was updated since the backend started)"
+    else:
         return
     print(
-        f"The Fragmenta backend already running on port {port} is version "
-        f"{running_version or 'unknown (older build)'}, but this installation "
-        f"is {ABOUT_VERSION}. Restarting it so the app matches the installed code."
+        f"The Fragmenta backend already running on port {port} {reason}. "
+        f"Restarting it so the app matches the installed code."
     )
     if not _terminate_backend_on_port(port):
         print(
