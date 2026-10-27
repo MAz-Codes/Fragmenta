@@ -195,7 +195,7 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
             <Stack direction="row" alignItems="center" spacing={2}>
                 <Box sx={{ flex: 1, minWidth: 0, opacity: (incompatReason && !checkpoint.downloaded) ? 0.55 : 1 }}>
                     <Stack direction="row" alignItems="center" spacing={1}>
-                        <Tooltip title={TIPS.checkpoints.gatedAccess}>
+                        <Tooltip title={checkpoint.token_free ? TIPS.checkpoints.openOnHf : TIPS.checkpoints.gatedAccess}>
                             <Typography
                                 component="a"
                                 href={`https://huggingface.co/${checkpoint.repo}`}
@@ -220,6 +220,17 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
                             variant="outlined"
                             sx={{ height: 18, fontSize: 10 }}
                         />
+                        {checkpoint.token_free && (
+                            <Tooltip title={TIPS.checkpoints.noAccount}>
+                                <Chip
+                                    size="small"
+                                    label="No account needed"
+                                    variant="outlined"
+                                    color="success"
+                                    sx={{ height: 18, fontSize: 10 }}
+                                />
+                            </Tooltip>
+                        )}
                         {checkpoint.downloaded && (
                             <Chip
                                 size="small"

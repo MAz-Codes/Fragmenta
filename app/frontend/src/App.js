@@ -61,9 +61,12 @@ import {
     Trash2 as DeleteIcon,
     Menu as MenuIcon,
     CheckCircle2 as CheckCircleIcon,
+    ArrowUpCircle as UpdateIcon,
 } from 'lucide-react';
 import api from './api';
 import AboutDialog from './components/AboutDialog';
+import UpdateDialog from './components/UpdateDialog';
+import useUpdateStatus from './components/useUpdateStatus';
 import { InfoViewProvider } from './components/InfoView';
 import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
@@ -71,7 +74,8 @@ import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
-import { VENDOR_AUDIO_EDIT_READY } from './features';
+import PreEncodeProgress from './components/PreEncodeProgress';
+import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
@@ -110,6 +114,20 @@ function App() {
     useEffect(() => {
         try { window.localStorage.setItem(TAB_STORAGE_KEY, String(tabValue)); } catch {}
     }, [tabValue]);
+
+    // Update notices: a dock button while a newer version is available, and a
+    // snackbar once per version per launch — held back while the Performance
+    // tab (index 3) is open so it never interrupts a live set.
+    const updates = useUpdateStatus();
+    const [showUpdateDialog, setShowUpdateDialog] = useState(false);
+    const [updateToastOpen, setUpdateToastOpen] = useState(false);
+    const updateToastShownForRef = useRef(null);
+    useEffect(() => {
+        const latest = updates.status?.latest;
+        if (!updates.visible || tabValue === 3 || updateToastShownForRef.current === latest) return;
+        updateToastShownForRef.current = latest;
+        setUpdateToastOpen(true);
+    }, [updates.visible, updates.status, tabValue]);
     // Header sticky chrome only kicks in once the page has scrolled.
     const [isScrolled, setIsScrolled] = useState(false);
     // Measure the header's actual rendered height so the fixed nav
@@ -247,11 +265,10 @@ function App() {
     // Generation panel top-level mode: 'create' (text → audio) or
     // 'edit' (audio → audio: style transfer, inpaint, extend).
     const [generationMode, setGenerationMode] = useState('create');
-    // Audio-to-audio is hidden while the vendor runtime can't do it — see
-    // features.js. Deriving the mode rather than reading state directly means
-    // there's no way to land in the edit panel while the flag is off, however
-    // the state got set.
-    const effectiveGenerationMode = VENDOR_AUDIO_EDIT_READY ? generationMode : 'create';
+    // Gated by GENERATION_AUDIO_EDIT (features.js). Deriving the mode rather
+    // than reading state directly means there's no way to land in the edit
+    // panel while the flag is off, however the state got set.
+    const effectiveGenerationMode = GENERATION_AUDIO_EDIT ? generationMode : 'create';
     const [generationPrompt, setGenerationPrompt] = useState('');
     const [negativePrompt, setNegativePrompt] = useState('');
     const [loraStack, setLoraStack] = useState([]);   // [{path, strength}]
@@ -373,10 +390,11 @@ function App() {
         catch { return ''; }
     });
     // Phase 6 — pre-encode state for the selected training project.
-    // { latents_count, latents_present, job: {state, current, total, ...} | null }
+    // { latents_count, latents_present, latents_autoencoder, job: {state, current, total, ...} | null }
     const [trainingPreEncode, setTrainingPreEncode] = useState({
         latents_count: 0,
         latents_present: false,
+        latents_autoencoder: null,
         job: null,
     });
     const preEncodePollRef = useRef(null);
@@ -455,7 +473,7 @@ function App() {
     // they're training on, and keep polling while a job is in flight.
     const refreshTrainingPreEncode = useCallback(async (name) => {
         if (!name) {
-            setTrainingPreEncode({ latents_count: 0, latents_present: false, job: null });
+            setTrainingPreEncode({ latents_count: 0, latents_present: false, latents_autoencoder: null, job: null });
             return;
         }
         try {
@@ -466,6 +484,7 @@ function App() {
             setTrainingPreEncode({
                 latents_count: proj.data.latents_count ?? 0,
                 latents_present: !!proj.data.latents_present,
+                latents_autoencoder: proj.data.latents_autoencoder ?? null,
                 job: status.data.job ?? null,
             });
         } catch { /* non-fatal */ }
@@ -497,6 +516,12 @@ function App() {
         };
     }, [trainingProject, trainingPreEncode.job, refreshTrainingPreEncode]);
 
+    // The SAME autoencoder the selected base trains on. Mapping mirrors
+    // latents_match_base() in pre_encoder.py.
+    const trainingAutoencoder = (trainingConfig.baseModel || '').includes('medium')
+        ? 'same-l'
+        : 'same-s';
+
     const startTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;
         try {
@@ -505,19 +530,15 @@ function App() {
             // pre-encoding for a medium base produced latents the trainer then
             // rejected — "produced by a different autoencoder … falling back to
             // live encoding" — silently throwing the whole pass away.
-            // Mapping mirrors latents_match_base() in pre_encoder.py.
-            const autoencoder = (trainingConfig.baseModel || '').includes('medium')
-                ? 'same-l'
-                : 'same-s';
             await api.post(
                 `/api/projects/${encodeURIComponent(trainingProject)}/pre-encode`,
-                { autoencoder },
+                { autoencoder: trainingAutoencoder },
             );
             refreshTrainingPreEncode(trainingProject);
         } catch (e) {
             console.error('Failed to start pre-encode', e);
         }
-    }, [trainingProject, trainingConfig.baseModel, refreshTrainingPreEncode]);
+    }, [trainingProject, trainingAutoencoder, refreshTrainingPreEncode]);
 
     const cancelTrainingPreEncode = useCallback(async () => {
         if (!trainingProject) return;
@@ -1535,30 +1556,41 @@ function App() {
 
                                                     {/* Phase 6 — pre-encode latents button. State machine:
                                                         no latents → "Pre-encode latents · N clips" (clickable, outlined)
-                                                        running   → "Encoding… X / Y" (disabled, with Stop button)
-                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint). */}
+                                                        running   → PreEncodeProgress (phase, moving bar, elapsed / time left, Stop)
+                                                        failed    → the button again, with the encoder's error under it
+                                                        present   → "✓ Pre-encoded · N latents" (disabled, outlined, green tint).
+                                                        "present" means a finished run for the selected base's autoencoder;
+                                                        a cancelled run, or latents for the other model size, offer a
+                                                        fresh pre-encode instead. */}
                                                     {trainingProject && (() => {
                                                         const job = trainingPreEncode.job;
                                                         const inFlight = job && (job.state === 'queued' || job.state === 'running');
-                                                        const ready = trainingPreEncode.latents_present && !inFlight;
+                                                        const ready = trainingPreEncode.latents_present
+                                                            && trainingPreEncode.latents_autoencoder === trainingAutoencoder
+                                                            && !inFlight;
                                                         const project = trainingProjects.find(p => p.name === trainingProject);
                                                         const clipCount = project?.clip_count ?? 0;
                                                         let label = `Pre-encode latents · ${clipCount} clip${clipCount === 1 ? '' : 's'}`;
-                                                        if (inFlight) {
-                                                            label = job.total > 0
-                                                                ? `Encoding… ${job.current} / ${job.total}`
-                                                                : 'Encoding…';
-                                                        } else if (ready) {
+                                                        if (ready) {
                                                             label = `Pre-encoded · ${trainingPreEncode.latents_count} latent${trainingPreEncode.latents_count === 1 ? '' : 's'}`;
                                                         }
+                                                        if (inFlight) {
+                                                            return (
+                                                                <Box sx={{ mt: 1 }}>
+                                                                    <PreEncodeProgress job={job} onStop={cancelTrainingPreEncode} />
+                                                                </Box>
+                                                            );
+                                                        }
+                                                        const failed = job && job.state === 'failed';
                                                         return (
+                                                            <>
                                                             <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
                                                                 <Button
                                                                     fullWidth
                                                                     size="small"
                                                                     variant="outlined"
                                                                     onClick={startTrainingPreEncode}
-                                                                    disabled={inFlight || ready || clipCount === 0}
+                                                                    disabled={ready || clipCount === 0}
                                                                     color={ready ? 'success' : 'primary'}
                                                                     startIcon={ready ? <CheckCircleIcon size={14} /> : null}
                                                                     sx={{
@@ -1581,18 +1613,13 @@ function App() {
                                                                 >
                                                                     {label}
                                                                 </Button>
-                                                                {inFlight && (
-                                                                    <Button
-                                                                        size="small"
-                                                                        variant="text"
-                                                                        color="error"
-                                                                        onClick={cancelTrainingPreEncode}
-                                                                        sx={{ minWidth: 0, textTransform: 'none' }}
-                                                                    >
-                                                                        Stop
-                                                                    </Button>
-                                                                )}
                                                             </Box>
+                                                            {failed && (
+                                                                <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5, wordBreak: 'break-word' }}>
+                                                                    Pre-encoding failed: {job.error || 'unknown error'}
+                                                                </Typography>
+                                                            )}
+                                                            </>
                                                         );
                                                     })()}
                                                 </Box>
@@ -2311,11 +2338,11 @@ function App() {
                                                     model picker and LoRA picker above stay visible in
                                                     both modes.
 
-                                                    Hidden while VENDOR_AUDIO_EDIT_READY is false: with
+                                                    Hidden while GENERATION_AUDIO_EDIT is false: with
                                                     only one reachable mode a switch is just a dead
                                                     control, so the page opens straight into Generate
-                                                    new. See features.js for the roll-back condition. */}
-                                                {VENDOR_AUDIO_EDIT_READY && (
+                                                    new. See features.js. */}
+                                                {GENERATION_AUDIO_EDIT && (
                                                 <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
                                                     <Tooltip title={TIPS.generate.mode}>
                                                     <ToggleButtonGroup
@@ -2735,6 +2762,32 @@ function App() {
                 </Alert>
             </Snackbar>
 
+            <Snackbar
+                open={updateToastOpen}
+                autoHideDuration={10000}
+                onClose={(_e, reason) => { if (reason !== 'clickaway') setUpdateToastOpen(false); }}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+            >
+                <Alert
+                    onClose={() => setUpdateToastOpen(false)}
+                    severity={updates.status?.critical ? 'warning' : 'info'}
+                    variant="filled"
+                    sx={{ minWidth: 280, boxShadow: 6 }}
+                    action={(
+                        <Button color="inherit" size="small"
+                            onClick={() => { setUpdateToastOpen(false); setShowUpdateDialog(true); }}>
+                            Details
+                        </Button>
+                    )}
+                >
+                    {updates.status?.upgrade_kind === 'major'
+                        ? `Fragmenta ${updates.status?.latest} is available — major upgrade`
+                        : `Fragmenta ${updates.status?.latest} is available`}
+                </Alert>
+            </Snackbar>
+
+            <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
+
             {isDockCollapsed ? (
                 <>
                     <IconButton
@@ -2783,6 +2836,14 @@ function App() {
                             </ListItemIcon>
                             <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
                         </MenuItem>
+                        {updates.visible && (
+                            <MenuItem
+                                onClick={() => { setDockMenuAnchor(null); setShowUpdateDialog(true); }}
+                            >
+                                <ListItemIcon><UpdateIcon size={18} /></ListItemIcon>
+                                <ListItemText>Update available</ListItemText>
+                            </MenuItem>
+                        )}
                         <MenuItem
                             onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
                         >
@@ -2896,6 +2957,21 @@ function App() {
                         </Typography>
                     </Box>
 
+                    {updates.visible && (
+                        <Box sx={appStyles.dockItem}>
+                            <IconButton
+                                aria-label="Update available"
+                                onClick={() => setShowUpdateDialog(true)}
+                                sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
+                            >
+                                <UpdateIcon size={18} />
+                            </IconButton>
+                            <Typography className="dock-label" sx={appStyles.dockLabel}>
+                                Update
+                            </Typography>
+                        </Box>
+                    )}
+
                     <Box sx={appStyles.dockItem}>
                         <IconButton
                             aria-label="Open about and documentation"
@@ -2917,6 +2993,8 @@ function App() {
                 onClose={() => setShowInfoDialog(false)}
                 onOpenDocumentation={handleOpenDocumentation}
                 isOpeningDocumentation={isOpeningDocumentation}
+                update={updates}
+                onShowUpdate={() => { setShowInfoDialog(false); setShowUpdateDialog(true); }}
             />
 
             <Dialog

@@ -317,6 +317,8 @@ class AudioGenerator:
                 import json
                 with open(config_path) as fh:
                     model_config = json.load(fh)
+                from stable_audio_3.model_configs import localize_conditioners
+                localize_conditioners(model_config, str(config_path))
                 from stable_audio_3.loading_utils import load_diffusion_cond
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")

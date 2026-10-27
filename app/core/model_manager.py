@@ -39,7 +39,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Small - Music",
         "sa3_name": "small-music",
         "repo": "stabilityai/stable-audio-3-small-music",
-        "size_bytes": 2_270_000_000,
+        "size_bytes": 3_490_000_000,   # DiT 2.27 GB + T5Gemma 1.18 GB
         "hardware": "cpu",                       # CPU / MPS / CUDA all work
         "max_duration_sec": 120,
         "description": "Fast distilled music generation. Locked to 8 steps, cfg 1.0.",
@@ -50,7 +50,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Small - SFX",
         "sa3_name": "small-sfx",
         "repo": "stabilityai/stable-audio-3-small-sfx",
-        "size_bytes": 2_270_000_000,
+        "size_bytes": 3_490_000_000,   # DiT 2.27 GB + T5Gemma 1.18 GB
         "hardware": "cpu",
         "max_duration_sec": 120,
         "description": "Fast distilled SFX/foley generation. Locked to 8 steps, cfg 1.0.",
@@ -61,7 +61,7 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Medium",
         "sa3_name": "medium",
         "repo": "stabilityai/stable-audio-3-medium",
-        "size_bytes": 9_220_000_000,
+        "size_bytes": 10_440_000_000,  # DiT 9.22 GB + T5Gemma 1.18 GB
         "hardware": "cuda+flash-attn",
         "max_duration_sec": 380,
         "description": "Fast distilled hi-fi generation, up to 380s. Locked to 8 steps, cfg 1.0.",
@@ -73,10 +73,11 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     "sa3-small-music-base": {
         "user_visible": True,
         "kind": "base",
+        "token_free": True,               # ungated on HF — no account needed
         "name": "Small - Music (Base)",
         "sa3_name": "small-music-base",
         "repo": "stabilityai/stable-audio-3-small-music-base",
-        "size_bytes": 2_270_000_000,
+        "size_bytes": 3_490_000_000,   # DiT 2.27 GB + T5Gemma 1.18 GB
         "hardware": "cpu",
         "max_duration_sec": 120,
         "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
@@ -84,10 +85,11 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     "sa3-small-sfx-base": {
         "user_visible": True,
         "kind": "base",
+        "token_free": True,               # ungated on HF — no account needed
         "name": "Small - SFX (Base)",
         "sa3_name": "small-sfx-base",
         "repo": "stabilityai/stable-audio-3-small-sfx-base",
-        "size_bytes": 2_270_000_000,
+        "size_bytes": 3_490_000_000,   # DiT 2.27 GB + T5Gemma 1.18 GB
         "hardware": "cpu",
         "max_duration_sec": 120,
         "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
@@ -95,10 +97,11 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
     "sa3-medium-base": {
         "user_visible": True,
         "kind": "base",
+        "token_free": True,               # ungated on HF — no account needed
         "name": "Medium (Base)",
         "sa3_name": "medium-base",
         "repo": "stabilityai/stable-audio-3-medium-base",
-        "size_bytes": 9_220_000_000,
+        "size_bytes": 10_440_000_000,  # DiT 9.22 GB + T5Gemma 1.18 GB
         "hardware": "cuda+flash-attn",
         "max_duration_sec": 380,
         "description": "CFG-aware base. Full control over cfg_scale, steps. Slower than distilled.",
@@ -312,6 +315,7 @@ class ModelManager:
             "sa3_name": info["sa3_name"],
             "repo": info["repo"],
             "size_bytes": info["size_bytes"],
+            "token_free": bool(info.get("token_free")),
             "hardware": info["hardware"],
             "max_duration_sec": info.get("max_duration_sec"),
             "description": info["description"],
@@ -378,18 +382,23 @@ class ModelManager:
         if not main_present:
             return False
 
-        # Base models need a T5Gemma conditioner that lives in a subfolder
-        # of the *post-trained sibling* repo. "Installed" must mean "ready
-        # to train / generate" — without the companion the first run blocks
-        # for 30s+ on an HF fetch.
+        # Base models need a T5Gemma conditioner — their own snapshot's copy,
+        # or failing that the *post-trained sibling's*. "Installed" must mean
+        # "ready to train / generate" — without one the first run blocks for
+        # 30s+ on an HF fetch.
         return self._is_companion_present(model_id)
 
     def _is_companion_present(self, model_id: str) -> bool:
-        from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+        from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS, snapshot_has_conditioner
         sibling = SA3_T5GEMMA_SIBLINGS.get(model_id)
         if not sibling:
             return True  # nothing to check (post-trained / autoencoder / tagger)
         sib_repo, sib_subfolder = sibling
+        own_snaps = self._hub_cache_dir_for(model_id) / "snapshots"
+        if own_snaps.is_dir() and any(
+            snapshot_has_conditioner(sub, sib_subfolder) for sub in own_snaps.iterdir()
+        ):
+            return True
         safe = "models--" + sib_repo.replace("/", "--")
         sib_hub = self.hub_dir / safe
         snaps = sib_hub / "snapshots"
@@ -576,7 +585,9 @@ class ModelManager:
         cache_dir.mkdir(exist_ok=True, parents=True)
         target = self._hub_cache_dir_for(job.model_id)
 
-        token = get_token()
+        # Ungated repos download without credentials, so a stale or invalid
+        # stored token can't turn into a 401.
+        token = False if info.get("token_free") else get_token()
 
         # Cancel cleanup must know which phase the cancel interrupted: once
         # the main snapshot is complete, deleting `target` would throw away
@@ -600,7 +611,7 @@ class ModelManager:
                 # with the blobs/refs/snapshots structure that
                 # hf_hub_download() and StableAudioModel.from_pretrained()
                 # both consume.
-                snapshot_download(
+                main_snap = snapshot_download(
                     repo_id=info["repo"],
                     cache_dir=str(cache_dir),
                     token=token,
@@ -611,15 +622,18 @@ class ModelManager:
                 )
                 main_snapshot_complete = True
 
-                # Companion fetch: base models reference their T5Gemma
-                # conditioner in a subfolder of the *post-trained sibling*
-                # repo. Without it the training subprocess crashes at
-                # AutoTokenizer.from_pretrained, and inference can't build
-                # the conditioner either. Pull it eagerly so "Installed"
-                # actually means "ready to use".
-                from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS
+                # Companion fetch (fallback): base model configs point their
+                # T5Gemma conditioner at the gated *post-trained sibling*.
+                # Every base snapshot ships its own identical copy, which
+                # localize_conditioners() loads instead, so the sibling is only
+                # pulled when that copy is missing. Without either, training
+                # crashes at AutoTokenizer.from_pretrained and inference can't
+                # build the conditioner.
+                from app.core.training.sa3_lora_runner import (
+                    SA3_T5GEMMA_SIBLINGS, snapshot_has_conditioner,
+                )
                 sibling = SA3_T5GEMMA_SIBLINGS.get(job.model_id)
-                if sibling:
+                if sibling and not snapshot_has_conditioner(Path(main_snap), sibling[1]):
                     sib_repo, sib_subfolder = sibling
                     sibling_dir = cache_dir / ("models--" + sib_repo.replace("/", "--"))
                     if sibling_preexisting is None:
@@ -632,7 +646,7 @@ class ModelManager:
                     snapshot_download(
                         repo_id=sib_repo,
                         cache_dir=str(cache_dir),
-                        token=token,
+                        token=get_token(),   # the sibling is gated
                         allow_patterns=[f"{sib_subfolder}/*"],
                     )
 
@@ -736,9 +750,12 @@ class ModelManager:
 
     @staticmethod
     def _dir_size(path: Path) -> int:
+        # Skip symlinks: in the HF cache layout every snapshot file is a link
+        # to its blob, so following them counts each file twice.
         if not path.exists():
             return 0
-        return sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+        return sum(p.stat().st_size for p in path.rglob("*")
+                   if p.is_file() and not p.is_symlink())
 
 # --- tqdm hook ----------------------------------------------------------------
 
@@ -812,7 +829,10 @@ def _disk_progress_poller(
         try:
             if not target.exists():
                 return 0
-            return sum(p.stat().st_size for p in target.rglob("*") if p.is_file())
+            # Links are the snapshot side of finished blobs; following them
+            # double-counts (the bar ran past 100%, e.g. 3.99 / 3.49 GB).
+            return sum(p.stat().st_size for p in target.rglob("*")
+                       if p.is_file() and not p.is_symlink())
         except Exception:
             return 0
 

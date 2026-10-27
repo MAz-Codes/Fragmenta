@@ -49,7 +49,7 @@ from stable_audio_3.data.dataset import (
 )
 from safetensors.torch import load_file
 from stable_audio_3.loading_utils import copy_state_dict
-from stable_audio_3.model_configs import base_models
+from stable_audio_3.model_configs import base_models, localize_conditioners
 from stable_audio_3.factory import create_diffusion_cond_from_config
 from stable_audio_3.models.lora.utils import load_lora_checkpoint
 from stable_audio_3.training.diffusion import (
@@ -67,6 +67,7 @@ def load_model(model_name: str, device: torch.device):
     local_config, local_ckpt = model_cfg.resolve()
     with open(local_config) as f:
         model_config = json.load(f)
+    localize_conditioners(model_config, local_config)  # Fragmenta: token-free base models
     model = create_diffusion_cond_from_config(model_config)
     copy_state_dict(model, load_file(local_ckpt))
     # On MPS we train with precision="32-true" (no autocast), so the frozen

@@ -30,10 +30,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -57,9 +59,11 @@ def get_pre_encode_job(project_name: str) -> Dict[str, Any]:
     well-formed dict so the frontend can render against it without guards."""
     with _pre_encode_jobs_lock:
         job = _pre_encode_jobs.get(project_name)
-        if job is None:
-            return _idle_job()
-        return dict(job)
+        snap = _idle_job() if job is None else dict(job)
+    # The server clock, so the UI can show elapsed time with timestamps from
+    # this machine even when its own clock differs (a remote browser).
+    snap["now"] = time.time()
+    return snap
 
 
 def count_running_pre_encode_jobs() -> int:
@@ -75,11 +79,14 @@ def count_running_pre_encode_jobs() -> int:
 def _idle_job() -> Dict[str, Any]:
     return {
         "state": "idle",          # idle | queued | running | complete | failed | cancelled
-        "current": 0,             # batch index (0-based)
+        "phase": None,            # loading (encoder + data) | encoding, while running
+        "current": 0,             # clip being encoded, 1-based (0 = none started)
         "total": 0,               # total batches (derived from clip count)
         "current_file": "",
         "error": None,
         "started_at": None,
+        "encoding_started_at": None,   # first clip began
+        "clip_started_at": None,       # current clip began
         "finished_at": None,
         "autoencoder": None,
     }
@@ -194,12 +201,17 @@ def start_pre_encode(
         if existing and existing.get("state") in ("queued", "running"):
             return dict(existing)
 
-        # Count source clips (sidecars committed) so we know the denominator.
-        sidecars = list(proj_dir.glob("*.txt"))
+        # The denominator is what the encoder will step through: its dataset
+        # scan (fast_scandir) takes every non-hidden file in the formats it
+        # reads, in subfolders too. Counting only .wav made a FLAC dataset
+        # report 0 clips; counting only captioned files undercounts, since an
+        # uncaptioned file still costs a batch (it's swapped for another clip).
+        from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
         clip_count = sum(
-            1 for p in sidecars
-            if p.read_text(encoding="utf-8").strip()
-            and p.with_suffix(".wav").exists()  # cheap & accurate enough
+            1 for _dir, _subdirs, files in os.walk(proj_dir)
+            for name in files
+            if not name.startswith(".")
+            and os.path.splitext(name)[1].lower() in SA3_AUDIO_EXTENSIONS
         )
 
         job: Dict[str, Any] = {
@@ -208,7 +220,10 @@ def start_pre_encode(
             "total": clip_count,
             "current_file": "",
             "error": None,
+            "phase": None,
             "started_at": time.time(),
+            "encoding_started_at": None,
+            "clip_started_at": None,
             "finished_at": None,
             "autoencoder": ae,
             "cancelled": False,
@@ -241,7 +256,6 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     cfg = get_config()
     proj_dir = project_path(project_name)
     out_dir = latents_dir(project_name)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     sa3_vendor = cfg.get_path("stable_audio_3")
     venv_python = sys.executable
@@ -277,13 +291,22 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
         _update_job(project_name, state="cancelled", finished_at=time.time())
         return
 
-    _update_job(project_name, state="running")
+    # Start from an empty folder. A cancelled run, or one for the other
+    # autoencoder, leaves files behind, and the vendor script keeps an existing
+    # silence.npy — so the new latents would pad with the wrong model's silence.
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    _update_job(project_name, state="running", phase="loading")
     logger.info(
         "Pre-encoding started · project=%s · autoencoder=%s · clips=%d · sample_size=%d",
         project_name, ae, get_pre_encode_job(project_name)["total"], sample_size,
     )
 
     batch_pat = re.compile(r"Processing batch (\d+)")
+    # The child's own output is the only record of why it failed (a
+    # traceback, or Python dying at startup); keep the end of it.
+    tail: deque = deque(maxlen=40)
     process: Optional[subprocess.Popen] = None
     try:
         process = subprocess.Popen(
@@ -302,9 +325,14 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
         if process.stdout is not None:
             for line in process.stdout:
                 line = line.rstrip()
+                if line:
+                    tail.append(line)
                 m = batch_pat.search(line)
                 if m:
-                    _update_job(project_name, current=int(m.group(1)) + 1)
+                    now = time.time()
+                    first = get_pre_encode_job(project_name).get("encoding_started_at")
+                    _update_job(project_name, phase="encoding", current=int(m.group(1)) + 1,
+                                encoding_started_at=first or now, clip_started_at=now)
 
         rc = process.wait() if process else 1
 
@@ -319,15 +347,18 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
             return
 
         if rc != 0:
+            # Last unindented line: the exception line of a traceback.
+            reason = next((ln for ln in reversed(tail) if not ln.startswith((" ", "\t"))), "")
             _update_job(
                 project_name,
                 state="failed",
-                error=f"pre_encode_dataset.py exited with code {rc}",
+                error=f"pre_encode_dataset.py exited with code {rc}"
+                      + (f": {reason[:300]}" if reason else ""),
                 finished_at=time.time(),
             )
             logger.error(
-                "Pre-encoding failed (exit %s) · project=%s",
-                rc, project_name,
+                "Pre-encoding failed (exit %s) · project=%s\n%s",
+                rc, project_name, "\n".join(tail),
             )
             return
 
