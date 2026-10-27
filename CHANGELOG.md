@@ -40,7 +40,6 @@ All notable changes to Fragmenta are listed here. The format follows
   chosen base.
 - The app window opens at a sensible size in your screen's shape on every
   platform: it was oversized on Macs and on scaled Windows displays.
-- Windows: the taskbar shows the Fragmenta icon instead of Python's.
 - The launcher restarts a backend left running from another Fragmenta folder
   or from before an update, instead of reusing its old code.
 - A failed pre-encode shows the encoder's actual error, on the Training page
