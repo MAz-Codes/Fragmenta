@@ -1139,22 +1139,16 @@ function PerformancePanelInner({
                             anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
                             transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
                         >
-                            <Box sx={{ p: 2, width: 300 }}>
-                                <Typography variant="subtitle2">Link sync</Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                                    This output adds {measuredLatencyMs ?? '…'} ms of delay. Fragmenta plays that
-                                    much earlier so its beats land with your Link peers.
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
-                                    Live compensates its own latency, so you only need this for delay Fragmenta
-                                    can't measure — Bluetooth headphones add 150–300 ms.
-                                </Typography>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                    <Typography variant="caption" sx={{ flex: 1 }}>
-                                        Fine-tune: {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
-                                        {' '}<Typography component="span" variant="caption" color="text.secondary">
-                                            (saved for this output)
-                                        </Typography>
+                            <Box sx={{ p: 2, width: 240 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>Link sync</Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 30 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>Output delay</Typography>
+                                    <Typography variant="caption">{measuredLatencyMs ?? '…'} ms</Typography>
+                                </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>Offset</Typography>
+                                    <Typography variant="caption" sx={{ mr: 0.5 }}>
+                                        {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
                                     </Typography>
                                     <IconButton size="small" aria-label="1 ms less" onClick={() => updateLinkOffset(linkOffsetMs - 1)}>
                                         <MinusIcon size={14} />
@@ -1172,7 +1166,7 @@ function PerformancePanelInner({
                                 />
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                     <Button size="small" variant={calibrating ? 'contained' : 'outlined'} onClick={toggleCalibration}>
-                                        {calibrating ? 'Stop clicks' : 'Calibrate by ear'}
+                                        {calibrating ? 'Stop' : 'Calibrate'}
                                     </Button>
                                     <Button size="small" onClick={() => updateLinkOffset(0)} disabled={linkOffsetMs === 0}>
                                         Reset
@@ -1180,8 +1174,7 @@ function PerformancePanelInner({
                                 </Box>
                                 {calibrating && (
                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                                        Turn on Live's metronome and press play. Move the slider until
-                                        Fragmenta's click and Live's sound as one.
+                                        Match the clicks to Live's metronome.
                                     </Typography>
                                 )}
                             </Box>

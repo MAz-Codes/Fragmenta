@@ -37,7 +37,7 @@ export const TIPS = {
                     : enabled
                         ? `Link on — ${peers} peer${peers === 1 ? '' : 's'} (click to disable)`
                         : 'Click to sync BPM with Ableton Link',
-        linkSync: 'Latency compensation for Link — click to fine-tune or calibrate by ear',
+        linkSync: "Link sync. Use Offset only for delay Fragmenta can't measure, e.g. Bluetooth headphones.",
         midiMode: ({ supported, permissionError, learnMode }) =>
             !supported
                 ? (permissionError || 'Web MIDI is not available')
