@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="app/frontend/public/fragmenta_icon_1024.png" alt="Fragmenta logo" width="150" />
+
 # Fragmenta 
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
@@ -10,7 +12,19 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/MAz-Codes)
 
-![Header Image](app/frontend/public/fragmenta.png)
+
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=lQgLaU8RujU" target="_blank">
+    <img
+      src="app/frontend/public/fragmenta.gif"
+      alt="Watch the Fragmenta video"
+      width="1036"
+    />
+  </a>
+  <br />
+  <sub>Click the preview to watch the full Fragmenta video on YouTube.</sub>
+</p>
 
 **Bend the latent space with your own sound: the complete open-source text-to-audio pipeline for musicians.**
 
@@ -18,7 +32,7 @@
 
 Fragmenta is an open-source app that brings the complete generative AI text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and live performance. After the initial installation, the app runs fully offline, and your data never leaves your device.
 
-Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragmenta is designed for all musicians, and especially for experimental music and sonic arts practitioners, giving them the ability to shape the latent space with their own audio and musical data, no coding required. It reflects the small-data, model-bending, and artist-first approaches to AI that are central to my [PhD research](https://www.misaghazimi.com). 
+Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragmenta is designed for all musicians, and especially for experimental music and sonic arts practitioners, giving them the ability to shape the latent space with their own audio and musical data, no coding required. It reflects the small-data, model-bending, and artist-first approaches to AI that are central to my [PhD research](https://www.misaghazimi.com/fragmenta). 
 > **Compatibility:** The beta version's engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
 ---
 
@@ -36,6 +50,7 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 
 
 ---
+
 
 ## Before You Start
 
