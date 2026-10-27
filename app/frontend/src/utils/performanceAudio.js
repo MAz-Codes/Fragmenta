@@ -190,6 +190,16 @@ export class ChannelStrip {
         // whenever the loop bounds move under a playing source.
         this._startedAt = null;
         this._startOffset = 0;
+        // Pitch (PIT knob), whole semitones -12..+12. Output only: `buffer`
+        // stays the original (waveform, regions, cue all read it) and sources
+        // play `_pitched`, a same-length shifted copy rendered offline, when
+        // the knob is off zero. Copies are cached per semitone for the current
+        // buffer; `_pitchToken` drops renders that a newer request or a new
+        // clip has overtaken.
+        this.pitchSemitones = 0;
+        this._pitched = null;
+        this._pitchCache = new Map();
+        this._pitchToken = 0;
         this.isMuted = false;
         this.isSoloed = false;
 
@@ -277,6 +287,151 @@ export class ChannelStrip {
         this.regionStart = 0;
         this.regionEnd = 1;
         this.launchStart = null;
+        // A new clip keeps the channel's pitch: render its copy before the
+        // caller launches it, so it never starts at the wrong pitch.
+        this._pitched = null;
+        this._pitchCache = new Map();
+        const token = ++this._pitchToken;
+        if (this.pitchSemitones !== 0) {
+            try {
+                const copy = await this._pitchedFor(this.pitchSemitones);
+                if (token === this._pitchToken) this._pitched = copy;
+            } catch (err) {
+                console.warn('Pitch render failed; playing unpitched:', err);
+            }
+        }
+    }
+
+    /** Set the channel's pitch in whole semitones (-12..+12). Resolves true
+     *  once the new pitch is what plays (a live source is swapped at its
+     *  playhead), false if a newer request or a new clip overtook it. */
+    async setPitch(semitones) {
+        const n = Math.max(-12, Math.min(12, Math.round(Number(semitones) || 0)));
+        this.pitchSemitones = n;
+        const token = ++this._pitchToken;
+        if (!this.buffer) return true;
+        const next = n === 0 ? null : await this._pitchedFor(n);
+        if (token !== this._pitchToken) return false;
+        if (next !== this._pitched) {
+            this._pitched = next;
+            this._swapLiveSource();
+        }
+        return true;
+    }
+
+    async _pitchedFor(n) {
+        const buffer = this.buffer;
+        let copy = this._pitchCache.get(n);
+        if (!copy) {
+            copy = await this._renderPitch(buffer, n);
+            if (buffer !== this.buffer) return null;   // clip changed meanwhile
+            this._pitchCache.set(n, copy);
+            // Keep the last few pitches around for knob back-and-forth.
+            while (this._pitchCache.size > 4) {
+                this._pitchCache.delete(this._pitchCache.keys().next().value);
+            }
+        }
+        return copy;
+    }
+
+    // Loaded on first use: keeps the WASM stretcher out of the startup bundle
+    // (and out of the Node engine tests, which stub this).
+    async _renderPitch(buffer, n) {
+        const { renderPitchedBuffer } = await import('./pitchShift.js');
+        return renderPitchedBuffer(buffer, n);
+    }
+
+    /** What sources play: the pitched copy when the knob is off zero. */
+    _playBuffer() {
+        return this._pitched || this.buffer;
+    }
+
+    /** Re-point a live or scheduled source at `_playBuffer()` without moving
+     *  the playhead: a scheduled source is simply rebuilt for the same entry,
+     *  a sounding one hands over to a new source at its current position with
+     *  a short crossfade. Both buffers have the same length, so loops, cue
+     *  and Link/quantize timing are untouched. */
+    _swapLiveSource() {
+        if (!this.source || !this.isPlaying || !this.buffer) return;
+        const now = this.ctx.currentTime;
+        const [regionStart, regionEnd] = this._regionSeconds();
+        const loop = this.isLooping;
+        const FADE = 0.015;
+        let when, offset;
+        if (this._startedAt !== null && this._startedAt > now) {
+            when = this._startedAt;
+            offset = this._startOffset;
+            this._retireSource(this.source, this.sourceFade, now, now);
+        } else {
+            const pos = this.getPlayPosition();
+            if (pos === null) return;
+            when = now + 0.005;
+            // Where the old source will be at `when`, wrapped into the loop.
+            offset = pos * this.buffer.duration + (when - now);
+            if (loop && offset >= regionEnd) offset = regionStart + (offset - regionEnd);
+            if (!loop && offset >= regionEnd) return;
+            this._retireSource(this.source, this.sourceFade, when, when + FADE);
+        }
+        const { src, fadeGain } = this._newSource(loop);
+        if (when > now + 0.004) {
+            fadeGain.gain.setValueAtTime(0, now);
+            fadeGain.gain.setValueAtTime(0, when);
+            fadeGain.gain.linearRampToValueAtTime(1, when + FADE);
+        }
+        if (loop) src.start(when, offset);
+        else src.start(when, offset, Math.max(0.01, regionEnd - offset));
+        this._startedAt = when;
+        this._startOffset = offset;
+        this.source = src;
+        this.sourceFade = fadeGain;
+    }
+
+    /** A source for `_playBuffer()` with its own fade gain, wired into the
+     *  filter chain, looping over the current region when `loop`. */
+    _newSource(loop) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this._playBuffer();
+        src.loop = loop;
+        // Per-source gain so we can fade-out without touching the user's
+        // channelGain. Cancels the click that would otherwise happen when
+        // stop() truncates a non-zero sample.
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        // Source enters at the head of the filter chain (hpf → lpf → …).
+        fadeGain.connect(this.hpf);
+        src.onended = () => {
+            if (this.source === src) {
+                this.source = null;
+                this.sourceFade = null;
+                this.isPlaying = false;
+                this._startedAt = null;
+            }
+        };
+        if (loop) {
+            const [regionStart, regionEnd] = this._regionSeconds();
+            src.loopStart = regionStart;
+            src.loopEnd = regionEnd;
+        }
+        return { src, fadeGain };
+    }
+
+    /** Fade `src` out over [fadeStart, stopAt], stop it just after, and
+     *  detach both nodes once the tail has played. */
+    _retireSource(src, fade, fadeStart, stopAt) {
+        const now = this.ctx.currentTime;
+        try {
+            if (fade) {
+                fade.gain.cancelScheduledValues(now);
+                fade.gain.setValueAtTime(fade.gain.value, fadeStart);
+                fade.gain.linearRampToValueAtTime(0, stopAt);
+            }
+            src.stop(stopAt + 0.005);
+        } catch (_) { /* already stopped */ }
+        window.setTimeout(() => {
+            try { src.disconnect(); } catch (_) { /* ok */ }
+            try { fade && fade.disconnect(); } catch (_) { /* ok */ }
+        }, Math.ceil((stopAt - now + 0.03) * 1000));
     }
 
     /** Set the playable region (normalized 0..1). Applies to the next launch
@@ -385,35 +540,15 @@ export class ChannelStrip {
         if (!this.buffer) return;
         this.stop();
         this.isLooping = loop;
-        const src = this.ctx.createBufferSource();
-        src.buffer = this.buffer;
-        src.loop = loop;
-        // Per-source gain so we can fade-out without touching the user's
-        // channelGain. Cancels the click that would otherwise happen when
-        // stop() truncates a non-zero sample.
-        const fadeGain = this.ctx.createGain();
-        fadeGain.gain.value = 1;
-        src.connect(fadeGain);
-        // Source enters at the head of the filter chain (hpf → lpf → …).
-        fadeGain.connect(this.hpf);
-        src.onended = () => {
-            if (this.source === src) {
-                this.source = null;
-                this.sourceFade = null;
-                this.isPlaying = false;
-                this._startedAt = null;
-            }
-        };
+        const { src, fadeGain } = this._newSource(loop);
 
         // Enter at the cue point at the scheduled (quantized) time, but loop
         // the region: the first pass runs cue → out-point, then every repeat
         // cycles in-point → out-point. Cue == in-point unless the user moved
         // it. One-shots just play cue → out-point and stop.
-        const [regionStart, regionEnd] = this._regionSeconds();
+        const [, regionEnd] = this._regionSeconds();
         const launch = this._launchSeconds();
         if (loop) {
-            src.loopStart = regionStart;
-            src.loopEnd = regionEnd;
             src.start(Math.max(0, startTime), launch);
         } else {
             src.start(Math.max(0, startTime), launch,
@@ -443,46 +578,16 @@ export class ChannelStrip {
         // Hand off any current source: hold its level until just before the
         // boundary, fade over 12 ms, and stop it right at `when`. No gap.
         if (this.source) {
-            const oldSrc = this.source;
-            const oldFade = this.sourceFade;
             const stopAt = Math.max(when, now + FADE);
-            const fadeStart = Math.max(now, stopAt - FADE);
-            try {
-                if (oldFade) {
-                    oldFade.gain.cancelScheduledValues(now);
-                    oldFade.gain.setValueAtTime(oldFade.gain.value, fadeStart);
-                    oldFade.gain.linearRampToValueAtTime(0, stopAt);
-                }
-                oldSrc.stop(stopAt + 0.005);
-            } catch (_) { /* already stopped */ }
-            window.setTimeout(() => {
-                try { oldSrc.disconnect(); } catch (_) { /* ok */ }
-                try { oldFade && oldFade.disconnect(); } catch (_) { /* ok */ }
-            }, Math.ceil((stopAt - now + 0.03) * 1000));
+            this._retireSource(this.source, this.sourceFade, Math.max(now, stopAt - FADE), stopAt);
         }
 
         // Schedule the new source from the clip head at the boundary.
         this.isLooping = loop;
-        const src = this.ctx.createBufferSource();
-        src.buffer = this.buffer;
-        src.loop = loop;
-        const fadeGain = this.ctx.createGain();
-        fadeGain.gain.value = 1;
-        src.connect(fadeGain);
-        fadeGain.connect(this.hpf);
-        src.onended = () => {
-            if (this.source === src) {
-                this.source = null;
-                this.sourceFade = null;
-                this.isPlaying = false;
-                this._startedAt = null;
-            }
-        };
-        const [regionStart, regionEnd] = this._regionSeconds();
+        const { src, fadeGain } = this._newSource(loop);
+        const [, regionEnd] = this._regionSeconds();
         const launch = this._launchSeconds();
         if (loop) {
-            src.loopStart = regionStart;
-            src.loopEnd = regionEnd;
             src.start(when, launch);
         } else {
             src.start(when, launch, Math.max(0.01, regionEnd - launch));
@@ -496,28 +601,13 @@ export class ChannelStrip {
 
     stop() {
         if (this.source) {
-            const src = this.source;
-            const fade = this.sourceFade;
-            const now = this.ctx.currentTime;
             // 12ms gain ramp masks the click from cutting a buffer
             // mid-cycle. The source is scheduled to actually stop just
             // after the ramp finishes; disconnect happens on the next
             // tick after that so we don't truncate the tail ourselves.
+            const now = this.ctx.currentTime;
             const FADE = 0.012;
-            try {
-                if (fade) {
-                    fade.gain.cancelScheduledValues(now);
-                    fade.gain.setValueAtTime(fade.gain.value, now);
-                    fade.gain.linearRampToValueAtTime(0, now + FADE);
-                }
-                src.stop(now + FADE + 0.005);
-            } catch (_) { /* already stopped */ }
-            // Detach the nodes after the tail finishes — otherwise we'd
-            // cut the fade short and reintroduce the click.
-            window.setTimeout(() => {
-                try { src.disconnect(); } catch (_) { /* ok */ }
-                try { fade && fade.disconnect(); } catch (_) { /* ok */ }
-            }, Math.ceil((FADE + 0.02) * 1000));
+            this._retireSource(this.source, this.sourceFade, now, now + FADE);
             this.source = null;
             this.sourceFade = null;
         }

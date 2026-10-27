@@ -3410,7 +3410,7 @@ export const performanceChannelStyles = {
     },
     knobsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
+        gridTemplateColumns: 'repeat(5, 1fr)',
         gap: 0.5,
         py: 0.5,
     },

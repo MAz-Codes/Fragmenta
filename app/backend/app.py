@@ -10,6 +10,7 @@ from app.core.training.sa3_trainer import start_training as start_training_func,
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
+import mimetypes
 import os
 import re
 import random
@@ -44,6 +45,10 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
 
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='')
+# The frontend loads one library (the pitch shifter) as a native .mjs module,
+# and browsers refuse modules served with a non-JavaScript type. Python's map
+# for .mjs varies by platform (Windows reads it from the registry), so pin it.
+mimetypes.add_type('text/javascript', '.mjs')
 
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 # /api/upload-folder sends two multipart parts per file (files + rel_paths);

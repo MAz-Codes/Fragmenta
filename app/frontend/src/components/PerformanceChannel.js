@@ -74,7 +74,16 @@ const KNOB_DEFS = [
     { key: 'filter', label: 'FLT', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    // Pitch in whole semitones, ±1 octave. Output only: the engine plays a
+    // same-length shifted copy (utils/pitchShift.js), so loops, cue and Link
+    // timing don't move. Last in the row so existing knobs keep their places.
+    { key: 'pitch', label: 'PIT', min: -12, max: 12, step: 1, default: 0, scale: 'bipolar' },
 ];
+
+// Settle time before a pitch change is rendered: a drag or MIDI sweep
+// updates the knob at once but renders only where it comes to rest.
+const PITCH_SETTLE_MS = 120;
+const fmtSemitones = (v) => (v > 0 ? `+${v}` : `${v}`);
 
 // Map a bipolar filter position (-1..+1) to the (LPF, HPF) frequencies that
 // the engine's two biquads need. 20 Hz / 20 kHz are the bypass anchors on
@@ -493,6 +502,7 @@ export default function PerformanceChannel({
         }
         strip.setDelayMix(knobs.delay);
         strip.setReverbMix(knobs.reverb);
+        if (knobs.pitch) strip.setPitch(knobs.pitch);
         strip.setLoop(looping);
         if (muted || soloed) {
             onMuteSoloChange?.(index, { mute: muted, solo: soloed });
@@ -853,7 +863,29 @@ export default function PerformanceChannel({
         onMuteSoloChange(index, { sidechain: !sidechained });
     };
 
+    // Pitch renders take a moment (a few hundred ms per clip), so the knob
+    // shows the new value at once, renders once it settles, and dims its
+    // label until the shifted copy is what plays.
+    const [pitchBusy, setPitchBusy] = useState(false);
+    const pitchTimerRef = useRef(null);
+    const pitchReqRef = useRef(0);
+    const applyPitch = useCallback((semitones) => {
+        const req = ++pitchReqRef.current;
+        setPitchBusy(true);
+        strip.setPitch(semitones)
+            .catch((err) => console.warn('Pitch change failed:', err))
+            .finally(() => { if (req === pitchReqRef.current) setPitchBusy(false); });
+    }, [strip]);
+    useEffect(() => () => window.clearTimeout(pitchTimerRef.current), []);
+
     const handleKnob = (key, value) => {
+        if (key === 'pitch') {
+            const semitones = Math.round(value);
+            setKnobs(prev => ({ ...prev, pitch: semitones }));
+            window.clearTimeout(pitchTimerRef.current);
+            pitchTimerRef.current = window.setTimeout(() => applyPitch(semitones), PITCH_SETTLE_MS);
+            return;
+        }
         setKnobs(prev => ({ ...prev, [key]: value }));
         if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
         else if (key === 'pan') strip.setPan(value);
@@ -1411,7 +1443,14 @@ export default function PerformanceChannel({
                             ? faderPosToDb
                             : (v) => v;
                     return (
-                        <Box key={k.key} sx={styles.knobCell}>
+                        <Box
+                            key={k.key}
+                            sx={styles.knobCell}
+                            {...(k.key === 'pitch' && {
+                                title: 'Pitch, in semitones · double-click to reset',
+                                onDoubleClick: () => handleKnob('pitch', 0),
+                            })}
+                        >
                             <MidiMappable
                                 id={ctrlId(k.key)}
                                 label={ctrlLabel(k.label)}
@@ -1470,7 +1509,15 @@ export default function PerformanceChannel({
                                     }}
                                 />
                             </MidiMappable>
-                            <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
+                            <Box
+                                component="span"
+                                sx={{
+                                    ...styles.knobLabel,
+                                    ...(k.key === 'pitch' && pitchBusy && { opacity: 0.45 }),
+                                }}
+                            >
+                                {k.key === 'pitch' && knobs.pitch ? `${k.label} ${fmtSemitones(knobs.pitch)}` : k.label}
+                            </Box>
                         </Box>
                     );
                 })}

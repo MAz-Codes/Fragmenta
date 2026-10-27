@@ -133,6 +133,7 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 | @mui/material | MIT |
 | @emotion/react, @emotion/styled | MIT |
 | lucide-react | ISC |
+| signalsmith-stretch (Performance pitch knob; shipped unmodified as `build/assets/SignalsmithStretch-*.mjs`) | MIT — Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.; text in [`licenses/SIGNALSMITH_STRETCH_LICENSE.txt`](licenses/SIGNALSMITH_STRETCH_LICENSE.txt) |
 | vite, @vitejs/plugin-react *(build only)* | MIT |
 
 ---
@@ -144,10 +145,11 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 - **Stable Audio 3 weights**: Stability AI Community License — [`licenses/STABILITY_AI_COMMUNITY_LICENSE.md`](licenses/STABILITY_AI_COMMUNITY_LICENSE.md) (official: https://stability.ai/community-license-agreement)
 - **T5Gemma text encoder**: Gemma Terms of Use — [`licenses/GEMMA_TERMS_OF_USE.md`](licenses/GEMMA_TERMS_OF_USE.md)
 - **Use policies**: [`licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md`](licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md), [`licenses/GEMMA_PROHIBITED_USE_POLICY.md`](licenses/GEMMA_PROHIBITED_USE_POLICY.md)
+- **Signalsmith Stretch** (pitch shifting): [`licenses/SIGNALSMITH_STRETCH_LICENSE.txt`](licenses/SIGNALSMITH_STRETCH_LICENSE.txt) (MIT)
 - **Python / npm packages**: see each package's metadata or upstream repository.
 
 ---
 
-**Last Updated**: 2026-10-22
+**Last Updated**: 2026-10-27
 
 For licensing questions, open an issue on the project repository or contact the maintainer.

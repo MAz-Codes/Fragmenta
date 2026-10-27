@@ -4,6 +4,14 @@ All notable changes to Fragmenta are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Pitch knob (PIT) on every Performance channel: transpose a clip up to an
+  octave up or down in semitones without changing its length, so loops, cue
+  points and Link timing stay put. Only what you hear changes, never the file.
+  Double-click to reset.
+
 ## [1.2.0] - 2026-10-27
 
 ### Added
