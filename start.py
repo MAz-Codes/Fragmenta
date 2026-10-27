@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import os
 import re
 import requests
@@ -10,6 +11,8 @@ import sys
 import time
 import webbrowser
 from pathlib import Path
+
+from app.core.code_stamp import code_stamp
 
 PROJECT_ROOT = Path(__file__).parent
 BACKEND_HOST = "127.0.0.1"
@@ -132,15 +135,26 @@ def _maybe_replace_stale_backend(port: int) -> None:
         resp = requests.get(
             f"http://{BACKEND_HOST}:{port}/api/health", timeout=1.5
         )
-        running_version = (resp.json() or {}).get("version")
+        health = resp.json() or {}
     except Exception:
         return
-    if running_version == ABOUT_VERSION:
+    running_version = health.get("version")
+    running_root = health.get("root")
+    running_stamp = health.get("code_stamp")
+    if running_version != ABOUT_VERSION:
+        reason = (f"is version {running_version or 'unknown (older build)'}, but this "
+                  f"installation is {ABOUT_VERSION}")
+    elif running_root is None or running_stamp is None:
+        reason = "is an older build of this version"
+    elif Path(running_root).resolve() != PROJECT_ROOT.resolve():
+        reason = f"belongs to another Fragmenta folder ({running_root})"
+    elif code_stamp(PROJECT_ROOT) > float(running_stamp) + 1:
+        reason = "predates the code on disk (it was updated since the backend started)"
+    else:
         return
     print(
-        f"The Fragmenta backend already running on port {port} is version "
-        f"{running_version or 'unknown (older build)'}, but this installation "
-        f"is {ABOUT_VERSION}. Restarting it so the app matches the installed code."
+        f"The Fragmenta backend already running on port {port} {reason}. "
+        f"Restarting it so the app matches the installed code."
     )
     if not _terminate_backend_on_port(port):
         print(
@@ -313,7 +327,9 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         # default launch path on Linux, so a fixed 1400x850 here is what most
         # users actually get regardless of their monitor.
         screen = detect_screen_size()
-        scale = ui_scale_for(screen[0]) if screen else 1.0
+        # A desktop that already scales (GNOME at 125%/200%, GDK_SCALE) tells
+        # Chromium so itself — forcing our own factor on top shrinks the UI.
+        scale = ui_scale_for(screen[0]) if screen and desktop_scale() == 1.0 else 1.0
         # --window-size is in device-independent pixels, so the geometry has
         # to be worked out in the scaled coordinate space, not raw pixels.
         logical = (int(screen[0] / scale), int(screen[1] / scale)) if screen else None
@@ -579,6 +595,34 @@ def ui_scale_for(screen_width: int) -> float:
     return 1.0       # 1080p and below — already the right size
 
 
+def desktop_scale() -> float:
+    """How much the desktop already magnifies X11/Xwayland apps, or 1.0.
+
+    GNOME on Wayland with fractional scaling (e.g. 125%) gives Xwayland apps a
+    doubled screen (a 3840x2160 panel reads as 6144x3456 in xrandr) and sets
+    Xft.dpi to 192 so they render at 2x; plain X11 scaling sets Xft.dpi or
+    GDK_SCALE. Ignoring that made the launcher mistake a scaled 4K desktop for
+    an unscaled 6K one and force a smaller zoom over the desktop's own.
+    """
+    if sys.platform != "linux":
+        return 1.0
+    scale = 1.0
+    try:
+        scale = max(scale, float(os.environ.get("GDK_SCALE", "1")))
+    except ValueError:
+        pass
+    try:
+        out = subprocess.run(
+            ["xrdb", "-query"], capture_output=True, text=True, timeout=3,
+        ).stdout
+        match = re.search(r"^Xft\.dpi:\s*([\d.]+)", out, re.M)
+        if match:
+            scale = max(scale, float(match.group(1)) / 96.0)
+    except Exception:
+        pass
+    return scale
+
+
 def detect_screen_size() -> tuple[int, int] | None:
     """Best-effort screen size in logical pixels, or None if it can't be read.
 
@@ -592,6 +636,18 @@ def detect_screen_size() -> tuple[int, int] | None:
             user32 = ctypes.windll.user32
             user32.SetProcessDPIAware()
             width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            # Those are physical pixels now that the process is DPI-aware, but
+            # pywebview takes logical sizes and scales them by the DPI itself
+            # (WinForms AutoScaleMode.Dpi) — on a 125-150% display the window
+            # came out that much too big. Convert back with the system DPI.
+            try:
+                dpi = user32.GetDpiForSystem()
+            except AttributeError:  # before Windows 10 1607
+                hdc = user32.GetDC(0)
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                user32.ReleaseDC(0, hdc)
+            if dpi and dpi > 96:
+                width, height = int(width * 96 / dpi), int(height * 96 / dpi)
             if width > 0 and height > 0:
                 return width, height
         except Exception:
@@ -607,26 +663,35 @@ def detect_screen_size() -> tuple[int, int] | None:
             match = re.search(r"current\s+(\d+)\s*x\s*(\d+)", out)
             if match:
                 width, height = int(match.group(1)), int(match.group(2))
-                # xrandr reports physical pixels; if the desktop is running
-                # scaled, the toolkit's logical space is smaller by that factor.
-                try:
-                    gdk_scale = int(os.environ.get("GDK_SCALE", "1"))
-                except ValueError:
-                    gdk_scale = 1
-                if gdk_scale > 1:
-                    width, height = width // gdk_scale, height // gdk_scale
+                # xrandr reports X pixels; if the desktop is running scaled,
+                # the toolkit's logical space is smaller by that factor.
+                factor = desktop_scale()
+                if factor > 1:
+                    width, height = int(width / factor), int(height / factor)
                 if width > 0 and height > 0:
                     return width, height
         except Exception:
             pass
 
     if sys.platform == "darwin":
+        # Points, not pixels. system_profiler's "Resolution" is the panel's
+        # physical size (3024x1964 on a 14" MacBook Pro, which works at
+        # 1512x982), so the window was asked for at about twice the screen.
+        # visibleFrame also leaves out the menu bar and Dock.
+        try:
+            from AppKit import NSScreen
+            frame = NSScreen.mainScreen().visibleFrame()
+            width, height = int(frame.size.width), int(frame.size.height)
+            if width > 0 and height > 0:
+                return width, height
+        except Exception:
+            pass
         try:
             out = subprocess.run(
                 ["system_profiler", "SPDisplaysDataType"],
                 capture_output=True, text=True, timeout=6,
             ).stdout
-            match = re.search(r"Resolution:\s+(\d+)\s*x\s*(\d+)", out)
+            match = re.search(r"UI Looks like:\s+(\d+)\s*x\s*(\d+)", out)
             if match:
                 return int(match.group(1)), int(match.group(2))
         except Exception:
@@ -665,14 +730,18 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # 70% of the screen. Capped because past ~2000px the layout just grows
-    # margins rather than showing more.
-    width = min(int(sw * 0.70), 2000)
-    height = min(int(sh * 0.70), 1300)
-    # Don't shrink below the size we've always shipped — but never grow past
-    # the screen doing it, or a small laptop gets a window it can't display.
-    width = max(width, min(default_w, sw - 40))
-    height = max(height, min(default_h, sh - 60))
+    # 75% of the screen, in the screen's own shape — independent width and
+    # height caps gave a ~3:2 box on 16:9 panels. On a small screen 75% is
+    # cramped, so never go under the width we've always shipped unless that
+    # would take more than 90% of the screen. Capped because past ~2000px the
+    # layout just grows margins rather than showing more. Height always
+    # follows from the width: flooring it separately (as before) broke the
+    # shape on every screen under ~1900 wide. The shape follows the screen
+    # between 16:10 and 16:9, so an ultrawide doesn't get a letterbox and a
+    # portrait monitor doesn't get a tower.
+    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 2000)
+    shape = min(max(sw / sh, 1.6), 16 / 9)
+    height = min(int(width / shape), int(sh * 0.9))
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.
@@ -747,7 +816,15 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _macos_apply_dock_icon
 
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-            webview.start(private_mode=False, storage_path=str(WEBVIEW_STORAGE_DIR))
+            start_kwargs = {"private_mode": False, "storage_path": str(WEBVIEW_STORAGE_DIR)}
+            # pywebview 6's Windows backend builds the form icon from `icon`
+            # (its docstring still says GTK/QT only); without it the form takes
+            # python.exe's icon, which is what the taskbar showed. Up to 5.0
+            # start() has no `icon` parameter at all, hence the check.
+            if (sys.platform == "win32" and _ensure_windows_icon()
+                    and "icon" in inspect.signature(webview.start).parameters):
+                start_kwargs["icon"] = str(WINDOWS_ICON_PATH)
+            webview.start(**start_kwargs)
             return 0 if window else 1
         except Exception as exc:
             print(

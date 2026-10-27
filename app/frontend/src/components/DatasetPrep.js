@@ -62,6 +62,7 @@ import {
     Undo2,
 } from 'lucide-react';
 import api from '../api';
+import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
 import { appStyles } from '../theme';
 
@@ -280,6 +281,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
             refreshHealth(name);
         } catch (e) {
             if (e?.response?.status === 404) {
+                // Remembered project is gone (deleted, or this is a different
+                // install sharing the same webview storage): drop it quietly
+                // so the next launch doesn't try again.
+                try { window.localStorage.removeItem('fragmenta.datasetPrep.lastProject'); } catch {}
                 setSelectedName('');
                 setProject(null);
                 setHealth(null);
@@ -313,6 +318,9 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 pollHandleRef.current = window.setTimeout(() => poll(name), 500);
             }
         } catch (e) {
+            // 404 = the project itself is missing; refreshProject handles that
+            // without an error, and this poll races it on startup.
+            if (e?.response?.status === 404) return;
             if (epoch === pollEpochRef.current) setError(extractError(e, 'Status poll failed'));
         }
     }, [refreshProject]);
@@ -761,27 +769,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                     )}
 
                     {isPreEncoding && preEncodeJob && (
-                        <Box>
-                            <LinearProgress
-                                variant={preEncodeJob.total > 0 ? 'determinate' : 'indeterminate'}
-                                value={preEncodeJob.total > 0 ? (preEncodeJob.current / preEncodeJob.total) * 100 : undefined}
-                            />
-                            <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
-                                    Pre-encoding latents · {preEncodeJob.current} / {preEncodeJob.total}
-                                    {preEncodeJob.autoencoder ? ` · ${preEncodeJob.autoencoder}` : ''}
-                                </Typography>
-                                <Button
-                                    size="small"
-                                    variant="outlined"
-                                    color="error"
-                                    startIcon={<StopIcon size={14} />}
-                                    onClick={handleCancelPreEncode}
-                                >
-                                    Stop
-                                </Button>
-                            </Box>
-                        </Box>
+                        <PreEncodeProgress job={preEncodeJob} onStop={handleCancelPreEncode} />
                     )}
 
                     {/* Two columns: the clip table gets the page, the tools get

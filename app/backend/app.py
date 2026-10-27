@@ -4,6 +4,8 @@ from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
+from app.core.generation.provenance import recording_tags, tag_existing_wav
+from app.backend import update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -104,6 +106,12 @@ try:
     _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
 except Exception:
     _APP_VERSION = None
+# Same idea for an update that keeps the version (a `git pull` between
+# releases) or a second install in another folder: the launcher compares
+# these against its own folder and code before reusing this process.
+from app.core.code_stamp import code_stamp as _code_stamp
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+_CODE_STAMP = _code_stamp(_CODE_ROOT)
 
 config = None
 generator = None
@@ -211,6 +219,8 @@ def health_check():
         'components_ready': _components_initialised,
         'init_error': _init_error,
         'version': _APP_VERSION,
+        'root': str(_CODE_ROOT),
+        'code_stamp': _CODE_STAMP,
         'gpu_available': torch.cuda.is_available(),
         'gpu_name': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }
@@ -224,6 +234,77 @@ def app_version():
     """Version of the code this process is running (from the VERSION file,
     read at import — see _APP_VERSION). Also exposed on /api/health."""
     return jsonify({'version': _APP_VERSION})
+
+
+# --- Update notices (app/backend/update_check.py) -----------------------------
+# Bodies are read with get_json() and no force=True: a cross-site "simple"
+# form/text POST then gets a 415 instead of acting (CORS + the JSON preflight
+# are the protection; there is no origin guard).
+
+def _open_in_browser(url: str) -> None:
+    """Open a URL in the user's browser without wiring that browser's console
+    into ours. webbrowser.open lets the launched browser inherit the backend's
+    stderr, so a snap Chromium's GTK and graphics-driver chatter lands in
+    Fragmenta's terminal and log. On Linux, xdg-open with its output discarded;
+    an explicit BROWSER override and other platforms keep webbrowser."""
+    if sys.platform.startswith('linux') and not os.environ.get('BROWSER'):
+        import subprocess
+        try:
+            subprocess.Popen(['xdg-open', url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+            return
+        except OSError:
+            pass
+    import webbrowser
+    webbrowser.open(url)
+
+
+@app.route('/api/update/status')
+def update_status():
+    """Cached update state for the UI — never does network I/O."""
+    return jsonify(update_check.status())
+
+
+@app.route('/api/update/check', methods=['POST'])
+def update_check_now():
+    """Forced check, rate-limited to once a minute server-side."""
+    return jsonify(update_check.manual_check())
+
+
+@app.route('/api/update/dismiss', methods=['POST'])
+def update_dismiss():
+    body = request.get_json() or {}
+    try:
+        return jsonify(update_check.dismiss(str(body.get('action'))))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/update/settings', methods=['POST'])
+def update_settings():
+    body = request.get_json() or {}
+    return jsonify(update_check.update_settings(
+        enabled=body.get('enabled'), include_prereleases=body.get('include_prereleases')))
+
+
+@app.route('/api/update/open', methods=['POST'])
+def update_open():
+    """Open the notes / download / upgrade-guide page in the system browser.
+    The URL comes from validated state, never from the client."""
+    body = request.get_json() or {}
+    if update_check.is_disabled() == 'hf_space':
+        return jsonify({'error': 'not available here'}), 403
+    url = update_check.resolve_url(str(body.get('target')))
+    if not url:
+        return jsonify({'error': 'nothing to open'}), 404
+    _open_in_browser(url)
+    return jsonify({'success': True})
+
+
+@app.route('/api/update/whats-new')
+def update_whats_new():
+    """Highlights for the version just installed, once after an upgrade."""
+    return jsonify(update_check.whats_new())
 
 
 @app.route('/')
@@ -1115,6 +1196,10 @@ def save_performance_recording():
     except Exception:
         dest.unlink(missing_ok=True)
         raise
+
+    # The browser encodes the capture, so no server-side writer has tagged it:
+    # add the AI-output marking (EU AI Act Art. 50) now — lossless rewrite.
+    tag_existing_wav(dest, recording_tags())
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None
@@ -2310,14 +2395,13 @@ def reveal_fragment():
 @app.route('/api/open-documentation', methods=['POST'])
 def open_documentation():
     try:
-        import webbrowser
-
         payload = request.get_json(silent=True) or {}
         doc_key = payload.get('doc_key', 'about')
 
         docs_map = {
             'about': 'https://www.misaghazimi.com/fragmenta',
             'documentation': 'https://github.com/MAz-Codes/Fragmenta',
+            'tutorials': 'https://www.youtube.com/watch?v=RPJU6xcQwAA',
         }
 
         target_url = docs_map.get(doc_key)
@@ -2327,7 +2411,7 @@ def open_documentation():
                 "error": f"Unsupported documentation target: {doc_key}"
             }), 400
 
-        webbrowser.open(target_url)
+        _open_in_browser(target_url)
 
         return jsonify({
             "success": True,
@@ -3559,4 +3643,6 @@ if __name__ == '__main__':
     # debug defaults OFF: shipped builds must not expose Werkzeug's interactive
     # debugger / verbose tracebacks. Opt in for local dev with FRAGMENTA_DEBUG=true.
     flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
+    # Only the real server checks for updates (not imports or test clients).
+    update_check.start_background_checker()
     app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)

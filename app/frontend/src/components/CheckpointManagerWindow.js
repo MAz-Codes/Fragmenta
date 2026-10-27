@@ -185,11 +185,12 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                         </Alert>
                     ) : !hfAuth.signed_in ? (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            SA3 checkpoints are gated on HuggingFace. You need a{' '}
+                            The Base models download without an account. The faster distilled
+                            models are gated on HuggingFace: for those you need a{' '}
                             <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">
                                 HuggingFace account
                             </a>
-                            {' '}to continue. Then{' '}
+                            . Then{' '}
                             <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
                                 create a Read access token
                             </a>
@@ -197,8 +198,9 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                         </Alert>
                     ) : (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            You're signed in. Each model is gated — click its name below to open the
-                            HuggingFace page and accept the model's terms before downloading.
+                            You're signed in. The distilled models are gated — click a model's name to
+                            open its HuggingFace page and accept its terms before downloading. Base
+                            models need no account.
                         </Alert>
                     )}
 
@@ -213,7 +215,8 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                 Pick a model to get started.
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                                Small - Music (1.2 GB) is a good first choice on a laptop or any GPU.
+                                Small - Music (Base) downloads without an account (3.5 GB). Small - Music
+                                is faster but needs a free HuggingFace account.
                             </Typography>
                         </Box>
                     )}
