@@ -4,7 +4,7 @@ All notable changes to Fragmenta are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [1.2.0] - Unreleased
+## [1.2.0] - 2026-10-27
 
 ### Added
 - Cue point for Performance channels: set where a launch or retrigger enters
