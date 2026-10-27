@@ -35,6 +35,7 @@ import {
 import api from '../api';
 import { PERFORMANCE_VARIATION } from '../features';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
+import RotaryKnob from './RotaryKnob';
 
 const CHANNEL_COLORS = [
     // Original introduction palette. Ch1 teal, ch2 violet, ch3 green, ch4 amber.
@@ -74,12 +75,12 @@ const KNOB_DEFS = [
     { key: 'filter', label: 'FLT', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
     { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
     { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
-    // Pitch in whole semitones, ±1 octave. Output only: the engine plays a
-    // same-length shifted copy (utils/pitchShift.js), so loops, cue and Link
-    // timing don't move. Last in the row so existing knobs keep their places.
-    { key: 'pitch', label: 'PIT', min: -12, max: 12, step: 1, default: 0, scale: 'bipolar' },
 ];
 
+// Pitch (rotary knob in the Generate row), whole semitones ±1 octave. Output
+// only: the engine plays a same-length shifted copy (utils/pitchShift.js), so
+// loops, cue and Link timing don't move. Stored in `knobs.pitch`.
+const PITCH_RANGE = 12;
 // Settle time before a pitch change is rendered: a drag or MIDI sweep
 // updates the knob at once but renders only where it comes to rest.
 const PITCH_SETTLE_MS = 120;
@@ -136,6 +137,7 @@ export default function PerformanceChannel({
     const defaultKnobs = (() => {
         const d = Object.fromEntries(KNOB_DEFS.map(k => [k.key, k.default]));
         d.pan = 0;
+        d.pitch = 0;
         return d;
     })();
 
@@ -1161,6 +1163,37 @@ export default function PerformanceChannel({
                         </Tooltip>
                     </MidiMappable>
                     )}
+
+                    {/* Pitch — right-aligned at the end of the row: -12 st,
+                        knob, +12 st. Centre detent, double-click for 0 st. */}
+                    <Box
+                        title="Pitch, in semitones · double-click for 0 st"
+                        sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}
+                    >
+                        <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE} st</Box>
+                        <MidiMappable
+                            id={ctrlId('pitch')}
+                            label={ctrlLabel('Pitch')}
+                            kind="continuous"
+                            curve="linear"
+                            min={-PITCH_RANGE}
+                            max={PITCH_RANGE}
+                            value={knobs.pitch ?? 0}
+                            onChange={(v) => handleKnob('pitch', v)}
+                        >
+                            <RotaryKnob
+                                value={knobs.pitch ?? 0}
+                                min={-PITCH_RANGE}
+                                max={PITCH_RANGE}
+                                color={color}
+                                busy={pitchBusy}
+                                format={fmtSemitones}
+                                ariaLabel="Pitch in semitones"
+                                onChange={(v) => handleKnob('pitch', v)}
+                            />
+                        </MidiMappable>
+                        <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE} st</Box>
+                    </Box>
                 </Box>
 
                 {channelError && (
@@ -1443,14 +1476,7 @@ export default function PerformanceChannel({
                             ? faderPosToDb
                             : (v) => v;
                     return (
-                        <Box
-                            key={k.key}
-                            sx={styles.knobCell}
-                            {...(k.key === 'pitch' && {
-                                title: 'Pitch, in semitones · double-click to reset',
-                                onDoubleClick: () => handleKnob('pitch', 0),
-                            })}
-                        >
+                        <Box key={k.key} sx={styles.knobCell}>
                             <MidiMappable
                                 id={ctrlId(k.key)}
                                 label={ctrlLabel(k.label)}
@@ -1509,15 +1535,7 @@ export default function PerformanceChannel({
                                     }}
                                 />
                             </MidiMappable>
-                            <Box
-                                component="span"
-                                sx={{
-                                    ...styles.knobLabel,
-                                    ...(k.key === 'pitch' && pitchBusy && { opacity: 0.45 }),
-                                }}
-                            >
-                                {k.key === 'pitch' && knobs.pitch ? `${k.label} ${fmtSemitones(knobs.pitch)}` : k.label}
-                            </Box>
+                            <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
                         </Box>
                     );
                 })}

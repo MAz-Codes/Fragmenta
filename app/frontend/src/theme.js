@@ -3410,7 +3410,7 @@ export const performanceChannelStyles = {
     },
     knobsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(5, 1fr)',
+        gridTemplateColumns: 'repeat(4, 1fr)',
         gap: 0.5,
         py: 0.5,
     },
@@ -3430,6 +3430,14 @@ export const performanceChannelStyles = {
         '& .MuiSlider-rail': { opacity: 0.3, width: fat ? 4 : 2 },
         '& .MuiSlider-track': { width: fat ? 4 : 2, border: 'none' },
     }),
+    // "-12 st" / "+12 st" either side of the pitch knob.
+    pitchRangeLabel: {
+        fontSize: perfTokens.fontSize.xs,
+        color: 'text.disabled',
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
+    },
     knobLabel: {
         ...perfTokens.caps,
         display: 'block',

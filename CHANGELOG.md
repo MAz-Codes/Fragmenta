@@ -7,10 +7,10 @@ All notable changes to Fragmenta are listed here. The format follows
 ## [Unreleased]
 
 ### Added
-- Pitch knob (PIT) on every Performance channel: transpose a clip up to an
-  octave up or down in semitones without changing its length, so loops, cue
-  points and Link timing stay put. Only what you hear changes, never the file.
-  Double-click to reset.
+- Pitch knob next to Generate on every Performance channel: transpose a clip
+  up to an octave up or down in semitones without changing its length, so
+  loops, cue points and Link timing stay put. Only what you hear changes,
+  never the file. It rests at 0 st when you pass it; double-click to reset.
 
 ## [1.2.0] - 2026-10-27
 
