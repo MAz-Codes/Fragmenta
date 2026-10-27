@@ -20,6 +20,9 @@ All notable changes to Fragmenta are listed here. The format follows
 - Linux: lower audio output latency (about 26 ms instead of 35 ms).
 - Link fine-tune now reaches −200…+500 ms (enough for Bluetooth headphones),
   with ±1 ms buttons for precise steps.
+- Stable Audio 3 code updated to Stability's October release. Adapters sound
+  the same at full strength and when bypassed; strengths in between now also
+  scale DoRA magnitudes, so they sound slightly different than in 1.2.
 
 ## [1.2.0] - 2026-10-27
 

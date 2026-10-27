@@ -36,7 +36,7 @@ from stable_audio_3.data.dataset import (
 
 
 def caption_metadata_fn(info, _audio):
-    # Import locally so it resolves inside DataLoader workers. On spawn-based
+    # Fragmenta: import locally so it resolves inside DataLoader workers. On spawn-based
     # platforms (macOS, Windows) workers don't inherit this module's globals,
     # so the top-level `from pathlib import Path` is invisible here and every
     # call would raise NameError — which SampleDataset.__getitem__ swallows and

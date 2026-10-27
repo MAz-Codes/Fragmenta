@@ -12,7 +12,7 @@ from einops import rearrange
 
 from stable_audio_3.interface.aeiou import audio_spectrogram_image
 from stable_audio_3.inference.distribution_shift import LogSNRShift, FluxDistributionShift, DistributionShift, IdentityDistributionShift
-from stable_audio_3.models.lora import has_lora
+from stable_audio_3.models.lora import has_lora, filter_lora_layers
 from stable_audio_3.interface.reprompt import reprompt as _reprompt_fn, get_model as _reprompt_get_model, is_model_cached as _reprompt_is_model_cached
 
 stable_audio_3_model = None
@@ -20,6 +20,31 @@ sample_size = 5324800
 sample_rate = 44100
 n_loras = 0
 _LENGTH_EXTRACT_RE = re.compile(r' Length: (\d+) seconds\.?\s*$')
+
+
+def parse_inpaint_regions(starts_csv, ends_csv):
+    """Parse matching comma-separated inpaint start/end regions."""
+    def parse(value):
+        values = [item.strip() for item in str(value or "").split(",") if item.strip()]
+        try:
+            return [float(item) for item in values]
+        except ValueError as exc:
+            raise gr.Error("Inpaint regions must be comma-separated numbers.") from exc
+
+    starts = parse(starts_csv)
+    ends = parse(ends_csv)
+    if not starts and not ends:
+        return None, None
+    if not starts or not ends:
+        raise gr.Error("Inpaint starts and ends must both be provided.")
+    if len(starts) != len(ends):
+        raise gr.Error("Inpaint starts and ends must contain the same number of regions.")
+    if any(start < 0 or end <= start for start, end in zip(starts, ends)):
+        raise gr.Error("Each inpaint region must have a non-negative start before its end.")
+    return (
+        starts[0] if len(starts) == 1 else starts,
+        ends[0] if len(ends) == 1 else ends,
+    )
 
 
 # when using a prompt in a filename
@@ -79,7 +104,7 @@ def generate_cond(
         preview_every = None
 
     # Parse per-LoRA controls from trailing args
-    # Each LoRA has 5 controls: strength, interval_min, interval_max, layer_filter
+    # Each LoRA has 4 controls: strength, interval_min, interval_max, layer_filter
     lora_configs = None
     if n_loras > 0 and len(lora_args) >= n_loras * 4:
         lora_configs = []
@@ -90,6 +115,19 @@ def generate_cond(
             interval_max = lora_args[off + 2]
             layer_filter = lora_args[off + 3]
             stable_audio_3_model.set_lora_strength(strength, lora_index=i)
+            # The DiT applies layer_filter itself, inside its forward, so it only
+            # ever sees adapters in the transformer. Conditioner adapters are
+            # unreachable from there — for SA3 that is the duration embedder
+            # (conditioners.seconds_total.embedder.embedding.1), the one non-DiT
+            # target LoRA training produces — so typing its name in the box did
+            # nothing. Apply the same filter here to cover it.
+            #
+            # Once per generate is enough: unlike the DiT, which re-filters every
+            # sampling step, nothing re-enables conditioner adapters mid-run. An
+            # empty filter re-enables them, which is the intended default.
+            conditioner = getattr(stable_audio_3_model.model, "conditioner", None)
+            if conditioner is not None:
+                filter_lora_layers(conditioner, layer_filter, lora_index=i)
             lora_configs.append({
                 "lora_index": i,
                 "interval": (interval_min, interval_max),
@@ -132,6 +170,12 @@ def generate_cond(
     else:
         inversion_params = None
 
+    mask_maskstart, mask_maskend = parse_inpaint_regions(
+        mask_maskstart, mask_maskend
+    )
+    if inpaint_audio is not None and mask_maskstart is None:
+        raise gr.Error("Add at least one inpaint start/end region.")
+
     generate_args = {
         "prompt": prompt,
         "negative_prompt": negative_prompt,
@@ -140,7 +184,7 @@ def generate_cond(
         "cfg_scale": cfg_scale,
         "cfg_interval": (cfg_interval_min, cfg_interval_max),
         "lora_configs": lora_configs,
-        "batch_size": batch_size,
+        "batch_size": int(batch_size),
         "sample_size": input_sample_size,
         "seed": seed,
         "sampler_type": sampler_type,
@@ -329,7 +373,12 @@ def create_sampling_ui(stable_audio_3_model, default_prompt=None):
                         with gr.Row():
                             int_min = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=0.0, label="Interval min")
                             int_max = gr.Slider(minimum=0.0, maximum=1.0, step=0.01, value=1.0, label="Interval max")
-                            lyr_filt = gr.Textbox(label="Layer filter", placeholder="")
+                            lyr_filt = gr.Textbox(
+                                label="Layer filter",
+                                placeholder="seconds_total, .transformer.layers",
+                                info="Comma-separated substrings to disable. "
+                                     "Covers conditioner layers too.",
+                            )
                         lora_ui_inputs.extend([strength, int_min, int_max, lyr_filt])
 
             with gr.Accordion("Sampler params", open=False):
@@ -428,8 +477,14 @@ def create_sampling_ui(stable_audio_3_model, default_prompt=None):
                         outputs=[dist_shift_state, logsnr_params_row, flux_params_row, full_params_row],
                     )
 
-            # Hidden state for batch_size (no UI control, but needed for function signature)
-            batch_size_state = gr.State(value=1)
+            with gr.Accordion("Batch", open=False):
+                batch_size_number = gr.Number(
+                    label="Batch size",
+                    value=1,
+                    minimum=1,
+                    precision=0,
+                    info="Generate multiple variations in one run.",
+                )
 
             with gr.Accordion("Output params", open=False):
                 # Output params
@@ -472,19 +527,8 @@ def create_sampling_ui(stable_audio_3_model, default_prompt=None):
 
             with gr.Accordion("Inpainting", open=False):
                 inpaint_audio_input = gr.Audio(label="Inpaint audio", waveform_options=gr.WaveformOptions(show_recording_waveform=False))
-                mask_maskstart_slider = gr.Slider(minimum=0.0, maximum=sample_size//sample_rate, step=0.1, value=0, label="Mask Start (sec)")
-                mask_maskend_slider = gr.Slider(minimum=0.0, maximum=sample_size//sample_rate, step=0.1, value=sample_size//sample_rate, label="Mask End (sec)")
-
-                # Update inpainting slider ranges when seconds_total changes.
-                # Only seconds_total is an input — reading the mask sliders here would cause
-                # validation errors since their values may exceed the about-to-be-reduced maximum.
-                def update_inpaint_sliders(seconds_total):
-                    max_val = max(seconds_total, 1)
-                    return (
-                        gr.update(maximum=max_val),
-                        gr.update(maximum=max_val, value=max_val),
-                    )
-                seconds_total_slider.change(update_inpaint_sliders, inputs=[seconds_total_slider], outputs=[mask_maskstart_slider, mask_maskend_slider])
+                mask_maskstart_slider = gr.Textbox(label="Mask starts (sec)", placeholder="4 or 4, 16", info="Comma-separate values to inpaint multiple regions.")
+                mask_maskend_slider = gr.Textbox(label="Mask ends (sec)", placeholder="8 or 8, 20")
 
             inputs = [
                 prompt,
@@ -514,7 +558,7 @@ def create_sampling_ui(stable_audio_3_model, default_prompt=None):
                 inversion_gamma_slider,
                 inversion_unconditional_checkbox,
                 duration_padding_slider,
-                batch_size_state,
+                batch_size_number,
                 dist_shift_state,
             ] + lora_ui_inputs
 

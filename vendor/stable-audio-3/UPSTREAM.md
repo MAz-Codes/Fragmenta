@@ -1,32 +1,53 @@
 # Stable Audio 3 — vendored snapshot
 
 - Upstream: https://github.com/Stability-AI/stable-audio-3
-- Pinned commit: fa5ee841dd49bae0fa361fac26904adc27fd400e
-- Pinned at:     2026-05-21T09:38:08-07:00
-- Vendored on:   2026-05-21T11:55:06-07:00
+- Pinned commit: 77e0398c26f7d22d801ec1bb036307e8b231f741 (upstream `main`)
+- Pinned at:     2026-10-11T03:32:19-04:00
+- Vendored on:   2026-10-27 (bumped from `fa5ee84`, 2026-05-21; 202 commits)
 
-Spiked locally on misagh's machine (RTX 5080, cu128 swap, CPU + GPU paths
-both confirmed working with small-music) before vendoring.
+Not vendored: `optimized/tensorRT` and `optimized/tflite` (out of scope).
+`optimized/mlx/scripts/` is on disk but ignored by Fragmenta's `.gitignore`,
+so it isn't tracked or shipped; Fragmenta uses `optimized/mlx/models/defs/`.
 
-To bump: re-clone upstream, diff against this tree, update this file.
+To bump: follow the procedure in the master plan (Part 4): 3-way merge every
+file below against the new upstream, replace the tree, overlay, re-run tests.
+Every local edit carries a `# Fragmenta:` comment in the code.
 
-## Local patches (re-apply or upstream when bumping)
+## Local patches
 
-- `stable_audio_3/models/lora/model.py` — `apply_lora()` removal branch:
-  iterate `list(layer.parametrizations.keys())` instead of the live
-  ModuleDict. `remove_parametrizations()` mutates that dict mid-loop, so
-  `remove_lora()`/`merge_lora()` raised "dictionary changed size during
-  iteration" on every parametrized layer (callers only saw it as a
-  warning + full-model-reload fallback). 2026-06-11.
-- `stable_audio_3/model_configs.py` — new `localize_conditioners()`: load a
-  T5Gemma conditioner from the checkpoint's own snapshot when it ships the
-  subfolder (every `*-base` repo does, byte-identical to the gated sibling it
-  points at), so base models need no Hugging Face token. Called after
-  `json.load` in `model.py` (`StableAudioModel.from_pretrained`) and
-  `scripts/train_lora.py` (`load_model`). 2026-10-22.
-- `stable_audio_3/model_configs.py` — the standalone-autoencoder fallbacks
-  (`_small_stable_audio_3`, `_medium_stable_audio_3`) also probe the `*-base`
-  checkpoints, which hold the identical autoencoder (pretransform tensors and
-  config checked equal). Without it, pre-encoding offline with only base
-  models cached failed looking for `stabilityai/SAME-S` / `SAME-L`.
-  2026-10-27.
+- `stable_audio_3/model_configs.py`
+  - New `localize_conditioners()`: load a T5Gemma conditioner from the
+    checkpoint's own snapshot when it ships the subfolder (every `*-base` repo
+    does, byte-identical to the gated sibling it points at), so base models
+    need no Hugging Face token. 2026-10-22.
+  - The standalone-autoencoder fallbacks (`_small_stable_audio_3`,
+    `_medium_stable_audio_3`) also probe the `*-base` checkpoints, which hold
+    the identical autoencoder (pretransform tensors and config checked equal).
+    Without it, pre-encoding offline with only base models cached failed
+    looking for `stabilityai/SAME-S` / `SAME-L`. 2026-10-27.
+- `stable_audio_3/model.py` — `StableAudioModel.from_pretrained` calls
+  `localize_conditioners()` after `json.load`. 2026-10-22.
+- `scripts/train_lora.py`
+  - `load_model` calls `localize_conditioners()` (token-free base models).
+  - Apple Silicon: picks MPS when there's no CUDA; keeps the frozen base in
+    fp32 and trains at `32-true` there (bf16 on MPS mismatches dtypes and its
+    autocast is unreliable); skips the base-precision downcast on MPS.
+  - Spawn-safe DataLoader workers (Windows/macOS): a top-level
+    `_worker_seed_init` via `functools.partial` instead of a lambda, and
+    `caption_metadata_fn` imports `Path` locally.
+  - `volume_norm=True` on the dataset (−16 LUFS, matching pre-encode).
+  - `CSVLogger(flush_logs_every_n_steps=1)` so the UI's loss curve is live.
+  - `--no_demo` flag to skip demo rendering entirely.
+- `scripts/pre_encode_dataset.py` — `caption_metadata_fn` imports `Path`
+  locally (spawn-based workers); `volume_norm=True` so cached latents match
+  training.
+- `stable_audio_3/models/transformer.py` — use flash-attn only for CUDA
+  tensors; CPU/MPS fall through to the SDPA path instead of crashing when
+  flash-attn is installed.
+- `stable_audio_3/training/utils.py` — `wandb` is optional (import guarded).
+
+## Dropped at the 2026-10-27 bump
+
+- `stable_audio_3/models/lora/model.py` — the `apply_lora()` removal-branch
+  fix (iterate `list(layer.parametrizations.keys())`) is now upstream, so the
+  upstream file is used as is.

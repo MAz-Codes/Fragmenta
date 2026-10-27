@@ -267,6 +267,7 @@ def main():
             args.inpaint_ends[0] if len(args.inpaint_ends) == 1 else args.inpaint_ends
         )
 
+    sample_size = model.model_config["sample_size"]
     # --- Generate ---
     print("Generating…")
     audio = model.generate(
@@ -277,6 +278,7 @@ def main():
         cfg_scale=args.cfg_scale,
         seed=args.seed,
         batch_size=batch_size,
+        sample_size=sample_size,
         init_audio=init_audio,
         init_noise_level=args.init_noise_level,
         inpaint_audio=inpaint_audio,
