@@ -102,11 +102,16 @@ models: dict[str, ModelConfig] = {
 }
 
 # Stable Audio 3 full-model configs to probe (in order) before downloading the AE-only repo.
+# Fragmenta: the -base checkpoints carry the identical autoencoder (same
+# pretransform tensors and config), so probe them too — otherwise a cache with
+# only base models (no Hugging Face account) can't pre-encode offline.
 _small_stable_audio_3: tuple[ModelConfig, ...] = (
     models["small-music"],
     models["small-sfx"],
+    models["small-music-base"],
+    models["small-sfx-base"],
 )
-_medium_stable_audio_3: tuple[ModelConfig, ...] = (models["medium"],)
+_medium_stable_audio_3: tuple[ModelConfig, ...] = (models["medium"], models["medium-base"])
 
 ae_models: dict[str, AutoencoderModelConfig] = {
     "same-s": AutoencoderModelConfig(

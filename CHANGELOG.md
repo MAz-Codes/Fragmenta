@@ -38,6 +38,8 @@ All notable changes to Fragmenta are listed here. The format follows
 - Pre-encoding for the medium model works after a cancelled or small-model
   run; the Training page only shows "Pre-encoded" for latents that match the
   chosen base.
+- Pre-encoding works with only the base models downloaded (no Hugging Face
+  account); it used to look only in the account-only models for the encoder.
 - The app window opens at a sensible size in your screen's shape on every
   platform: it was oversized on Macs and on scaled Windows displays.
 - The launcher restarts a backend left running from another Fragmenta folder

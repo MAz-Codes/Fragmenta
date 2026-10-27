@@ -24,3 +24,9 @@ To bump: re-clone upstream, diff against this tree, update this file.
   points at), so base models need no Hugging Face token. Called after
   `json.load` in `model.py` (`StableAudioModel.from_pretrained`) and
   `scripts/train_lora.py` (`load_model`). 2026-10-22.
+- `stable_audio_3/model_configs.py` — the standalone-autoencoder fallbacks
+  (`_small_stable_audio_3`, `_medium_stable_audio_3`) also probe the `*-base`
+  checkpoints, which hold the identical autoencoder (pretransform tensors and
+  config checked equal). Without it, pre-encoding offline with only base
+  models cached failed looking for `stabilityai/SAME-S` / `SAME-L`.
+  2026-10-27.
