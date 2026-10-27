@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://www.youtube.com/watch?v=lQgLaU8RujU" target="_blank">
     <img
-      src="app/frontend/public/fragmenta.gif"
+      src="docs/fragmenta.gif"
       alt="Watch the Fragmenta video"
       width="1036"
     />
