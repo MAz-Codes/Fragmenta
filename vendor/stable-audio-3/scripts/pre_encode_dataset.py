@@ -60,7 +60,8 @@ def main(args):
     dataset = SampleDataset(
         [
             LocalDatasetConfig(
-                id="train", path=args.data_dir, custom_metadata_fn=caption_metadata_fn
+                id="train", path=args.data_dir, custom_metadata_fn=caption_metadata_fn,
+                filelist_path=args.filelist,  # Fragmenta: --filelist
             )
         ],
         sample_size=args.sample_size,
@@ -149,6 +150,13 @@ if __name__ == "__main__":
         "--data_dir",
         required=True,
         help="Folder with audio files and matching .txt captions",
+    )
+    # Fragmenta: encode only the clips listed (one path per line, relative
+    # to --data_dir) instead of every audio file in it.
+    parser.add_argument(
+        "--filelist",
+        default=None,
+        help="Text file listing the clips to use, relative to --data_dir (default: all)",
     )
     parser.add_argument(
         "--output_path", required=True, help="Folder to write .npy/.json latent pairs"

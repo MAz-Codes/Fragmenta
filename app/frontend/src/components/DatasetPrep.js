@@ -1770,7 +1770,7 @@ function HealthSection({ health, onSelectFiles }) {
                     }}
                 >
                     {empty.count > 0 && (
-                        <Tooltip title={TIPS.dataset.selectClips}>
+                        <Tooltip title={TIPS.dataset.emptyPrompts}>
                             <Chip
                                 size="small"
                                 variant="outlined"

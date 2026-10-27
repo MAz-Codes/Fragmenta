@@ -109,6 +109,7 @@ export const TIPS = {
         injectScope: 'Which clips get the text — every clip in the project, or only the ones ticked in the table. Switches to Selected automatically as soon as you tick something.',
         injectUndo: 'Roll back the last injection, one pass at a time. Clips you\'ve edited by hand since are left as they are, so undo never eats newer work.',
         selectClips: 'Click to select these clips — then Auto-annotate them.',
+        emptyPrompts: 'Clips without a prompt are left out of pre-encoding and training. Click to select them, then Auto-annotate or write prompts.',
         autoAnnotateClip: 'Auto-annotate this clip (overwrites any current prompt)',
         sliceClip: 'Slice this clip into shorter children (immediate)',
         removeClip: 'Remove this clip from the project (immediate)',

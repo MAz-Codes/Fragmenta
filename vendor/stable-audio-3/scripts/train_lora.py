@@ -159,6 +159,7 @@ def train(args):
                     id="train",
                     path=args.data_dir,
                     custom_metadata_fn=caption_metadata_fn,
+                    filelist_path=args.filelist,  # Fragmenta: --filelist
                 )
             ],
             sample_size=sample_size,
@@ -370,6 +371,13 @@ def main():
         "--data_dir",
         default=None,
         help="Folder with audio files and matching .txt captions",
+    )
+    # Fragmenta: train only the clips listed (one path per line, relative to
+    # --data_dir) instead of every audio file in it.
+    p.add_argument(
+        "--filelist",
+        default=None,
+        help="Text file listing the clips to use, relative to --data_dir (default: all)",
     )
     p.add_argument(
         "--encoded_dir",

@@ -42,13 +42,51 @@ SA3_T5GEMMA_SIBLINGS: Dict[str, Tuple[str, str]] = {
 }
 
 
-# Extensions SA3's training data loader actually accepts.
-# Source: vendor/stable-audio-3/stable_audio_3/data/dataset.py:91.
-# Single source of truth — both the health check and the hyperparam suggester
-# use this so what we count matches what the loader will train on.
 # What training and pre-encode read: the app-wide list (the vendored dataset
 # scan uses the same one, incl. m4a/AAC via PyAV).
 from app.core.audio.decode import AUDIO_EXTENSIONS as SA3_AUDIO_EXTENSIONS  # noqa: E402
+
+
+def audio_files(data_dir: Path) -> List[Path]:
+    """Audio files SA3's loader finds in `data_dir`: accepted formats,
+    subfolders too, no hidden files (or hidden folders such as .latents)."""
+    found: List[Path] = []
+    for root, dirs, files in os.walk(data_dir):
+        dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+        found += [
+            Path(root) / name for name in sorted(files)
+            if not name.startswith(".") and os.path.splitext(name)[1].lower() in SA3_AUDIO_EXTENSIONS
+        ]
+    return found
+
+
+def _has_prompt(clip: Path) -> bool:
+    try:
+        return bool(clip.with_suffix(".txt").read_text(encoding="utf-8", errors="replace").strip())
+    except OSError:
+        return False
+
+
+def captioned_clips(data_dir: Path) -> List[Path]:
+    """The clips training and pre-encode use: `audio_files` with a non-empty
+    `.txt` prompt beside them.
+
+    SA3 itself swaps a clip with no `.txt` for a random other clip (a
+    duplicate in the batch, or a duplicate latent when pre-encoding) and
+    trains a clip with an empty `.txt` on an empty prompt, so both are left
+    out: the run gets a filelist of these clips (`write_filelist`).
+    """
+    return [c for c in audio_files(data_dir) if _has_prompt(c)]
+
+
+def write_filelist(data_dir: Path, clips: List[Path], out_path: Path) -> Path:
+    """Write SA3's filelist format (one path per line, relative to the data
+    folder) for `--filelist`. The scripts run with PYTHONUTF8=1, so UTF-8 names
+    read back as written on Windows too."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        "".join(f"{c.relative_to(data_dir).as_posix()}\n" for c in clips), encoding="utf-8")
+    return out_path
 
 
 # --- Base model pre-staging -------------------------------------------------
@@ -167,6 +205,7 @@ def build_train_command(
     sa3_model_name: str,
     data_dir: Path,
     encoded_dir: Optional[Path] = None,
+    filelist: Optional[Path] = None,
     svd_bases_path: Optional[Path] = None,
     save_dir: Path,
     rank: int = 16,
@@ -229,6 +268,9 @@ def build_train_command(
         # then uses PreEncodedDataset instead of SampleDataset and skips
         # the SAME autoencoder pass per step.
         cmd += ["--encoded_dir", str(encoded_dir)]
+    elif filelist is not None:
+        # Only the captioned clips (captioned_clips); latents already are.
+        cmd += ["--filelist", str(filelist)]
     if svd_bases_path is not None and adapter_type.endswith("-xs"):
         # -XS adapters factor weights against precomputed SVD bases. SA3 only
         # *loads* bases from this path (it doesn't write them), so we pass it

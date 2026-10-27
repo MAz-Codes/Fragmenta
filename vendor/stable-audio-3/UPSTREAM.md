@@ -73,6 +73,12 @@ Every local edit carries a `# Fragmenta:` comment in the code.
     `build_pingpong_schedule` (closed-form inverse of its LogSNR shift);
     matches the torch schedule to 2e-7.
 
+- `scripts/pre_encode_dataset.py`, `scripts/train_lora.py`: `--filelist`
+  (passed to `LocalDatasetConfig.filelist_path`) so Fragmenta can hand over
+  only the clips with prompts. Without it, SA3 swaps a clip with no `.txt`
+  for a random other clip (duplicate latents) and trains one with an empty
+  `.txt` on an empty prompt. 2026-10-27.
+
 ## Dropped at the 2026-10-27 bump
 
 - `stable_audio_3/models/lora/model.py` — the `apply_lora()` removal-branch

@@ -201,18 +201,14 @@ def start_pre_encode(
         if existing and existing.get("state") in ("queued", "running"):
             return dict(existing)
 
-        # The denominator is what the encoder will step through: its dataset
-        # scan (fast_scandir) takes every non-hidden file in the formats it
-        # reads, in subfolders too. Counting only .wav made a FLAC dataset
-        # report 0 clips; counting only captioned files undercounts, since an
-        # uncaptioned file still costs a batch (it's swapped for another clip).
-        from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
-        clip_count = sum(
-            1 for _dir, _subdirs, files in os.walk(proj_dir)
-            for name in files
-            if not name.startswith(".")
-            and os.path.splitext(name)[1].lower() in SA3_AUDIO_EXTENSIONS
-        )
+        # The encoder gets a filelist of the clips with prompts (the run
+        # writes it), so that's the denominator too.
+        from app.core.training.sa3_lora_runner import captioned_clips
+        clip_count = len(captioned_clips(proj_dir))
+        if clip_count == 0:
+            raise ValueError(
+                "No clips with prompts in this project yet. Add prompts and "
+                "click Create Dataset, then pre-encode.")
 
         job: Dict[str, Any] = {
             "state": "queued",
@@ -296,6 +292,14 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     # silence.npy — so the new latents would pad with the wrong model's silence.
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Encode only clips with prompts: SA3 swaps a clip without one for a
+    # random other clip, which made duplicate latents. clips.txt also records
+    # what this cache was made from.
+    from app.core.training.sa3_lora_runner import captioned_clips, write_filelist
+    clips = captioned_clips(proj_dir)
+    cmd += ["--filelist", str(write_filelist(proj_dir, clips, out_dir / "clips.txt"))]
+    _update_job(project_name, total=len(clips))
 
     _update_job(project_name, state="running", phase="loading")
     logger.info(

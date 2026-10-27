@@ -28,6 +28,9 @@ All notable changes to Fragmenta are listed here. The format follows
   used in training; before, they showed in the Dataset tab but were skipped.
 
 ### Fixed
+- Clips without a prompt are left out of pre-encoding and training. Before,
+  each one was replaced by a copy of another clip (so some clips counted
+  twice) or trained with an empty prompt.
 - Edit → Style transfer: base models no longer distort (at strength 0.9 they
   pushed tens of thousands of samples into clipping), and the strength slider
   now works across its whole range. Before, anything above about 0.6 ignored
