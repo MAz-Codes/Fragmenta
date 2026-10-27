@@ -39,6 +39,8 @@ import {
     RotateCcw as RestoreIcon,
     CloudDownload as DownloadIcon,
     Circle as RecordIcon,
+    Minus as MinusIcon,
+    Plus as PlusIcon,
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
@@ -66,6 +68,11 @@ import {
     copyScope,
     clearScope as clearFragmentScope,
 } from '../utils/fragmentStorage';
+
+// Link fine-tune range (ms). Wide enough for Bluetooth headphones, whose
+// 150–300 ms the browser often doesn't report as output latency.
+const LINK_OFFSET_MIN = -200;
+const LINK_OFFSET_MAX = 500;
 
 const CHANNEL_COUNT = 4;
 const MASTER_COLOR = '#35C2D4';
@@ -769,6 +776,7 @@ function PerformancePanelInner({
     }, [linkOffsetKey]);
     useEffect(() => { engineRef.current?.setLinkOffsetMs(linkOffsetMs); }, [linkOffsetMs]);
     const updateLinkOffset = useCallback((ms) => {
+        ms = Math.max(LINK_OFFSET_MIN, Math.min(LINK_OFFSET_MAX, Math.round(ms)));
         setLinkOffsetMs(ms);
         try { window.localStorage.setItem(linkOffsetKey, String(ms)); } catch { /* private mode */ }
     }, [linkOffsetKey]);
@@ -1133,20 +1141,33 @@ function PerformancePanelInner({
                         >
                             <Box sx={{ p: 2, width: 300 }}>
                                 <Typography variant="subtitle2">Link sync</Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                                     This output adds {measuredLatencyMs ?? '…'} ms of delay. Fragmenta plays that
                                     much earlier so its beats land with your Link peers.
                                 </Typography>
-                                <Typography variant="caption">
-                                    Fine-tune: {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
-                                    {' '}<Typography component="span" variant="caption" color="text.secondary">
-                                        (saved for this output)
-                                    </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                                    Live compensates its own latency, so you only need this for delay Fragmenta
+                                    can't measure — Bluetooth headphones add 150–300 ms.
                                 </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                    <Typography variant="caption" sx={{ flex: 1 }}>
+                                        Fine-tune: {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
+                                        {' '}<Typography component="span" variant="caption" color="text.secondary">
+                                            (saved for this output)
+                                        </Typography>
+                                    </Typography>
+                                    <IconButton size="small" aria-label="1 ms less" onClick={() => updateLinkOffset(linkOffsetMs - 1)}>
+                                        <MinusIcon size={14} />
+                                    </IconButton>
+                                    <IconButton size="small" aria-label="1 ms more" onClick={() => updateLinkOffset(linkOffsetMs + 1)}>
+                                        <PlusIcon size={14} />
+                                    </IconButton>
+                                </Box>
                                 <Slider
-                                    size="small" min={-50} max={150} step={1}
+                                    size="small" min={LINK_OFFSET_MIN} max={LINK_OFFSET_MAX} step={1}
                                     value={linkOffsetMs}
                                     onChange={(_, v) => updateLinkOffset(v)}
+                                    marks={[{ value: 0 }]}
                                     aria-label="Link offset in milliseconds"
                                 />
                                 <Box sx={{ display: 'flex', gap: 1 }}>

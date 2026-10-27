@@ -18,6 +18,8 @@ All notable changes to Fragmenta are listed here. The format follows
   adjustments you can't hear, and reads Link's timing from Link's own clock,
   so launches are steadier too.
 - Linux: lower audio output latency (about 26 ms instead of 35 ms).
+- Link fine-tune now reaches −200…+500 ms (enough for Bluetooth headphones),
+  with ±1 ms buttons for precise steps.
 
 ## [1.2.0] - 2026-10-27
 
