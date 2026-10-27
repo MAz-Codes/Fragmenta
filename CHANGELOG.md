@@ -32,8 +32,7 @@ All notable changes to Fragmenta are listed here. The format follows
   pushed tens of thousands of samples into clipping), and the strength slider
   now works across its whole range. Before, anything above about 0.6 ignored
   the source; now it moves evenly from keeping the source (0) to following
-  the prompt (1). The default 0.7 keeps the source's groove and structure
-  while following the prompt.
+  the prompt (1), and starts halfway, at 0.5.
 - m4a/AAC clips: the dataset health check now sees their length, and long
   ones can be sliced.
 - Training on a dataset whose files can't be read stops with a clear error

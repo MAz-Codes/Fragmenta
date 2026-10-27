@@ -89,7 +89,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
         !!model_id && model_id.startsWith('sa3-') && !model_id.endsWith('-base');
 
     // style transfer
-    const [styleStrength, setStyleStrength] = useState(0.7);
+    const [styleStrength, setStyleStrength] = useState(0.5);
 
     // inpaint
     const [maskStart, setMaskStart] = useState(2.0);
