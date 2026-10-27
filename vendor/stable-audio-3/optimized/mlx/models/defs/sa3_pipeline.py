@@ -93,6 +93,15 @@ def build_pingpong_schedule(steps: int, sigma_max: float = 1.0,
 
     Returns mx.array shape (steps+1,) of float32.
     """
+    if use_logsnr_shift and 0.0 < sigma_max < 1.0:
+        # Fragmenta: shifting linspace(sigma_max, 0) and re-anchoring its start
+        # made the second value higher than the first (0.9 -> 0.995), so the
+        # run restarted from near-full noise. Start the linear schedule where
+        # the shift maps to sigma_max instead (same fix as the torch
+        # build_schedule), capped at sigma_max: it only descends.
+        u0 = (math.log(sigma_max / (1.0 - sigma_max)) + 2.0) / (2.0 - (-6.2))
+        t = mx.minimum(logsnr_shift(mx.linspace(u0, 0.0, steps + 1, dtype=mx.float32)), sigma_max)
+        return mx.concatenate([mx.array([sigma_max], dtype=mx.float32), t[1:]], axis=0)
     t = mx.linspace(sigma_max, 0.0, steps + 1, dtype=mx.float32)
     if use_logsnr_shift:
         t = logsnr_shift(t)

@@ -48,6 +48,15 @@ def build_schedule(
         elif seq_len is not None:
             # Clamp scalar sequence length to at least 1
             seq_len = max(int(seq_len), 1)
+        if 0.0 < sigma_max < 1.0:
+            # Fragmenta: a partial schedule (init audio) used to be shifted as
+            # is, then have its first value forced back to sigma_max, so the
+            # second value came out higher (LogSNRShift: 0.9 -> 0.995, 0.5 ->
+            # 0.88). The first step ran backwards (with CFG, base models
+            # clipped) and the run restarted from near-full noise. Run the
+            # linear schedule from the point the shift maps to sigma_max
+            # instead, so it starts at sigma_max and only descends.
+            return _shifted_partial_schedule(t / sigma_max, sigma_max, dist_shift, seq_len)
         t = dist_shift.shift(t, seq_len)
 
         # Ensure the first timestep remains aligned with sigma_max after shifting.
@@ -62,6 +71,28 @@ def build_schedule(
                 t[..., 0] = sigma_max_tensor
 
     return t
+
+
+def _shifted_partial_schedule(base, sigma_max, dist_shift, seq_len):
+    """Fragmenta: dist_shift.shift(base * u0) with u0 found by bisection so the
+    first value is sigma_max (every shift is monotonic in t). One row per
+    batch element for per-element lengths, as dist_shift.shift returns."""
+    def row(sl):
+        lo, hi = 0.0, 1.0
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            v = float(dist_shift.shift(base.new_tensor([mid]), sl).reshape(-1)[0])
+            lo, hi = (mid, hi) if v < sigma_max else (lo, mid)
+        t = dist_shift.shift(base * ((lo + hi) / 2), sl).reshape(-1)
+        # Below a shift's smallest non-zero value (LogSNRShift: 0.119) there
+        # is no shifted schedule: go straight from sigma_max to 0.
+        t = torch.where(t > sigma_max, torch.zeros_like(t), t)
+        t[0] = sigma_max
+        return t
+
+    if isinstance(seq_len, torch.Tensor):
+        return torch.stack([row(seq_len[i:i + 1]) for i in range(seq_len.shape[0])])
+    return row(seq_len)
 
 
 def sample_timesteps_logsnr(batch_size, mean_logsnr=-1.2, std_logsnr=2.0):

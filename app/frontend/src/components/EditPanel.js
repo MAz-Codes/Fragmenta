@@ -46,6 +46,20 @@ import { getFragmentDragPayload } from '../utils/fragmentDrag';
  *                    distilled models bake CFG at 1.0).
  *   onGenerated(blob, filename, params): called with the resulting WAV
  */
+// Style-transfer strength → the noise level the model starts from
+// (init_noise_level). Spaced evenly in log-SNR between a near-copy (0.38) and
+// almost pure noise (0.97): how much of the source survives falls off
+// steadily across the slider, instead of all at once above 0.9 as with a
+// linear mapping. 0 keeps the source, 1 generates from scratch.
+const STRENGTH_LOGSNR_KEEP = 0.5;
+const STRENGTH_LOGSNR_FOLLOW = -3.5;
+export function strengthToNoiseLevel(strength) {
+    if (strength <= 0) return 0;
+    if (strength >= 1) return 1;
+    const logSnr = STRENGTH_LOGSNR_KEEP + strength * (STRENGTH_LOGSNR_FOLLOW - STRENGTH_LOGSNR_KEEP);
+    return 1 / (1 + Math.exp(logSnr));
+}
+
 export default function EditPanel({ model_id, negativePrompt, loraStack, steps, cfgScale, onGenerated }) {
     const [mode, setMode] = useState('style');   // 'style' | 'inpaint' | 'extend'
     const [sourcePath, setSourcePath] = useState('');
@@ -75,7 +89,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
         !!model_id && model_id.startsWith('sa3-') && !model_id.endsWith('-base');
 
     // style transfer
-    const [initNoiseLevel, setInitNoiseLevel] = useState(0.7);
+    const [styleStrength, setStyleStrength] = useState(0.7);
 
     // inpaint
     const [maskStart, setMaskStart] = useState(2.0);
@@ -310,7 +324,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
 
             if (mode === 'style') {
                 body.init_audio_path = sourcePath;
-                body.init_noise_level = initNoiseLevel;
+                body.init_noise_level = strengthToNoiseLevel(styleStrength);
             } else if (mode === 'inpaint') {
                 // Pin output length to the source so the mask (measured in
                 // source seconds) maps onto the same timeline the user sees.
@@ -440,8 +454,8 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                     </Tooltip>
                     <Stack direction="row" alignItems="center" spacing={2}>
                         <Slider
-                            value={initNoiseLevel}
-                            onChange={(_, v) => setInitNoiseLevel(v)}
+                            value={styleStrength}
+                            onChange={(_, v) => setStyleStrength(v)}
                             min={0}
                             max={1}
                             step={0.05}
@@ -454,7 +468,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                             sx={{ flex: 1 }}
                         />
                         <Typography variant="body2" sx={{ width: 40, textAlign: 'right' }}>
-                            {initNoiseLevel.toFixed(2)}
+                            {styleStrength.toFixed(2)}
                         </Typography>
                     </Stack>
                 </Box>

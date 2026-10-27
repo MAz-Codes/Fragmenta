@@ -59,6 +59,20 @@ Every local edit carries a `# Fragmenta:` comment in the code.
   - `cli.py`, `interface/diffusion_cond.py` (gradio), `training/diffusion.py`
     (demo callbacks): `torchaudio.load`/`save` → `read_audio`/`write_audio`.
 
+- Partial (init audio) sampling schedules. 2026-10-27.
+  - `stable_audio_3/inference/sampling.py`: `build_schedule` shifted
+    `linspace(sigma_max, 0)` and then forced its first value back to
+    `sigma_max`, so with `LogSNRShift` the second value was higher (0.9 →
+    0.995, 0.5 → 0.88). The first step ran backwards (base models with CFG
+    clipped heavily: 23k–47k samples at 0.9) and the run restarted from
+    near-full noise, so `init_noise_level` above ~0.6 ignored the source. Now
+    the linear schedule starts where the shift maps to `sigma_max`
+    (`_shifted_partial_schedule`, bisection, per-element rows), so it starts
+    at `sigma_max` and only descends. Full schedules are unchanged.
+  - `optimized/mlx/models/defs/sa3_pipeline.py`: same fix in
+    `build_pingpong_schedule` (closed-form inverse of its LogSNR shift);
+    matches the torch schedule to 2e-7.
+
 ## Dropped at the 2026-10-27 bump
 
 - `stable_audio_3/models/lora/model.py` — the `apply_lora()` removal-branch
