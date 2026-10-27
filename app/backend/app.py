@@ -1046,9 +1046,11 @@ def upload_source_audio():
     name = Path(fileobj.filename).name
     # Strip path components + restrict to known extensions.
     ext = Path(name).suffix.lower()
-    if ext not in {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".opus"}:
+    from app.core.audio.decode import AUDIO_EXTENSIONS
+    if ext not in AUDIO_EXTENSIONS:
         return jsonify(APIResponse.error(
-            f"Unsupported audio format '{ext}'. Use wav/mp3/flac/m4a/ogg/opus.",
+            f"Unsupported audio format '{ext}'. Use "
+            + "/".join(e.lstrip('.') for e in AUDIO_EXTENSIONS) + ".",
             status_code=400)), 400
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(name).stem)[:60] or "upload"
 
@@ -2607,7 +2609,7 @@ def environment():
 def upload_folder():
     # Browser-native folder upload path for containerised deployments
     # (e.g. HF Space) where no display server is available for a native dialog.
-    audio_exts = {'.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'}
+    from app.core.audio.decode import AUDIO_EXTENSIONS as audio_exts
 
     files = request.files.getlist('files')
     rel_paths = request.form.getlist('rel_paths')

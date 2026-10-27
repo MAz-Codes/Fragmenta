@@ -45,6 +45,19 @@ Every local edit carries a `# Fragmenta:` comment in the code.
   tensors; CPU/MPS fall through to the SDPA path instead of crashing when
   flash-attn is installed.
 - `stable_audio_3/training/utils.py` — `wandb` is optional (import guarded).
+- File I/O without torchaudio (torchaudio 2.9+ dropped `load`/`save`).
+  2026-10-27.
+  - New `stable_audio_3/data/audio_io.py`: `read_audio` (soundfile, PyAV
+    fallback for m4a/AAC, optional early stop), `write_audio` (int16 → 16-bit
+    PCM, else 32-bit float, as `torchaudio.save` did), `AUDIO_EXTENSIONS`
+    (the app's list: adds `.m4a`, `.aac`, `.aiff`).
+  - `stable_audio_3/data/dataset.py`: `load_file` uses `read_audio`;
+    `get_audio_filenames` defaults to `AUDIO_EXTENSIONS`; `__getitem__` of
+    `SampleDataset` and `PreEncodedDataset` retries a bad sample at most 32
+    times (`_RETRY` / `_with_bounded_retries`) instead of recursing without
+    limit, then raises a clear error.
+  - `cli.py`, `interface/diffusion_cond.py` (gradio), `training/diffusion.py`
+    (demo callbacks): `torchaudio.load`/`save` → `read_audio`/`write_audio`.
 
 ## Dropped at the 2026-10-27 bump
 

@@ -2246,7 +2246,8 @@ function IngestDialog({ open, projectName, ingestMode, onClose, onIngested, isDo
         // Filter to audio up front (mirrors the backend's accepted set) so
         // artwork/project clutter doesn't count against the request size and
         // multipart part limits.
-        const AUDIO_EXTS = ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'];
+        // Keep in step with AUDIO_EXTENSIONS in app/core/audio/decode.py.
+        const AUDIO_EXTS = ['.wav', '.mp3', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.m4a', '.aac'];
         const files = Array.from(fileList || []).filter((f) =>
             AUDIO_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext)));
         if (!files.length) {

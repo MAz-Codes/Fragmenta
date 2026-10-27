@@ -4,7 +4,7 @@ import gradio as gr
 import re
 import subprocess
 import torch
-import torchaudio
+from stable_audio_3.data.audio_io import write_audio  # Fragmenta: no torchaudio I/O
 import threading
 import os, time, math
 
@@ -243,7 +243,7 @@ def generate_cond(
     audio = audio.to(torch.float32).clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
     # save as wav file
-    torchaudio.save(output_wav, audio, sample_rate)
+    write_audio(output_wav, audio, sample_rate)
 
     # If file_format is other than wav, convert to other file format
     cmd = ""

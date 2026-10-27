@@ -15,9 +15,11 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from app.core.audio.decode import AUDIO_EXTENSIONS, load_mono  # one list, one decoder
+
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac")
+
 
 CLAP_CKPT_FILENAME = "music_audioset_epoch_15_esc_90.14.pt"
 CLAP_REPO = "lukewys/laion_clap"
@@ -366,8 +368,7 @@ class _ClapTagger:
         # Decode only what the windowing below can use (CLAP_MAX_WINDOWS x
         # 10 s). Without the cap a 2-hour file decodes fully into RAM
         # (~1.3 GB of float32 at 48 kHz) just to embed its first 2 minutes.
-        y, _ = librosa.load(str(audio_path), sr=CLAP_SR, mono=True,
-                            duration=CLAP_MAX_WINDOWS * 10)
+        y, _ = load_mono(audio_path, CLAP_SR, duration=CLAP_MAX_WINDOWS * 10)
         if y.size == 0:
             raise ValueError("empty audio")
 
@@ -584,9 +585,9 @@ def annotate_file(
 
     parts: Dict[str, Any] = {}
     try:
-        y, loaded_sr = librosa.load(str(audio_path), sr=sr, mono=True, duration=max_seconds)
+        y, loaded_sr = load_mono(audio_path, sr, duration=max_seconds)
     except Exception as exc:
-        logger.warning("librosa failed to load %s: %s", audio_path.name, exc)
+        logger.warning("Couldn't decode %s: %s", audio_path.name, exc)
         return {
             "file_name": audio_path.name,
             "prompt": "",

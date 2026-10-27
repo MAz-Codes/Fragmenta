@@ -98,7 +98,8 @@ Installed from PyPI and baked into the Docker images. All licenses below are GPL
 | python-rtmidi | MIT |
 | setuptools | MIT |
 | dill | BSD-3-Clause |
-| soundfile | BSD-3-Clause |
+| soundfile | BSD-3-Clause; its wheels bundle libsndfile (LGPL-2.1-or-later) |
+| av (PyAV) *(decodes m4a/AAC)* | BSD-3-Clause; its wheels bundle FFmpeg (LGPL-3.0-or-later) linked with libx264/libx265 (GPL-2.0-or-later), so the bundled FFmpeg binaries are GPL-3.0-or-later as shipped, compatible with Fragmenta's AGPL-3.0. Source: [ffmpeg.org](https://ffmpeg.org), build scripts: [PyAV-Org/pyav-ffmpeg](https://github.com/PyAV-Org/pyav-ffmpeg) |
 | scipy | BSD-3-Clause |
 | numpy | BSD-3-Clause |
 | pandas | BSD-3-Clause |

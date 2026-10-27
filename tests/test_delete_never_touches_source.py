@@ -27,6 +27,9 @@ os.environ["FRAGMENTA_UPLOADS_DIR"] = str(_TMP / "uploads")
 # Symlink ingest is force-downgraded to copy under FRAGMENTA_DOCKER; this
 # suite is specifically about the symlink path, so make sure we're "desktop".
 os.environ.pop("FRAGMENTA_DOCKER", None)
+# A Linux shell without a display (SSH, VS Code remote) also counts as
+# headless, which disables symlink ingest.
+os.environ.setdefault("DISPLAY", ":0")
 (_TMP / "projects").mkdir(parents=True, exist_ok=True)
 (_TMP / "uploads").mkdir(parents=True, exist_ok=True)
 

@@ -409,7 +409,7 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".wav,.mp3,.flac,.m4a,.ogg,.opus,audio/*"
+                    accept=".wav,.mp3,.flac,.ogg,.opus,.aif,.aiff,.m4a,.aac,audio/*"
                     style={{ display: 'none' }}
                     onChange={onFileChange}
                 />

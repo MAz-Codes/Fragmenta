@@ -23,6 +23,15 @@ All notable changes to Fragmenta are listed here. The format follows
 - Stable Audio 3 code updated to Stability's October release. Adapters sound
   the same at full strength and when bypassed; strengths in between now also
   scale DoRA magnitudes, so they sound slightly different than in 1.2.
+- Audio files are read the same way everywhere (datasets, training, edit
+  uploads), without torchaudio's file loaders. m4a/AAC and AIFF clips are now
+  used in training; before, they showed in the Dataset tab but were skipped.
+
+### Fixed
+- m4a/AAC clips: the dataset health check now sees their length, and long
+  ones can be sliced.
+- Training on a dataset whose files can't be read stops with a clear error
+  instead of retrying forever.
 
 ## [1.2.0] - 2026-10-27
 

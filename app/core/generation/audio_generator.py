@@ -600,14 +600,15 @@ class AudioGenerator:
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod
     def _load_audio(path: str):
-        """Load a wav/mp3/flac into the (sample_rate, tensor) tuple SA3 expects.
+        """Load any accepted audio file into the (sample_rate, tensor) tuple SA3
+        expects.
 
         Returns a stereo float32 tensor of shape (channels, samples). Mono
         inputs are duplicated to stereo (SA3 expects 2 channels); ≥3-channel
         inputs are truncated to the first 2.
         """
-        import torchaudio
-        wav, sr = torchaudio.load(str(path))   # (channels, samples), float32
+        from app.core.audio.decode import read_audio
+        wav, sr = read_audio(path)   # (channels, samples), float32
         if wav.shape[0] == 1:
             wav = wav.repeat(2, 1)
         elif wav.shape[0] > 2:

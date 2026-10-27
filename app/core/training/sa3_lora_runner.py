@@ -46,7 +46,9 @@ SA3_T5GEMMA_SIBLINGS: Dict[str, Tuple[str, str]] = {
 # Source: vendor/stable-audio-3/stable_audio_3/data/dataset.py:91.
 # Single source of truth — both the health check and the hyperparam suggester
 # use this so what we count matches what the loader will train on.
-SA3_AUDIO_EXTENSIONS: Tuple[str, ...] = (".wav", ".mp3", ".flac", ".ogg", ".aif", ".opus")
+# What training and pre-encode read: the app-wide list (the vendored dataset
+# scan uses the same one, incl. m4a/AAC via PyAV).
+from app.core.audio.decode import AUDIO_EXTENSIONS as SA3_AUDIO_EXTENSIONS  # noqa: E402
 
 
 # --- Base model pre-staging -------------------------------------------------
