@@ -106,8 +106,12 @@ def main():
             detail = f"timed out after {TIMEOUT}s"
 
         # Confirm a produced .safetensors loads and carries the base_model
-        # metadata. Wait briefly for the post-run conversion to finish writing.
+        # metadata. The .ckpt -> .safetensors conversion runs when training
+        # ends, so let the run finish first (on CPU the steps after the first
+        # checkpoint outlast a fixed grace window), then wait briefly for it.
         if ok:
+            while time.time() < deadline and T.get_training_status().get("is_training"):
+                time.sleep(3)
             ckpt = None
             for _ in range(10):
                 found = scan()
