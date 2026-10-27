@@ -178,6 +178,9 @@ function PerformancePanelInner({
     const [measuredLatencyMs, setMeasuredLatencyMs] = useState(null);
     const [launchQuantum, setLaunchQuantum] = useState(session.launchQuantum ?? LAUNCH_Q_DEFAULT);
     const wasPlayingRef = useRef(false);
+    // Recent Link polls, for placing Link's clock on performance.now() — see
+    // the poll below.
+    const linkClockRef = useRef([]);
     const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     // Mirror of peakLabelDb for the RAF tick's 0.5 dB hysteresis gate. The
@@ -689,11 +692,25 @@ function PerformancePanelInner({
             const sentAt = performance.now();
             try {
                 const r = await api.get('/api/link/state');
-                // Best estimate of when the backend sampled the Link clock: the
-                // round-trip midpoint (assumes ~symmetric latency). Stamping at
-                // send-time biased the beat ~½ RTT into the future, nudging
-                // quantized launches early.
-                const capturedAt = (sentAt + performance.now()) / 2;
+                const receivedAt = performance.now();
+                // When the backend read Link's clock, on our clock. The round
+                // trip's midpoint is only right when the request didn't wait
+                // on the way: a slow answer put single snapshots tens of ms
+                // off, which skewed launches and the drift correction. So the
+                // midpoints only estimate the offset between the two clocks —
+                // NTP-style, from the fastest round trip of the last 5 s, which
+                // brackets the read most tightly — and every snapshot is then
+                // placed by Link's own timestamp. Bindings without a clock
+                // fall back to the midpoint.
+                let capturedAt = (sentAt + receivedAt) / 2;
+                const micros = Number(r.data?.time_micros) || 0;
+                if (micros > 0) {
+                    const samples = linkClockRef.current;
+                    samples.push({ rtt: receivedAt - sentAt, offset: capturedAt - micros / 1000, at: receivedAt });
+                    while (samples.length > 1 && receivedAt - samples[0].at > 5000) samples.shift();
+                    const best = samples.reduce((a, b) => (b.rtt < a.rtt ? b : a));
+                    capturedAt = micros / 1000 + best.offset;
+                }
                 if (cancelled || !r.data?.enabled) return;
                 const serverBpm = Math.round(r.data.bpm);
                 if (serverBpm >= BPM_MIN && serverBpm <= BPM_MAX) {

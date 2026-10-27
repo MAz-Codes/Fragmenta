@@ -15,7 +15,7 @@ class Node_ {
     connect() {} disconnect() {}
 }
 class Source extends Node_ {
-    constructor() { super(); this.loop = false; this.loopStart = 0; this.loopEnd = 0; this.started = null; this.stoppedAt = null; }
+    constructor() { super(); this.loop = false; this.loopStart = 0; this.loopEnd = 0; this.started = null; this.stoppedAt = null; this.playbackRate = new Param(1); }
     start(when, offset, duration) { this.started = { when, offset, duration }; }
     stop(t) { this.stoppedAt = t; }
 }

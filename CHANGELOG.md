@@ -12,6 +12,13 @@ All notable changes to Fragmenta are listed here. The format follows
   loops, cue points and Link timing stay put. Only what you hear changes,
   never the file. It rests at 0 st when you pass it; double-click to reset.
 
+### Changed
+- Ableton Link: loops stay on Live's beat over long sessions. Fragmenta
+  corrects the slow drift between the sound card and Link with tiny speed
+  adjustments you can't hear, and reads Link's timing from Link's own clock,
+  so launches are steadier too.
+- Linux: lower audio output latency (about 26 ms instead of 35 ms).
+
 ## [1.2.0] - 2026-10-27
 
 ### Added

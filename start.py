@@ -354,6 +354,11 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             launch_args_base.insert(2, f"--force-device-scale-factor={scale}")
         if sys.platform == "linux":
             launch_args_base.insert(2, f"--class={APP_WM_CLASS}")
+            # 256-frame audio buffer (~5 ms): measured output latency on a
+            # PipeWire desktop drops from ~35 ms to ~26 ms, so Link launches
+            # need less compensation. 256 frames is a standard, safe size;
+            # 128 only saved another 1-2 ms at more risk of crackles.
+            launch_args_base.append("--audio-buffer-size=256")
 
         attempts = [
             (
