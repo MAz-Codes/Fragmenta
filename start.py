@@ -636,6 +636,18 @@ def detect_screen_size() -> tuple[int, int] | None:
             user32 = ctypes.windll.user32
             user32.SetProcessDPIAware()
             width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+            # Those are physical pixels now that the process is DPI-aware, but
+            # pywebview takes logical sizes and scales them by the DPI itself
+            # (WinForms AutoScaleMode.Dpi) — on a 125-150% display the window
+            # came out that much too big. Convert back with the system DPI.
+            try:
+                dpi = user32.GetDpiForSystem()
+            except AttributeError:  # before Windows 10 1607
+                hdc = user32.GetDC(0)
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                user32.ReleaseDC(0, hdc)
+            if dpi and dpi > 96:
+                width, height = int(width * 96 / dpi), int(height * 96 / dpi)
             if width > 0 and height > 0:
                 return width, height
         except Exception:
@@ -662,12 +674,24 @@ def detect_screen_size() -> tuple[int, int] | None:
             pass
 
     if sys.platform == "darwin":
+        # Points, not pixels. system_profiler's "Resolution" is the panel's
+        # physical size (3024x1964 on a 14" MacBook Pro, which works at
+        # 1512x982), so the window was asked for at about twice the screen.
+        # visibleFrame also leaves out the menu bar and Dock.
+        try:
+            from AppKit import NSScreen
+            frame = NSScreen.mainScreen().visibleFrame()
+            width, height = int(frame.size.width), int(frame.size.height)
+            if width > 0 and height > 0:
+                return width, height
+        except Exception:
+            pass
         try:
             out = subprocess.run(
                 ["system_profiler", "SPDisplaysDataType"],
                 capture_output=True, text=True, timeout=6,
             ).stdout
-            match = re.search(r"Resolution:\s+(\d+)\s*x\s*(\d+)", out)
+            match = re.search(r"UI Looks like:\s+(\d+)\s*x\s*(\d+)", out)
             if match:
                 return int(match.group(1)), int(match.group(2))
         except Exception:
@@ -707,14 +731,17 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
         return default_w, default_h, min_w, min_h
 
     # 75% of the screen, in the screen's own shape — independent width and
-    # height caps gave a ~3:2 box on 16:9 panels. Capped because past ~2000px
-    # the layout just grows margins rather than showing more.
-    width = min(int(sw * 0.75), 2000)
-    height = int(width * sh / sw)
-    # Don't shrink below the size we've always shipped — but never grow past
-    # the screen doing it, or a small laptop gets a window it can't display.
-    width = max(width, min(default_w, sw - 40))
-    height = max(height, min(default_h, sh - 60))
+    # height caps gave a ~3:2 box on 16:9 panels. On a small screen 75% is
+    # cramped, so never go under the width we've always shipped unless that
+    # would take more than 90% of the screen. Capped because past ~2000px the
+    # layout just grows margins rather than showing more. Height always
+    # follows from the width: flooring it separately (as before) broke the
+    # shape on every screen under ~1900 wide. The shape follows the screen
+    # between 16:10 and 16:9, so an ultrawide doesn't get a letterbox and a
+    # portrait monitor doesn't get a tower.
+    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 2000)
+    shape = min(max(sw / sh, 1.6), 16 / 9)
+    height = min(int(width / shape), int(sh * 0.9))
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.
