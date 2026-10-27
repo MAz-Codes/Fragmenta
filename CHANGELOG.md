@@ -10,6 +10,8 @@ All notable changes to Fragmenta are listed here. The format follows
 - Cue point for Performance channels: set where a launch or retrigger enters
   the clip, while repeats return to the loop start. Sharper waveforms and a
   playhead too.
+- Edit existing is back on the Generation page: style transfer, inpaint and
+  extend. Drag a fragment's name onto it to use it as the source.
 - Tighter Ableton Link sync: Fragmenta now plays early by its own output
   latency, so launches land on your peers' beat. Fine-tune per output, or
   calibrate by ear against Live's metronome.
@@ -17,17 +19,15 @@ All notable changes to Fragmenta are listed here. The format follows
   Manager marks them "No account needed" and shows correct download sizes.
 - Update notices: Fragmenta checks GitHub once a day and tells you when a new
   version is out. Nothing personal is sent; turn it off in About.
-- Model licence texts and notices ship with the app, and About and the welcome
-  screen show "Powered by Stability AI".
-- AI transparency note (`docs/AI_TRANSPARENCY.md`): how outputs are marked
-  and how to check a file.
-- Edit existing is back on the Generation page: style transfer, inpaint and
-  extend. Drag a fragment's name onto it to use it as the source.
 - Generated Fragments: click or drag a waveform to scrub, with a smooth
   playhead.
 - Pre-encoding shows what it's doing: loading the encoder, which clip, time
   elapsed and time left, on both the Training and Dataset pages. FLAC
   and other formats are counted too, not just WAV.
+- Model licence texts and notices ship with the app, and About and the welcome
+  screen show "Powered by Stability AI".
+- AI transparency note (`docs/AI_TRANSPARENCY.md`): how outputs are marked
+  and how to check a file.
 
 ### Fixed
 - The backend no longer crashes when the terminal that launched it is closed.
