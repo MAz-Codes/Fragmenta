@@ -66,19 +66,19 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#F8E7D2', ink: '#373A30',
+        name: 'Linen', bg: '#F1F1E5', ink: '#373A30',
         cool: '#45B8F5', warm: '#FFC65E', fresh: '#8DDCC9', hot: '#F16E50',   // sky, golden yellow, mint green, coral red
         // Hand-tuned over the derived values.
         exact: {
-            surface: '#FCF5ED', control: '#EADBC7', controlHover: '#E3D4C0', section: '#FAEDDD',
+            surface: '#F9F9F5', control: '#E4E4D8', controlHover: '#DDDDD1', section: '#F5F5EC',
             textDim: '#46483E', textFaint: '#5A5B51', navSelected: '#C9E4EE',
-            amber: '#086A9E', amberHi: '#0B83C3', amberLo: '#075681',
+            amber: '#096FA5', amberHi: '#0B88CA', amberLo: '#075A86',
         },
         lanes: {
-            tints: ['#C9DBDB', '#F7CEB7', '#D6E3CF', '#FADCAD'],
-            playing: ['#B8D6DF', '#F6C5AE', '#CBE2CE', '#FBD9A1'],
-            deep: ['#0972AA', '#C93310', '#28816C', '#A26900'],
-            soft: ['#96CDE5', '#F4A48B', '#B8E0CD', '#FCD38C'],
+            tints: ['#C4E2E9', '#F1D5C6', '#D1EADC', '#F5E3BA'],
+            playing: ['#B3DCEB', '#F1CCBB', '#C7E8D9', '#F7DFAC'],
+            deep: ['#0975AE', '#CE3410', '#29856F', '#A56B00'],
+            soft: ['#92D2EE', '#F1A993', '#B5E4D4', '#F9D794'],
         },
     },
 };
