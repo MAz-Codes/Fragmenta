@@ -21,10 +21,6 @@ import {
     FormControl,
     Select,
     MenuItem,
-    Menu,
-    ListItemIcon,
-    ListItemText,
-    Divider,
     Snackbar,
     Accordion,
     AccordionSummary,
@@ -50,17 +46,11 @@ import {
     RefreshCw as RefreshIcon,
     ChevronDown as ExpandMoreIcon,
     CloudDownload as CloudDownloadIcon,
-    FolderOpen as FolderOpenIcon,
-    Info as InfoIcon,
-    HelpCircle as InfoViewIcon,
-    Palette as PaletteIcon,
     Piano as PerformanceIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
     Trash2 as DeleteIcon,
-    Menu as MenuIcon,
     CheckCircle2 as CheckCircleIcon,
-    ArrowUpCircle as UpdateIcon,
 } from 'lucide-react';
 import api from './api';
 import AboutDialog from './components/AboutDialog';
@@ -78,13 +68,13 @@ import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
+import AppToolbar from './components/AppToolbar';
 import { formatDuration } from './utils/format';
-import { appStyles, paletteThemes, PALETTES, DEFAULT_PALETTE } from './theme';
+import { appStyles, lightTheme } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
-const PALETTE_STORAGE_KEY = 'fragmenta-palette';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
@@ -189,15 +179,6 @@ function App() {
         probe(0);
         return () => { cancelled = true; };
     }, []);
-    // One light palette (no dark mode). While choosing between the candidate
-    // palettes, the dock's Palette button flips between them.
-    const [paletteName, setPaletteName] = useState(() => {
-        try {
-            const saved = window.localStorage.getItem(PALETTE_STORAGE_KEY);
-            if (paletteThemes[saved]) return saved;
-        } catch { /* storage blocked: use the default */ }
-        return DEFAULT_PALETTE;
-    });
 
     // Ableton-style Info View: when on, control help text shows in a fixed
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
@@ -553,8 +534,8 @@ function App() {
         canOpenModels: false,
     });
     const appTheme = useMemo(
-        () => paletteThemes[paletteName],
-        [paletteName]
+        () => lightTheme,
+        []
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
     // Vertical icon-only mode: between the compact (horizontal) threshold
@@ -567,8 +548,6 @@ function App() {
     const isMobileLayout = useMediaQuery(appTheme.breakpoints.down('sm'));
     // Dock collapses to a hamburger at the same threshold where the nav
     // rail flips horizontal — keeps the chrome transition unified.
-    const isDockCollapsed = isCompactLayout;
-    const [dockMenuAnchor, setDockMenuAnchor] = useState(null);
 
     useEffect(() => {
         console.log('Model changed:', selectedModel);
@@ -1294,15 +1273,6 @@ function App() {
         }
     };
 
-    const cyclePalette = () => {
-        setPaletteName((prev) => {
-            const keys = Object.keys(paletteThemes);
-            const next = keys[(keys.indexOf(prev) + 1) % keys.length];
-            try { window.localStorage.setItem(PALETTE_STORAGE_KEY, next); } catch { /* not persisted */ }
-            return next;
-        });
-    };
-
     const getSelectedModelDisplayName = () => {
         if (!selectedModel) return '';
         const baseModel = baseModels.find(m => m.name === selectedModel);
@@ -1412,39 +1382,19 @@ function App() {
                         </Box>
 
                         <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
-                            <Paper sx={appStyles.gpuCard(isCompactLayout)}>
-                                {gpuMemoryStatus && gpuMemoryStatus.cuda ? (
-                                    <>
-                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
-                                            <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
-                                                GPU
-                                            </Typography>
-                                            <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, fontSize: '0.72rem' }}>
-                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {Math.ceil(gpuMemoryStatus.cuda.total)} GB free
-                                            </Typography>
-                                        </Box>
-                                        <Box sx={{ height: 4, borderRadius: 999, bgcolor: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
-                                            <Box
-                                                sx={{
-                                                    height: '100%',
-                                                    width: `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
-                                                    bgcolor: 'primary.main',
-                                                    transition: 'width 0.3s ease',
-                                                }}
-                                            />
-                                        </Box>
-                                    </>
-                                ) : (
-                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                        <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
-                                            GPU
-                                        </Typography>
-                                        <Typography variant="caption" color="warning.main" sx={{ fontSize: '0.72rem' }}>
-                                            Not detected · CPU mode
-                                        </Typography>
-                                    </Box>
-                                )}
-                            </Paper>
+                            <AppToolbar
+                                gpu={gpuMemoryStatus}
+                                isDocker={isDocker}
+                                isFreeingGPU={isFreeingGPU}
+                                onGetModels={() => setCheckpointMgrOpen(true)}
+                                onOpenOutputs={handleOpenOutputFolder}
+                                onFreeGPU={() => setShowFreeGPUDialog(true)}
+                                infoViewEnabled={infoViewEnabled}
+                                onToggleInfoView={toggleInfoView}
+                                updateVisible={updates.visible}
+                                onShowUpdate={() => setShowUpdateDialog(true)}
+                                onAbout={() => setShowInfoDialog(true)}
+                            />
                         </Box>
                     </Box>
 
@@ -2782,206 +2732,6 @@ function App() {
             </Snackbar>
 
             <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
-
-            {isDockCollapsed ? (
-                <>
-                    <IconButton
-                        aria-label="Open actions menu"
-                        onClick={(e) => setDockMenuAnchor(e.currentTarget)}
-                        sx={appStyles.dockHamburger}
-                    >
-                        <MenuIcon size={18} />
-                    </IconButton>
-                    <Menu
-                        anchorEl={dockMenuAnchor}
-                        open={Boolean(dockMenuAnchor)}
-                        onClose={() => setDockMenuAnchor(null)}
-                        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
-                        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                    >
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setCheckpointMgrOpen(true); }}
-                        >
-                            <ListItemIcon><CloudDownloadIcon size={18} /></ListItemIcon>
-                            <ListItemText>Get Models</ListItemText>
-                        </MenuItem>
-                        {!isDocker && (
-                            <MenuItem
-                                onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
-                            >
-                                <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
-                                <ListItemText>Outputs</ListItemText>
-                            </MenuItem>
-                        )}
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setShowFreeGPUDialog(true); }}
-                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                        >
-                            <ListItemIcon>
-                                {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
-                            </ListItemIcon>
-                            <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
-                        </MenuItem>
-                        <Divider />
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); cyclePalette(); }}
-                        >
-                            <ListItemIcon>
-                                <PaletteIcon size={18} />
-                            </ListItemIcon>
-                            <ListItemText>Palette: {PALETTES[paletteName].name}</ListItemText>
-                        </MenuItem>
-                        {updates.visible && (
-                            <MenuItem
-                                onClick={() => { setDockMenuAnchor(null); setShowUpdateDialog(true); }}
-                            >
-                                <ListItemIcon><UpdateIcon size={18} /></ListItemIcon>
-                                <ListItemText>Update available</ListItemText>
-                            </MenuItem>
-                        )}
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
-                        >
-                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
-                            <ListItemText>About</ListItemText>
-                        </MenuItem>
-                    </Menu>
-                </>
-            ) : (
-                <Box
-                    sx={(theme) => ({
-                        position: 'fixed',
-                        left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
-                        bottom: { xs: theme.spacing(7), sm: theme.spacing(9), md: theme.spacing(12) },
-                        zIndex: 1350,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 0.75,
-                    })}
-                >
-                    {/* Small Info View toggle, sitting above the dock card. */}
-                    <Box
-                        component="button"
-                        type="button"
-                        onClick={toggleInfoView}
-                        aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
-                        aria-pressed={infoViewEnabled}
-                        sx={(theme) => ({
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 0.4,
-                            px: 0.5,
-                            py: 0.25,
-                            m: 0,
-                            border: 'none',
-                            background: 'transparent',
-                            cursor: 'pointer',
-                            borderRadius: 999,
-                            fontFamily: 'inherit',
-                            fontSize: '0.6rem',
-                            lineHeight: 1,
-                            letterSpacing: '0.02em',
-                            color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
-                            opacity: infoViewEnabled ? 0.9 : 0.55,
-                            transition: 'color 160ms ease, opacity 160ms ease',
-                            '&:hover': {
-                                opacity: 1,
-                                color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
-                            },
-                        })}
-                    >
-                        <InfoViewIcon size={11} />
-                        <Box component="span">Info</Box>
-                    </Box>
-
-                    <Paper sx={[appStyles.bottomDock, { position: 'static', left: 'auto', right: 'auto', bottom: 'auto', zIndex: 'auto' }]}>
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Get models"
-                            onClick={() => setCheckpointMgrOpen(true)}
-                            sx={appStyles.dockIconButton}
-                        >
-                            <CloudDownloadIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            Get Models
-                        </Typography>
-                    </Box>
-
-                    {!isDocker && (
-                        <Box sx={appStyles.dockItem}>
-                            <IconButton
-                                aria-label="Open outputs folder"
-                                onClick={handleOpenOutputFolder}
-                                sx={appStyles.dockIconButton}
-                            >
-                                <FolderOpenIcon size={18} />
-                            </IconButton>
-                            <Typography className="dock-label" sx={appStyles.dockLabel}>
-                                Outputs
-                            </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Free GPU memory"
-                            onClick={() => setShowFreeGPUDialog(true)}
-                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
-                        >
-                            {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {isFreeingGPU ? 'Freeing…' : 'Free GPU'}
-                        </Typography>
-                    </Box>
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label={`Palette: ${PALETTES[paletteName].name}. Switch palette`}
-                            onClick={cyclePalette}
-                            sx={[appStyles.dockIconButton, { color: 'warm.main', '&:hover': { color: 'warm.main' } }]}
-                        >
-                            <PaletteIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            Palette: {PALETTES[paletteName].name}
-                        </Typography>
-                    </Box>
-
-                    {updates.visible && (
-                        <Box sx={appStyles.dockItem}>
-                            <IconButton
-                                aria-label="Update available"
-                                onClick={() => setShowUpdateDialog(true)}
-                                sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
-                            >
-                                <UpdateIcon size={18} />
-                            </IconButton>
-                            <Typography className="dock-label" sx={appStyles.dockLabel}>
-                                Update
-                            </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Open about and documentation"
-                            onClick={() => setShowInfoDialog(true)}
-                            sx={appStyles.dockIconButton}
-                        >
-                            <InfoIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            About
-                        </Typography>
-                    </Box>
-                    </Paper>
-                </Box>
-            )}
 
             <AboutDialog
                 open={showInfoDialog}

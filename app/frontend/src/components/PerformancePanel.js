@@ -84,6 +84,7 @@ const MASTER_DB_MIN = -60;
 const MASTER_DB_MAX = FADER_MAX_DB;
 const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
+const PEAK_HOLD_MS = 1500;
 const BPM_MIN = 20;
 const BPM_MAX = 300;
 const BPM_DEFAULT = 120;
@@ -162,6 +163,9 @@ function PerformancePanelInner({
 
     const engineRef = useRef(null);
     const meterFillRef = useRef(null);
+    const peakMarkerRef = useRef(null);
+    // Peak marker: holds the loudest level for PEAK_HOLD_MS, then falls.
+    const peakMarkRef = useRef({ db: METER_FLOOR_DB, until: 0, at: 0 });
     const peakHoldRef = useRef({ db: METER_FLOOR_DB, decayedAt: performance.now() });
     const meterRafRef = useRef(null);
     const [engineReady, setEngineReady] = useState(false);
@@ -559,7 +563,22 @@ function PerformancePanelInner({
             const fill = meterFillRef.current;
             if (fill) {
                 const pct = ((displayDb - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
-                fill.style.height = `${Math.max(0, Math.min(100, pct))}%`;
+                // The gradient spans the whole track; the clip reveals it.
+                fill.style.clipPath = `inset(${100 - Math.max(0, Math.min(100, pct))}% 0 0 0 round 999px)`;
+            }
+            const mark = peakMarkRef.current;
+            if (instantDb >= mark.db) {
+                mark.db = instantDb;
+                mark.until = now + PEAK_HOLD_MS;
+            } else if (now > mark.until) {
+                mark.db = Math.max(METER_FLOOR_DB, mark.db - ((now - mark.at) / 1000) * 20);
+            }
+            mark.at = now;
+            const marker = peakMarkerRef.current;
+            if (marker) {
+                const pct = ((mark.db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
+                marker.style.bottom = `calc(${Math.max(0, Math.min(100, pct))}% - 2px)`;
+                marker.style.opacity = mark.db > METER_FLOOR_DB + 1 ? '0.75' : '0';
             }
             if (Math.abs(displayDb - peakLabelDbRef.current) > 0.5) {
                 peakLabelDbRef.current = displayDb;
@@ -1761,7 +1780,7 @@ function PerformancePanelInner({
                         <Box sx={styles.masterFaderWrap}>
                             <Box sx={styles.masterMeterTrack}>
                                 <Box ref={meterFillRef} sx={styles.masterMeterFill(perfColors.master)} />
-                                <Box sx={styles.masterMeterSegments} />
+                                <Box ref={peakMarkerRef} sx={styles.masterPeakMarker} />
                             </Box>
                             <MidiMappable
                                 id="master.fader"

@@ -21,7 +21,7 @@ import {
     Shuffle as VariationIcon,
     Repeat as LoopIcon,
 } from 'lucide-react';
-import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
+import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, RADIUS } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import { extractError } from '../utils/errors';
@@ -87,6 +87,19 @@ function bipolarToFilterFreqs(pos) {
 
 const PAN_CENTER_SNAP = 0.06;
 
+// Lane waveform height: the most expressive element on the lane, so it gets
+// room to breathe.
+const WAVE_HEIGHT = 60;
+
+const fmtHz = (hz) => (hz < 1000 ? `${Math.round(hz)}` : `${(hz / 1000).toFixed(hz < 10000 ? 1 : 0)}k`);
+// Knob readouts under each effect knob.
+const fmtFilter = (pos) => {
+    if (Math.abs(pos) < 0.005) return 'Off';
+    const { lpf, hpf } = bipolarToFilterFreqs(pos);
+    return pos < 0 ? `LP ${fmtHz(lpf)}` : `HP ${fmtHz(hpf)}`;
+};
+const fmtPercent = (v) => `${Math.round(v * 100)}%`;
+
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
 const BATCH_OPTIONS = [1, 2, 3, 4];
@@ -115,6 +128,9 @@ export default function PerformanceChannel({
 }) {
     const perfColors = useTheme().palette.perf;
     const color = perfColors.channels[index % perfColors.channels.length];
+    // Deeper shade of the lane colour for fine marks (waveform, arcs,
+    // brackets) so they read on the lane's pale tint.
+    const deep = perfColors.channelsDeep[index % perfColors.channelsDeep.length];
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
@@ -412,7 +428,8 @@ export default function PerformanceChannel({
             const el = meterRef.current;
             if (el && strip) {
                 const level = strip.getLevel();
-                el.style.width = `${Math.min(100, level * 140)}%`;
+                // The gradient spans the whole track; the clip reveals it.
+                el.style.clipPath = `inset(0 ${100 - Math.min(100, level * 140)}% 0 0 round 999px)`;
             }
             // Playhead rides the same frame as the meter, written straight to
             // style so a 60 Hz cursor never re-renders the strip.
@@ -436,10 +453,10 @@ export default function PerformanceChannel({
 
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
-            // Each channel's waveform is drawn in that channel's own color.
-            strip.drawWaveform(canvasRef.current, color);
+            // Each channel's waveform is drawn in that channel's own colour.
+            strip.drawWaveform(canvasRef.current, deep);
         }
-    }, [strip, color]);
+    }, [strip, deep]);
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
@@ -906,12 +923,12 @@ export default function PerformanceChannel({
     const ctrlLabel = (name) => `Ch ${index + 1} · ${name}`;
 
     return (
-        <Box sx={styles.strip(color, playing)}>
-            <Box sx={styles.stripHeader(color)}>
-                {/* Transport (Play / Loop) on the left, Mute / Solo on the
-                    right — replaces the old "01" channel badge so the channel
-                    number isn't using up that slot. */}
+        <Box data-lane={index} sx={styles.strip(index, playing)}>
+            <Box sx={styles.stripHeader}>
+                {/* Lane number in a circle of the lane colour, then Play and
+                    Loop; Mute / Solo / Sidechain on the right. */}
                 <Box sx={styles.muteSoloRow}>
+                    <Box sx={styles.laneIndicator(color, playing)} aria-hidden>{index + 1}</Box>
                     <MidiMappable id={ctrlId('transport')} label={ctrlLabel('Play/Stop')} kind="trigger" onChange={handleTransportToggle}>
                         <IconButton
                             onClick={playing ? handleStop : handlePlay}
@@ -1015,17 +1032,7 @@ export default function PerformanceChannel({
                         it mirrors the Generate row layout (content fills left,
                         modifier sits right). Width matches the ×N selector so
                         the right column reads as a uniform stack. */}
-                    <Box
-                        sx={{
-                            display: 'inline-flex',
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            borderRadius: 0.75,
-                            overflow: 'hidden',
-                            height: '100%',
-                            flexShrink: 0,
-                        }}
-                    >
+                    <Box sx={styles.segmented}>
                         {[
                             { mode: 'sec',  label: 'Sec'  },
                             { mode: 'bars', label: 'Bars' },
@@ -1036,21 +1043,7 @@ export default function PerformanceChannel({
                                 <ButtonBase
                                     key={mode}
                                     onClick={() => setDurationMode(value)}
-                                    sx={{
-                                        fontSize: perfTokens.fontSize.sm,
-                                        px: 0.7,
-                                        minWidth: 36,
-                                        bgcolor: active ? color : 'transparent',
-                                        backgroundImage: active ? SHEEN_DARK : 'none',
-                                        boxShadow: active ? RAISE_DARK : 'none',
-                                        color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
-                                        fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
-                                        transition: 'background-color 120ms, color 120ms, box-shadow 120ms',
-                                        '&:hover': {
-                                            bgcolor: active ? color : 'action.hover',
-                                            color: active ? 'rgba(0,0,0,0.88)' : 'text.secondary',
-                                        },
-                                    }}
+                                    sx={styles.segment(color, active)}
                                 >
                                     {label}
                                 </ButtonBase>
@@ -1110,7 +1103,7 @@ export default function PerformanceChannel({
                             onChange={(e) => setBatchSize(Number(e.target.value))}
                             disabled={generating}
                             size="small"
-                            sx={{ ...styles.channelPillControl, width: 54, flexShrink: 0 }}
+                            sx={[styles.channelPillControl, { width: 54, flexShrink: 0 }]}
                             renderValue={(v) => `×${v}`}
                         >
                             {BATCH_OPTIONS.map((n) => (
@@ -1140,12 +1133,11 @@ export default function PerformanceChannel({
                                 <ButtonBase
                                     onClick={handleVariation}
                                     disabled={!loaded || generating}
-                                    sx={{
-                                        ...styles.channelPillControl,
+                                    sx={[styles.channelPillControl, {
                                         width: 40,
                                         justifyContent: 'center',
                                         '&.Mui-disabled': { opacity: 0.4, color: 'text.disabled' },
-                                    }}
+                                    }]}
                                     aria-label="Variation"
                                 >
                                     <VariationIcon size={15} strokeWidth={2.25} />
@@ -1176,7 +1168,7 @@ export default function PerformanceChannel({
                                 value={knobs.pitch ?? 0}
                                 min={-PITCH_RANGE}
                                 max={PITCH_RANGE}
-                                color={color}
+                                color={deep}
                                 busy={pitchBusy}
                                 format={fmtSemitones}
                                 ariaLabel="Pitch in semitones"
@@ -1218,18 +1210,18 @@ export default function PerformanceChannel({
                 sx={[
                     styles.waveformWrap,
                     dropActive && {
-                        borderColor: color,
-                        boxShadow: `inset 0 0 0 2px ${color}`,
-                        backgroundColor: `${color}1F`,
-                        transition: 'border-color 120ms, box-shadow 120ms, background-color 120ms',
+                        boxShadow: `inset 0 0 0 2px ${deep}`,
+                        backgroundColor: `${color}66`,
+                        transition: 'box-shadow 120ms, background-color 120ms',
                     },
+                    generating && styles.waveformGenerating(color),
                 ]}
             >
                 <canvas
                     ref={canvasRef}
                     width={140}
-                    height={42}
-                    style={{ width: '100%', height: 42, display: 'block', pointerEvents: 'none' }}
+                    height={WAVE_HEIGHT}
+                    style={{ width: '100%', height: WAVE_HEIGHT, display: 'block', pointerEvents: 'none', borderRadius: 12 }}
                 />
                 {!loaded && (
                     <Typography sx={styles.waveformPlaceholder}>
@@ -1246,14 +1238,14 @@ export default function PerformanceChannel({
                         <Box sx={{
                             position: 'absolute', top: 0, bottom: 0, left: 0,
                             width: `${trim.start * 100}%`,
-                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
-                            pointerEvents: 'none',
+                            ...styles.trimVeil,
+                            borderRadius: '12px 0 0 12px',
                         }} />
                         <Box sx={{
                             position: 'absolute', top: 0, bottom: 0, right: 0,
                             width: `${(1 - trim.end) * 100}%`,
-                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
-                            pointerEvents: 'none',
+                            ...styles.trimVeil,
+                            borderRadius: '0 12px 12px 0',
                         }} />
                         {/* In-point → cue: inside the loop, so heard on every
                             repeat, but skipped on the launch pass. Tinted so
@@ -1263,8 +1255,8 @@ export default function PerformanceChannel({
                                 position: 'absolute', top: 0, bottom: 0,
                                 left: `${trim.start * 100}%`,
                                 width: `${Math.max(0, launchStart - trim.start) * 100}%`,
-                                backgroundColor: 'rgba(0, 0, 0, 0.3)',
-                                pointerEvents: 'none',
+                                ...styles.trimVeil,
+                                opacity: 0.5,
                             }} />
                         )}
                         <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
@@ -1280,12 +1272,12 @@ export default function PerformanceChannel({
                                     display: 'flex', justifyContent: 'center',
                                     '&::before': {
                                         content: '""', width: 2,
-                                        height: '100%', backgroundColor: color,
+                                        height: '100%', backgroundColor: deep,
                                     },
                                     '&::after': {
                                         content: '""', position: 'absolute',
                                         top: 0, left: 4, width: 5, height: 7,
-                                        backgroundColor: color,
+                                        backgroundColor: deep,
                                         borderRadius: '0 0 2px 0',
                                     },
                                 }}
@@ -1304,12 +1296,12 @@ export default function PerformanceChannel({
                                     display: 'flex', justifyContent: 'center',
                                     '&::before': {
                                         content: '""', width: 2,
-                                        height: '100%', backgroundColor: color,
+                                        height: '100%', backgroundColor: deep,
                                     },
                                     '&::after': {
                                         content: '""', position: 'absolute',
                                         bottom: 0, right: 4, width: 5, height: 7,
-                                        backgroundColor: color,
+                                        backgroundColor: deep,
                                         borderRadius: '2px 0 0 0',
                                     },
                                 }}
@@ -1367,10 +1359,14 @@ export default function PerformanceChannel({
                         <Box
                             ref={playheadRef}
                             sx={{
-                                position: 'absolute', top: 0, bottom: 0, left: 0,
-                                width: 1,
-                                backgroundColor: 'rgba(255, 255, 255, 0.45)',
-                                boxShadow: '0 0 3px rgba(255, 255, 255, 0.18)',
+                                position: 'absolute', top: 2, bottom: 2, left: 0,
+                                // '2px', not 2: sx reads numbers <= 1 as a
+                                // percentage, and width 1 made this a
+                                // full-width overlay from the playhead on.
+                                width: '2px',
+                                ml: '-1px',
+                                borderRadius: RADIUS.pill,
+                                backgroundColor: deep,
                                 opacity: 0,
                                 pointerEvents: 'none',
                                 zIndex: 4,
@@ -1400,8 +1396,8 @@ export default function PerformanceChannel({
                 onClearAll={handleClearFragments}
             />
 
-            <Box sx={{ px: 1, py: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+            <Box sx={{ px: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', minWidth: 28 }}>PAN</Box>
                     <MidiMappable
                         id={ctrlId('pan')}
@@ -1424,10 +1420,7 @@ export default function PerformanceChannel({
                             marks={[{ value: 0 }]}
                             sx={{
                                 flex: 1,
-                                // Match the channel main color (the global
-                                // MuiSlider override is amber; the vertical
-                                // knobs already pass `color` via knobSlider).
-                                color,
+                                color: deep,
                                 '& .MuiSlider-mark': {
                                     width: 2,
                                     height: 10,
@@ -1445,89 +1438,53 @@ export default function PerformanceChannel({
                 </Box>
             </Box>
 
+            {/* Gain and effects: one strip of compact knobs, each with a fine
+                arc in the lane colour and its value underneath. Gain turns in
+                fader-taper position space (faderLaw), like the master fader,
+                so the stored value stays in dB for persistence and MIDI. */}
             <Box sx={styles.knobsGrid}>
                 {KNOB_DEFS.map((k) => {
-                    const isLog = k.scale === 'log';
-                    const isBipolar = k.scale === 'bipolar';
                     const isFader = k.scale === 'fader';
-                    // log + fader knobs drive a 0..1 slider position and
-                    // convert to/from the underlying value at the boundary;
-                    // the value stored in state stays in the domain unit
-                    // (Hz for log, dB for fader) so persistence + MIDI keep
-                    // working unchanged.
-                    const usesPos = isLog || isFader;
-                    const valueToPos = isLog
-                        ? (v) => Math.log(Math.max(v, k.min) / k.min) / Math.log(k.max / k.min)
-                        : isFader
-                            ? faderDbToPos
-                            : (v) => v;
-                    const posToValue = isLog
-                        ? (p) => k.min * Math.pow(k.max / k.min, p)
-                        : isFader
-                            ? faderPosToDb
-                            : (v) => v;
+                    const isBipolar = k.scale === 'bipolar';
+                    const knobProps = isFader
+                        ? {
+                            value: faderDbToPos(knobs[k.key]),
+                            min: 0, max: 1, step: 0.005, detent: 0,
+                            center: faderDbToPos(k.default), origin: 0,
+                            format: (pos) => {
+                                const db = faderPosToDb(pos);
+                                return db <= GAIN_DB_MIN + 0.05 ? '−∞' : `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+                            },
+                            onChange: (pos) => handleKnob(k.key, faderPosToDb(pos)),
+                        }
+                        : {
+                            value: knobs[k.key],
+                            min: k.min, max: k.max, step: 0.01,
+                            center: k.default, detent: isBipolar ? 0.06 : 0,
+                            format: isBipolar ? fmtFilter : fmtPercent,
+                            onChange: (v) => handleKnob(k.key, v),
+                        };
                     return (
-                        <Box key={k.key} sx={styles.knobCell}>
-                            <MidiMappable
-                                id={ctrlId(k.key)}
-                                label={ctrlLabel(k.label)}
-                                kind="continuous"
-                                curve={isLog ? 'log' : isFader ? 'fader' : 'linear'}
-                                min={k.min}
-                                max={k.max}
-                                value={knobs[k.key]}
-                                onChange={(v) => handleKnob(k.key, v)}
-                                sx={{ alignItems: 'center' }}
-                            >
-                                <Slider
-                                    orientation="vertical"
-                                    value={valueToPos(knobs[k.key])}
-                                    onChange={(_, v) => handleKnob(k.key, posToValue(v))}
-                                    min={usesPos ? 0 : k.min}
-                                    max={usesPos ? 1 : k.max}
-                                    step={usesPos ? 0.001 : k.step}
-                                    size="small"
-                                    track={isBipolar ? false : undefined}
-                                    marks={isBipolar ? [{ value: 0 }]
-                                        : isFader ? [{ value: faderDbToPos(0) }] : undefined}
-                                    sx={{
-                                        ...styles.knobSlider(color, k.key === 'gain'),
-                                        ...(isBipolar && {
-                                            '& .MuiSlider-mark': {
-                                                width: 10,
-                                                height: 2,
-                                                borderRadius: 1,
-                                                backgroundColor: 'text.secondary',
-                                                opacity: 0.7,
-                                            },
-                                            '& .MuiSlider-markActive': {
-                                                backgroundColor: 'text.secondary',
-                                                opacity: 0.7,
-                                            },
-                                        }),
-                                        // Subtle unity (0 dB) tick on the gain knob.
-                                        // height must be > 1: numeric <= 1 in
-                                        // MUI sx means a percentage (1 = 100%),
-                                        // which drew a full-height bar past the
-                                        // top of the knob lane.
-                                        ...(isFader && {
-                                            '& .MuiSlider-mark': {
-                                                width: 10,
-                                                height: 2,
-                                                borderRadius: 1,
-                                                backgroundColor: 'text.disabled',
-                                                opacity: 0.7,
-                                            },
-                                            '& .MuiSlider-markActive': {
-                                                backgroundColor: 'text.disabled',
-                                                opacity: 0.7,
-                                            },
-                                        }),
-                                    }}
-                                />
-                            </MidiMappable>
-                            <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
-                        </Box>
+                        <MidiMappable
+                            key={k.key}
+                            id={ctrlId(k.key)}
+                            label={ctrlLabel(k.label)}
+                            kind="continuous"
+                            curve={isFader ? 'fader' : 'linear'}
+                            min={k.min}
+                            max={k.max}
+                            value={knobs[k.key]}
+                            onChange={(v) => handleKnob(k.key, v)}
+                            sx={{ alignItems: 'center' }}
+                        >
+                            <RotaryKnob
+                                {...knobProps}
+                                size={34}
+                                color={deep}
+                                label={k.label}
+                                ariaLabel={`${k.label} · ${ctrlLabel(k.label)}`}
+                            />
+                        </MidiMappable>
                     );
                 })}
             </Box>

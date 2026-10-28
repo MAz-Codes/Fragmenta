@@ -139,11 +139,13 @@ export default function ChannelFragmentHistory({
                                     e.dataTransfer.setData(dragMime, fragment.id);
                                     e.dataTransfer.effectAllowed = 'copy';
                                 }}
-                                sx={{
-                                    ...styles.fragmentRow(color, isCommitted, isAuditioning),
-                                    cursor: isEditing ? 'default' : 'grab',
-                                    '&:active': { cursor: isEditing ? 'default' : 'grabbing' },
-                                }}
+                                sx={[
+                                    styles.fragmentRow(color, isCommitted, isAuditioning),
+                                    {
+                                        cursor: isEditing ? 'default' : 'grab',
+                                        '&:active': { cursor: isEditing ? 'default' : 'grabbing' },
+                                    },
+                                ]}
                             >
                                 <Box className="frag-reorder" sx={styles.fragmentReorderCol}>
                                     <Tooltip title={TIPS.fragments.moveUp} placement="top" arrow enterDelay={400}>
@@ -189,7 +191,7 @@ export default function ChannelFragmentHistory({
                                         <IconButton
                                             size="small"
                                             onClick={() => onAudition(fragment.id)}
-                                            sx={styles.fragmentIconBtn(color, isAuditioning, true)}
+                                            sx={styles.fragmentPlayBtn(isAuditioning)}
                                             aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
                                         >
                                             {isAuditioning

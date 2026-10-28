@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Box } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
 // 270° of travel, centred on 12 o'clock.
 const SWEEP = 135;
@@ -18,19 +19,25 @@ function arc(c, r, from, to) {
 }
 
 /**
- * Bipolar rotary knob with a centre detent. Drag vertically, scroll, or use
- * the arrow keys; double-click returns to `center`. The detent is extra drag
- * travel around `center` (in value units), so a sweep sticks there briefly
- * instead of skipping through.
+ * Rotary knob: a softly sculpted body with an indicator line, ringed by a
+ * fine arc that follows the value. Drag vertically, scroll, or use the arrow
+ * keys; double-click returns to `center`. The detent is extra drag travel
+ * around `center` (in value units), so a sweep sticks there briefly instead
+ * of skipping through (0 = no detent).
  *
- * Props: value, min, max, step (1), center (0), detent (1), size (28),
- * color, busy (dims while the change is being applied), format(v) for the
- * centre readout, ariaLabel, onChange(v).
+ * Props: value, min, max, step (1), center (0: reset/detent point),
+ * origin (where the arc starts; defaults to `center`), detent (1), size (28),
+ * color (the arc), busy (dims while a change is applied), format(v),
+ * label (shown under the knob, with the value; without it the value sits
+ * in the middle), ariaLabel, onChange(v).
  */
 export default function RotaryKnob({
-    value, min, max, step = 1, center = 0, detent = 1, size = 28,
-    color = '#279FBB', busy = false, format = (v) => String(v), ariaLabel, onChange,
+    value, min, max, step = 1, center = 0, origin, detent = 1, size = 28,
+    color, busy = false, format = (v) => String(v), label, ariaLabel, onChange,
 }) {
+    const theme = useTheme();
+    const arcColor = color || theme.palette.primary.main;
+    const valueBelow = label !== undefined;
     const ref = useRef(null);
     const drag = useRef(null);
     const latest = useRef({ value, onChange });
@@ -88,11 +95,15 @@ export default function RotaryKnob({
     const c = size / 2;
     const r = c - 2;
     const angle = (v) => -SWEEP + ((v - min) / (max - min)) * 2 * SWEEP;
-    const a0 = angle(center);
+    const a0 = angle(origin ?? center);
     const a = angle(value);
-    const [px, py] = polar(c, r, a);
+    const body = r - 4.5;
+    // Indicator line from near the centre out toward the rim.
+    const [ix0, iy0] = polar(c, body * (valueBelow ? 0.25 : 0.62), a);
+    const [ix1, iy1] = polar(c, body - 1.5, a);
+    const gradId = `knob-body-${size}`;
 
-    return (
+    const knob = (
         <Box
             ref={ref}
             role="slider"
@@ -118,25 +129,53 @@ export default function RotaryKnob({
                 opacity: busy ? 0.5 : 1,
                 transition: 'opacity 120ms ease',
                 outline: 'none',
-                '&:focus-visible': { boxShadow: `0 0 0 2px ${color}66` },
+                color: 'text.primary',
+                '&:focus-visible': { boxShadow: `0 0 0 2px ${arcColor}66` },
             }}
         >
-            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
-                <path d={arc(c, r, -SWEEP, SWEEP)} fill="none" stroke="currentColor" strokeOpacity={0.15}
-                    strokeWidth={2.5} strokeLinecap="round" />
-                <path d={arc(c, r, Math.min(a0, a), Math.max(a0, a))} fill="none" stroke={color}
-                    strokeWidth={2.5} strokeLinecap="round" />
-                {/* Centre tick, so the detent position is visible. */}
-                <line x1={c} y1={0.5} x2={c} y2={3.5} stroke="currentColor" strokeOpacity={0.45} strokeWidth={1} />
-                <circle cx={c} cy={c} r={r - 4} fill="currentColor" fillOpacity={0.06} />
-                {/* Position marker on the ring; the value sits in the middle. */}
-                <circle cx={px} cy={py} r={2.4} fill={value === center ? 'currentColor' : color}
-                    fillOpacity={value === center ? 0.7 : 1} />
-                <text x={c} y={c + 3} textAnchor="middle" fontSize={8} fontWeight={600}
-                    fill="currentColor" fillOpacity={0.85} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                    {format(value)}
-                </text>
+            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block', overflow: 'visible' }}>
+                <defs>
+                    {/* Soft top-left light on the body. */}
+                    <radialGradient id={gradId} cx="35%" cy="30%" r="75%">
+                        <stop offset="0%" stopColor="#FFFFFF" stopOpacity={0.9} />
+                        <stop offset="100%" stopColor="#FFFFFF" stopOpacity={0.25} />
+                    </radialGradient>
+                </defs>
+                <path d={arc(c, r, -SWEEP, SWEEP)} fill="none" stroke="currentColor" strokeOpacity={0.12}
+                    strokeWidth={2} strokeLinecap="round" />
+                <path d={arc(c, r, Math.min(a0, a), Math.max(a0, a))} fill="none" stroke={arcColor}
+                    strokeWidth={2} strokeLinecap="round" style={{ transition: 'd 90ms linear' }} />
+                {/* Sculpted body: a faint drop shadow, then the lit face. */}
+                <circle cx={c} cy={c + 0.8} r={body} fill="currentColor" fillOpacity={0.10} />
+                <circle cx={c} cy={c} r={body} fill={`url(#${gradId})`} stroke="currentColor" strokeOpacity={0.10} strokeWidth={0.75} />
+                <line x1={ix0} y1={iy0} x2={ix1} y2={iy1} stroke="currentColor" strokeOpacity={0.8}
+                    strokeWidth={1.6} strokeLinecap="round" />
+                {!valueBelow && (
+                    <text x={c} y={c + 3} textAnchor="middle" fontSize={8} fontWeight={600}
+                        fill="currentColor" fillOpacity={0.85} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                        {format(value)}
+                    </text>
+                )}
             </svg>
+        </Box>
+    );
+
+    if (!valueBelow) return knob;
+    return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25, minWidth: 0 }}>
+            {knob}
+            <Box component="span" sx={{
+                fontSize: '0.58rem', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+                color: 'text.secondary', lineHeight: 1.1, mt: 0.25,
+            }}>
+                {label}
+            </Box>
+            <Box component="span" sx={{
+                fontSize: '0.62rem', fontVariantNumeric: 'tabular-nums', color: 'text.primary',
+                lineHeight: 1.1, whiteSpace: 'nowrap',
+            }}>
+                {format(value)}
+            </Box>
         </Box>
     );
 }

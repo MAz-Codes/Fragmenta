@@ -732,33 +732,46 @@ export class ChannelStrip {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.clearRect(0, 0, cssW, cssH);
 
-        // Faint centre line, so near-silent audio still shows its axis.
-        g.fillStyle = 'rgba(255, 255, 255, 0.06)';
-        g.fillRect(0, cssH / 2 - 0.5, cssW, 1);
-
-        // Mono-summed min/max per column. Stereo is averaged rather than
-        // taking channel 0 alone, so hard-panned material doesn't vanish.
+        // Mono-summed per column. Stereo is averaged rather than taking
+        // channel 0 alone, so hard-panned material doesn't vanish.
         const ch0 = this.buffer.getChannelData(0);
         const ch1 = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : null;
         const cols = Math.max(1, Math.floor(cssW));
         const bucket = Math.max(1, Math.floor(ch0.length / cols));
         const mid = cssH / 2;
-        const scale = (cssH - 2) / 2;
-        g.fillStyle = color || '#279FBB';
-        for (let i = 0; i < cols; i++) {
+        const scale = (cssH - 4) / 2;
+        const top = new Float32Array(cols), bot = new Float32Array(cols), rms = new Float32Array(cols);
+        let n = 0;
+        for (let i = 0; i < cols; i++, n++) {
             const s = i * bucket;
             const e = Math.min(ch0.length, s + bucket);
             if (s >= e) break;
-            let mn = 0, mx = 0;
+            let mn = 0, mx = 0, sq = 0;
             for (let j = s; j < e; j++) {
                 const v = ch1 ? (ch0[j] + ch1[j]) * 0.5 : ch0[j];
                 if (v < mn) mn = v;
                 if (v > mx) mx = v;
+                sq += v * v;
             }
-            const y0 = mid - mx * scale;
-            const y1 = mid - mn * scale;
-            g.fillRect(i, y0, 1, Math.max(1, y1 - y0));
+            top[i] = mid - mx * scale;
+            bot[i] = mid - mn * scale;
+            rms[i] = Math.min(Math.sqrt(sq / (e - s)) * scale, mid);
         }
+        const fill = (upper, lower) => {
+            g.beginPath();
+            g.moveTo(0, upper(0));
+            for (let i = 1; i < n; i++) g.lineTo(i, upper(i));
+            for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, lower(i));
+            g.closePath();
+            g.fill();
+        };
+        g.fillStyle = color || '#279FBB';
+        // Soft outer envelope (the exact peaks, for trimming) under a solid
+        // RMS body: accurate where editing needs it, calmer to look at.
+        g.globalAlpha = 0.35;
+        fill((i) => top[i], (i) => bot[i]);
+        g.globalAlpha = 1;
+        fill((i) => mid - Math.max(rms[i], 0.5), (i) => mid + Math.max(rms[i], 0.5));
     }
 
     dispose() {
