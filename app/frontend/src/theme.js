@@ -2791,12 +2791,13 @@ export const welcomePageStyles = {
         };
     },
     title: {
-        fontFamily: '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace',
-        fontWeight: 400,
+        fontFamily: FONT_DISPLAY,
+        fontWeight: 600,
         color: 'text.primary',
         mb: 1,
-        fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4rem' },
-        letterSpacing: '0.02em',
+        fontSize: { xs: '2.5rem', sm: '3.25rem', md: '3.75rem' },
+        letterSpacing: '-0.03em',
+        fontVariationSettings: '"opsz" 96',
     },
 };
 
