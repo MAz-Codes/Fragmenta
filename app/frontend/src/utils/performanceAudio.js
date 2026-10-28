@@ -214,10 +214,10 @@ export function paintWave(g, n, cssW, cssH, peak, rms, color, pastel) {
         g.fill();
     };
     const rgba = (hex, a) => {
-        const h = (hex || '#6B62C4').replace('#', '');
+        const h = (hex || '#0A77B1').replace('#', '');
         return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
     };
-    const deep = color || '#6B62C4';
+    const deep = color || '#0A77B1';
     const light = pastel || deep;
     // 1. Soft outer envelope: pastel → deep → pastel across the clip.
     const across = g.createLinearGradient(0, 0, cssW, 0);
