@@ -66,19 +66,19 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#F1F1E5', ink: '#373A30',
+        name: 'Linen', bg: '#EBEAE3', ink: '#24261F',
         cool: '#45B8F5', warm: '#FFC65E', fresh: '#86A77C', hot: '#D7A29C',   // sky, golden yellow, sage green, dusty red
         // Hand-tuned over the derived values.
         exact: {
-            surface: '#F5F5EC', control: '#E6E6DA', controlHover: '#DEDFD3', section: '#ECECE0',
-            textDim: '#46483E', textFaint: '#5A5B51', navSelected: '#C9E4EE',
-            amber: '#096FA5', amberHi: '#0B88CA', amberLo: '#075A86',
+            surface: '#F8F7F3', control: '#E4E3DB', controlHover: '#DAD9D0', section: '#F0EFE9',
+            textDim: '#3B3D35', textFaint: '#55574E', navSelected: '#C9E4EE',
+            amber: '#096BA0', amberHi: '#0B84C4', amberLo: '#075681',
         },
         lanes: {
-            tints: ['#C4E2E9', '#E9D8CE', '#D3DCC8', '#F5E3BA'],
-            playing: ['#B3DCEB', '#E7D1C8', '#CCD7C0', '#F7DFAC'],
-            deep: ['#0975AE', '#B15248', '#58764F', '#A56B00'],
-            soft: ['#92D2EE', '#E1C2B9', '#B1C5A6', '#F9D794'],
+            tints: ['#C0DDE8', '#E3CFC8', '#CDD6C4', '#F1DEB8'],
+            playing: ['#AFD8E9', '#E2C9C2', '#C5D1BC', '#F3DBAB'],
+            deep: ['#096FA5', '#A44C42', '#526D49', '#9C6500'],
+            soft: ['#90CFED', '#DFBFB8', '#AEC2A5', '#F7D493'],
         },
     },
 };
@@ -88,8 +88,8 @@ export const DEFAULT_PALETTE = 'linen';
 // controls compact, 999 only for selected states and circular precision
 // controls. px strings so they don't multiply by theme.shape.borderRadius.
 // Controls sitting on a lane's tint.
-export const ON_TINT = 'rgba(247, 247, 239, 0.55)';
-export const ON_TINT_HOVER = 'rgba(247, 247, 239, 0.8)';
+export const ON_TINT = 'rgba(248, 247, 243, 0.72)';
+export const ON_TINT_HOVER = 'rgba(248, 247, 243, 0.92)';
 export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -1035,7 +1035,7 @@ function makePaletteTheme(LIGHT) {
                 active: `rgba(${LIGHT.inkRgb}, 0.6)`,
                 hover: `rgba(${LIGHT.inkRgb}, 0.04)`,
                 selected: `rgba(${LIGHT.inkRgb}, 0.08)`,
-                disabled: `rgba(${LIGHT.inkRgb}, 0.26)`,
+                disabled: `rgba(${LIGHT.inkRgb}, 0.42)`,
                 disabledBackground: `rgba(${LIGHT.inkRgb}, 0.10)`,
             },
             divider: LIGHT.divider,
@@ -3272,7 +3272,7 @@ export const performancePanelStyles = {
             '&:hover': { border: 'none', backgroundColor: fill, filter: 'brightness(0.97)' },
             '&.Mui-disabled': {
                 border: 'none',
-                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.38)`,
+                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.5)`,
                 backgroundColor: theme.palette.fragmenta.control,
             },
         };
