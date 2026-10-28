@@ -65,6 +65,8 @@ import { MidiMappable } from './MidiContext';
 export default function ChannelFragmentHistory({
     fragments,
     color,
+    soft,
+    deep,
     channelIndex,
     auditioningId,
     committedId,
@@ -108,6 +110,9 @@ export default function ChannelFragmentHistory({
                 <Box component="span" sx={styles.fragmentHistoryHeaderText}>
                     Fragments
                 </Box>
+                <Box component="span" sx={{ ml: 'auto', mr: 0.5, fontSize: '0.6875rem', color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+                    {fragments.length} of {maxFragments}
+                </Box>
                 {fragments.length > 0 && (
                     <IconButton
                         size="small"
@@ -140,7 +145,7 @@ export default function ChannelFragmentHistory({
                                     e.dataTransfer.effectAllowed = 'copy';
                                 }}
                                 sx={[
-                                    styles.fragmentRow(color, isCommitted, isAuditioning),
+                                    styles.fragmentRow(soft || color, isCommitted, isAuditioning),
                                     {
                                         cursor: isEditing ? 'default' : 'grab',
                                         '&:active': { cursor: isEditing ? 'default' : 'grabbing' },
@@ -191,7 +196,7 @@ export default function ChannelFragmentHistory({
                                         <IconButton
                                             size="small"
                                             onClick={() => onAudition(fragment.id)}
-                                            sx={styles.fragmentPlayBtn(isAuditioning)}
+                                            sx={styles.fragmentPlayBtn(isAuditioning, isCommitted)}
                                             aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
                                         >
                                             {isAuditioning
@@ -239,6 +244,11 @@ export default function ChannelFragmentHistory({
                                             </Box>
                                         </Tooltip>
                                     )}
+                                    {!isEditing && Number.isFinite(fragment.duration) && (
+                                        <Box component="span" sx={styles.fragmentDuration}>
+                                            {fragment.duration.toFixed(1)} s
+                                        </Box>
+                                    )}
                                 </Box>
 
                                 <Tooltip
@@ -250,12 +260,13 @@ export default function ChannelFragmentHistory({
                                     <IconButton
                                         size="small"
                                         onClick={() => onToggleStar(fragment.id)}
-                                        sx={styles.fragmentIconBtn(color, fragment.starred)}
+                                        sx={styles.fragmentIconBtn(deep || color, fragment.starred)}
                                         aria-label={fragment.starred ? 'Unstar fragment' : 'Star fragment'}
                                     >
                                         <StarIcon
-                                            size={12}
-                                            fill={fragment.starred ? color : 'none'}
+                                            size={13}
+                                            color={fragment.starred ? (deep || color) : 'currentColor'}
+                                            fill={fragment.starred ? (deep || color) : 'none'}
                                             strokeWidth={2}
                                         />
                                     </IconButton>
@@ -270,24 +281,22 @@ export default function ChannelFragmentHistory({
                                     <DeleteIcon size={12} />
                                 </IconButton>
 
-                                <Tooltip
-                                    title={TIPS.fragments.commit(isCommitted)}
-                                    placement="top"
-                                    arrow
-                                    enterDelay={300}
-                                >
-                                    <span>
+                                {isCommitted ? (
+                                    <Tooltip title={TIPS.fragments.commit(true)} placement="top" arrow enterDelay={300}>
+                                        <Box component="span" sx={styles.fragmentLoaded}>Loaded</Box>
+                                    </Tooltip>
+                                ) : (
+                                    <Tooltip title={TIPS.fragments.commit(false)} placement="top" arrow enterDelay={300}>
                                         <IconButton
                                             size="small"
                                             onClick={() => onCommit(fragment.id)}
-                                            disabled={isCommitted}
-                                            sx={styles.fragmentIconBtn(color, isCommitted, true)}
+                                            sx={styles.fragmentIconBtn(color, false)}
                                             aria-label="Load fragment into channel"
                                         >
-                                            <CommitIcon size={12} strokeWidth={isCommitted ? 3 : 2} />
+                                            <CommitIcon size={13} strokeWidth={2} />
                                         </IconButton>
-                                    </span>
-                                </Tooltip>
+                                    </Tooltip>
+                                )}
                             </Box>
                         );
                     })}

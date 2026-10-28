@@ -57,14 +57,14 @@ const KNOB_DEFS = [
     // scale 'fader' → console-style position↔dB taper (faderLaw), same as
     // the master fader. Without it the gain knob was linear-in-dB and a
     // quarter-turn down already dropped to ~-15 dB.
-    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
+    { key: 'gain', label: 'Gain', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
     // Bipolar "DJ-filter" knob. -1..+1 with 0 = bypass. Negative side drives
     // the LPF cutoff down from 20 kHz → 20 Hz (kills highs). Positive side
     // drives the HPF cutoff up from 20 Hz → 20 kHz (kills lows). The two
     // biquads sit in series in the engine; only one side ever cuts at a time.
-    { key: 'filter', label: 'FLT', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
-    { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
-    { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    { key: 'filter', label: 'Filter', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
+    { key: 'delay', label: 'Delay', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    { key: 'reverb', label: 'Reverb', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
 
 // Pitch (rotary knob in the Generate row), whole semitones ±1 octave. Output
@@ -89,7 +89,7 @@ const PAN_CENTER_SNAP = 0.06;
 
 // Lane waveform height: the most expressive element on the lane, so it gets
 // room to breathe.
-const WAVE_HEIGHT = 60;
+const WAVE_HEIGHT = 96;
 
 const fmtHz = (hz) => (hz < 1000 ? `${Math.round(hz)}` : `${(hz / 1000).toFixed(hz < 10000 ? 1 : 0)}k`);
 // Knob readouts under each effect knob.
@@ -131,6 +131,8 @@ export default function PerformanceChannel({
     // Deeper shade of the lane colour for fine marks (waveform, arcs,
     // brackets) so they read on the lane's pale tint.
     const deep = perfColors.channelsDeep[index % perfColors.channelsDeep.length];
+    // Soft shade for the loop toggle and the loaded fragment row.
+    const soft = perfColors.channelsSoft[index % perfColors.channelsSoft.length];
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
@@ -454,9 +456,9 @@ export default function PerformanceChannel({
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
             // Each channel's waveform is drawn in that channel's own colour.
-            strip.drawWaveform(canvasRef.current, deep);
+            strip.drawWaveform(canvasRef.current, deep, color);
         }
-    }, [strip, deep]);
+    }, [strip, deep, color]);
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
@@ -947,7 +949,7 @@ export default function PerformanceChannel({
                         >
                             <IconButton
                                 onClick={handleLoopToggle}
-                                sx={styles.loopBtn(color, looping)}
+                                sx={styles.loopBtn(soft, looping)}
                                 size="small"
                                 aria-label={looping ? 'Loop on' : 'Loop off'}
                             >
@@ -1018,7 +1020,7 @@ export default function PerformanceChannel({
                             value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
                             onChange={(e) => setBars(Number(e.target.value))}
                             size="small"
-                            sx={{ ...panelStyles.pillControl, flex: 1 }}
+                            sx={[panelStyles.pillControl, styles.laneSelect]}
                         >
                             {availableBars.map(b => (
                                 <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
@@ -1153,7 +1155,7 @@ export default function PerformanceChannel({
                         title="Pitch, in semitones · double-click for 0 st"
                         sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}
                     >
-                        <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE} st</Box>
+                        <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE}</Box>
                         <MidiMappable
                             id={ctrlId('pitch')}
                             label={ctrlLabel('Pitch')}
@@ -1169,13 +1171,14 @@ export default function PerformanceChannel({
                                 min={-PITCH_RANGE}
                                 max={PITCH_RANGE}
                                 color={deep}
+                                size={36}
                                 busy={pitchBusy}
                                 format={fmtSemitones}
                                 ariaLabel="Pitch in semitones"
                                 onChange={(v) => handleKnob('pitch', v)}
                             />
                         </MidiMappable>
-                        <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE} st</Box>
+                        <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE}</Box>
                     </Box>
                 </Box>
 
@@ -1202,7 +1205,6 @@ export default function PerformanceChannel({
 
             <Box
                 onDragEnter={handleWaveDragEnter}
-                ref={waveWrapRef}
                 onDragOver={handleWaveDragOver}
                 onDragLeave={handleWaveDragLeave}
                 onDrop={handleWaveDrop}
@@ -1217,163 +1219,104 @@ export default function PerformanceChannel({
                     generating && styles.waveformGenerating(color),
                 ]}
             >
-                <canvas
-                    ref={canvasRef}
-                    width={140}
-                    height={WAVE_HEIGHT}
-                    style={{ width: '100%', height: WAVE_HEIGHT, display: 'block', pointerEvents: 'none', borderRadius: 12 }}
-                />
-                {!loaded && (
-                    <Typography sx={styles.waveformPlaceholder}>
-                        {dropActive ? 'Drop to load' : 'Waveform'}
-                    </Typography>
-                )}
-                {/* DJ-style in/out points: drag the brackets to choose where
-                    the clip loops (bounds retarget live while playing). The
-                    cue triangle on the bottom edge sets where a launch/retrigger
-                    enters — repeats still come back to the in-point. Double-
-                    click the waveform to reset to the full clip. */}
-                {loaded && (
-                    <>
-                        <Box sx={{
-                            position: 'absolute', top: 0, bottom: 0, left: 0,
-                            width: `${trim.start * 100}%`,
-                            ...styles.trimVeil,
-                            borderRadius: '12px 0 0 12px',
-                        }} />
-                        <Box sx={{
-                            position: 'absolute', top: 0, bottom: 0, right: 0,
-                            width: `${(1 - trim.end) * 100}%`,
-                            ...styles.trimVeil,
-                            borderRadius: '0 12px 12px 0',
-                        }} />
-                        {/* In-point → cue: inside the loop, so heard on every
-                            repeat, but skipped on the launch pass. Tinted so
-                            that skip is visible rather than baffling. */}
-                        {launchStart !== null && (
+                {/* Inset from the capsule's round ends: the canvas, the
+                    trim maths (waveWrapRef) and every overlay share this box. */}
+                <Box ref={waveWrapRef} sx={styles.waveformInner}>
+                    <canvas
+                        ref={canvasRef}
+                        width={140}
+                        height={WAVE_HEIGHT}
+                        style={{ width: '100%', height: WAVE_HEIGHT, display: 'block', pointerEvents: 'none' }}
+                    />
+                    {!loaded && (
+                        <Typography sx={styles.waveformPlaceholder}>
+                            {dropActive ? 'Drop to load' : 'Waveform'}
+                        </Typography>
+                    )}
+                    {/* DJ-style in/out points: drag the handles to choose where
+                        the clip loops (bounds retarget live while playing). The
+                        cue triangle near the bottom sets where a launch/retrigger
+                        enters; repeats still come back to the in-point. Double-
+                        click the waveform to reset to the full clip. */}
+                    {loaded && (
+                        <>
                             <Box sx={{
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `${trim.start * 100}%`,
-                                width: `${Math.max(0, launchStart - trim.start) * 100}%`,
+                                position: 'absolute', top: 0, bottom: 0, left: 0,
+                                width: `${trim.start * 100}%`,
                                 ...styles.trimVeil,
-                                opacity: 0.5,
+                                borderRadius: '999px 0 0 999px',
                             }} />
-                        )}
-                        <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('start')}
-                                sx={{
+                            <Box sx={{
+                                position: 'absolute', top: 0, bottom: 0, right: 0,
+                                width: `${(1 - trim.end) * 100}%`,
+                                ...styles.trimVeil,
+                                borderRadius: '0 999px 999px 0',
+                            }} />
+                            {/* In-point → cue: inside the loop, so heard on every
+                                repeat, but skipped on the launch pass. Tinted so
+                                that skip is visible rather than baffling. */}
+                            {launchStart !== null && (
+                                <Box sx={{
                                     position: 'absolute', top: 0, bottom: 0,
-                                    left: `calc(${trim.start * 100}% - 5px)`,
-                                    width: 10,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 2,
-                                    display: 'flex', justifyContent: 'center',
-                                    '&::before': {
-                                        content: '""', width: 2,
-                                        height: '100%', backgroundColor: deep,
-                                    },
-                                    '&::after': {
-                                        content: '""', position: 'absolute',
-                                        top: 0, left: 4, width: 5, height: 7,
-                                        backgroundColor: deep,
-                                        borderRadius: '0 0 2px 0',
-                                    },
-                                }}
-                            />
-                        </Tooltip>
-                        <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('end')}
-                                sx={{
-                                    position: 'absolute', top: 0, bottom: 0,
-                                    left: `calc(${trim.end * 100}% - 5px)`,
-                                    width: 10,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 2,
-                                    display: 'flex', justifyContent: 'center',
-                                    '&::before': {
-                                        content: '""', width: 2,
-                                        height: '100%', backgroundColor: deep,
-                                    },
-                                    '&::after': {
-                                        content: '""', position: 'absolute',
-                                        bottom: 0, right: 4, width: 5, height: 7,
-                                        backgroundColor: deep,
-                                        borderRadius: '2px 0 0 0',
-                                    },
-                                }}
-                            />
-                        </Tooltip>
-                        {/* Cue guide — only drawn once the cue is off the
-                            in-point, where the loop bracket's own line
-                            already marks the spot. Red like the handle
-                            (the palette's cue colour), so the two read as one marker rather
-                            than a third loop bracket. */}
-                        {launchStart !== null && (
-                            <Box sx={(t) => ({
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `calc(${launchStart * 100}% - 1px)`,
-                                width: 2,
-                                backgroundColor: t.palette.perf.cue,
-                                filter: CUE_SHADOW,
-                                pointerEvents: 'none',
-                                zIndex: 2,
-                            })} />
-                        )}
-                        {/* Cue handle. Head on the BOTTOM edge and red, so it
-                            stays legible where it starts life — sitting exactly
-                            on the loop-start bracket, whose own nub is top-left
-                            in the channel colour. Right-pointing, like a play
-                            button: it marks where playback enters and which way
-                            it runs. Hit zone is the bottom 12 px only, so the
-                            full-height loop brackets keep the rest. */}
-                        <Tooltip title="Cue point — drag to set where a launch or retrigger enters the clip. Repeats still return to the loop start. Double-click to pin it back." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('cue')}
-                                onDoubleClick={(e) => { e.stopPropagation(); applyLaunch(null); }}
-                                sx={(t) => ({
-                                    position: 'absolute', bottom: 0, height: 12,
-                                    left: `calc(${(launchStart !== null ? launchStart : trim.start) * 100}% - 4px)`,
-                                    width: 11,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 3,
+                                    left: `${trim.start * 100}%`,
+                                    width: `${Math.max(0, launchStart - trim.start) * 100}%`,
+                                    ...styles.trimVeil,
+                                    opacity: 0.5,
+                                }} />
+                            )}
+                            <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
+                                <Box onPointerDown={startTrimDrag('start')} sx={styles.trimHandle(trim.start, deep)} />
+                            </Tooltip>
+                            <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
+                                <Box onPointerDown={startTrimDrag('end')} sx={styles.trimHandle(trim.end, deep)} />
+                            </Tooltip>
+                            {/* Cue guide — only drawn once the cue is off the
+                                in-point, where the loop handle already marks it. */}
+                            {launchStart !== null && (
+                                <Box sx={(t) => ({
+                                    position: 'absolute', top: 14, bottom: 14,
+                                    left: `calc(${launchStart * 100}% - 1px)`,
+                                    width: '2px',
+                                    borderRadius: RADIUS.pill,
+                                    backgroundColor: t.palette.perf.cue,
                                     filter: CUE_SHADOW,
-                                    '&::before': {
-                                        content: '""', position: 'absolute',
-                                        bottom: 0, left: 3,
-                                        borderTop: '4px solid transparent',
-                                        borderBottom: '4px solid transparent',
-                                        borderLeft: `7px solid ${t.palette.perf.cue}`,
-                                        opacity: launchStart !== null ? 1 : 0.85,
-                                    },
-                                })}
-                            />
-                        </Tooltip>
-                        {/* Playhead. Positioned by the meter rAF loop writing
-                            style directly; starts hidden and is revealed only
-                            while the strip reports a position. */}
-                        <Box
-                            ref={playheadRef}
-                            sx={{
-                                position: 'absolute', top: 2, bottom: 2, left: 0,
-                                // '2px', not 2: sx reads numbers <= 1 as a
-                                // percentage, and width 1 made this a
-                                // full-width overlay from the playhead on.
-                                width: '2px',
-                                ml: '-1px',
-                                borderRadius: RADIUS.pill,
-                                backgroundColor: deep,
-                                opacity: 0,
-                                pointerEvents: 'none',
-                                zIndex: 4,
-                            }}
-                        />
-                    </>
-                )}
+                                    pointerEvents: 'none',
+                                    zIndex: 2,
+                                })} />
+                            )}
+                            {/* Cue handle: a right-pointing triangle near the
+                                bottom, in the cue colour; its hit zone is only
+                                the bottom strip, so the loop handles keep the rest. */}
+                            <Tooltip title="Cue point — drag to set where a launch or retrigger enters the clip. Repeats still return to the loop start. Double-click to pin it back." placement="top" enterDelay={600}>
+                                <Box
+                                    onPointerDown={startTrimDrag('cue')}
+                                    onDoubleClick={(e) => { e.stopPropagation(); applyLaunch(null); }}
+                                    sx={(t) => ({
+                                        position: 'absolute', bottom: 6, height: 14,
+                                        left: `calc(${(launchStart !== null ? launchStart : trim.start) * 100}% - 4px)`,
+                                        width: 12,
+                                        cursor: 'ew-resize',
+                                        touchAction: 'none',
+                                        zIndex: 3,
+                                        filter: CUE_SHADOW,
+                                        '&::before': {
+                                            content: '""', position: 'absolute',
+                                            bottom: 2, left: 3,
+                                            borderTop: '5px solid transparent',
+                                            borderBottom: '5px solid transparent',
+                                            borderLeft: `8px solid ${t.palette.perf.cue}`,
+                                            opacity: launchStart !== null ? 1 : 0.85,
+                                        },
+                                    })}
+                                />
+                            </Tooltip>
+                            {/* Playhead: a line with a dot cap. Positioned by the
+                                meter rAF loop writing style directly; hidden until
+                                the strip reports a position. */}
+                            <Box ref={playheadRef} sx={styles.playhead} />
+                        </>
+                    )}
+                </Box>
             </Box>
 
             {/* Per-channel rolling fragment history. Always rendered (empty
@@ -1383,6 +1326,8 @@ export default function PerformanceChannel({
             <ChannelFragmentHistory
                 fragments={fragments}
                 color={color}
+                soft={soft}
+                deep={deep}
                 channelIndex={index}
                 auditioningId={auditioningFragmentId}
                 committedId={committedFragmentId}
@@ -1479,7 +1424,7 @@ export default function PerformanceChannel({
                         >
                             <RotaryKnob
                                 {...knobProps}
-                                size={34}
+                                size={52}
                                 color={deep}
                                 label={k.label}
                                 ariaLabel={`${k.label} · ${ctrlLabel(k.label)}`}
@@ -1494,7 +1439,7 @@ export default function PerformanceChannel({
                 signal flow below". */}
             <Box sx={styles.transportRow}>
                 <Box sx={styles.meterTrack}>
-                    <Box ref={meterRef} sx={styles.meterFill(color)} />
+                    <Box ref={meterRef} sx={styles.meterFill(color, deep)} />
                 </Box>
             </Box>
 

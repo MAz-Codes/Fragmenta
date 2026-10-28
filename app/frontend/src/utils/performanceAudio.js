@@ -713,7 +713,7 @@ export class ChannelStrip {
      *  strip's real width, which is what made these read as blurry blocks.
      *  Sizing is derived from the element's layout box, so the caller must
      *  redraw on resize (PerformanceChannel does, via ResizeObserver). */
-    drawWaveform(canvas, color) {
+    drawWaveform(canvas, color, pastel) {
         if (!canvas || !this.buffer) return;
         const cssW = canvas.clientWidth || canvas.width;
         const cssH = canvas.clientHeight || canvas.height;
@@ -732,46 +732,92 @@ export class ChannelStrip {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.clearRect(0, 0, cssW, cssH);
 
-        // Mono-summed per column. Stereo is averaged rather than taking
-        // channel 0 alone, so hard-panned material doesn't vanish.
+        // Per-column peak and RMS of the mono sum (stereo averaged, so
+        // hard-panned material doesn't vanish).
         const ch0 = this.buffer.getChannelData(0);
         const ch1 = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : null;
         const cols = Math.max(1, Math.floor(cssW));
         const bucket = Math.max(1, Math.floor(ch0.length / cols));
         const mid = cssH / 2;
-        const scale = (cssH - 4) / 2;
-        const top = new Float32Array(cols), bot = new Float32Array(cols), rms = new Float32Array(cols);
+        const scale = (cssH - 8) / 2;
+        const peak = new Float32Array(cols), rms = new Float32Array(cols);
         let n = 0;
         for (let i = 0; i < cols; i++, n++) {
             const s = i * bucket;
             const e = Math.min(ch0.length, s + bucket);
             if (s >= e) break;
-            let mn = 0, mx = 0, sq = 0;
+            let p = 0, sq = 0;
             for (let j = s; j < e; j++) {
                 const v = ch1 ? (ch0[j] + ch1[j]) * 0.5 : ch0[j];
-                if (v < mn) mn = v;
-                if (v > mx) mx = v;
+                const a = v < 0 ? -v : v;
+                if (a > p) p = a;
                 sq += v * v;
             }
-            top[i] = mid - mx * scale;
-            bot[i] = mid - mn * scale;
-            rms[i] = Math.min(Math.sqrt(sq / (e - s)) * scale, mid);
+            peak[i] = Math.min(1, p);
+            rms[i] = Math.min(1, Math.sqrt(sq / (e - s)));
         }
-        const fill = (upper, lower) => {
+        if (!n) return;
+        // Box-smoothing for the soft layers; the bars stay exact.
+        const smooth = (src, radius) => {
+            const out = new Float32Array(n);
+            for (let i = 0; i < n; i++) {
+                let sum = 0, cnt = 0;
+                for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) { sum += src[k]; cnt++; }
+                out[i] = sum / cnt;
+            }
+            return out;
+        };
+        const widen = (src, radius) => {
+            const out = new Float32Array(n);
+            for (let i = 0; i < n; i++) {
+                let m = 0;
+                for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) if (src[k] > m) m = src[k];
+                out[i] = m;
+            }
+            return out;
+        };
+        const env = smooth(widen(peak, 4), 3);
+        const body = smooth(rms, 2);
+        const shape = (amp) => {
             g.beginPath();
-            g.moveTo(0, upper(0));
-            for (let i = 1; i < n; i++) g.lineTo(i, upper(i));
-            for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, lower(i));
+            g.moveTo(0, mid - amp(0));
+            for (let i = 1; i < n; i++) g.lineTo(i, mid - amp(i));
+            for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, mid + amp(i));
             g.closePath();
             g.fill();
         };
-        g.fillStyle = color || '#279FBB';
-        // Soft outer envelope (the exact peaks, for trimming) under a solid
-        // RMS body: accurate where editing needs it, calmer to look at.
-        g.globalAlpha = 0.35;
-        fill((i) => top[i], (i) => bot[i]);
+        const rgba = (hex, a) => {
+            const h = (hex || '#627BB8').replace('#', '');
+            return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
+        };
+        const deep = color || '#627BB8';
+        const light = pastel || deep;
+        // 1. Soft outer envelope: pastel → deep → pastel across the clip.
+        const across = g.createLinearGradient(0, 0, cssW, 0);
+        across.addColorStop(0, light);
+        across.addColorStop(0.5, deep);
+        across.addColorStop(1, light);
+        g.globalAlpha = 0.3;
+        g.fillStyle = across;
+        shape((i) => Math.max(1, env[i] * scale));
+        // 2. Body: the RMS, fading toward the edges.
+        const down = g.createLinearGradient(0, 0, 0, cssH);
+        down.addColorStop(0, rgba(deep, 0.12));
+        down.addColorStop(0.5, rgba(deep, 0.55));
+        down.addColorStop(1, rgba(deep, 0.12));
         g.globalAlpha = 1;
-        fill((i) => mid - Math.max(rms[i], 0.5), (i) => mid + Math.max(rms[i], 0.5));
+        g.fillStyle = down;
+        shape((i) => Math.max(0.5, Math.min(env[i], body[i] * 1.4) * scale));
+        // 3. Exact detail: a thin bar per 3 px at that window's true peak.
+        g.globalAlpha = 0.85;
+        g.fillStyle = deep;
+        for (let x = 0; x < n; x += 3) {
+            let p = 0;
+            for (let k = x; k < Math.min(n, x + 3); k++) if (peak[k] > p) p = peak[k];
+            const a = Math.max(0.5, p * scale);
+            g.fillRect(x + 0.8, mid - a, 1.4, 2 * a);
+        }
+        g.globalAlpha = 1;
     }
 
     dispose() {
@@ -947,6 +993,19 @@ export class PerformanceEngine {
         this.masterReverb.connect(this.masterLimiter);
 
         this.masterLimiter.connect(this.masterAnalyser);
+
+        // Left/right meters: a splitter off the limiter into two analysers.
+        // Analysers are processed without a downstream connection, so this
+        // taps the signal without adding to the audio path.
+        this.meterSplitter = ctx.createChannelSplitter(2);
+        this.meterL = ctx.createAnalyser();
+        this.meterR = ctx.createAnalyser();
+        this.meterL.fftSize = 1024;
+        this.meterR.fftSize = 1024;
+        this.meterData = new Uint8Array(this.meterL.frequencyBinCount);
+        this.masterLimiter.connect(this.meterSplitter);
+        this.meterSplitter.connect(this.meterL, 0);
+        this.meterSplitter.connect(this.meterR, 1);
 
         // Stage 2 multichannel routing. The stereo master bus is split into
         // two mono lines and merged into a destination sized to the device's
@@ -1472,6 +1531,20 @@ export class PerformanceEngine {
         return peak;
     }
 
+    /** Peak of the master's left and right channels, 0..1 each. */
+    getMasterPeaks() {
+        const peak = (analyser) => {
+            analyser.getByteTimeDomainData(this.meterData);
+            let p = 0;
+            for (let i = 0; i < this.meterData.length; i++) {
+                const v = Math.abs(this.meterData[i] - 128) / 128;
+                if (v > p) p = v;
+            }
+            return p;
+        };
+        return [peak(this.meterL), peak(this.meterR)];
+    }
+
     isRecording() {
         return Boolean(this._recNode);
     }
@@ -1668,5 +1741,6 @@ export class PerformanceEngine {
         tryDisconnect(this.masterReverb);
         tryDisconnect(this.masterLimiter);
         tryDisconnect(this.masterAnalyser);
+        tryDisconnect(this.meterSplitter);
     }
 }

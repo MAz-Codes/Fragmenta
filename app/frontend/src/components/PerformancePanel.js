@@ -26,6 +26,7 @@ import {
     Popover,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
+import RotaryKnob from './RotaryKnob';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
@@ -85,6 +86,8 @@ const MASTER_DB_MAX = FADER_MAX_DB;
 const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
 const PEAK_HOLD_MS = 1500;
+// Scale beside the master meters (dB).
+const METER_SCALE_DB = [0, -6, -12, -24, METER_FLOOR_DB];
 const BPM_MIN = 20;
 const BPM_MAX = 300;
 const BPM_DEFAULT = 120;
@@ -162,11 +165,12 @@ function PerformancePanelInner({
     } = usePerformanceSession(CHANNEL_COUNT);
 
     const engineRef = useRef(null);
-    const meterFillRef = useRef(null);
-    const peakMarkerRef = useRef(null);
-    // Peak marker: holds the loudest level for PEAK_HOLD_MS, then falls.
-    const peakMarkRef = useRef({ db: METER_FLOOR_DB, until: 0, at: 0 });
-    const peakHoldRef = useRef({ db: METER_FLOOR_DB, decayedAt: performance.now() });
+    // Left/right master meters: fill and peak-hold marker per channel.
+    const meterFillRefs = [useRef(null), useRef(null)];
+    const peakMarkerRefs = [useRef(null), useRef(null)];
+    // Peak markers hold the loudest level for PEAK_HOLD_MS, then fall.
+    const peakMarkRef = useRef([{ db: METER_FLOOR_DB, until: 0, at: 0 }, { db: METER_FLOOR_DB, until: 0, at: 0 }]);
+    const peakHoldRef = useRef([0, 1].map(() => ({ db: METER_FLOOR_DB, decayedAt: performance.now() })));
     const meterRafRef = useRef(null);
     const [engineReady, setEngineReady] = useState(false);
     const [masterDb, setMasterDb] = useState(session.masterDb ?? MASTER_DB_DEFAULT);
@@ -547,42 +551,41 @@ function PerformancePanelInner({
     // mounted behind other tabs).
     useEffect(() => {
         if (!active) return undefined;
+        const toPct = (db) => Math.max(0, Math.min(100, ((db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100));
         const tick = () => {
             const now = performance.now();
             const engine = engineRef.current;
-            const peakAmp = engine ? engine.getMasterPeak() : 0;
-            const instantDb = ampToDb(peakAmp);
-            const hold = peakHoldRef.current;
-            const elapsed = now - hold.decayedAt;
-            let displayDb = hold.db - (elapsed / 1000) * 24;
-            if (instantDb > displayDb) displayDb = instantDb;
-            if (displayDb < METER_FLOOR_DB) displayDb = METER_FLOOR_DB;
-            hold.db = displayDb;
-            hold.decayedAt = now;
-
-            const fill = meterFillRef.current;
-            if (fill) {
-                const pct = ((displayDb - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
+            const peaks = engine ? engine.getMasterPeaks() : [0, 0];
+            let loudest = METER_FLOOR_DB;
+            peaks.forEach((amp, ch) => {
+                const instantDb = ampToDb(amp);
+                const hold = peakHoldRef.current[ch];
+                let displayDb = hold.db - ((now - hold.decayedAt) / 1000) * 24;
+                if (instantDb > displayDb) displayDb = instantDb;
+                if (displayDb < METER_FLOOR_DB) displayDb = METER_FLOOR_DB;
+                hold.db = displayDb;
+                hold.decayedAt = now;
+                if (displayDb > loudest) loudest = displayDb;
+                const fill = meterFillRefs[ch].current;
                 // The gradient spans the whole track; the clip reveals it.
-                fill.style.clipPath = `inset(${100 - Math.max(0, Math.min(100, pct))}% 0 0 0 round 999px)`;
-            }
-            const mark = peakMarkRef.current;
-            if (instantDb >= mark.db) {
-                mark.db = instantDb;
-                mark.until = now + PEAK_HOLD_MS;
-            } else if (now > mark.until) {
-                mark.db = Math.max(METER_FLOOR_DB, mark.db - ((now - mark.at) / 1000) * 20);
-            }
-            mark.at = now;
-            const marker = peakMarkerRef.current;
-            if (marker) {
-                const pct = ((mark.db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
-                marker.style.bottom = `calc(${Math.max(0, Math.min(100, pct))}% - 2px)`;
-                marker.style.opacity = mark.db > METER_FLOOR_DB + 1 ? '0.75' : '0';
-            }
-            if (Math.abs(displayDb - peakLabelDbRef.current) > 0.5) {
-                peakLabelDbRef.current = displayDb;
-                setPeakLabelDb(displayDb);
+                if (fill) fill.style.clipPath = `inset(${100 - toPct(displayDb)}% 0 0 0 round 999px)`;
+                const mark = peakMarkRef.current[ch];
+                if (instantDb >= mark.db) {
+                    mark.db = instantDb;
+                    mark.until = now + PEAK_HOLD_MS;
+                } else if (now > mark.until) {
+                    mark.db = Math.max(METER_FLOOR_DB, mark.db - ((now - mark.at) / 1000) * 20);
+                }
+                mark.at = now;
+                const marker = peakMarkerRefs[ch].current;
+                if (marker) {
+                    marker.style.bottom = `calc(${toPct(mark.db)}% - 2px)`;
+                    marker.style.opacity = mark.db > METER_FLOOR_DB + 1 ? '0.8' : '0';
+                }
+            });
+            if (Math.abs(loudest - peakLabelDbRef.current) > 0.5) {
+                peakLabelDbRef.current = loudest;
+                setPeakLabelDb(loudest);
             }
             meterRafRef.current = requestAnimationFrame(tick);
         };
@@ -1089,10 +1092,10 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 0.5,
-                                minWidth: 38,
+                                px: 1.75,
+                                minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '2px',
+                                borderRadius: '10px',
                                 // Three states matching Ableton Live's button:
                                 // off → gray, on/no peers → yellow (broadcasting,
                                 // alone), on/peers → teal (sync'd with at least
@@ -1135,13 +1138,12 @@ function PerformancePanelInner({
                                 sx={{
                                     fontSize: perfTokens.fontSize.sm,
                                     fontWeight: 600,
-                                    px: 0.75,
+                                    px: 1.5,
                                     height: perfTokens.height.compact,
-                                    borderRadius: '2px',
-                                    border: '1px solid',
-                                    borderColor: 'divider',
+                                    borderRadius: '10px',
+                                    backgroundColor: (t) => t.palette.fragmenta.control,
                                     color: 'text.secondary',
-                                    '&:hover': { color: 'text.primary' },
+                                    '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.controlHover },
                                 }}
                             >
                                 {measuredLatencyMs === null
@@ -1213,10 +1215,10 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 0.5,
-                                minWidth: 38,
+                                px: 1.75,
+                                minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '2px',
+                                borderRadius: '10px',
                                 bgcolor: midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff,
                                 color: perfColors.label,
                                 opacity: midi?.supported ? 1 : 0.45,
@@ -1765,78 +1767,58 @@ function PerformancePanelInner({
                         <Box sx={styles.masterBadge(perfColors.master)}>Master</Box>
                     </Box>
 
-                    {/* Middle group — fader+meter (fixed height) plus the
-                        DBFS/Pk readouts, vertically centered in the remaining
-                        space between the header and the FX pickers below. */}
-                    <Box sx={{
-                        flex: 1,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 0.5,
-                        minHeight: 0,
-                    }}>
-                        <Box sx={styles.masterFaderWrap}>
-                            <Box sx={styles.masterMeterTrack}>
-                                <Box ref={meterFillRef} sx={styles.masterMeterFill(perfColors.master)} />
-                                <Box ref={peakMarkerRef} sx={styles.masterPeakMarker} />
-                            </Box>
-                            <MidiMappable
-                                id="master.fader"
-                                label="Master Fader"
-                                kind="continuous"
-                                curve="fader"
-                                min={MASTER_DB_MIN}
-                                max={MASTER_DB_MAX}
-                                value={masterDb}
-                                onChange={(v) => handleMasterChange(null, v)}
-                                sx={{
-                                    alignSelf: 'stretch',
-                                    // Fixed-width lane wide enough for the 16 px
-                                    // thumb plus a touch of hit area. Without an
-                                    // explicit width the wrapper would either
-                                    // collapse to nothing (no flex parent on the
-                                    // slider) or stretch to fill (with flex: 1),
-                                    // which pinned the fader to the left edge.
-                                    width: 20,
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                }}
-                            >
-                                <Slider
-                                    orientation="vertical"
-                                    // Slider travels in tapered POSITION space
-                                    // (0..1); the dB value rides through
-                                    // faderLaw so unity sits ~80% up with
-                                    // boost above. handleMasterChange stays in
-                                    // dB (readout, MIDI, engine unchanged).
-                                    value={faderDbToPos(masterDb)}
-                                    onChange={(_, pos) => handleMasterChange(null, faderPosToDb(pos))}
-                                    min={0}
-                                    max={1}
-                                    step={0.002}
-                                    marks={[{ value: FADER_UNITY_POS }]}
-                                    sx={styles.masterFader(perfColors.master)}
-                                />
-                            </MidiMappable>
-                        </Box>
-
-                        <Box sx={styles.masterReadouts}>
-                            <Typography sx={styles.masterValue}>
-                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                    DBFS
-                                </Box>
-                                {' '}{formatDb(masterDb)}
-                            </Typography>
-                            <Typography sx={styles.masterPeakValue}>
-                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                    Pk
-                                </Box>
-                                {' '}{formatDb(peakLabelDb)}
-                            </Typography>
-                        </Box>
+                    {/* Output level: a big knob on the fader taper (faderLaw), so
+                        MIDI and the stored value stay in dB. Double-click: 0 dB. */}
+                    <MidiMappable
+                        id="master.fader"
+                        label="Master Fader"
+                        kind="continuous"
+                        curve="fader"
+                        min={MASTER_DB_MIN}
+                        max={MASTER_DB_MAX}
+                        value={masterDb}
+                        onChange={(v) => handleMasterChange(null, v)}
+                    >
+                        <RotaryKnob
+                            value={faderDbToPos(masterDb)}
+                            min={0}
+                            max={1}
+                            step={0.005}
+                            detent={0}
+                            center={FADER_UNITY_POS}
+                            origin={0}
+                            size={96}
+                            valueInside={false}
+                            ariaLabel="Master output level"
+                            format={(pos) => `${formatDb(faderPosToDb(pos))} dB`}
+                            onChange={(pos) => handleMasterChange(null, faderPosToDb(pos))}
+                        />
+                    </MidiMappable>
+                    <Box sx={styles.masterReadouts}>
+                        <Typography sx={styles.masterValue}>{formatDb(masterDb)} dB</Typography>
+                        <Typography sx={styles.masterCaption}>Output</Typography>
                     </Box>
+
+                    {/* Left/right meters on a dB scale, with peak-hold markers. */}
+                    <Box sx={styles.masterMeters} role="img" aria-label="Master output meters">
+                        <Box sx={styles.masterScale} aria-hidden>
+                            {METER_SCALE_DB.map((db) => (
+                                <Box key={db} component="span" sx={styles.masterScaleLabel(((db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100)}>
+                                    {db === METER_FLOOR_DB ? '−∞' : db === 0 ? '0' : `−${-db}`}
+                                </Box>
+                            ))}
+                        </Box>
+                        {['L', 'R'].map((ch, i) => (
+                            <Box key={ch} sx={styles.masterMeterCol}>
+                                <Box sx={styles.masterMeterTrack}>
+                                    <Box ref={meterFillRefs[i]} sx={styles.masterMeterFill(perfColors.master)} />
+                                    <Box ref={peakMarkerRefs[i]} sx={styles.masterPeakMarker} />
+                                </Box>
+                                <Typography component="span" sx={styles.masterMeterLabel}>{ch}</Typography>
+                            </Box>
+                        ))}
+                    </Box>
+                    <Typography sx={styles.masterPeakValue}>Peak {formatDb(peakLabelDb)} dB</Typography>
 
                     {/* Master FX pickers — Reverb IR and Delay division.
                         No wet sliders: the shared FX run always-on, and the
@@ -1845,8 +1827,8 @@ function PerformancePanelInner({
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 0.75,
-                        pt: 0.75,
-                        borderTop: `1px solid ${perfColors.master}33`,
+                        alignSelf: 'stretch',
+                        mt: 'auto',
                     }}>
                         <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
                             <Select
@@ -2163,7 +2145,7 @@ function PerformancePanelInner({
                     fields are skipped. Replaces the old Auto BPM toggle. */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     <Box component="span" sx={perfTokens.labelMuted}>
-                        Inject
+                        Add to prompt
                     </Box>
                     <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
                         <TextField

@@ -87,6 +87,9 @@ export const DEFAULT_PALETTE = 'linen';
 // Shape hierarchy, not one radius everywhere: large surfaces softly rounded,
 // controls compact, 999 only for selected states and circular precision
 // controls. px strings so they don't multiply by theme.shape.borderRadius.
+// Controls sitting on a lane's tint.
+export const ON_TINT = 'rgba(255, 255, 255, 0.5)';
+export const ON_TINT_HOVER = 'rgba(255, 255, 255, 0.72)';
 export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -196,7 +199,7 @@ function paletteTokens(P) {
         master: P.cool,
         masterHover: mixHex(P.cool, white, 0.25),
         play: P.cool,
-        stop: P.warm,
+        stop: t.control,
         record: t.errorHi,
         cue: t.error,
         toggleOn: P.warm,
@@ -2722,9 +2725,9 @@ export const perfTokens = {
     height: {
         iconSm: 18,    // smallest tap targets (take-history clear)
         iconMd: 20,    // take-row icon buttons (audition, star, delete, commit)
-        sub: 22,       // small subordinate square toggles (mute, solo, loop)
-        compact: 26,   // primary compact controls (Link, MIDI, Q, BPM, transport)
-        cta: 28,       // primary CTA pill (Generate)
+        sub: 28,       // small square toggles (mute, solo, sidechain)
+        compact: 34,   // bar controls (Link, MIDI, Q, BPM, selects)
+        cta: 40,       // Generate
     },
     // Icon glyph sizes paired with their host control. Inside a 26px button
     // use `md`; inside 18–22px buttons use `sm`; inside the channel transport
@@ -2785,11 +2788,11 @@ export const performancePanelStyles = {
     // toggles (fragmentIconBtn, transportBtn, loopBtn, mute/solo) stay parameterized
     // — they're not just icon buttons.
     compactIconBtn: (size = 'md', variant = 'menu') => {
-        const sz = { xs: 18, sm: 20, md: 22, lg: 26 }[size];
+        const sz = { xs: 18, sm: 20, md: 22, lg: 34 }[size];
         return {
             width: sz,
             height: sz,
-            borderRadius: 1,
+            borderRadius: RADIUS.pill,
             color: variant === 'danger' ? 'text.disabled' : 'text.secondary',
             '&:hover': {
                 color: variant === 'danger' ? 'error.main' : 'text.primary',
@@ -2934,13 +2937,15 @@ export const performancePanelStyles = {
     masterStrip: () => (theme) => ({
         display: 'flex',
         flexDirection: 'column',
-        gap: 1.5,
-        p: 1.5,
+        alignItems: 'center',
+        gap: 2,
+        px: 2,
+        py: 2.5,
         borderRadius: RADIUS.card,
         backgroundColor: theme.palette.fragmenta.surface,
         boxShadow: theme.palette.fragmenta.shadowRaised,
-        width: { xs: '100%', md: 150 },
-        flex: { xs: '1 1 100%', md: '0 0 150px' },
+        width: { xs: '100%', md: 176 },
+        flex: { xs: '1 1 100%', md: '0 0 176px' },
         minHeight: 0,
         overflow: 'hidden',
         boxSizing: 'border-box',
@@ -2949,45 +2954,78 @@ export const performancePanelStyles = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 0.5,
-        minHeight: perfTokens.height.compact,
+        minHeight: 20,
     }),
     masterBadge: () => ({
         ...perfTokens.caps,
+        fontSize: '0.625rem',
+        letterSpacing: '0.1em',
         color: 'text.secondary',
     }),
-    masterFaderWrap: {
-        // Sized so the lanes, not the master, set the row height.
-        height: 260,
+    masterReadouts: {
         display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        justifyContent: 'center',
-        gap: 1.5,
-        py: 1.25,
-        minHeight: 0,
-        flexShrink: 0,
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '2px',
+        mt: -1,
     },
-    // Tall, slim, rounded meter on an inset track.
+    masterValue: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.25rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        color: 'text.primary',
+        lineHeight: 1.1,
+    },
+    masterCaption: {
+        ...perfTokens.caps,
+        fontSize: '0.625rem',
+        color: 'text.disabled',
+    },
+    // Tall, slim, rounded L/R meters with a dB scale beside them.
+    masterMeters: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        height: 222,
+    },
+    masterScale: {
+        position: 'relative',
+        width: 22,
+        height: 200,
+    },
+    masterScaleLabel: (bottomPct) => ({
+        position: 'absolute',
+        right: 0,
+        bottom: `calc(${bottomPct}% - 6px)`,
+        fontSize: '0.625rem',
+        lineHeight: '12px',
+        color: 'text.disabled',
+        fontVariantNumeric: 'tabular-nums',
+    }),
+    masterMeterCol: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 1,
+    },
     masterMeterTrack: (theme) => ({
-        width: 8,
+        position: 'relative',
+        width: 12,
+        height: 200,
         borderRadius: RADIUS.pill,
         backgroundColor: theme.palette.fragmenta.control,
-        boxShadow: `inset 0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.12)`,
-        position: 'relative',
+        boxShadow: `inset 0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.14)`,
         overflow: 'hidden',
-        display: 'flex',
-        alignItems: 'flex-end',
     }),
-    // Soft gradient: the master colour, warming toward the top.
-    // Full height; PerformancePanel reveals it with a clip-path, so the warm
-    // top only shows when the level actually gets there.
+    // Full height; the meter loop reveals it with a clip-path, so the warm
+    // top only shows when the level gets there.
     masterMeterFill: (color) => (theme) => ({
-        width: '100%',
-        height: '100%',
+        position: 'absolute',
+        inset: 0,
         clipPath: 'inset(100% 0 0 0)',
         borderRadius: RADIUS.pill,
-        background: `linear-gradient(0deg, ${theme.palette.primary.main} 0%, ${color} 55%, ${theme.palette.fragmenta.accents.warm} 80%, ${theme.palette.error.main} 100%)`,
+        background: `linear-gradient(0deg, ${theme.palette.primary.main} 0%, ${color} 55%, ${theme.palette.fragmenta.accents.warm} 82%, ${theme.palette.fragmenta.accents.hot} 100%)`,
     }),
     // Peak hold: a short ink line that holds the loudest moment briefly.
     masterPeakMarker: {
@@ -2998,45 +3036,18 @@ export const performancePanelStyles = {
         height: 2,
         borderRadius: RADIUS.pill,
         backgroundColor: 'text.primary',
-        opacity: 0.75,
+        opacity: 0,
         pointerEvents: 'none',
     },
-    masterFader: () => (theme) => ({
-        height: '100%',
-        color: theme.palette.primary.main,
-        '& .MuiSlider-rail': { width: 4 },
-        '& .MuiSlider-track': { width: 4, border: 'none' },
-        '& .MuiSlider-thumb': { width: 16, height: 16 },
-        // Unity (0 dB) tick. Numeric height <= 1 in sx is a percentage, so 2 (px).
-        '& .MuiSlider-mark': {
-            width: 10,
-            height: 2,
-            borderRadius: 1,
-            bgcolor: 'text.disabled',
-            opacity: 1,
-        },
-        '& .MuiSlider-markActive': {
-            bgcolor: 'text.disabled',
-        },
-    }),
-    masterReadouts: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 0.25,
-        alignItems: 'center',
-    },
-    masterValue: {
-        ...perfTokens.num,
-        textAlign: 'center',
-        color: 'primary.main',
+    masterMeterLabel: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        color: 'text.disabled',
     },
     masterPeakValue: {
-        ...perfTokens.num,
-        textAlign: 'center',
-        color: 'text.disabled',
-        // Visually subordinate to the main dB readout — kept xs intentionally
-        // even though `num` sets sm.
-        fontSize: perfTokens.fontSize.xs,
+        fontSize: '0.6875rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
     },
     masterTransport: {
         display: 'flex',
@@ -3070,8 +3081,8 @@ export const performancePanelStyles = {
     },
     // Transport (Play / Stop / Record): circular, filled with their colour.
     masterIconBtn: (color) => (theme) => ({
-        width: 28,
-        height: 28,
+        width: 42,
+        height: 42,
         borderRadius: RADIUS.pill,
         color: theme.palette.perf.label,
         backgroundColor: color,
@@ -3101,8 +3112,8 @@ export const performanceChannelStyles = {
         return {
             display: 'flex',
             flexDirection: 'column',
-            gap: 1.25,
-            p: 1.5,
+            gap: '14px',
+            p: 2,
             borderRadius: RADIUS.card,
             backgroundColor: tints[index % tints.length],
             boxShadow: playing ? theme.palette.fragmenta.shadowRaised : theme.palette.fragmenta.shadowSoft,
@@ -3119,14 +3130,14 @@ export const performanceChannelStyles = {
     },
     // Circular lane number in the lane colour; solid ink ring while playing.
     laneIndicator: (color, playing) => (theme) => ({
-        width: 22,
-        height: 22,
+        width: 28,
+        height: 28,
         flexShrink: 0,
         borderRadius: RADIUS.pill,
         display: 'grid',
         placeItems: 'center',
-        fontSize: perfTokens.fontSize.xs,
-        fontWeight: perfTokens.weight.bold,
+        fontSize: '0.75rem',
+        fontWeight: perfTokens.weight.heavy,
         fontVariantNumeric: 'tabular-nums',
         color: theme.palette.perf.label,
         backgroundColor: color,
@@ -3137,7 +3148,7 @@ export const performanceChannelStyles = {
     muteSoloRow: {
         display: 'flex',
         alignItems: 'center',
-        gap: 0.5,
+        gap: 1,
     },
     // M / S / SC: compact rounded rectangles on the control tone; their
     // active fills come from the palette's state colours.
@@ -3159,11 +3170,12 @@ export const performanceChannelStyles = {
     // Prompt sits directly on a slightly darker tone; no outline.
     promptField: (theme) => ({
         '& .MuiOutlinedInput-root': {
-            fontSize: perfTokens.fontSize.xs,
-            backgroundColor: `rgba(${theme.palette.fragmenta.bgRgb}, 0.55)`,
-            borderRadius: '12px',
+            fontSize: '0.8125rem',
+            padding: '11px 14px',
+            backgroundColor: ON_TINT,
+            borderRadius: '16px',
             transition: 'background-color 160ms ease',
-            '&:hover': { backgroundColor: `rgba(${theme.palette.fragmenta.bgRgb}, 0.75)` },
+            '&:hover': { backgroundColor: ON_TINT_HOVER },
             '&.Mui-focused': { backgroundColor: theme.palette.fragmenta.surface },
             '& textarea': {
                 lineHeight: 1.4,
@@ -3189,45 +3201,56 @@ export const performanceChannelStyles = {
     }),
     // Sec / Bars: a segmented control on the control tone; the selected
     // segment is the one place a fully rounded end is used.
-    segmented: (theme) => ({
+    segmented: {
         display: 'inline-flex',
         alignItems: 'center',
-        p: '2px',
+        p: '3px',
         gap: '2px',
-        height: '100%',
+        height: 34,
+        boxSizing: 'border-box',
         flexShrink: 0,
         borderRadius: RADIUS.control,
-        backgroundColor: theme.palette.fragmenta.control,
-    }),
+        backgroundColor: ON_TINT,
+    },
     segment: (color, active) => (theme) => ({
-        fontSize: perfTokens.fontSize.sm,
-        px: 0.9,
-        minWidth: 34,
-        height: '100%',
+        fontSize: '0.75rem',
+        px: 1.4,
+        height: 28,
         borderRadius: RADIUS.pill,
         bgcolor: active ? color : 'transparent',
         color: active ? theme.palette.perf.label : 'text.secondary',
         fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
-            bgcolor: active ? color : theme.palette.fragmenta.controlHover,
+            bgcolor: active ? color : ON_TINT_HOVER,
             color: 'text.primary',
         },
     }),
+    // The lane's length select, on the tint.
+    laneSelect: {
+        flex: 1,
+        '& .MuiOutlinedInput-root': {
+            height: 34,
+            borderRadius: '10px',
+            backgroundColor: ON_TINT,
+            '&:hover': { backgroundColor: ON_TINT_HOVER },
+        },
+        '& .MuiSelect-select': { lineHeight: '34px', fontSize: '0.75rem' },
+    },
     // The ×N batch select next to Generate: tonal, no outline.
     channelPillControl: (theme) => ({
         '& .MuiOutlinedInput-root': {
             fontFamily: 'inherit',
-            height: perfTokens.height.cta,
+            height: 40,
             borderRadius: RADIUS.control,
-            backgroundColor: theme.palette.fragmenta.control,
-            '&:hover': { backgroundColor: theme.palette.fragmenta.controlHover },
+            backgroundColor: ON_TINT,
+            '&:hover': { backgroundColor: ON_TINT_HOVER },
         },
         '& fieldset': { border: 'none' },
         '& .MuiSelect-select': {
             fontFamily: 'inherit',
-            padding: '0 28px 0 10px !important',
-            lineHeight: `${perfTokens.height.cta}px`,
+            padding: '0 26px 0 10px !important',
+            lineHeight: '40px',
             fontSize: perfTokens.fontSize.sm,
             fontWeight: perfTokens.weight.bold,
             fontVariantNumeric: 'tabular-nums',
@@ -3245,12 +3268,13 @@ export const performanceChannelStyles = {
             overflow: 'hidden',
             boxSizing: 'border-box',
             width: '100%',
-            height: perfTokens.height.cta,
+            minWidth: 96,
+            height: 40,
             px: 1.5,
-            borderRadius: RADIUS.control,
+            borderRadius: '14px',
             border: 'none',
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: 500,
+            fontSize: '0.8125rem',
+            fontWeight: 600,
             textTransform: 'none',
             cursor: disabled ? 'not-allowed' : 'pointer',
             transition: 'background-color 160ms ease, color 160ms ease, transform 160ms ease',
@@ -3258,14 +3282,14 @@ export const performanceChannelStyles = {
         if (disabled) {
             return {
                 ...base,
-                backgroundColor: theme.palette.fragmenta.control,
-                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.42)`,
+                backgroundColor: ON_TINT,
+                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.45)`,
             };
         }
         if (generating) {
             return {
                 ...base,
-                backgroundColor: theme.palette.fragmenta.control,
+                backgroundColor: ON_TINT,
                 color: theme.palette.perf.label,
                 animation: 'fragmenta-generate-pop 260ms cubic-bezier(0.16, 1, 0.3, 1)',
             };
@@ -3274,6 +3298,7 @@ export const performanceChannelStyles = {
             ...base,
             backgroundColor: color,
             color: theme.palette.perf.label,
+            boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
             '&:hover': { filter: 'brightness(0.97)' },
             '&:active': { transform: 'scale(0.98)' },
         };
@@ -3285,7 +3310,7 @@ export const performanceChannelStyles = {
         bottom: 0,
         width: `${Math.max(0, Math.min(100, progressPct))}%`,
         backgroundColor: color,
-        borderRadius: 'inherit',
+        borderRadius: '14px',
         transition: 'width 250ms ease-out',
         pointerEvents: 'none',
         zIndex: 0,
@@ -3301,13 +3326,66 @@ export const performanceChannelStyles = {
     },
     // Waveform: open and borderless on a faint veil, softly rounded. Not
     // clipped, so the loop brackets can sit on the very edges.
-    waveformWrap: (theme) => ({
+    // Waveform: a tall capsule. The waveform and its overlays sit in an
+    // inner box inset from the round ends (waveformInner), so nothing is
+    // clipped by the caps and the trim maths stays in one box.
+    waveformWrap: {
         position: 'relative',
-        height: 60,
-        borderRadius: '12px',
-        backgroundColor: `rgba(${theme.palette.fragmenta.bgRgb}, 0.5)`,
-        overflow: 'visible',
-        my: 0.25,
+        height: 96,
+        borderRadius: RADIUS.pill,
+        backgroundColor: 'rgba(255, 255, 255, 0.42)',
+        px: '18px',
+        boxSizing: 'border-box',
+    },
+    waveformInner: {
+        position: 'relative',
+        height: '100%',
+    },
+    // Loop in/out handle: a slim pill inset from the capsule's caps, with a
+    // wider invisible hit area.
+    trimHandle: (pos, deep) => ({
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: `calc(${pos * 100}% - 7px)`,
+        width: 14,
+        cursor: 'ew-resize',
+        touchAction: 'none',
+        zIndex: 2,
+        '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 20,
+            bottom: 20,
+            left: 5,
+            width: 4,
+            borderRadius: RADIUS.pill,
+            backgroundColor: deep,
+        },
+    }),
+    playhead: (t) => ({
+        position: 'absolute',
+        top: 12,
+        bottom: 12,
+        left: 0,
+        // '2px', not 2: sx reads numbers <= 1 as a percentage.
+        width: '2px',
+        ml: '-1px',
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.perf.label,
+        opacity: 0,
+        pointerEvents: 'none',
+        zIndex: 4,
+        '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: -6,
+            left: -4,
+            width: 10,
+            height: 10,
+            borderRadius: RADIUS.pill,
+            backgroundColor: t.palette.perf.label,
+        },
     }),
     // Outside the loop: the canvas tone laid over the waveform, so those
     // parts fade rather than go dark.
@@ -3321,7 +3399,7 @@ export const performanceChannelStyles = {
             content: '""',
             position: 'absolute',
             inset: 0,
-            borderRadius: '12px',
+            borderRadius: RADIUS.pill,
             pointerEvents: 'none',
             background: `linear-gradient(90deg, transparent 0%, ${color}99 50%, transparent 100%)`,
             backgroundSize: '50% 100%',
@@ -3364,12 +3442,9 @@ export const performanceChannelStyles = {
     // resizes as fragments accumulate.
     fragmentHistoryList: {
         flex: 1,
-        minHeight: 3 * 28 + 2,
+        minHeight: 3 * 38,
         height: 0,
         overflowY: 'auto',
-        p: '3px',
-        borderRadius: '12px',
-        backgroundColor: (t) => `rgba(${t.palette.fragmenta.bgRgb}, 0.35)`,
         display: 'flex',
         flexDirection: 'column',
         gap: '2px',
@@ -3379,24 +3454,23 @@ export const performanceChannelStyles = {
         textAlign: 'center',
         color: 'text.disabled',
         flex: 1,
-        minHeight: 3 * 28 + 2,
+        minHeight: 3 * 38,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: '12px',
-        backgroundColor: (t) => `rgba(${t.palette.fragmenta.bgRgb}, 0.35)`,
+        borderRadius: '14px',
+        backgroundColor: 'rgba(255, 255, 255, 0.3)',
     },
-    fragmentRow: (color, isCommitted, isAuditioning) => (theme) => ({
+    fragmentRow: (soft, isCommitted, isAuditioning) => () => ({
         display: 'flex',
         alignItems: 'center',
-        gap: 0.25,
-        px: 0.5,
-        minHeight: 26,
-        borderRadius: RADIUS.small,
-        bgcolor: isCommitted ? `${color}AA` : 'transparent',
-        '&:hover': {
-            bgcolor: isCommitted ? color : (isAuditioning ? `${color}66` : `rgba(${theme.palette.fragmenta.bgRgb}, 0.6)`),
-        },
+        gap: 0.75,
+        pl: '5px',
+        pr: 1.25,
+        minHeight: 36,
+        borderRadius: '14px',
+        bgcolor: isCommitted || isAuditioning ? soft : 'transparent',
+        '&:hover': { bgcolor: isCommitted || isAuditioning ? soft : ON_TINT },
         '& .frag-reorder': { opacity: 0, transition: 'opacity 120ms ease' },
         '&:hover .frag-reorder, &:focus-within .frag-reorder': { opacity: 1 },
         transition: 'background-color 160ms ease',
@@ -3436,13 +3510,13 @@ export const performanceChannelStyles = {
             : { color: 'text.secondary', opacity: 0.85 },
     }),
     // Audition: the row's small circular play indicator.
-    fragmentPlayBtn: (active) => (theme) => ({
-        width: 20,
-        height: 20,
+    fragmentPlayBtn: (active, loaded) => (theme) => ({
+        width: 26,
+        height: 26,
         borderRadius: RADIUS.pill,
         color: theme.palette.perf.label,
-        backgroundColor: active ? theme.palette.fragmenta.surface : `rgba(${theme.palette.fragmenta.bgRgb}, 0.65)`,
-        boxShadow: active ? theme.palette.fragmenta.shadowSoft : 'none',
+        backgroundColor: active || loaded ? theme.palette.fragmenta.surface : 'rgba(255, 255, 255, 0.55)',
+        boxShadow: active || loaded ? `0 1px 3px rgba(${theme.palette.fragmenta.inkRgb}, 0.14)` : 'none',
         transition: 'background-color 160ms ease',
         '&:hover': { bgcolor: theme.palette.fragmenta.surface },
     }),
@@ -3462,8 +3536,17 @@ export const performanceChannelStyles = {
         overflow: 'hidden',
     },
     fragmentOrdinal: {
-        ...perfTokens.num,
-        fontWeight: perfTokens.weight.bold,
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        color: 'text.primary',
+        flexShrink: 0,
+    },
+    fragmentLoaded: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
         color: 'text.primary',
         flexShrink: 0,
     },
@@ -3490,7 +3573,8 @@ export const performanceChannelStyles = {
         },
     },
     fragmentDuration: {
-        ...perfTokens.num,
+        fontSize: '0.6875rem',
+        fontVariantNumeric: 'tabular-nums',
         color: 'text.secondary',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
@@ -3508,9 +3592,8 @@ export const performanceChannelStyles = {
     },
     knobsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
         gap: 0.5,
-        pt: 0.5,
     },
     // "-12 st" / "+12 st" either side of the pitch knob.
     pitchRangeLabel: {
@@ -3529,25 +3612,25 @@ export const performanceChannelStyles = {
     // Play: a circle on the control tone; filled with the lane colour while
     // playing.
     transportBtn: (color, playing) => (theme) => ({
-        width: 26,
-        height: 26,
+        width: 36,
+        height: 36,
         borderRadius: RADIUS.pill,
         color: theme.palette.perf.label,
         backgroundColor: playing ? color : theme.palette.fragmenta.surface,
-        boxShadow: theme.palette.fragmenta.shadowSoft,
+        boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.08), 0 4px 10px rgba(${theme.palette.fragmenta.inkRgb}, 0.08)`,
         transition: 'background-color 160ms ease',
         '&:hover': { backgroundColor: playing ? color : theme.palette.fragmenta.paperHi },
         '&.Mui-disabled': { color: 'text.disabled', boxShadow: 'none', backgroundColor: 'transparent' },
     }),
-    loopBtn: (color, active) => (theme) => ({
-        width: 24,
-        height: 24,
+    loopBtn: (soft, active) => (theme) => ({
+        width: 30,
+        height: 30,
         borderRadius: RADIUS.pill,
         color: active ? theme.palette.perf.label : 'text.secondary',
-        backgroundColor: active ? color : 'transparent',
+        backgroundColor: active ? soft : 'transparent',
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
-            backgroundColor: active ? color : theme.palette.fragmenta.control,
+            backgroundColor: active ? soft : ON_TINT,
             color: 'text.primary',
         },
     }),
@@ -3556,7 +3639,7 @@ export const performanceChannelStyles = {
         flex: 1,
         height: 6,
         mt: 0.75,
-        backgroundColor: theme.palette.fragmenta.control,
+        backgroundColor: 'rgba(255, 255, 255, 0.55)',
         boxShadow: `inset 0 1px 1px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
         borderRadius: RADIUS.pill,
         position: 'relative',
@@ -3565,28 +3648,28 @@ export const performanceChannelStyles = {
         alignItems: 'center',
     }),
     // Full width; the lane reveals it with a clip-path (see the meter tick).
-    meterFill: (color) => (theme) => ({
+    meterFill: (color, deep) => (theme) => ({
         width: '100%',
         height: '100%',
         clipPath: 'inset(0 100% 0 0)',
         borderRadius: RADIUS.pill,
-        background: `linear-gradient(90deg, ${color} 0%, ${color} 72%, ${theme.palette.fragmenta.accents.warm} 86%, ${theme.palette.error.main} 100%)`,
+        background: `linear-gradient(90deg, ${color} 0%, ${deep} 82%, ${theme.palette.error.main} 100%)`,
     }),
 };
 
 // M / S / SC button: compact rounded rectangle, filled with `fill` when on.
 function smallToggle(theme, active, fill) {
     return {
-        width: perfTokens.height.sub,
-        height: perfTokens.height.sub,
-        fontSize: perfTokens.fontSize.sm,
+        width: 28,
+        height: 28,
+        fontSize: '0.6875rem',
         fontWeight: 700,
         borderRadius: RADIUS.small,
         color: active ? theme.palette.perf.label : 'text.secondary',
-        backgroundColor: active ? fill : theme.palette.fragmenta.control,
+        backgroundColor: active ? fill : ON_TINT,
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
-            backgroundColor: active ? fill : theme.palette.fragmenta.controlHover,
+            backgroundColor: active ? fill : ON_TINT_HOVER,
             color: 'text.primary',
         },
     };
