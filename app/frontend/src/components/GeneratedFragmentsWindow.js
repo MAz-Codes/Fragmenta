@@ -47,6 +47,9 @@ function relativeTime(createdAt) {
 // revoked.
 const preloadCache = new Map();      // key -> { blob, blobUrl }
 const preloadInFlight = new Set();   // keys with a fetch outstanding
+// Preloads that failed (file gone, server error): they count as settled, so
+// one missing file can't hold the whole list behind the loading screen.
+const preloadFailed = new Set();
 const PRELOAD_CACHE_MAX = 150;
 
 const preloadKeyOf = (frag) => frag.filename || String(frag.id);
@@ -115,6 +118,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
             const key = preloadKeyOf(frag);
             if (preloadCache.has(key)) return;      // already preloaded
             if (preloadInFlight.has(key)) return;
+            if (preloadFailed.has(key)) return;
             if (!frag.audioUrl) return;
             preloadInFlight.add(key);
             fetch(frag.audioUrl)
@@ -132,6 +136,8 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 })
                 .catch((err) => {
                     console.warn(`Fragment preload failed (${frag.filename || frag.id}):`, err);
+                    preloadFailed.add(key);
+                    if (!cancelled) setLoadedTick((t) => t + 1);
                 })
                 .finally(() => {
                     preloadInFlight.delete(key);
@@ -148,7 +154,8 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
     const effectiveUrl = (frag) => preloadCache.get(preloadKeyOf(frag))?.blobUrl || frag.audioUrl;
     const isFragmentReady = (frag) => !!frag.audioBlob || preloadCache.has(preloadKeyOf(frag));
 
-    const readyCount = fragments.filter(isFragmentReady).length;
+    const isSettled = (frag) => isFragmentReady(frag) || preloadFailed.has(preloadKeyOf(frag)) || !frag.audioUrl;
+    const readyCount = fragments.filter(isSettled).length;
     const allReady = fragments.length === 0 || readyCount === fragments.length;
 
     // Safety buffer: once everything reports ready, keep the loading overlay
@@ -360,7 +367,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                         <TitleIcon size={20} />
                     </Box>
                     <Typography variant="h6" sx={generatedFragmentsWindowStyles.titleText}>
-                        Generated Fragments
+                        Generated fragments
                     </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -460,7 +467,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                         return (
                             <ListItem
                                 key={fragment.id}
-                                sx={generatedFragmentsWindowStyles.listItem}
+                                sx={generatedFragmentsWindowStyles.listItem(isPlaying)}
                             >
                                 <IconButton
                                     size="small"
@@ -468,8 +475,11 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     aria-label={isPlaying ? 'Stop' : 'Play'}
                                     sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
                                 >
-                                    {isPlaying ? <StopIcon size={16} /> : <PlayIcon size={16} />}
+                                    {isPlaying ? <StopIcon size={14} fill="currentColor" /> : <PlayIcon size={14} fill="currentColor" />}
                                 </IconButton>
+
+                                <Box sx={generatedFragmentsWindowStyles.rowBody}>
+                                <Box sx={generatedFragmentsWindowStyles.rowTop}>
 
                                 {/* The prompt text is the row's drag handle (the waveform
                                     next to it scrubs). One drag carries both payloads:
@@ -535,14 +545,20 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                         {fragment.prompt}
                                     </Typography>
                                 </Box>
+                                <Typography component="span" sx={generatedFragmentsWindowStyles.metaText}>
+                                    {[fragment.duration ? `${Math.round(Number(fragment.duration))} s` : null, ago].filter(Boolean).join(' · ')}
+                                </Typography>
+                                </Box>
 
                                 <GenerationWaveform
                                     blob={effectiveBlob(fragment)}
                                     audioUrl={effectiveUrl(fragment)}
+                                    height={40}
                                     currentTime={isPlaying ? playingTime : 0}
                                     duration={audioRefs.current[fragment.id]?.duration || fragment.duration || 0}
                                     onSeek={(frac) => handleSeek(fragment, frac)}
                                 />
+                                </Box>
 
                                 <Tooltip
                                     title={

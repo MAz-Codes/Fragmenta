@@ -1959,8 +1959,26 @@ export const appStyles = {
     durationRow: {
         display: 'flex',
         alignItems: 'center',
-        gap: { xs: 1, sm: 2 },
-        mb: 2,
+        gap: 2,
+        mb: 2.5,
+    },
+    // Small caps field label (DURATION, PROMPT …).
+    fieldCaps: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: 'text.secondary',
+        minWidth: 64,
+    },
+    // A value readout set in the display face (10 s, 64%).
+    bigValue: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '0.95rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        minWidth: 44,
+        textAlign: 'right',
     },
     generatingWrap: {
         mb: 3,
@@ -2002,10 +2020,9 @@ export const appStyles = {
         gap: 1,
         mb: 1.5,
     },
+    // Card titles stand alone (no icon), as in the design.
     sectionCardIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
+        display: 'none',
     },
     // Layout glue only — typography is owned by the Tier-1 (h6) variant.
     // Leaving fontWeight here would override the canonical 600.
@@ -2309,17 +2326,14 @@ export const audioUploadRowStyles = {
 };
 
 export const generatedFragmentsWindowStyles = {
-    // Theme-driven coloring — MuiPaper handles bg/border/shadow.
-    // Card grows with content up to a sensible cap, then scrolls.
     rootPaper: {
-        p: 2,
+        p: 3,
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 2.5,
-        // Tall enough to show ~9 rows before scrolling. Min keeps the empty
-        // state from collapsing the layout when no fragments exist yet.
+        borderRadius: RADIUS.card,
+        // Min keeps the empty state from collapsing the layout.
         minHeight: 240,
-        maxHeight: 520,
+        maxHeight: 640,
     },
     headerRow: {
         display: 'flex',
@@ -2333,17 +2347,20 @@ export const generatedFragmentsWindowStyles = {
         gap: 1,
         minWidth: 0,
     },
-    titleIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
-    },
+    titleIcon: { display: 'none' },
     titleText: {},  // typography handled by the h6 variant in theme
-    countText: {
+    countText: (t) => ({
         fontWeight: 600,
         minWidth: 20,
-        textAlign: 'right',
-    },
+        height: 26,
+        px: 1.25,
+        display: 'inline-flex',
+        alignItems: 'center',
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.control,
+        color: 'text.primary',
+        fontVariantNumeric: 'tabular-nums',
+    }),
     emptyState: {
         display: 'flex',
         alignItems: 'center',
@@ -2354,50 +2371,65 @@ export const generatedFragmentsWindowStyles = {
     listRoot: {
         flex: 1,
         overflow: 'auto',
-        // Each row is ~40px (single-line layout); cap so the card height
-        // never exceeds rootPaper.maxHeight regardless of fragment count.
         p: 0,
-        '& .MuiListItem-root': {
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 1.5,
-            mb: 0.75,
-            bgcolor: 'background.default',
-            '&:last-child': { mb: 0 },
-        },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
     },
-    // One-row, Spotify-style layout:
-    //   [▶]   prompt text (ellipsis)    Xs · ago    (i)   [⬇]
-    listItem: {
+    // [▶]  prompt · 10 s · 4 min ago        [i] [⬇] [📁] [🗑]
+    //      ⟨ capsule waveform ⟩
+    listItem: (isPlaying) => (t) => ({
         display: 'flex',
         alignItems: 'center',
+        gap: 1.5,
+        p: '10px 12px 10px 10px',
+        borderRadius: '20px',
+        backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
+        transition: 'background-color 160ms ease',
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.7)` },
+    }),
+    rowBody: {
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+    },
+    rowTop: {
+        display: 'flex',
+        alignItems: 'baseline',
         gap: 1,
-        py: 0.5,
-        px: 1,
-        minHeight: 40,
+        minWidth: 0,
     },
     fragmentMeta: {
         flex: 1,
         minWidth: 0,
     },
     fragmentPrompt: {
+        fontSize: '0.8125rem',
         fontWeight: 500,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
     },
-    batchTag: {
+    metaText: {
+        flexShrink: 0,
+        fontSize: '0.6875rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+    },
+    batchTag: (t) => ({
         display: 'inline-block',
         fontWeight: 700,
         fontSize: '0.7rem',
-        px: 0.5,
-        py: 0,
+        px: 0.75,
         mr: 0.75,
-        borderRadius: 0.75,
-        bgcolor: 'action.selected',
+        borderRadius: RADIUS.pill,
+        bgcolor: t.palette.fragmenta.control,
         color: 'text.secondary',
         fontVariantNumeric: 'tabular-nums',
-    },
+    }),
     fragmentMetaInline: {
         flexShrink: 0,
         whiteSpace: 'nowrap',
@@ -2407,23 +2439,25 @@ export const generatedFragmentsWindowStyles = {
         display: 'inline-flex',
         alignItems: 'center',
         color: 'text.secondary',
-        opacity: 0.5,
+        opacity: 0.6,
         cursor: 'help',
         transition: 'opacity 150ms ease',
-        '&:hover': { opacity: 0.95 },
+        '&:hover': { opacity: 1 },
     },
-    playPauseButton: (isPlaying) => (muiTheme) => ({
+    // Play: a 40 px circle, ivory with a soft shadow; the cool pastel while playing.
+    playPauseButton: (isPlaying) => (t) => ({
         flexShrink: 0,
-        border: '1px solid',
-        borderColor: isPlaying
-            ? 'primary.main'
-            : (muiTheme.palette.mode === 'dark' ? 'rgba(194, 207, 228, 0.22)' : 'rgba(15, 23, 42, 0.2)'),
-        color: isPlaying ? 'primary.main' : 'inherit',
+        width: 40,
+        height: 40,
+        color: t.palette.text.primary,
+        backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
+        boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
     }),
     downloadButton: {
         flexShrink: 0,
         color: 'text.secondary',
-        '&:hover': { color: 'primary.main' },
+        '&:hover': { color: 'text.primary' },
     },
     hiddenAudio: {
         display: 'none',

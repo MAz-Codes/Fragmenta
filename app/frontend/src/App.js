@@ -1448,7 +1448,7 @@ function App() {
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <SlidersIcon size={20} />
                                                     </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Training Configuration</Typography>
+                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Train a LoRA</Typography>
                                                 </Box>
 
                                                 <TextField
@@ -1643,7 +1643,7 @@ function App() {
 
                                                 <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -2133,7 +2133,7 @@ function App() {
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <SparklesIcon size={20} />
                                                     </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio Generation</Typography>
+                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio generation</Typography>
                                                 </Box>
 
                                                 <Box sx={appStyles.generationModelRow}>
@@ -2308,9 +2308,9 @@ function App() {
                                                 <TextField
                                                     fullWidth
                                                     multiline
-                                                    minRows={1}
-                                                    maxRows={4}
-                                                    label="Generation Prompt"
+                                                    minRows={3}
+                                                    maxRows={6}
+                                                    label="Prompt"
                                                     placeholder="Describe the audio you want to generate..."
                                                     value={generationPrompt}
                                                     onChange={(e) => setGenerationPrompt(e.target.value)}
@@ -2321,8 +2321,8 @@ function App() {
 
                                                 <Tooltip title={TIPS.generate.duration}>
                                                 <Box sx={appStyles.durationRow}>
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Desired Duration (seconds):
+                                                    <Typography component="span" sx={appStyles.fieldCaps}>
+                                                        Duration
                                                     </Typography>
                                                     <Slider
                                                         value={generationDuration}
@@ -2330,18 +2330,18 @@ function App() {
                                                         min={1}
                                                         max={getMaxDuration()}
                                                         step={1}
-                                                        marks
                                                         valueLabelDisplay="auto"
+                                                        aria-label="Duration in seconds"
                                                     />
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        {generationDuration}s
+                                                    <Typography component="span" sx={appStyles.bigValue}>
+                                                        {generationDuration} s
                                                     </Typography>
                                                 </Box>
                                                 </Tooltip>
 
                                                 <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>

@@ -76,7 +76,7 @@ export default function TrainingMonitor({
                         <ActivityIcon size={20} />
                     </Box>
                     <Typography variant="h6" sx={trainingMonitorStyles.headerTitle}>
-                        Training Monitor
+                        Monitor
                     </Typography>
                 </Box>
                 <Box sx={trainingMonitorStyles.statusInline}>
