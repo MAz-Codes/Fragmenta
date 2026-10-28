@@ -2534,7 +2534,7 @@ function App() {
                                                         })()}
                                                         sx={appStyles.generateButton}
                                                     >
-                                                        Generate Audio
+                                                        Generate audio
                                                     </Button>
                                                 )}
 

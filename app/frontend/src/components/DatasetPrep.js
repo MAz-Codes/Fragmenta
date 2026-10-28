@@ -64,7 +64,7 @@ import {
 import api from '../api';
 import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
-import { appStyles } from '../theme';
+import { appStyles, datasetStyles } from '../theme';
 
 // Shared caveat for the switch/close confirms — the edits aren't lost, they
 // just aren't durable yet, and that distinction is the whole point of asking.
@@ -806,13 +806,13 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                             />
                         </Box>
 
-                        <Paper
-                            variant="outlined"
+                        <Box
                             sx={{
                                 width: { xs: '100%', lg: 300 },
                                 flex: 'none',
-                                borderRadius: 2.5,
-                                overflow: 'hidden',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 2,
                                 // Sticky so the tools stay reachable while a
                                 // few hundred clips scroll past.
                                 position: { lg: 'sticky' },
@@ -839,7 +839,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                 onError={(msg) => setError(msg)}
                                 requestConfirm={setConfirm}
                             />
-                        </Paper>
+                        </Box>
                     </Box>
 
                     <audio
@@ -1251,8 +1251,8 @@ function InspectorRail({
                     <span style={{ display: 'flex' }}>
                         <Button
                             variant="contained"
-                            color="warm"
-                            size="small"
+                            color="primary"
+                            size="medium"
                             fullWidth
                             startIcon={annotateStarting
                                 ? <CircularProgress size={16} color="inherit" />
@@ -1576,7 +1576,10 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <Stack direction="row" spacing={2} alignItems="center" sx={{ flex: 1, minWidth: 240 }}>
                 <Box>
-                    <Typography variant="h6">Project: &ldquo;{project.name}&rdquo;</Typography>
+                    {/* overline / h5: the page normalises body/caption sizes, so
+                        these use variants it leaves alone. */}
+                    <Typography component="div" variant="overline" sx={datasetStyles.kicker}>Project</Typography>
+                    <Typography component="h2" variant="h5" sx={datasetStyles.projectName}>{project.name}</Typography>
                     <Typography variant="body2" color="text.secondary">
                         {project.clip_count} clip{project.clip_count === 1 ? '' : 's'}
                         {' · '}{stateLabel}
@@ -1624,12 +1627,13 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
                     <span>
                         <Button
                             variant="contained"
+                            color="success"
                             size="small"
                             startIcon={<DatasetIcon size={16} />}
                             onClick={onCommit}
                             disabled={disabled || !project.dirty}
                         >
-                            Create Dataset
+                            Create dataset
                         </Button>
                     </span>
                 </Tooltip>
@@ -1657,22 +1661,13 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
 function RailSection({ title, icon, defaultOpen = true, badge, children }) {
     const [open, setOpen] = useState(defaultOpen);
     return (
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+        <Box sx={datasetStyles.railCard}>
             <ButtonBase
                 onClick={() => setOpen((o) => !o)}
                 aria-expanded={open}
-                sx={{
-                    width: '100%',
-                    px: 1.5,
-                    py: 1.15,
-                    gap: 1,
-                    justifyContent: 'flex-start',
-                    color: 'text.primary',
-                    '&:hover': { bgcolor: 'action.hover' },
-                }}
+                sx={datasetStyles.railHeader}
             >
-                <Box component="span" sx={{ display: 'flex', color: 'text.secondary' }}>{icon}</Box>
-                <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, textAlign: 'left' }}>
+                <Typography component="h3" variant="subtitle1" sx={datasetStyles.railTitle}>
                     {title}
                 </Typography>
                 {badge}
@@ -1689,7 +1684,7 @@ function RailSection({ title, icon, defaultOpen = true, badge, children }) {
                 </Box>
             </ButtonBase>
             <Collapse in={open} unmountOnExit>
-                <Stack spacing={1.25} sx={{ px: 1.5, pb: 1.75, pt: 0.25 }}>
+                <Stack spacing={1.5} sx={{ px: 2.25, pb: 2.25, pt: 0.25 }}>
                     {children}
                 </Stack>
             </Collapse>
@@ -1857,29 +1852,32 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
             return;
         }
 
+        // Soft envelope under exact bars (slicing needs the real peaks); the
+        // played part in the deep accent, the rest dimmed.
         const barCount = peaks.length;
-        const barWidth = Math.max(1, w / barCount - 1);
+        const deep = theme.palette.perf.channelsDeep[0];
+        const midY = h / 2;
+        const scale = (h - 4) / 2;
+        ctx.beginPath();
+        ctx.moveTo(0, midY);
+        for (let i = 0; i < barCount; i++) ctx.lineTo((i + 0.5) * (w / barCount), midY - peaks[i] * scale);
+        ctx.lineTo(w, midY);
+        for (let i = barCount - 1; i >= 0; i--) ctx.lineTo((i + 0.5) * (w / barCount), midY + peaks[i] * scale);
+        ctx.closePath();
+        ctx.fillStyle = `${deep}2E`;
+        ctx.fill();
         const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
-        // Match the Generated-Fragments waveforms: the accent for the played
-        // portion, dimmed (35% alpha) for the rest.
-        const playedColor = theme.palette.primary.main;
-        const restColor = `${playedColor}59`;
-
+        const barWidth = Math.max(1, Math.min(2, w / barCount - 1.5));
         for (let i = 0; i < barCount; i++) {
-            const v = peaks[i];
-            const barH = Math.max(1, v * (h - 2));
-            const x = i * (w / barCount);
-            const y = (h - barH) / 2;
-            ctx.fillStyle = i <= playedIdx ? playedColor : restColor;
-            ctx.fillRect(x, y, barWidth, barH);
+            const barH = Math.max(1, peaks[i] * (h - 4));
+            const x = (i + 0.5) * (w / barCount) - barWidth / 2;
+            ctx.fillStyle = i <= playedIdx ? theme.palette.primary.main : `${deep}73`;
+            ctx.fillRect(x, (h - barH) / 2, barWidth, barH);
         }
-
-        // Playhead: bars are only 80 buckets wide, so a hairline is what makes
-        // the position readable enough to scrub against.
         if (isActive) {
             const px = Math.min(w - 1, Math.max(0, progress * w));
-            ctx.fillStyle = playedColor;
-            ctx.fillRect(px, 0, 1, h);
+            ctx.fillStyle = theme.palette.text.primary;
+            ctx.fillRect(px - 0.75, 1, 1.5, h - 2);
         }
     }, [peaks, isActive, progress, theme]);
 
@@ -1902,7 +1900,7 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
     // room out of the table, and the file name has to survive on one line.
     // The waveform still reads fine at this size.
     return (
-        <Box sx={{ width: 100, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
+        <Box sx={[datasetStyles.waveCapsule, { opacity: failed ? 0.3 : 1 }]}>
             <canvas
                 ref={canvasRef}
                 style={{
@@ -1949,9 +1947,9 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
         );
     }
     return (
-        <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+        <Box>
             <TableContainer>
-                <Table size="small">
+                <Table size="small" sx={datasetStyles.clipTable}>
                     <TableHead>
                         <TableRow>
                             <TableCell padding="checkbox">
@@ -1990,7 +1988,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                     </TableBody>
                 </Table>
             </TableContainer>
-        </Paper>
+        </Box>
     );
 }
 
@@ -2006,7 +2004,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
     const dirty = draft !== clip.prompt;
 
     return (
-        <TableRow hover selected={selected}>
+        <TableRow hover selected={selected} sx={datasetStyles.clipRow(isPlaying)}>
             <TableCell padding="checkbox">
                 <Checkbox
                     size="small"
@@ -2014,44 +2012,50 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                     onChange={() => onToggleSelected && onToggleSelected(clip.file_name)}
                 />
             </TableCell>
-            <TableCell sx={{ wordBreak: 'break-all' }}>
-                <Stack direction="row" alignItems="center" spacing={1}>
+            <TableCell>
+                <Stack direction="row" alignItems="center" spacing={1.5}>
                     <IconButton
                         size="small"
                         onClick={() => onPlayToggle(clip.file_name)}
-                        sx={{ width: 28, height: 28 }}
+                        aria-label={isPlaying ? `Pause ${clip.file_name}` : `Play ${clip.file_name}`}
+                        sx={datasetStyles.playButton(isPlaying)}
                     >
-                        {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+                        {isPlaying ? <PauseIcon size={13} fill="currentColor" /> : <PlayIcon size={13} fill="currentColor" />}
                     </IconButton>
-                    <Waveform
-                        projectName={projectName}
-                        fileName={clip.file_name}
-                        isActive={isPlaying}
-                        progress={playProgress}
-                        onSeek={onSeek}
-                    />
-                    {/* overflowWrap rather than break-all: a name only breaks
-                        when it genuinely can't fit, instead of splitting
-                        "…04.wav" across lines the moment it's close. */}
-                    <Typography
-                        variant="body2"
-                        title={clip.file_name}
-                        sx={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}
-                    >
-                        {clip.file_name}
-                    </Typography>
+                    <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
+                        {/* overflowWrap rather than break-all: a name only breaks
+                            when it genuinely can't fit. */}
+                        <Typography
+                            variant="body2"
+                            title={clip.file_name}
+                            sx={datasetStyles.fileName}
+                        >
+                            {clip.file_name}
+                        </Typography>
+                        <Waveform
+                            projectName={projectName}
+                            fileName={clip.file_name}
+                            isActive={isPlaying}
+                            progress={playProgress}
+                            onSeek={onSeek}
+                        />
+                    </Stack>
                 </Stack>
             </TableCell>
             <TableCell>
                 <TextField
                     fullWidth
                     size="small"
-                    variant="standard"
+                    multiline
+                    minRows={2}
+                    maxRows={4}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onBlur={() => { if (dirty) onPromptChange(clip.file_name, draft); }}
-                    placeholder="(empty — write a prompt or auto-annotate)"
+                    placeholder="No prompt yet: write one or auto-annotate"
                     disabled={disabled}
+                    inputProps={{ 'aria-label': `Prompt for ${clip.file_name}` }}
+                    sx={datasetStyles.promptField(!draft.trim())}
                 />
             </TableCell>
             <TableCell sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -2061,7 +2065,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onAnnotate(clip.file_name)}
                             disabled={disabled}
-                            sx={{ color: 'warm.main', '&:hover': { color: 'warm.light', bgcolor: 'action.hover' } }}
+                            aria-label={`Auto-annotate ${clip.file_name}`}
+                            sx={datasetStyles.rowAction}
                         >
                             <WandSparkles size={16} />
                         </IconButton>
@@ -2073,6 +2078,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onSlice(clip.file_name)}
                             disabled={disabled}
+                            aria-label={`Slice ${clip.file_name}`}
+                            sx={datasetStyles.rowAction}
                         >
                             <ScissorsIcon size={16} />
                         </IconButton>
@@ -2084,6 +2091,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onDelete(clip.file_name)}
                             disabled={disabled}
+                            aria-label={`Remove ${clip.file_name}`}
+                            sx={datasetStyles.rowAction}
                         >
                             <TrashIcon size={16} />
                         </IconButton>

@@ -2271,6 +2271,121 @@ export const appToolbarStyles = {
     }),
 };
 
+// Dataset workbench: project header, clip rows, rail cards.
+export const datasetStyles = {
+    kicker: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.1em',
+        textTransform: 'uppercase',
+        lineHeight: 1.4,
+        color: 'text.secondary',
+    },
+    projectName: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.75rem',
+        fontWeight: 600,
+        letterSpacing: '-0.02em',
+        lineHeight: 1.15,
+        my: 0.25,
+    },
+    // Clip list: rows with soft rounded backgrounds instead of rule lines.
+    clipTable: (t) => ({
+        borderCollapse: 'separate',
+        borderSpacing: '0 4px',
+        '& th': {
+            borderBottom: 'none',
+            fontSize: '0.625rem',
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: t.palette.text.secondary,
+            py: 0.75,
+        },
+        '& td': { borderBottom: 'none', py: 1.25, verticalAlign: 'middle' },
+        '& td:first-of-type': { borderRadius: '18px 0 0 18px' },
+        '& td:last-of-type': { borderRadius: '0 18px 18px 0' },
+    }),
+    clipRow: (isPlaying) => (t) => ({
+        '& td': {
+            backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
+            transition: 'background-color 160ms ease',
+        },
+        '&.MuiTableRow-hover:hover td': {
+            backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.8)`,
+        },
+        '&.Mui-selected td, &.Mui-selected:hover td': { backgroundColor: t.palette.fragmenta.control },
+    }),
+    playButton: (isPlaying) => (t) => ({
+        width: 36,
+        height: 36,
+        flexShrink: 0,
+        color: t.palette.text.primary,
+        backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
+        boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
+    }),
+    fileName: {
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+        lineHeight: 1.35,
+    },
+    waveCapsule: (t) => ({
+        width: '100%',
+        maxWidth: 260,
+        height: 36,
+        flexShrink: 0,
+        boxSizing: 'border-box',
+        px: '9px',
+        borderRadius: RADIUS.pill,
+        backgroundColor: `rgba(${t.palette.fragmenta.bgRgb}, 0.8)`,
+    }),
+    // A clip's prompt: tonal; rose-tinted while empty.
+    promptField: (empty) => (t) => ({
+        '& .MuiOutlinedInput-root': {
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            py: 1,
+            px: 1.5,
+            backgroundColor: empty ? t.palette.perf.laneTints[1] : t.palette.fragmenta.control,
+            '&:hover': { backgroundColor: empty ? t.palette.perf.laneTints[1] : t.palette.fragmenta.controlHover },
+        },
+        '& textarea::placeholder': { color: t.palette.perf.channelsDeep[1], opacity: 1 },
+    }),
+    rowAction: {
+        width: 30,
+        height: 30,
+        color: 'text.secondary',
+        '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.control },
+    },
+    // Rail: each tool is its own soft card.
+    railCard: (t) => ({
+        borderRadius: '22px',
+        backgroundColor: t.palette.fragmenta.surface,
+        boxShadow: t.palette.fragmenta.shadowSoft,
+        overflow: 'hidden',
+    }),
+    railHeader: {
+        width: '100%',
+        px: 2.25,
+        py: 1.75,
+        gap: 1,
+        justifyContent: 'flex-start',
+        color: 'text.primary',
+        '&:hover': { backgroundColor: (t) => `rgba(${t.palette.fragmenta.bgRgb}, 0.5)` },
+    },
+    railTitle: {
+        flex: 1,
+        textAlign: 'left',
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.0625rem',
+        fontWeight: 600,
+        letterSpacing: '-0.01em',
+    },
+};
+
 export const tabPanelStyles = {
     root: {
         px: 0,
