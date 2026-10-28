@@ -41,6 +41,15 @@ Every local edit carries a `# Fragmenta:` comment in the code.
 - `scripts/pre_encode_dataset.py` — `caption_metadata_fn` imports `Path`
   locally (spawn-based workers); `volume_norm=True` so cached latents match
   training.
+  - Encodes each clip at its own length (`pad=args.pad or batch_size > 1`)
+    instead of padding every clip to `--sample_size` first: a 30 s clip cost
+    a 285 s encode (SAME-S on CPU 16 s → 1.7 s; SAME-L on GPU 3.7 → 0.6 s).
+    Latents match the padded encode within CPU/GPU noise except the last few
+    frames. 2026-10-27.
+  - `--chunked`: `ae.encode(..., chunked=True)` for the clips and the
+    silence latent, so SAME-L without CUDA stays at ~7.3 GB for any length
+    (the unchunked 285 s silence encode alone was OOM-killed on 30 GB).
+    Fragmenta passes it for SAME-L when CUDA is unavailable. 2026-10-27.
 - `stable_audio_3/models/transformer.py` — use flash-attn only for CUDA
   tensors; CPU/MPS fall through to the SDPA path instead of crashing when
   flash-attn is installed.

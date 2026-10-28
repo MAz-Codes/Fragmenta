@@ -246,6 +246,11 @@ def _update_job(project_name: str, **fields: Any) -> None:
         job.update(fields)
 
 
+def _silence_cache_path(cfg, ae: str, sample_size: int) -> Path:
+    """Where the padding latent for this encoder + window is kept between runs."""
+    return cfg.get_path("models_pretrained") / "sa3" / "silence_latents" / f"{ae}-{int(sample_size)}.npy"
+
+
 def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     """Background-thread target. Spawns the SA3 pre_encode_dataset.py script,
     streams stdout for progress, writes a _meta.json manifest on success."""
@@ -265,6 +270,12 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
         "--batch_size", "1",
         "--sample_size", str(int(sample_size)),
     ]
+    # SAME-L without a CUDA GPU (CPU, Mac): encode in chunks, so memory stays
+    # ~7.4 GB whatever the clip length (a 285 s clip was OOM-killed on a
+    # 30 GB box). SAME-S is quick on CPU and chunking costs it accuracy.
+    import torch
+    if ae == "same-l" and not torch.cuda.is_available():
+        cmd.append("--chunked")
 
     env = os.environ.copy()
     pp = env.get("PYTHONPATH", "")
@@ -300,6 +311,13 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     clips = captioned_clips(proj_dir)
     cmd += ["--filelist", str(write_filelist(proj_dir, clips, out_dir / "clips.txt"))]
     _update_job(project_name, total=len(clips))
+
+    # The vendor script first encodes a full window of silence (the padding
+    # latent) unless silence.npy exists: ~3 min for SAME-L on CPU, every run.
+    # It depends only on the encoder and the window, so reuse the last one.
+    silence_cache = _silence_cache_path(cfg, ae, sample_size)
+    if silence_cache.exists():
+        shutil.copyfile(silence_cache, out_dir / "silence.npy")
 
     _update_job(project_name, state="running", phase="loading")
     logger.info(
@@ -365,6 +383,13 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
                 rc, project_name, "\n".join(tail),
             )
             return
+
+        if not silence_cache.exists() and (out_dir / "silence.npy").exists():
+            try:
+                silence_cache.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(out_dir / "silence.npy", silence_cache)
+            except OSError as exc:
+                logger.warning("Couldn't cache the silence latent: %s", exc)
 
         manifest = {
             "autoencoder": ae,

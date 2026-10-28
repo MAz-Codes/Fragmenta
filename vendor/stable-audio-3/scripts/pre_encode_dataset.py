@@ -70,6 +70,12 @@ def main(args):
         # Fragmenta: normalize to -16 LUFS at encode time so the cached latents
         # match what train_lora.py produces (which also sets volume_norm=True).
         volume_norm=True,
+        # Fragmenta: encode each clip at its own length when encoding one at a
+        # time, instead of padding every clip to --sample_size first (a 30 s
+        # clip cost a 285 s encode: 9x slower on CPU, and SAME-L ran out of
+        # memory). Latents match the padded encode to within CPU/GPU noise
+        # except the last few frames. Batches still need equal lengths.
+        pad=args.pad or args.batch_size > 1,
     )
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -91,7 +97,7 @@ def main(args):
         if args.model_half:
             silence_audio = silence_audio.half()
         with torch.no_grad():
-            silence_latent = ae.encode(silence_audio, ae.sample_rate)
+            silence_latent = ae.encode(silence_audio, ae.sample_rate, chunked=args.chunked)  # Fragmenta: --chunked
         np.save(silence_path, silence_latent.cpu().numpy())
 
     for nb, (audio, metadata) in enumerate(loader):
@@ -105,7 +111,7 @@ def main(args):
         if args.model_half:
             audio = audio.half()
 
-        latents = ae.encode(audio, ae.sample_rate)
+        latents = ae.encode(audio, ae.sample_rate, chunked=args.chunked)  # Fragmenta: --chunked
 
         for i, latent in enumerate(latents):
             latent_np = latent.cpu().numpy()
@@ -170,6 +176,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model_half", action="store_true", help="Run autoencoder in fp16"
+    )
+    # Fragmenta: overlapping-chunk encoding keeps memory flat for long clips
+    # (SAME-L on CPU: ~7.4 GB at any length, and linear time).
+    parser.add_argument(
+        "--chunked", action="store_true", help="Encode in overlapping chunks to bound memory"
     )
     parser.add_argument(
         "--pad", action="store_true", help="Pad audio samples to --sample_size"

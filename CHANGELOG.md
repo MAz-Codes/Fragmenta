@@ -28,6 +28,10 @@ All notable changes to Fragmenta are listed here. The format follows
   used in training; before, they showed in the Dataset tab but were skipped.
 
 ### Fixed
+- Pre-encoding is much faster and lighter: each clip is encoded at its own
+  length instead of the model's full window. Medium (SAME-L) pre-encoding
+  now works without an NVIDIA GPU (CPU, Mac) in about 7 GB of memory;
+  before, it could run out of memory.
 - Clips without a prompt are left out of pre-encoding and training. Before,
   each one was replaced by a copy of another clip (so some clips counted
   twice) or trained with an empty prompt.
