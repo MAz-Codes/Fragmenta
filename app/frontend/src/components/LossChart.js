@@ -35,7 +35,7 @@ function smoothEMA(values, alpha) {
     return out;
 }
 
-export default function LossChart({ data, width = 600, height = 200 }) {
+export default function LossChart({ data, checkpoints = [], width = 600, height = 200 }) {
     const [hover, setHover] = useState(null);
     const theme = useTheme();
     const padding = lossChartStyles.padding;
@@ -44,6 +44,9 @@ export default function LossChart({ data, width = 600, height = 200 }) {
         grid: theme.palette.divider,
         axis: theme.palette.text.disabled,
         line: theme.palette.primary.main,
+        area: theme.palette.fragmenta.accents.cool,
+        checkpoint: theme.palette.fragmenta.accents.warm,
+        checkpointRing: theme.palette.fragmenta.section,
         tooltipBg: theme.palette.text.primary,
         tooltipBorder: theme.palette.divider,
         tooltipText: theme.palette.background.paper,
@@ -71,6 +74,18 @@ export default function LossChart({ data, width = 600, height = 200 }) {
 
     const points = data.map(d => `${xScale(d.step)},${yScale(d.loss)}`).join(' ');
     const smoothedPoints = data.map((d, i) => `${xScale(d.step)},${yScale(smoothed[i])}`).join(' ');
+    // Area under the smoothed curve, down to the plot floor.
+    const floorY = height - padding.bottom;
+    const areaPath = `M ${xScale(data[0].step)},${floorY} L ${smoothedPoints.split(' ').join(' L ')} L ${xScale(data[data.length - 1].step)},${floorY} Z`;
+    // Checkpoints inside the plotted range, placed on the smoothed curve.
+    const nearestIndex = (step) => {
+        let best = 0;
+        for (let i = 1; i < data.length; i++) if (Math.abs(data[i].step - step) < Math.abs(data[best].step - step)) best = i;
+        return best;
+    };
+    const markers = checkpoints
+        .filter((st) => st >= xMin && st <= xMax)
+        .map((st) => ({ x: xScale(st), y: yScale(smoothed[nearestIndex(st)]) }));
 
     const yTicks = 4;
     const xTicks = Math.min(5, data.length);
@@ -101,7 +116,7 @@ export default function LossChart({ data, width = 600, height = 200 }) {
                 return (
                     <g key={`y${i}`}>
                         <line x1={padding.left} x2={width - padding.right} y1={y} y2={y}
-                            stroke={colors.grid} strokeDasharray="3 3" />
+                            stroke={colors.grid} />
                         <text x={padding.left - 6} y={y + 4} textAnchor="end"
                             fontSize={axisFontSize} fill={colors.axis}>{v.toFixed(3)}</text>
                     </g>
@@ -119,11 +134,23 @@ export default function LossChart({ data, width = 600, height = 200 }) {
                 );
             })}
 
+            <defs>
+                <linearGradient id="loss-area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors.area} stopOpacity="0.6" />
+                    <stop offset="100%" stopColor={colors.area} stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            <path d={areaPath} fill="url(#loss-area)" />
+
             {/* Raw loss as a faint background trace (the "peaky" curve). */}
             <polyline fill="none" stroke={colors.line} strokeWidth="1" strokeOpacity="0.25" points={points} />
 
             {/* EMA-smoothed loss as the primary trace. */}
-            <polyline fill="none" stroke={colors.line} strokeWidth="2.5" points={smoothedPoints} />
+            <polyline fill="none" stroke={colors.line} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" points={smoothedPoints} />
+
+            {markers.map((m, i) => (
+                <circle key={i} cx={m.x} cy={m.y} r="5" fill={colors.checkpoint} stroke={colors.checkpointRing} strokeWidth="2" />
+            ))}
 
             {hover && (
                 <g>

@@ -1740,11 +1740,13 @@ export const appStyles = {
         flexDirection: 'column',
         minHeight: { xs: 'auto', md: 0 },
         overflow: 'visible',
-        '& .MuiTypography-body1, & .MuiTypography-body2, & .MuiTypography-caption, & .MuiTypography-subtitle2': {
+        // Defaults only: :where() keeps these at zero extra specificity, so a
+        // component's own sx size (big readouts, labels) still wins.
+        '& :where(.MuiTypography-body1, .MuiTypography-body2, .MuiTypography-caption, .MuiTypography-subtitle2)': {
             fontSize: muiTheme.typography.body2.fontSize,
             lineHeight: muiTheme.typography.body2.lineHeight,
         },
-        '& .MuiButton-startIcon svg, & .MuiButton-endIcon svg, & .MuiIconButton-root svg, & .MuiAccordionSummary-expandIconWrapper svg': {
+        '& :where(.MuiButton-startIcon svg, .MuiButton-endIcon svg, .MuiIconButton-root svg, .MuiAccordionSummary-expandIconWrapper svg)': {
             width: 20,
             height: 20,
         },
@@ -2586,8 +2588,8 @@ export const trainingMonitorStyles = {
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 2.5,
-        transition: 'all 0.3s ease',
+        gap: 2.25,
+        borderRadius: RADIUS.card,
     },
     headerRow: {
         display: 'flex',
@@ -2595,74 +2597,83 @@ export const trainingMonitorStyles = {
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: 1,
-        mb: 2,
     },
     headerTitleWrap: {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
     },
-    headerIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
-    },
+    headerIcon: { display: 'none' },
     headerTitle: {},  // typography handled by the h6 variant in theme
-    statusInline: {
+    // Status pill: tinted by state (training warm, done sage, error rose).
+    statusInline: (status) => (t) => ({
         display: 'flex',
         alignItems: 'center',
-        gap: 0.75,
-        px: 1,
-        py: 0.35,
-        borderRadius: 999,
-        border: '1px solid',
-        borderColor: 'divider',
-        bgcolor: 'background.default',
-    },
+        gap: 1,
+        height: 30,
+        px: 1.5,
+        borderRadius: RADIUS.pill,
+        backgroundColor: status === 'live'
+            ? t.palette.fragmenta.accents.warm
+            : status === 'complete'
+                ? t.palette.fragmenta.accents.fresh
+                : status === 'error'
+                    ? t.palette.fragmenta.accents.hot
+                    : t.palette.fragmenta.control,
+    }),
     statusDot: (status, animate = false) => ({
         width: 8,
         height: 8,
         borderRadius: '50%',
-        bgcolor: status === 'live'
-            ? 'success.main'
-            : status === 'error'
-                ? 'error.main'
-                : status === 'complete'
-                    ? 'primary.main'
-                    : 'text.secondary',
-        animation: animate ? 'pulse 2s infinite' : 'none',
-        '@keyframes pulse': {
+        bgcolor: 'text.primary',
+        opacity: status === 'idle' ? 0.45 : 1,
+        animation: animate ? 'fragmenta-status-pulse 2s infinite' : 'none',
+        '@keyframes fragmenta-status-pulse': {
             '0%': { opacity: 1 },
-            '50%': { opacity: 0.5 },
+            '50%': { opacity: 0.35 },
             '100%': { opacity: 1 },
         },
     }),
-    statusText: (status) => ({
-        color: status === 'live'
-            ? 'success.main'
-            : status === 'error'
-                ? 'error.main'
-                : status === 'complete'
-                    ? 'primary.main'
-                    : 'text.secondary',
+    statusText: () => ({
+        color: 'text.primary',
         fontWeight: 600,
-        letterSpacing: '0.03em',
-        textTransform: 'uppercase',
-        fontSize: { xs: '0.64rem', sm: '0.7rem' },
+        fontSize: '0.75rem',
         lineHeight: 1,
     }),
     progressSection: {
-        mb: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.25,
     },
     progressHeader: {
         display: 'flex',
-        justifyContent: 'space-between',
-        mb: 1,
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        gap: 1.5,
     },
-    progressBar: {
-        height: 8,
-        borderRadius: 4,
+    bigPercent: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '3rem',
+        fontWeight: 600,
+        letterSpacing: '-0.03em',
+        lineHeight: 1,
+        fontVariantNumeric: 'tabular-nums',
     },
+    stepText: {
+        fontSize: '0.8125rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+    },
+    progressBar: (t) => ({
+        height: 10,
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.control,
+        boxShadow: `inset 0 1px 2px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '& .MuiLinearProgress-bar': {
+            borderRadius: RADIUS.pill,
+            backgroundImage: `linear-gradient(90deg, ${t.palette.perf.channelsSoft[3]}, ${t.palette.fragmenta.accents.warm} 60%, ${t.palette.perf.channelsDeep[3]})`,
+        },
+    }),
     deviceSection: {
         mb: 2,
     },
@@ -2670,22 +2681,51 @@ export const trainingMonitorStyles = {
         fontSize: { xs: '0.74rem', sm: '0.8rem' },
         mt: 0.5,
     },
+    // Four tonal tiles: Loss, Checkpoints, Phase, Seed.
     metricsGrid: {
-        mb: 2,
+        display: 'grid',
+        gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
+        gap: 1,
     },
-    lossSection: {
-        mb: 2,
+    metricTile: (t) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0.5,
+        p: 1.5,
+        borderRadius: '16px',
+        backgroundColor: t.palette.fragmenta.section,
+    }),
+    metricLabel: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'text.secondary',
     },
+    metricValue: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.25rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.2,
+    },
+    lossSection: (t) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1,
+        p: 2,
+        pb: 1.25,
+        borderRadius: '20px',
+        backgroundColor: t.palette.fragmenta.section,
+    }),
     lossChartBox: {
         height: 200,
         width: '100%',
     },
     lossDisclaimer: {
         display: 'block',
-        mt: 0.75,
-        fontStyle: 'italic',
         lineHeight: 1.4,
-        opacity: 0.75,
+        color: 'text.secondary',
     },
     errorAlert: {
         mb: 2,

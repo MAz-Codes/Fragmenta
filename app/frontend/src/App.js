@@ -1453,7 +1453,7 @@ function App() {
 
                                                 <TextField
                                                     fullWidth
-                                                    label="Fine-tuned Model Name"
+                                                    label="Name"
                                                     value={trainingConfig.modelName}
                                                     onChange={(e) => setTrainingConfig({
                                                         ...trainingConfig,
@@ -1463,7 +1463,7 @@ function App() {
                                                 />
 
                                                 <Box sx={appStyles.fieldMarginBottom}>
-                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                    <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
                                                         Dataset
                                                     </Typography>
                                                     {trainingProjects.length === 0 ? (
@@ -1570,8 +1570,8 @@ function App() {
                                                 </Box>
 
                                                 <Box sx={appStyles.fieldMarginBottom}>
-                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                                                        Base model to fine-tune
+                                                    <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
+                                                        Base model
                                                     </Typography>
                                                     <Select
                                                         fullWidth
