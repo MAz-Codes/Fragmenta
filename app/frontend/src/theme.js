@@ -66,19 +66,19 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#EBEAE3', ink: '#24261F',
+        name: 'Linen', bg: '#E8E3DB', ink: '#24261F',
         cool: '#45B8F5', warm: '#FFC65E', fresh: '#86A77C', hot: '#D7A29C',   // sky, golden yellow, sage green, dusty red
         // Hand-tuned over the derived values.
         exact: {
-            surface: '#F8F7F3', control: '#E4E3DB', controlHover: '#DAD9D0', section: '#F0EFE9',
-            textDim: '#3B3D35', textFaint: '#55574E', navSelected: '#C9E4EE',
-            amber: '#096BA0', amberHi: '#0B84C4', amberLo: '#075681',
+            surface: '#F7F4EF', control: '#ECE7E0', controlHover: '#E3DED5', section: '#F0ECE5',
+            textDim: '#3B3D35', textFaint: '#55574E', navSelected: '#BAD7E2',
+            amber: '#08679A', amberHi: '#0A7FBE', amberLo: '#07527A',
         },
         lanes: {
-            tints: ['#C0DDE8', '#E3CFC8', '#CDD6C4', '#F1DEB8'],
-            playing: ['#AFD8E9', '#E2C9C2', '#C5D1BC', '#F3DBAB'],
-            deep: ['#096FA5', '#A44C42', '#526D49', '#9C6500'],
-            soft: ['#90CFED', '#DFBFB8', '#AEC2A5', '#F7D493'],
+            tints: ['#BED8E2', '#E2CAC3', '#CED3C1', '#EFDAB3'],
+            playing: ['#ADD4E4', '#E0C5BE', '#C7CFBB', '#F2D7A7'],
+            deep: ['#096CA1', '#A04B41', '#516C49', '#996300'],
+            soft: ['#8ECBE9', '#DEBCB5', '#ADBFA2', '#F6D290'],
         },
     },
 };
@@ -88,8 +88,8 @@ export const DEFAULT_PALETTE = 'linen';
 // controls compact, 999 only for selected states and circular precision
 // controls. px strings so they don't multiply by theme.shape.borderRadius.
 // Controls sitting on a lane's tint.
-export const ON_TINT = 'rgba(248, 247, 243, 0.72)';
-export const ON_TINT_HOVER = 'rgba(248, 247, 243, 0.92)';
+export const ON_TINT = 'rgba(247, 244, 239, 0.72)';
+export const ON_TINT_HOVER = 'rgba(247, 244, 239, 0.92)';
 export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
