@@ -25,6 +25,7 @@ import {
     InputAdornment,
     Popover,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
@@ -75,12 +76,8 @@ const LINK_OFFSET_MIN = -200;
 const LINK_OFFSET_MAX = 500;
 
 const CHANNEL_COUNT = 4;
-const MASTER_COLOR = '#35C2D4';
-// Transport colors (original): Play uses the master cyan, Stop the error red,
-// Record its own red — kept as icon-only buttons.
-const RECORD_COLOR = '#E5484D';   // record red
-const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
-const PLAY_COLOR = '#35C2D4';     // master cyan
+// Master, transport and Link/MIDI colours come from the palette
+// (theme.palette.perf): pastel fills with ink labels.
 const MASTER_DB_MIN = -60;
 // +6 dB of boost headroom above unity; the fader taper (faderLaw) puts unity
 // at ~80% of throw, not the very top.
@@ -158,6 +155,7 @@ function PerformancePanelInner({
     // at full frame rate behind every other tab.
     active = true,
 }) {
+    const perfColors = useTheme().palette.perf;
     const {
         session, updateGlobal, updateChannel, cancelPendingPersist,
     } = usePerformanceSession(CHANNEL_COUNT);
@@ -1081,22 +1079,22 @@ function PerformancePanelInner({
                                 // alone), on/peers → teal (sync'd with at least
                                 // one other app).
                                 bgcolor: !linkEnabled
-                                    ? '#6e6e6e'
+                                    ? perfColors.toggleOff
                                     : linkPeers > 0
-                                        ? MASTER_COLOR
-                                        : '#F5C542',
-                                color: linkEnabled ? '#000' : '#2a2a2a',
+                                        ? perfColors.master
+                                        : perfColors.toggleOn,
+                                color: perfColors.label,
                                 opacity: linkInstalling ? 0.55 : 1,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
                                     bgcolor: !linkEnabled
-                                        ? '#7d7d7d'
+                                        ? perfColors.toggleOffHover
                                         : linkPeers > 0
-                                            ? '#4DD0DE'
-                                            : '#FFD54F',
+                                            ? perfColors.masterHover
+                                            : perfColors.toggleOnHover,
                                 },
                                 '&.Mui-disabled': {
-                                    color: linkEnabled ? '#000' : '#2a2a2a',
+                                    color: perfColors.label,
                                 },
                             }}
                         >
@@ -1200,15 +1198,15 @@ function PerformancePanelInner({
                                 minWidth: 38,
                                 height: perfTokens.height.compact,
                                 borderRadius: '2px',
-                                bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
-                                color: midi?.learnMode ? '#000' : '#2a2a2a',
+                                bgcolor: midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff,
+                                color: perfColors.label,
                                 opacity: midi?.supported ? 1 : 0.45,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
-                                    bgcolor: midi?.learnMode ? '#FFD54F' : '#7d7d7d',
+                                    bgcolor: midi?.learnMode ? perfColors.toggleOnHover : perfColors.toggleOffHover,
                                 },
                                 '&.Mui-disabled': {
-                                    color: '#2a2a2a',
+                                    color: perfColors.label,
                                 },
                             }}
                         >
@@ -1629,7 +1627,7 @@ function PerformancePanelInner({
                                 onClick={handlePlayAll}
                                 disabled={!anyLoaded}
                                 aria-label="Play All"
-                                sx={styles.masterIconBtn(PLAY_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.play)}
                             >
                                 <PlayAllIcon size={14} fill="currentColor" />
                             </IconButton>
@@ -1644,7 +1642,7 @@ function PerformancePanelInner({
                                 onClick={handleStopAll}
                                 disabled={!anyPlaying}
                                 aria-label="Stop All"
-                                sx={styles.masterIconBtn(STOP_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.stop)}
                             >
                                 <StopAllIcon size={14} fill="currentColor" />
                             </IconButton>
@@ -1662,7 +1660,7 @@ function PerformancePanelInner({
                                 disableRipple
                                 onClick={handleToggleRecord}
                                 aria-label={recording ? 'Stop recording' : 'Record performance'}
-                                sx={styles.masterIconBtn(RECORD_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.record)}
                             >
                                 {recording
                                     ? <StopAllIcon size={14} fill="currentColor" />
@@ -1743,9 +1741,9 @@ function PerformancePanelInner({
                     ))}
                 </Box>
 
-                <Box sx={styles.masterStrip(MASTER_COLOR)}>
-                    <Box sx={styles.masterHeader(MASTER_COLOR)}>
-                        <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
+                <Box sx={styles.masterStrip(perfColors.master)}>
+                    <Box sx={styles.masterHeader(perfColors.master)}>
+                        <Box sx={styles.masterBadge(perfColors.master)}>Master</Box>
                     </Box>
 
                     {/* Middle group — fader+meter (fixed height) plus the
@@ -1762,7 +1760,7 @@ function PerformancePanelInner({
                     }}>
                         <Box sx={styles.masterFaderWrap}>
                             <Box sx={styles.masterMeterTrack}>
-                                <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
+                                <Box ref={meterFillRef} sx={styles.masterMeterFill(perfColors.master)} />
                                 <Box sx={styles.masterMeterSegments} />
                             </Box>
                             <MidiMappable
@@ -1800,7 +1798,7 @@ function PerformancePanelInner({
                                     max={1}
                                     step={0.002}
                                     marks={[{ value: FADER_UNITY_POS }]}
-                                    sx={styles.masterFader(MASTER_COLOR)}
+                                    sx={styles.masterFader(perfColors.master)}
                                 />
                             </MidiMappable>
                         </Box>
@@ -1829,7 +1827,7 @@ function PerformancePanelInner({
                         flexDirection: 'column',
                         gap: 0.75,
                         pt: 0.75,
-                        borderTop: `1px solid ${MASTER_COLOR}33`,
+                        borderTop: `1px solid ${perfColors.master}33`,
                     }}>
                         <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
                             <Select
@@ -2180,16 +2178,16 @@ function PerformancePanelInner({
                                 px: 1,
                                 borderRadius: 1.5,
                                 border: '1px solid',
-                                borderColor: promptInjectBpm ? MASTER_COLOR : theme.palette.divider,
-                                backgroundColor: promptInjectBpm ? MASTER_COLOR : 'transparent',
-                                color: promptInjectBpm ? '#0c1018' : 'text.disabled',
+                                borderColor: promptInjectBpm ? perfColors.master : theme.palette.divider,
+                                backgroundColor: promptInjectBpm ? perfColors.master : 'transparent',
+                                color: promptInjectBpm ? perfColors.label : 'text.disabled',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: perfTokens.weight.bold,
                                 fontVariantNumeric: 'tabular-nums',
                                 transition: 'background-color 120ms, color 120ms, border-color 120ms',
                                 '&:hover': {
-                                    backgroundColor: promptInjectBpm ? MASTER_COLOR : 'action.hover',
-                                    color: promptInjectBpm ? '#0c1018' : 'text.secondary',
+                                    backgroundColor: promptInjectBpm ? perfColors.master : 'action.hover',
+                                    color: promptInjectBpm ? perfColors.label : 'text.secondary',
                                 },
                             })}
                         >

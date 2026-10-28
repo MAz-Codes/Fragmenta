@@ -9,6 +9,7 @@ import {
     MenuItem,
     ButtonBase,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
@@ -37,21 +38,10 @@ import { PERFORMANCE_VARIATION } from '../features';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
 import RotaryKnob from './RotaryKnob';
 
-const CHANNEL_COLORS = [
-    // Original introduction palette. Ch1 teal, ch2 violet, ch3 green, ch4 amber.
-    // Light enough that the black label text on active toggles stays legible.
-    // Slots 4–7 are spares (only 4 channels render).
-    '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
-    '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
-];
-
-// Cue-point marker. Deliberately NOT the theme's success green: ch3 is already
-// green (#53C18A), so a green cue disappeared on that strip and read as washed
-// out on the others. Red is unused by the four rendering channels and sits far
-// enough from teal/violet/green in hue to stay unambiguous; these are tuned for
-// legibility both over the dimmed out-of-region overlays and over a bright
-// waveform peak. Paired with a dark drop-shadow for the same reason.
-const CUE_COLOR = { dark: '#FF453A', light: '#D92D20' };
+// Channel and cue-point colours come from the palette (theme.palette.perf):
+// ch1–ch4 are its four pastels, labels on them in ink; the cue marker is the
+// deepened "hot" accent, which no channel uses, so it stays visible on every
+// strip. Paired with a dark drop-shadow for legibility over waveform peaks.
 const CUE_SHADOW = 'drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9))';
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
@@ -123,7 +113,8 @@ export default function PerformanceChannel({
     // keepMounted) — pauses this channel's meter RAF loop.
     panelActive = true,
 }) {
-    const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
+    const perfColors = useTheme().palette.perf;
+    const color = perfColors.channels[index % perfColors.channels.length];
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
@@ -1327,14 +1318,14 @@ export default function PerformanceChannel({
                         {/* Cue guide — only drawn once the cue is off the
                             in-point, where the loop bracket's own line
                             already marks the spot. Red like the handle
-                            (CUE_COLOR), so the two read as one marker rather
+                            (the palette's cue colour), so the two read as one marker rather
                             than a third loop bracket. */}
                         {launchStart !== null && (
                             <Box sx={(t) => ({
                                 position: 'absolute', top: 0, bottom: 0,
                                 left: `calc(${launchStart * 100}% - 1px)`,
                                 width: 2,
-                                backgroundColor: CUE_COLOR[t.palette.mode] || CUE_COLOR.dark,
+                                backgroundColor: t.palette.perf.cue,
                                 filter: CUE_SHADOW,
                                 pointerEvents: 'none',
                                 zIndex: 2,
@@ -1364,7 +1355,7 @@ export default function PerformanceChannel({
                                         bottom: 0, left: 3,
                                         borderTop: '4px solid transparent',
                                         borderBottom: '4px solid transparent',
-                                        borderLeft: `7px solid ${CUE_COLOR[t.palette.mode] || CUE_COLOR.dark}`,
+                                        borderLeft: `7px solid ${t.palette.perf.cue}`,
                                         opacity: launchStart !== null ? 1 : 0.85,
                                     },
                                 })}

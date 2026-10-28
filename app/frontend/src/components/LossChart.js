@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTheme } from '@mui/material/styles';
 import { lossChartStyles } from '../theme';
 
 // Bias-corrected exponential moving average — same math as the EMA used in
@@ -36,8 +37,17 @@ function smoothEMA(values, alpha) {
 
 export default function LossChart({ data, width = 600, height = 200 }) {
     const [hover, setHover] = useState(null);
+    const theme = useTheme();
     const padding = lossChartStyles.padding;
-    const colors = lossChartStyles.colors;
+    // Palette colours: ink tooltip with paper text, accent line.
+    const colors = {
+        grid: theme.palette.divider,
+        axis: theme.palette.text.disabled,
+        line: theme.palette.primary.main,
+        tooltipBg: theme.palette.text.primary,
+        tooltipBorder: theme.palette.divider,
+        tooltipText: theme.palette.background.paper,
+    };
     const axisFontSize = lossChartStyles.axisFontSize;
     const tooltip = lossChartStyles.tooltip;
 

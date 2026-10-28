@@ -69,13 +69,13 @@ function InfoViewBar({ hint }) {
                     // text to stay readable over any content behind it.
                     backgroundColor: theme.palette.mode === 'dark'
                         ? 'rgba(20, 22, 24, 0.55)'
-                        : 'rgba(248, 243, 234, 0.62)',
+                        : `rgba(${theme.palette.fragmenta.glassRgb}, 0.62)`,
                     backdropFilter: 'blur(16px) saturate(160%)',
                     WebkitBackdropFilter: 'blur(16px) saturate(160%)',
                     border: `1px solid ${theme.palette.divider}`,
                     boxShadow: theme.palette.mode === 'dark'
                         ? '0 8px 28px rgba(0,0,0,0.5)'
-                        : '0 8px 28px rgba(43,31,18,0.16)',
+                        : `0 8px 28px rgba(${theme.palette.fragmenta.inkRgb}, 0.16)`,
                     animation: 'fragmenta-fade-up 240ms cubic-bezier(0.16, 1, 0.3, 1)',
                 })}
             >

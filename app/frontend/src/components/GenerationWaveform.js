@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { Box } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
-const DEFAULT_COLOR = '#279FBB';
 // Fixed, low waveform resolution — matches the dataset-page waveforms
 // (/peaks?n=80). Decoding to a constant bucket count (instead of one pair per
 // pixel) means the decode runs once per clip rather than re-running on every
@@ -24,7 +24,7 @@ const PEAK_COUNT = 80;
  *   currentTime: number          — playback head position in seconds.
  *   duration:    number          — total length in seconds.
  *   height:      number          — canvas height in px (default 28).
- *   color:       string          — accent color (default theme amber).
+ *   color:       string          — accent color (default: the theme's primary).
  *   onSeek:      (fraction) => void — called with 0..1 on click / drag.
  */
 export default function GenerationWaveform({
@@ -33,9 +33,11 @@ export default function GenerationWaveform({
     currentTime = 0,
     duration = 0,
     height = 28,
-    color = DEFAULT_COLOR,
+    color: colorProp,
     onSeek,
 }) {
+    const theme = useTheme();
+    const color = colorProp || theme.palette.primary.main;
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
     const scrubbingRef = useRef(false);

@@ -1860,10 +1860,10 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         const barCount = peaks.length;
         const barWidth = Math.max(1, w / barCount - 1);
         const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
-        // Match the Generated-Fragments waveforms: teal accent for the played
+        // Match the Generated-Fragments waveforms: the accent for the played
         // portion, dimmed (35% alpha) for the rest.
-        const playedColor = '#279FBB';
-        const restColor = '#279FBB59';
+        const playedColor = theme.palette.primary.main;
+        const restColor = `${playedColor}59`;
 
         for (let i = 0; i < barCount; i++) {
             const v = peaks[i];

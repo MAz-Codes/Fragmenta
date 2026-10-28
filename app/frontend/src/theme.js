@@ -54,36 +54,132 @@ const DARK = {
     warning:   '#E3A34B',
 };
 
-// --- Paper (light) palette --------------------------------------------------
-const LIGHT = {
-    bg:        '#F2EDE3',      // lighter cream — less amber, closer to warm white
-    bgElev:    '#F6F1E8',
-    paper:     '#F8F3EA',
-    paperHi:   '#FBF6EE',
-    divider:   'rgba(43, 31, 18, 0.16)',
-    text:      '#2B1F12',      // warm dark brown
-    textDim:   '#4D3F2A',      // darker for ~7:1 contrast on cream
-    textFaint: '#7A6A50',      // bumped from #9C8B70 for ~4.5:1
-    // "amber" is a legacy token name — the accent is actually a deep
-    // cyan that mirrors dark mode. Cream + gold read as muddy yellow-on-
-    // amber; cyan gives the accents real separation from the warm paper.
-    amber:     '#1F7E94',      // deep cyan accent for legibility on cream
-    amberHi:   '#2DA0BC',
-    amberLo:   '#155F71',
-    // Warm complement on cream — same hue family as dark mode but deeper
-    // for legibility against the warm-paper background.
-    warm:      '#C97A1A',      // deeper golden amber for cream
-    warmHi:    '#E59334',
-    warmLo:    '#9C5C0F',
-    // Deep navy for moon-icon / night cues on light mode — needs strong
-    // contrast against the warm cream paper.
-    night:     '#1F3A5F',
-    blue:      '#3B6E9B',
-    blueDim:   '#5E8FB8',
-    success:   '#2E8A52',
-    error:     '#B84E45',      // deeper red for cream legibility
-    warning:   '#B47318',
+// --- Palettes ----------------------------------------------------------------
+// One light palette at a time (no dark mode). Each is a cream background, an
+// ink for text and icons, and four pastel accents in fixed roles:
+//   cool    → the main accent (primary: buttons, sliders, links, focus)
+//   warm    → "active / in progress" (generation, training, Link/MIDI on)
+//   fresh   → success and the secondary cue
+//   hot     → errors, Record, the cue point
+// Pastels fill large surfaces with ink text on them (5–6:1). Where an accent
+// must read as text or a thin line on the cream, a deepened shade of the same
+// hue is used instead (`deepen`, below).
+export const PALETTES = {
+    linen: {
+        name: 'Linen', bg: '#F1EDE2', ink: '#373A30',
+        cool: '#A9B7D8', warm: '#D9B778', fresh: '#B5BE91', hot: '#D6A1A8',   // periwinkle, ochre, sage moss, dusty rose
+    },
+    chalk: {
+        name: 'Chalk', bg: '#F7F3E9', ink: '#353A35',
+        cool: '#91BFD0', warm: '#E8B94F', fresh: '#A8C6A0', hot: '#E78C78',   // pool blue, lemon butter, sea glass, tomato cream
+    },
 };
+export const DEFAULT_PALETTE = 'linen';
+
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const rgbHex = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+const mixHex = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return rgbHex(A.map((v, i) => v + (B[i] - v) * t)); };
+const rgbStr = (h) => hexRgb(h).join(', ');
+const luminance = (h) => {
+    const [r, g, b] = hexRgb(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+const hslToHex = (h, s, l) => {
+    const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+    return rgbHex([0, 8, 4].map((n) => 255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))));
+};
+const hexHsl = (hex) => {
+    const [r, g, b] = hexRgb(hex).map((v) => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+    if (!d) return [0, 0, l];
+    const s = d / (1 - Math.abs(2 * l - 1));
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(h * 60 + 360) % 360, s, l];
+};
+// Same hue and saturation, darker until it reaches `target` contrast on `bg`.
+const deepen = (hex, bg, target) => {
+    const [h, s, l] = hexHsl(hex);
+    for (let L = l; L > 0; L -= 0.002) {
+        const c = hslToHex(h, s, L);
+        if (contrast(c, bg) >= target) return c;
+    }
+    return '#000000';
+};
+// The ink mixed toward the background, as light as `target` contrast allows.
+const inkAt = (ink, bg, target) => {
+    for (let t = 1; t >= 0; t -= 0.01) {
+        const c = mixHex(ink, bg, t);
+        if (contrast(c, bg) >= target) return c;
+    }
+    return ink;
+};
+
+function paletteTokens(P) {
+    const white = '#FFFFFF';
+    const t = {
+        name: P.name,
+        bg: P.bg,
+        bgElev: mixHex(P.bg, white, 0.3),
+        paper: mixHex(P.bg, white, 0.45),
+        paperHi: mixHex(P.bg, white, 0.6),
+        bgTop: mixHex(P.bg, white, 0.4),
+        bgBottom: mixHex(P.bg, P.ink, 0.06),
+        divider: `rgba(${rgbStr(P.ink)}, 0.16)`,
+        text: P.ink,
+        textDim: inkAt(P.ink, P.bg, 7),
+        textFaint: inkAt(P.ink, P.bg, 4.5),
+        onAccent: mixHex(P.bg, white, 0.8),
+        // Primary: deepened cool accent (text and thin lines stay legible).
+        amber: deepen(P.cool, P.bg, 4.5),
+        amberHi: deepen(P.cool, P.bg, 3),
+        amberLo: deepen(P.cool, P.bg, 6),
+        warm: deepen(P.warm, P.bg, 3),
+        warmHi: P.warm,
+        warmLo: deepen(P.warm, P.bg, 4.5),
+        night: deepen(P.cool, P.bg, 6),
+        blue: deepen(P.fresh, P.bg, 4.5),
+        blueDim: deepen(P.fresh, P.bg, 3),
+        blueLo: deepen(P.fresh, P.bg, 6),
+        success: deepen(P.fresh, P.bg, 4.5),
+        successHi: deepen(P.fresh, P.bg, 3),
+        successLo: deepen(P.fresh, P.bg, 6),
+        error: deepen(P.hot, P.bg, 4.5),
+        errorHi: deepen(P.hot, P.bg, 3),
+        errorLo: deepen(P.hot, P.bg, 6),
+        warning: deepen(P.warm, P.bg, 4.5),
+        accents: { cool: P.cool, warm: P.warm, fresh: P.fresh, hot: P.hot },
+    };
+    Object.assign(t, {
+        inkRgb: rgbStr(P.ink),
+        amberRgb: rgbStr(t.amber),
+        warmRgb: rgbStr(t.warm),
+        errorRgb: rgbStr(t.error),
+        bgRgb: rgbStr(P.bg),
+        glassRgb: rgbStr(mixHex(P.bg, white, 0.35)),
+        glassHiRgb: rgbStr(mixHex(P.bg, white, 0.6)),
+        hiRgb: rgbStr(t.onAccent),
+    });
+    // Performance tab: pastel fills with ink labels.
+    t.perf = {
+        channels: [P.cool, P.hot, P.fresh, P.warm, P.cool, P.hot, P.fresh, P.warm],
+        master: P.cool,
+        masterHover: mixHex(P.cool, white, 0.25),
+        play: P.cool,
+        stop: P.warm,
+        record: t.errorHi,
+        cue: t.error,
+        toggleOn: P.warm,
+        toggleOnHover: mixHex(P.warm, white, 0.25),
+        toggleOff: mixHex(P.ink, P.bg, 0.55),
+        toggleOffHover: mixHex(P.ink, P.bg, 0.45),
+        label: P.ink,
+        midiMappedRgb: rgbStr(P.fresh),
+        midiLearn: P.warm,
+        midiLearnRgb: rgbStr(P.warm),
+    };
+    return t;
+}
 
 // --- Raised-pad depth recipe ------------------------------------------------
 // The "lively" contained buttons get their depth from a directional gradient +
@@ -883,524 +979,529 @@ theme = responsiveFontSizes(theme, {
     factor: 2.4,
 });
 
-export const lightTheme = createTheme(theme, {
-    palette: {
-        mode: 'light',
-        primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: '#FFFBF1' },
-        secondary: { main: LIGHT.blue, light: LIGHT.blueDim, dark: '#2B547A', contrastText: '#FFFBF1' },
-        background: { default: LIGHT.bg, paper: LIGHT.paper },
-        text: { primary: LIGHT.text, secondary: LIGHT.textDim, disabled: LIGHT.textFaint },
-        action: {
-            active: 'rgba(43, 31, 18, 0.6)',
-            hover: 'rgba(43, 31, 18, 0.04)',
-            selected: 'rgba(43, 31, 18, 0.08)',
-            disabled: 'rgba(43, 31, 18, 0.26)',
-            disabledBackground: 'rgba(43, 31, 18, 0.10)',
-        },
-        divider: LIGHT.divider,
-        error: { main: LIGHT.error },
-        warning: { main: LIGHT.warning },
-        success: { main: LIGHT.success },
-        info: { main: LIGHT.blue },
-        warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
-        night: { main: LIGHT.night },
-    },
-    components: {
-        MuiCssBaseline: {
-            styleOverrides: {
-                ':root': { colorScheme: 'light' },
-                body: {
-                    margin: 0,
-                    minHeight: '100vh',
-                    // Three-layer backdrop, mirroring dark mode:
-                    // soft cyan radial on the left, warm radial on the
-                    // bottom-right, and a gentle diagonal cream linear.
-                    // Opacities are low so the paper still reads neutral.
-                    backgroundColor: LIGHT.bg,
-                    backgroundImage:
-                        `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.06), transparent 60%), ` +
-                        `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.05), transparent 55%), ` +
-                        `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
-                    backgroundAttachment: 'fixed',
-                    color: LIGHT.text,
-                    fontFeatureSettings: '"cv11", "ss01", "ss03"',
-                },
-                '#root': { minHeight: '100vh' },
-                html: { scrollbarGutter: 'stable' },
-                '*::-webkit-scrollbar-track': {
-                    background: 'transparent',
-                    borderRadius: '999px',
-                },
-                '*::-webkit-scrollbar-thumb': {
-                    background: 'rgba(43, 31, 18, 0.18)',
-                    borderRadius: '999px',
-                    border: '2px solid rgba(0, 0, 0, 0)',
-                    backgroundClip: 'padding-box',
-                    '&:hover': { background: 'rgba(43, 31, 18, 0.32)' },
-                },
-                '*::-webkit-scrollbar-corner': { background: 'transparent' },
-                '*': {
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(43, 31, 18, 0.18) transparent',
-                },
+function makePaletteTheme(LIGHT) {
+    return createTheme(theme, {
+        palette: {
+            mode: 'light',
+            primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: LIGHT.onAccent },
+            secondary: { main: LIGHT.blue, light: LIGHT.blueDim, dark: LIGHT.blueLo, contrastText: LIGHT.onAccent },
+            background: { default: LIGHT.bg, paper: LIGHT.paper },
+            text: { primary: LIGHT.text, secondary: LIGHT.textDim, disabled: LIGHT.textFaint },
+            action: {
+                active: `rgba(${LIGHT.inkRgb}, 0.6)`,
+                hover: `rgba(${LIGHT.inkRgb}, 0.04)`,
+                selected: `rgba(${LIGHT.inkRgb}, 0.08)`,
+                disabled: `rgba(${LIGHT.inkRgb}, 0.26)`,
+                disabledBackground: `rgba(${LIGHT.inkRgb}, 0.10)`,
             },
+            divider: LIGHT.divider,
+            error: { main: LIGHT.error },
+            warning: { main: LIGHT.warning },
+            success: { main: LIGHT.success },
+            info: { main: LIGHT.blue },
+            warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
+            night: { main: LIGHT.night },
+            // All palette tokens, and the Performance tab's colours.
+            fragmenta: LIGHT,
+            perf: LIGHT.perf,
         },
-        MuiPaper: {
-            styleOverrides: {
-                root: {
-                    // Liquid Glass on cream: translucent warm paper with
-                    // softer rim highlights so the surface reads as glass
-                    // on paper rather than glass on charcoal.
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    boxShadow:
-                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
-                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
-                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
-                },
-            },
-        },
-        MuiCard: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    boxShadow:
-                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08)',
-                    transition: 'box-shadow 220ms ease, background-color 220ms ease',
-                    '&:hover': {
-                        backgroundColor: 'rgba(252, 246, 232, 0.82)',
-                        boxShadow:
-                            '0 24px 48px rgba(43, 31, 18, 0.14), ' +
-                            '0 5px 14px rgba(43, 31, 18, 0.08), ' +
-                            'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
-                            'inset 0 -1px 0 rgba(43, 31, 18, 0.10), ' +
-                            '0 0 0 1px rgba(31, 126, 148, 0.25)',
-                    },
-                },
-            },
-        },
-        MuiButton: {
-            variants: [
-                {
-                    props: { color: 'warm', variant: 'contained' },
-                    style: {
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warm} 55%, ${LIGHT.warmLo} 100%)`,
-                        color: '#FFFBF1',
-                        '&:hover': {
-                            backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warmHi} 55%, ${LIGHT.warm} 100%)`,
-                        },
-                    },
-                },
-            ],
-            styleOverrides: {
-                contained: {
-                    boxShadow: '0 6px 14px rgba(31, 126, 148, 0.18)',
-                    '&:hover': { boxShadow: '0 10px 20px rgba(31, 126, 148, 0.26)' },
-                    '&.Mui-disabled': {
-                        backgroundImage: 'none',
-                        backgroundColor: 'rgba(43, 31, 18, 0.08)',
-                        color: 'rgba(43, 31, 18, 0.30)',
-                        boxShadow: 'none',
-                    },
-                },
-                containedPrimary: {
-                    backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                    color: '#FFFBF1',
-                },
-                containedSecondary: {
-                    backgroundImage: `linear-gradient(135deg, ${LIGHT.blueDim} 0%, ${LIGHT.blue} 100%)`,
-                },
-                containedError: {
-                    backgroundImage: 'linear-gradient(135deg, #C66E6D 0%, #9E4B49 100%)',
-                },
-                outlined: {
-                    // Cyan accent by default, mirroring dark-mode outlined
-                    // buttons. Keeps "Browse / Choose CSV" etc. visually
-                    // active without going to a fully filled (contained)
-                    // treatment.
-                    borderColor: 'rgba(31, 126, 148, 0.50)',
-                    color: LIGHT.amber,
-                    '&:hover': {
-                        borderColor: LIGHT.amberLo,
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
-                        color: LIGHT.amberLo,
-                    },
-                    '&.Mui-disabled': {
-                        borderColor: 'rgba(43, 31, 18, 0.12)',
-                        color: 'rgba(43, 31, 18, 0.30)',
-                    },
-                },
-                outlinedError: {
-                    borderColor: 'rgba(184, 78, 69, 0.55)',
-                    color: LIGHT.error,
-                    '&:hover': {
-                        borderColor: LIGHT.error,
-                        backgroundColor: 'rgba(184, 78, 69, 0.10)',
-                        color: LIGHT.error,
-                    },
-                },
-                text: {
-                    color: LIGHT.text,
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.08)',
-                        color: LIGHT.amberLo,
-                    },
-                },
-            },
-        },
-        MuiTextField: {
-            styleOverrides: {
-                root: {
-                    '& .MuiOutlinedInput-root': {
-                        backgroundColor: 'rgba(255, 251, 241, 0.6)',
-                        borderRadius: 8,
-                        '& fieldset': { borderColor: 'rgba(43, 31, 18, 0.18)' },
-                        '&:hover fieldset': { borderColor: 'rgba(43, 31, 18, 0.36)' },
-                        '&.Mui-focused fieldset': {
-                            borderColor: LIGHT.amber,
-                            boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
-                        },
-                    },
-                },
-            },
-        },
-        MuiSelect: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(255, 251, 241, 0.6)',
-                    borderRadius: 8,
-                    '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.18)' },
-                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.36)' },
-                    '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                        borderColor: LIGHT.amber,
-                        boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
-                    },
-                },
-            },
-        },
-        MuiModal: {
-            defaultProps: { disableScrollLock: true },
-        },
-        // See dark theme above — same dropdown/popover paper treatment.
-        MuiPopover: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    border: `1px solid ${LIGHT.divider}`,
-                    borderRadius: 20,
-                    overflow: 'hidden',
-                },
-            },
-        },
-        MuiMenu: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    border: `1px solid ${LIGHT.divider}`,
-                    borderRadius: 20,
-                    overflow: 'hidden',
-                },
-            },
-        },
-        MuiDrawer: {
-            defaultProps: { disableScrollLock: true },
-        },
-        MuiMenuItem: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: LIGHT.paper,
-                    '&:hover': { backgroundColor: LIGHT.paperHi },
-                    '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        color: LIGHT.amberLo,
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
-                    },
-                },
-            },
-        },
-        MuiChip: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.06)',
-                    color: LIGHT.text,
-                    border: `1px solid rgba(43, 31, 18, 0.14)`,
-                    borderRadius: 999,
-                    '&.MuiChip-filled.MuiChip-colorPrimary': {
-                        backgroundColor: LIGHT.amber,
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.amber,
-                        boxShadow: RAISE_LIGHT,
-                    },
-                    '&.MuiChip-filled.MuiChip-colorSuccess': {
-                        backgroundColor: LIGHT.success,
-                        backgroundImage: `linear-gradient(135deg, #3FA86A 0%, ${LIGHT.success} 55%, #1F6038 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.success,
-                        boxShadow: RAISE_LIGHT,
-                    },
-                },
-                outlined: {
-                    borderColor: 'rgba(43, 31, 18, 0.20)',
-                    '&.MuiChip-colorPrimary': { borderColor: LIGHT.amber, color: LIGHT.amberLo },
-                },
-            },
-        },
-        MuiAccordion: {
-            styleOverrides: {
-                root: {
-                    borderRadius: 25,
-                    overflow: 'hidden',
-                    marginBottom: 16,
-                    '&:before': { display: 'none' },
-                    '&:first-of-type': {
-                        borderTopLeftRadius: 25,
-                        borderTopRightRadius: 25,
-                    },
-                    '&:last-of-type': {
-                        borderBottomLeftRadius: 25,
-                        borderBottomRightRadius: 25,
-                    },
-                    '&.Mui-expanded': {
-                        marginTop: 0,
-                        marginBottom: 16,
-                    },
-                    '&.Mui-expanded:last-of-type': { marginBottom: 16 },
-                },
-            },
-        },
-        MuiAccordionSummary: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
-                },
-            },
-        },
-        MuiDialog: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    // Liquid Glass on cream — same shape as the global
-                    // MuiPaper override so dialogs match the rest of the
-                    // surfaces (translucent warm + soft rim highlights).
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    borderRadius: 14,
-                    boxShadow:
-                        '0 24px 48px rgba(43, 31, 18, 0.18), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
-                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
-                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
-                },
-            },
-        },
-        MuiDialogTitle: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    borderBottom: `1px solid ${LIGHT.divider}`,
-                    color: LIGHT.text,
-                    fontWeight: 600,
-                    fontSize: '1.1rem',
-                    letterSpacing: '-0.01em',
-                },
-            },
-        },
-        MuiDialogContent: { styleOverrides: { root: { backgroundColor: 'transparent', color: LIGHT.text } } },
-        MuiDialogActions: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    borderTop: `1px solid ${LIGHT.divider}`,
-                },
-            },
-        },
-        MuiListItem: {
-            styleOverrides: {
-                root: {
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
-                    '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
-                    },
-                },
-            },
-        },
-        MuiCheckbox: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    '&.Mui-checked': { color: LIGHT.amber },
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.08)' },
-                },
-            },
-        },
-        MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
-        MuiSlider: {
-            styleOverrides: {
-                root: {
-                    color: NORDIC_BLUE,
-                    height: 4,
-                    // Beat MUI's color="primary" root color (which is the
-                    // accent cyan) so the DEFAULT slider is the accent cyan —
-                    // needed in dark mode where the plain root rule lost the
-                    // specificity battle. sx `color` on channel sliders still
-                    // overrides this, so per-channel coloring is unaffected.
-                    '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
-                        color: NORDIC_BLUE,
-                    },
-                },
-                rail: { backgroundColor: 'rgba(43, 31, 18, 0.18)', opacity: 1 },
-                track: { backgroundColor: 'currentColor', border: 0 },
-                thumb: {
-                    backgroundColor: 'currentColor',
-                    width: 16,
-                    height: 16,
-                    border: `2px solid ${LIGHT.paper}`,
-                    boxShadow: '0 2px 6px rgba(43, 31, 18, 0.20)',
-                    '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(39, 159, 187, 0.18)',
-                    },
-                },
-                valueLabel: {
-                    backgroundColor: LIGHT.text,
-                    color: '#FFFBF1',
-                    borderRadius: 6,
-                    fontWeight: 400,
-                },
-                mark: { backgroundColor: 'rgba(43, 31, 18, 0.28)' },
-                markActive: { backgroundColor: 'currentColor' },
-            },
-        },
-        MuiLinearProgress: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.10)',
-                    borderRadius: 999,
-                    overflow: 'hidden',
-                },
-                bar: {
-                    backgroundImage: `linear-gradient(90deg, ${LIGHT.warmLo} 0%, ${LIGHT.warm} 100%)`,
-                },
-            },
-        },
-        MuiCircularProgress: { styleOverrides: { root: { color: LIGHT.amber } } },
-        MuiTabs: {
-            styleOverrides: {
-                root: {
-                    '& .MuiTabs-indicator': {
-                        backgroundColor: LIGHT.amber,
-                        height: 2,
-                        borderRadius: '2px 2px 0 0',
-                    },
-                },
-            },
-        },
-        MuiTab: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    textTransform: 'none',
-                    fontWeight: 400,
-                    '&.Mui-selected': { color: LIGHT.amberLo },
-                    '&:hover': { color: LIGHT.text },
-                },
-            },
-        },
-        MuiBackdrop: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.32)',
-                    backdropFilter: 'blur(4px)',
-                },
-            },
-        },
-        MuiDivider: { styleOverrides: { root: { borderColor: LIGHT.divider } } },
-        MuiIconButton: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    transition: 'all 160ms ease',
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
-                        color: LIGHT.amberLo,
-                    },
-                },
-            },
-        },
-        MuiToggleButton: {
-            styleOverrides: {
-                root: {
-                    textTransform: 'none',
-                    border: `1px solid ${LIGHT.divider}`,
-                    color: LIGHT.textDim,
-                    fontWeight: 400,
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.06)',
+        components: {
+            MuiCssBaseline: {
+                styleOverrides: {
+                    ':root': { colorScheme: 'light' },
+                    body: {
+                        margin: 0,
+                        minHeight: '100vh',
+                        // Three-layer backdrop, mirroring dark mode:
+                        // soft cyan radial on the left, warm radial on the
+                        // bottom-right, and a gentle diagonal cream linear.
+                        // Opacities are low so the paper still reads neutral.
+                        backgroundColor: LIGHT.bg,
+                        backgroundImage:
+                            `radial-gradient(900px 700px at -5% 50%, rgba(${LIGHT.amberRgb}, 0.06), transparent 60%), ` +
+                            `radial-gradient(1100px 700px at 95% 108%, rgba(${LIGHT.warmRgb}, 0.05), transparent 55%), ` +
+                            `linear-gradient(165deg, ${LIGHT.bgTop} 0%, ${LIGHT.bg} 42%, ${LIGHT.bgBottom} 100%)`,
+                        backgroundAttachment: 'fixed',
                         color: LIGHT.text,
+                        fontFeatureSettings: '"cv11", "ss01", "ss03"',
                     },
-                    '&.Mui-selected': {
-                        backgroundColor: LIGHT.amber,
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.amber,
-                        boxShadow: RAISE_LIGHT,
+                    '#root': { minHeight: '100vh' },
+                    html: { scrollbarGutter: 'stable' },
+                    '*::-webkit-scrollbar-track': {
+                        background: 'transparent',
+                        borderRadius: '999px',
+                    },
+                    '*::-webkit-scrollbar-thumb': {
+                        background: `rgba(${LIGHT.inkRgb}, 0.18)`,
+                        borderRadius: '999px',
+                        border: '2px solid rgba(0, 0, 0, 0)',
+                        backgroundClip: 'padding-box',
+                        '&:hover': { background: `rgba(${LIGHT.inkRgb}, 0.32)` },
+                    },
+                    '*::-webkit-scrollbar-corner': { background: 'transparent' },
+                    '*': {
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: `rgba(${LIGHT.inkRgb}, 0.18) transparent`,
+                    },
+                },
+            },
+            MuiPaper: {
+                styleOverrides: {
+                    root: {
+                        // Liquid Glass on cream: translucent warm paper with
+                        // softer rim highlights so the surface reads as glass
+                        // on paper rather than glass on charcoal.
+                        backgroundColor: `rgba(${LIGHT.glassRgb}, 0.72)`,
+                        backgroundImage: 'none',
+                        backdropFilter: 'blur(22px) saturate(160%)',
+                        WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                        border: 'none',
+                        boxShadow:
+                            `0 18px 36px rgba(${LIGHT.inkRgb}, 0.10), ` +
+                            `0 3px 10px rgba(${LIGHT.inkRgb}, 0.06), ` +
+                            'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                            `inset 0 -1px 0 rgba(${LIGHT.inkRgb}, 0.08), ` +
+                            'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
+                            `inset -1px 0 0 rgba(${LIGHT.inkRgb}, 0.04)`,
+                    },
+                },
+            },
+            MuiCard: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.glassRgb}, 0.72)`,
+                        backgroundImage: 'none',
+                        backdropFilter: 'blur(22px) saturate(160%)',
+                        WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                        border: 'none',
+                        boxShadow:
+                            `0 18px 36px rgba(${LIGHT.inkRgb}, 0.10), ` +
+                            `0 3px 10px rgba(${LIGHT.inkRgb}, 0.06), ` +
+                            'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                            `inset 0 -1px 0 rgba(${LIGHT.inkRgb}, 0.08)`,
+                        transition: 'box-shadow 220ms ease, background-color 220ms ease',
                         '&:hover': {
-                            backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amberHi} 55%, ${LIGHT.amber} 100%)`,
-                            backgroundColor: LIGHT.amberHi,
+                            backgroundColor: `rgba(${LIGHT.glassHiRgb}, 0.82)`,
+                            boxShadow:
+                                `0 24px 48px rgba(${LIGHT.inkRgb}, 0.14), ` +
+                                `0 5px 14px rgba(${LIGHT.inkRgb}, 0.08), ` +
+                                'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
+                                `inset 0 -1px 0 rgba(${LIGHT.inkRgb}, 0.10), ` +
+                                `0 0 0 1px rgba(${LIGHT.amberRgb}, 0.25)`,
                         },
                     },
                 },
             },
-        },
-        MuiSwitch: {
-            styleOverrides: {
-                switchBase: {
-                    '&.Mui-checked': {
-                        color: '#FFFBF1',
-                        '& + .MuiSwitch-track': {
+            MuiButton: {
+                variants: [
+                    {
+                        props: { color: 'warm', variant: 'contained' },
+                        style: {
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warm} 55%, ${LIGHT.warmLo} 100%)`,
+                            color: LIGHT.onAccent,
+                            '&:hover': {
+                                backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warmHi} 55%, ${LIGHT.warm} 100%)`,
+                            },
+                        },
+                    },
+                ],
+                styleOverrides: {
+                    contained: {
+                        boxShadow: `0 6px 14px rgba(${LIGHT.amberRgb}, 0.18)`,
+                        '&:hover': { boxShadow: `0 10px 20px rgba(${LIGHT.amberRgb}, 0.26)` },
+                        '&.Mui-disabled': {
+                            backgroundImage: 'none',
+                            backgroundColor: `rgba(${LIGHT.inkRgb}, 0.08)`,
+                            color: `rgba(${LIGHT.inkRgb}, 0.30)`,
+                            boxShadow: 'none',
+                        },
+                    },
+                    containedPrimary: {
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
+                        color: LIGHT.onAccent,
+                    },
+                    containedSecondary: {
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.blueDim} 0%, ${LIGHT.blue} 100%)`,
+                    },
+                    containedError: {
+                        backgroundImage: `linear-gradient(135deg, ${LIGHT.errorHi} 0%, ${LIGHT.errorLo} 100%)`,
+                    },
+                    outlined: {
+                        // Cyan accent by default, mirroring dark-mode outlined
+                        // buttons. Keeps "Browse / Choose CSV" etc. visually
+                        // active without going to a fully filled (contained)
+                        // treatment.
+                        borderColor: `rgba(${LIGHT.amberRgb}, 0.50)`,
+                        color: LIGHT.amber,
+                        '&:hover': {
+                            borderColor: LIGHT.amberLo,
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.10)`,
+                            color: LIGHT.amberLo,
+                        },
+                        '&.Mui-disabled': {
+                            borderColor: `rgba(${LIGHT.inkRgb}, 0.12)`,
+                            color: `rgba(${LIGHT.inkRgb}, 0.30)`,
+                        },
+                    },
+                    outlinedError: {
+                        borderColor: `rgba(${LIGHT.errorRgb}, 0.55)`,
+                        color: LIGHT.error,
+                        '&:hover': {
+                            borderColor: LIGHT.error,
+                            backgroundColor: `rgba(${LIGHT.errorRgb}, 0.10)`,
+                            color: LIGHT.error,
+                        },
+                    },
+                    text: {
+                        color: LIGHT.text,
+                        '&:hover': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.08)`,
+                            color: LIGHT.amberLo,
+                        },
+                    },
+                },
+            },
+            MuiTextField: {
+                styleOverrides: {
+                    root: {
+                        '& .MuiOutlinedInput-root': {
+                            backgroundColor: `rgba(${LIGHT.hiRgb}, 0.6)`,
+                            borderRadius: 8,
+                            '& fieldset': { borderColor: `rgba(${LIGHT.inkRgb}, 0.18)` },
+                            '&:hover fieldset': { borderColor: `rgba(${LIGHT.inkRgb}, 0.36)` },
+                            '&.Mui-focused fieldset': {
+                                borderColor: LIGHT.amber,
+                                boxShadow: `0 0 0 3px rgba(${LIGHT.amberRgb}, 0.14)`,
+                            },
+                        },
+                    },
+                },
+            },
+            MuiSelect: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.hiRgb}, 0.6)`,
+                        borderRadius: 8,
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: `rgba(${LIGHT.inkRgb}, 0.18)` },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: `rgba(${LIGHT.inkRgb}, 0.36)` },
+                        '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                            borderColor: LIGHT.amber,
+                            boxShadow: `0 0 0 3px rgba(${LIGHT.amberRgb}, 0.14)`,
+                        },
+                    },
+                },
+            },
+            MuiModal: {
+                defaultProps: { disableScrollLock: true },
+            },
+            // See dark theme above — same dropdown/popover paper treatment.
+            MuiPopover: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: {
+                        border: `1px solid ${LIGHT.divider}`,
+                        borderRadius: 20,
+                        overflow: 'hidden',
+                    },
+                },
+            },
+            MuiMenu: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: {
+                        border: `1px solid ${LIGHT.divider}`,
+                        borderRadius: 20,
+                        overflow: 'hidden',
+                    },
+                },
+            },
+            MuiDrawer: {
+                defaultProps: { disableScrollLock: true },
+            },
+            MuiMenuItem: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: LIGHT.paper,
+                        '&:hover': { backgroundColor: LIGHT.paperHi },
+                        '&.Mui-selected': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.14)`,
+                            color: LIGHT.amberLo,
+                            '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.20)` },
+                        },
+                    },
+                },
+            },
+            MuiChip: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.06)`,
+                        color: LIGHT.text,
+                        border: `1px solid rgba(${LIGHT.inkRgb}, 0.14)`,
+                        borderRadius: 999,
+                        '&.MuiChip-filled.MuiChip-colorPrimary': {
                             backgroundColor: LIGHT.amber,
-                            opacity: 1,
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
+                            color: LIGHT.onAccent,
+                            borderColor: LIGHT.amber,
+                            boxShadow: RAISE_LIGHT,
+                        },
+                        '&.MuiChip-filled.MuiChip-colorSuccess': {
+                            backgroundColor: LIGHT.success,
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.successHi} 0%, ${LIGHT.success} 55%, ${LIGHT.successLo} 100%)`,
+                            color: LIGHT.onAccent,
+                            borderColor: LIGHT.success,
+                            boxShadow: RAISE_LIGHT,
+                        },
+                    },
+                    outlined: {
+                        borderColor: `rgba(${LIGHT.inkRgb}, 0.20)`,
+                        '&.MuiChip-colorPrimary': { borderColor: LIGHT.amber, color: LIGHT.amberLo },
+                    },
+                },
+            },
+            MuiAccordion: {
+                styleOverrides: {
+                    root: {
+                        borderRadius: 25,
+                        overflow: 'hidden',
+                        marginBottom: 16,
+                        '&:before': { display: 'none' },
+                        '&:first-of-type': {
+                            borderTopLeftRadius: 25,
+                            borderTopRightRadius: 25,
+                        },
+                        '&:last-of-type': {
+                            borderBottomLeftRadius: 25,
+                            borderBottomRightRadius: 25,
+                        },
+                        '&.Mui-expanded': {
+                            marginTop: 0,
+                            marginBottom: 16,
+                        },
+                        '&.Mui-expanded:last-of-type': { marginBottom: 16 },
+                    },
+                },
+            },
+            MuiAccordionSummary: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.06)` },
+                    },
+                },
+            },
+            MuiDialog: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: {
+                        // Liquid Glass on cream — same shape as the global
+                        // MuiPaper override so dialogs match the rest of the
+                        // surfaces (translucent warm + soft rim highlights).
+                        backgroundColor: `rgba(${LIGHT.glassRgb}, 0.72)`,
+                        backgroundImage: 'none',
+                        backdropFilter: 'blur(22px) saturate(160%)',
+                        WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+                        border: 'none',
+                        borderRadius: 14,
+                        boxShadow:
+                            `0 24px 48px rgba(${LIGHT.inkRgb}, 0.18), ` +
+                            `0 3px 10px rgba(${LIGHT.inkRgb}, 0.06), ` +
+                            'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
+                            `inset 0 -1px 0 rgba(${LIGHT.inkRgb}, 0.08), ` +
+                            'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
+                            `inset -1px 0 0 rgba(${LIGHT.inkRgb}, 0.04)`,
+                    },
+                },
+            },
+            MuiDialogTitle: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        borderBottom: `1px solid ${LIGHT.divider}`,
+                        color: LIGHT.text,
+                        fontWeight: 600,
+                        fontSize: '1.1rem',
+                        letterSpacing: '-0.01em',
+                    },
+                },
+            },
+            MuiDialogContent: { styleOverrides: { root: { backgroundColor: 'transparent', color: LIGHT.text } } },
+            MuiDialogActions: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        borderTop: `1px solid ${LIGHT.divider}`,
+                    },
+                },
+            },
+            MuiListItem: {
+                styleOverrides: {
+                    root: {
+                        '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.06)` },
+                        '&.Mui-selected': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.14)`,
+                            '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.20)` },
                         },
                     },
                 },
-                track: { backgroundColor: 'rgba(43, 31, 18, 0.30)' },
             },
-        },
-        MuiTooltip: {
-            styleOverrides: {
-                tooltip: {
-                    backgroundColor: LIGHT.text,
-                    color: '#FFFBF1',
-                    fontWeight: 400,
-                    fontSize: '0.75rem',
-                    borderRadius: 6,
-                    boxShadow: '0 8px 18px rgba(43, 31, 18, 0.24)',
+            MuiCheckbox: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        '&.Mui-checked': { color: LIGHT.amber },
+                        '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.08)` },
+                    },
                 },
-                arrow: { color: LIGHT.text },
+            },
+            MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
+            MuiSlider: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.amber,
+                        height: 4,
+                        // Beat MUI's color="primary" root color (which is the
+                        // accent cyan) so the DEFAULT slider is the accent cyan —
+                        // needed in dark mode where the plain root rule lost the
+                        // specificity battle. sx `color` on channel sliders still
+                        // overrides this, so per-channel coloring is unaffected.
+                        '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
+                            color: LIGHT.amber,
+                        },
+                    },
+                    rail: { backgroundColor: `rgba(${LIGHT.inkRgb}, 0.18)`, opacity: 1 },
+                    track: { backgroundColor: 'currentColor', border: 0 },
+                    thumb: {
+                        backgroundColor: 'currentColor',
+                        width: 16,
+                        height: 16,
+                        border: `2px solid ${LIGHT.paper}`,
+                        boxShadow: `0 2px 6px rgba(${LIGHT.inkRgb}, 0.20)`,
+                        '&:hover, &.Mui-focusVisible': {
+                            boxShadow: `0 0 0 8px rgba(${LIGHT.amberRgb}, 0.18)`,
+                        },
+                    },
+                    valueLabel: {
+                        backgroundColor: LIGHT.text,
+                        color: LIGHT.onAccent,
+                        borderRadius: 6,
+                        fontWeight: 400,
+                    },
+                    mark: { backgroundColor: `rgba(${LIGHT.inkRgb}, 0.28)` },
+                    markActive: { backgroundColor: 'currentColor' },
+                },
+            },
+            MuiLinearProgress: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.10)`,
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                    },
+                    bar: {
+                        backgroundImage: `linear-gradient(90deg, ${LIGHT.warmLo} 0%, ${LIGHT.warm} 100%)`,
+                    },
+                },
+            },
+            MuiCircularProgress: { styleOverrides: { root: { color: LIGHT.amber } } },
+            MuiTabs: {
+                styleOverrides: {
+                    root: {
+                        '& .MuiTabs-indicator': {
+                            backgroundColor: LIGHT.amber,
+                            height: 2,
+                            borderRadius: '2px 2px 0 0',
+                        },
+                    },
+                },
+            },
+            MuiTab: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        textTransform: 'none',
+                        fontWeight: 400,
+                        '&.Mui-selected': { color: LIGHT.amberLo },
+                        '&:hover': { color: LIGHT.text },
+                    },
+                },
+            },
+            MuiBackdrop: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.32)`,
+                        backdropFilter: 'blur(4px)',
+                    },
+                },
+            },
+            MuiDivider: { styleOverrides: { root: { borderColor: LIGHT.divider } } },
+            MuiIconButton: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        transition: 'all 160ms ease',
+                        '&:hover': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.10)`,
+                            color: LIGHT.amberLo,
+                        },
+                    },
+                },
+            },
+            MuiToggleButton: {
+                styleOverrides: {
+                    root: {
+                        textTransform: 'none',
+                        border: `1px solid ${LIGHT.divider}`,
+                        color: LIGHT.textDim,
+                        fontWeight: 400,
+                        '&:hover': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.06)`,
+                            color: LIGHT.text,
+                        },
+                        '&.Mui-selected': {
+                            backgroundColor: LIGHT.amber,
+                            backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
+                            color: LIGHT.onAccent,
+                            borderColor: LIGHT.amber,
+                            boxShadow: RAISE_LIGHT,
+                            '&:hover': {
+                                backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amberHi} 55%, ${LIGHT.amber} 100%)`,
+                                backgroundColor: LIGHT.amberHi,
+                            },
+                        },
+                    },
+                },
+            },
+            MuiSwitch: {
+                styleOverrides: {
+                    switchBase: {
+                        '&.Mui-checked': {
+                            color: LIGHT.onAccent,
+                            '& + .MuiSwitch-track': {
+                                backgroundColor: LIGHT.amber,
+                                opacity: 1,
+                            },
+                        },
+                    },
+                    track: { backgroundColor: `rgba(${LIGHT.inkRgb}, 0.30)` },
+                },
+            },
+            MuiTooltip: {
+                styleOverrides: {
+                    tooltip: {
+                        backgroundColor: LIGHT.text,
+                        color: LIGHT.onAccent,
+                        fontWeight: 400,
+                        fontSize: '0.75rem',
+                        borderRadius: 6,
+                        boxShadow: `0 8px 18px rgba(${LIGHT.inkRgb}, 0.24)`,
+                    },
+                    arrow: { color: LIGHT.text },
+                },
             },
         },
-    },
-});
+    });
+}
 
 export const appStyles = {
     root: {
@@ -1464,10 +1565,10 @@ export const appStyles = {
         WebkitBackdropFilter: 'blur(14px)',
         backgroundColor: theme.palette.mode === 'dark'
             ? 'rgba(31, 32, 33, 0.55)'
-            : 'rgba(242, 237, 227, 0.65)',
+            : `rgba(${theme.palette.fragmenta.bgRgb}, 0.65)`,
         borderBottom: theme.palette.mode === 'dark'
             ? '1px solid rgba(255, 255, 255, 0.04)'
-            : '1px solid rgba(43, 31, 18, 0.08)',
+            : `1px solid rgba(${theme.palette.fragmenta.inkRgb}, 0.08)`,
     }),
     headerBrand: {
         position: 'relative',
@@ -1591,12 +1692,12 @@ export const appStyles = {
             '&.Mui-selected': {
                 color: 'primary.main',
                 fontWeight: 600,
-                backgroundColor: 'rgba(53, 194, 212, 0.16)',
-                boxShadow: 'inset 0 0 0 1px rgba(115, 215, 227, 0.35)',
+                backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.14)`,
+                boxShadow: (t) => `inset 0 0 0 1px rgba(${t.palette.fragmenta.amberRgb}, 0.30)`,
             },
             '&:hover': {
                 color: 'text.primary',
-                backgroundColor: 'rgba(53, 194, 212, 0.08)',
+                backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.08)`,
             },
         },
     }),
@@ -1952,7 +2053,7 @@ export const appStyles = {
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
             color: 'text.primary',
-            backgroundColor: 'rgba(53, 194, 212, 0.08)',
+            backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.08)`,
         },
         '&.Mui-disabled': {
             opacity: 0.45,
@@ -1962,7 +2063,7 @@ export const appStyles = {
         color: 'primary.main',
         '&:hover': {
             color: 'primary.light',
-            backgroundColor: 'rgba(53, 194, 212, 0.10)',
+            backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.10)`,
         },
     },
     // Hamburger trigger shown in place of the full dock when the viewport
@@ -2337,6 +2438,7 @@ export const trainingMonitorStyles = {
 export const welcomePageStyles = {
     backdrop: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
+        const L = muiTheme.palette.fragmenta;
         // Match the main app body's three-layer treatment so the
         // welcome page reads as part of the same surface, not a
         // separate dialog with its own palette.
@@ -2346,9 +2448,9 @@ export const welcomePageStyles = {
                 ? `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.18), transparent 60%), ` +
                   `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.14), transparent 55%), ` +
                   `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`
-                : `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.09), transparent 60%), ` +
-                  `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.08), transparent 55%), ` +
-                  `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
+                : `radial-gradient(900px 700px at -5% 50%, rgba(${L.amberRgb}, 0.09), transparent 60%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(${L.warmRgb}, 0.08), transparent 55%), ` +
+                  `linear-gradient(165deg, ${L.bgTop} 0%, ${L.bg} 42%, ${L.bgBottom} 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2415,9 +2517,9 @@ export const demoNoticeStyles = {
     },
     badge: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
-        // DARK.warm #FDA22B / LIGHT.warm #C97A1A, as rgba so the badge tints
-        // the glass beneath it instead of sitting on an opaque chip.
-        const warmRgb = isDark ? '253, 162, 43' : '201, 122, 26';
+        // The warm accent as rgba, so the badge tints the glass beneath it
+        // instead of sitting on an opaque chip.
+        const warmRgb = isDark ? '253, 162, 43' : muiTheme.palette.fragmenta.warmRgb;
         return {
             mt: 0.25,
             px: 1.1,
@@ -2425,7 +2527,7 @@ export const demoNoticeStyles = {
             borderRadius: 999,
             border: `1px solid rgba(${warmRgb}, 0.45)`,
             backgroundColor: `rgba(${warmRgb}, 0.12)`,
-            color: isDark ? DARK.warm : LIGHT.warm,
+            color: isDark ? DARK.warm : muiTheme.palette.fragmenta.warm,
             fontFamily: FONT_MONO,
             fontSize: '0.62rem',
             fontWeight: 500,
@@ -2461,15 +2563,6 @@ export const demoNoticeStyles = {
 
 export const lossChartStyles = {
     padding: { top: 10, right: 16, bottom: 28, left: 44 },
-    colors: {
-        grid: '#2B3446',
-        axis: '#9DA9BC',
-        line: '#35C2D4',
-        point: '#73D7E3',
-        tooltipBg: '#111826',
-        tooltipBorder: 'rgba(194, 207, 228, 0.2)',
-        tooltipText: '#E8EDF5',
-    },
     svg: {
         width: '100%',
         height: '100%',
@@ -2611,7 +2704,7 @@ export const performancePanelStyles = {
         borderRadius: 2,
         border: '1px solid',
         borderColor: 'divider',
-        background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
+        background: (t) => `linear-gradient(135deg, rgba(${t.palette.fragmenta.amberRgb}, 0.05) 0%, rgba(${t.palette.fragmenta.warmRgb}, 0.04) 100%)`,
         flexWrap: { xs: 'wrap', md: 'nowrap' },
     },
     // Single source of truth for every "pill" control in the master + bottom
@@ -2733,7 +2826,7 @@ export const performancePanelStyles = {
         // Matches the channel-strip at-rest treatment so master sits in the
         // same visual family — same liquid glass (translucent + backdrop blur
         // + inset rim) rather than a higher-elevation solid surface.
-        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
+        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : `rgba(${theme.palette.fragmenta.glassRgb}, 0.45)`;
         const rim = dark
             ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
             : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
@@ -2949,7 +3042,7 @@ export const performanceChannelStyles = {
         // Liquid glass: translucent surface + backdrop blur so the panel's
         // glow bleeds through, matching the app's Paper/Card treatment.
         // Playing channels add a channel-colored tint + accent rim on top.
-        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
+        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : `rgba(${theme.palette.fragmenta.glassRgb}, 0.45)`;
         const rim = dark
             ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
             : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
@@ -3031,7 +3124,7 @@ export const performanceChannelStyles = {
             fontSize: perfTokens.fontSize.sm,
             fontWeight: 700,
             borderRadius: 1,
-            color: active ? '#0c1018' : 'text.secondary',
+            color: active ? 'text.primary' : 'text.secondary',
             backgroundColor: active ? `${c}F2` : 'transparent',   // F2 ≈ 95%
             backgroundImage: active ? SHEEN_DARK : 'none',
             border: '1px solid',
@@ -3051,7 +3144,7 @@ export const performanceChannelStyles = {
             fontSize: perfTokens.fontSize.xs,
             fontWeight: 700,
             borderRadius: 1,
-            color: active ? '#0c1018' : 'text.secondary',
+            color: active ? 'text.primary' : 'text.secondary',
             backgroundColor: active ? `${c}F2` : 'transparent',
             backgroundImage: active ? SHEEN_DARK : 'none',
             border: '1px solid',
@@ -3335,14 +3428,14 @@ export const performanceChannelStyles = {
         width: 20,
         height: 20,
         borderRadius: 0.75,
-        color: filled && active ? '#0c1018' : (active ? color : 'text.disabled'),
+        color: filled && active ? 'text.primary' : (active ? color : 'text.disabled'),
         backgroundColor: filled && active ? color : 'transparent',
         border: filled && active ? `1px solid ${color}` : '1px solid transparent',
         '&:hover': filled && active
-            ? { backgroundColor: color, color: '#0c1018' }
+            ? { backgroundColor: color, color: 'text.primary' }
             : { color, bgcolor: 'action.hover' },
         '&.Mui-disabled': filled && active
-            ? { color: '#0c1018', backgroundColor: color, opacity: 1 }
+            ? { color: 'text.primary', backgroundColor: color, opacity: 1 }
             : { color, opacity: 0.85 },
     }),
     fragmentDeleteBtn: {
@@ -3457,7 +3550,7 @@ export const performanceChannelStyles = {
         width: perfTokens.height.compact,
         height: perfTokens.height.compact,
         borderRadius: 1.5,
-        color: playing ? '#0c1018' : color,
+        color: playing ? 'text.primary' : color,
         backgroundColor: playing ? color : `${color}14`,
         backgroundImage: playing ? SHEEN_DARK : 'none',
         border: `1px solid ${color}${playing ? '' : '55'}`,
@@ -3482,7 +3575,7 @@ export const performanceChannelStyles = {
         fontSize: perfTokens.fontSize.sm,
         fontWeight: perfTokens.weight.heavy,
         lineHeight: 1,
-        color: active ? '#0c1018' : 'text.disabled',
+        color: active ? 'text.primary' : 'text.disabled',
         backgroundColor: active ? color : 'transparent',
         backgroundImage: active ? SHEEN_DARK : 'none',
         border: '1px solid',
@@ -3491,7 +3584,7 @@ export const performanceChannelStyles = {
         transition: 'background-color 120ms, color 120ms, border-color 120ms, box-shadow 120ms',
         '&:hover': {
             backgroundColor: active ? color : 'action.hover',
-            color: active ? '#0c1018' : 'text.secondary',
+            color: active ? 'text.primary' : 'text.secondary',
         },
     }),
     meterTrack: (theme) => ({
@@ -3507,12 +3600,17 @@ export const performanceChannelStyles = {
         display: 'flex',
         alignItems: 'center',
     }),
-    meterFill: (color) => ({
+    meterFill: (color) => (theme) => ({
         width: '0%',
         height: '100%',
-        background: `linear-gradient(90deg, ${color} 0%, ${color}AA 70%, #E36C61 100%)`,
+        background: `linear-gradient(90deg, ${color} 0%, ${color}AA 70%, ${theme.palette.error.main} 100%)`,
         transition: 'width 0.05s linear',
     }),
 };
+
+export const paletteThemes = Object.fromEntries(
+    Object.entries(PALETTES).map(([key, P]) => [key, makePaletteTheme(paletteTokens(P))]),
+);
+export const lightTheme = paletteThemes[DEFAULT_PALETTE];
 
 export default theme;

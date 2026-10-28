@@ -53,8 +53,7 @@ import {
     FolderOpen as FolderOpenIcon,
     Info as InfoIcon,
     HelpCircle as InfoViewIcon,
-    Moon as MoonIcon,
-    Sun as SunIcon,
+    Palette as PaletteIcon,
     Piano as PerformanceIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
@@ -80,12 +79,12 @@ import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import { formatDuration } from './utils/format';
-import theme, { appStyles, lightTheme } from './theme';
+import { appStyles, paletteThemes, PALETTES, DEFAULT_PALETTE } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
-const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
+const PALETTE_STORAGE_KEY = 'fragmenta-palette';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
@@ -190,17 +189,14 @@ function App() {
         probe(0);
         return () => { cancelled = true; };
     }, []);
-    const [colorMode, setColorMode] = useState(() => {
-        if (typeof window === 'undefined') {
-            return 'dark';
-        }
-
-        const savedMode = window.localStorage.getItem(COLOR_MODE_STORAGE_KEY);
-        if (savedMode === 'light' || savedMode === 'dark') {
-            return savedMode;
-        }
-
-        return 'dark';
+    // One light palette (no dark mode). While choosing between the candidate
+    // palettes, the dock's Palette button flips between them.
+    const [paletteName, setPaletteName] = useState(() => {
+        try {
+            const saved = window.localStorage.getItem(PALETTE_STORAGE_KEY);
+            if (paletteThemes[saved]) return saved;
+        } catch { /* storage blocked: use the default */ }
+        return DEFAULT_PALETTE;
     });
 
     // Ableton-style Info View: when on, control help text shows in a fixed
@@ -557,8 +553,8 @@ function App() {
         canOpenModels: false,
     });
     const appTheme = useMemo(
-        () => (colorMode === 'light' ? lightTheme : theme),
-        [colorMode]
+        () => paletteThemes[paletteName],
+        [paletteName]
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
     // Vertical icon-only mode: between the compact (horizontal) threshold
@@ -1298,13 +1294,12 @@ function App() {
         }
     };
 
-    const toggleColorMode = () => {
-        setColorMode((prevMode) => {
-            const nextMode = prevMode === 'light' ? 'dark' : 'light';
-            if (typeof window !== 'undefined') {
-                window.localStorage.setItem(COLOR_MODE_STORAGE_KEY, nextMode);
-            }
-            return nextMode;
+    const cyclePalette = () => {
+        setPaletteName((prev) => {
+            const keys = Object.keys(paletteThemes);
+            const next = keys[(keys.indexOf(prev) + 1) % keys.length];
+            try { window.localStorage.setItem(PALETTE_STORAGE_KEY, next); } catch { /* not persisted */ }
+            return next;
         });
     };
 
@@ -2829,12 +2824,12 @@ function App() {
                         </MenuItem>
                         <Divider />
                         <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); toggleColorMode(); }}
+                            onClick={() => { setDockMenuAnchor(null); cyclePalette(); }}
                         >
                             <ListItemIcon>
-                                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                                <PaletteIcon size={18} />
                             </ListItemIcon>
-                            <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
+                            <ListItemText>Palette: {PALETTES[paletteName].name}</ListItemText>
                         </MenuItem>
                         {updates.visible && (
                             <MenuItem
@@ -2946,14 +2941,14 @@ function App() {
 
                     <Box sx={appStyles.dockItem}>
                         <IconButton
-                            aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-                            onClick={toggleColorMode}
-                            sx={[appStyles.dockIconButton, { color: colorMode === 'light' ? 'night.main' : 'warm.main', '&:hover': { color: colorMode === 'light' ? 'night.main' : 'warm.main' } }]}
+                            aria-label={`Palette: ${PALETTES[paletteName].name}. Switch palette`}
+                            onClick={cyclePalette}
+                            sx={[appStyles.dockIconButton, { color: 'warm.main', '&:hover': { color: 'warm.main' } }]}
                         >
-                            {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
+                            <PaletteIcon size={18} />
                         </IconButton>
                         <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}
+                            Palette: {PALETTES[paletteName].name}
                         </Typography>
                     </Box>
 
