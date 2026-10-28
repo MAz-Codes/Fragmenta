@@ -70,7 +70,7 @@ export const PALETTES = {
         cool: '#45B8F5', warm: '#FFC65E', fresh: '#8DDCC9', hot: '#F16E50',   // sky, golden yellow, mint green, coral red
         // Hand-tuned over the derived values.
         exact: {
-            surface: '#F9F9F5', control: '#E4E4D8', controlHover: '#DDDDD1', section: '#F5F5EC',
+            surface: '#F5F5EC', control: '#E6E6DA', controlHover: '#DEDFD3', section: '#ECECE0',
             textDim: '#46483E', textFaint: '#5A5B51', navSelected: '#C9E4EE',
             amber: '#096FA5', amberHi: '#0B88CA', amberLo: '#075A86',
         },
@@ -88,8 +88,8 @@ export const DEFAULT_PALETTE = 'linen';
 // controls compact, 999 only for selected states and circular precision
 // controls. px strings so they don't multiply by theme.shape.borderRadius.
 // Controls sitting on a lane's tint.
-export const ON_TINT = 'rgba(255, 255, 255, 0.5)';
-export const ON_TINT_HOVER = 'rgba(255, 255, 255, 0.72)';
+export const ON_TINT = 'rgba(247, 247, 239, 0.55)';
+export const ON_TINT_HOVER = 'rgba(247, 247, 239, 0.8)';
 export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -3700,7 +3700,7 @@ export const performanceChannelStyles = {
         height: 26,
         borderRadius: RADIUS.pill,
         color: theme.palette.perf.label,
-        backgroundColor: active || loaded ? theme.palette.fragmenta.surface : 'rgba(255, 255, 255, 0.55)',
+        backgroundColor: active || loaded ? theme.palette.fragmenta.surface : ON_TINT,
         boxShadow: active || loaded ? `0 1px 3px rgba(${theme.palette.fragmenta.inkRgb}, 0.14)` : 'none',
         transition: 'background-color 160ms ease',
         '&:hover': { bgcolor: theme.palette.fragmenta.surface },
@@ -3824,7 +3824,7 @@ export const performanceChannelStyles = {
         flex: 1,
         height: 6,
         mt: 0.75,
-        backgroundColor: 'rgba(255, 255, 255, 0.55)',
+        backgroundColor: ON_TINT,
         boxShadow: `inset 0 1px 1px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
         borderRadius: RADIUS.pill,
         position: 'relative',
