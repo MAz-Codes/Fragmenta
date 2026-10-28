@@ -67,7 +67,7 @@ const DARK = {
 export const PALETTES = {
     linen: {
         name: 'Linen', bg: '#F1F1E5', ink: '#373A30',
-        cool: '#45B8F5', warm: '#FFC65E', fresh: '#8DDCC9', hot: '#F16E50',   // sky, golden yellow, mint green, coral red
+        cool: '#45B8F5', warm: '#FFC65E', fresh: '#8DDCC9', hot: '#F44783',   // sky, golden yellow, mint green, pink red
         // Hand-tuned over the derived values.
         exact: {
             surface: '#F5F5EC', control: '#E6E6DA', controlHover: '#DEDFD3', section: '#ECECE0',
@@ -75,10 +75,10 @@ export const PALETTES = {
             amber: '#096FA5', amberHi: '#0B88CA', amberLo: '#075A86',
         },
         lanes: {
-            tints: ['#C4E2E9', '#F1D5C6', '#D1EADC', '#F5E3BA'],
-            playing: ['#B3DCEB', '#F1CCBB', '#C7E8D9', '#F7DFAC'],
-            deep: ['#0975AE', '#CE3410', '#29856F', '#A56B00'],
-            soft: ['#92D2EE', '#F1A993', '#B5E4D4', '#F9D794'],
+            tints: ['#C4E2E9', '#F2D2D3', '#D1EADC', '#F5E3BA'],
+            playing: ['#B3DCEB', '#F2C8CD', '#C7E8D9', '#F7DFAC'],
+            deep: ['#0975AE', '#D70D53', '#29856F', '#A56B00'],
+            soft: ['#92D2EE', '#F394AF', '#B5E4D4', '#F9D794'],
         },
     },
 };
@@ -2361,6 +2361,15 @@ export const datasetStyles = {
         color: 'text.secondary',
         '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.control },
     },
+    // Auto-annotate this clip: golden, like the other auto actions.
+    rowActionWarm: (t) => ({
+        width: 30,
+        height: 30,
+        color: t.palette.text.primary,
+        backgroundColor: t.palette.fragmenta.accents.warm,
+        '&:hover': { backgroundColor: t.palette.fragmenta.warmHi, filter: 'brightness(0.96)' },
+        '&.Mui-disabled': { backgroundColor: t.palette.fragmenta.control },
+    }),
     // Rail: each tool is its own soft card.
     railCard: (t) => ({
         borderRadius: '22px',
@@ -3384,9 +3393,10 @@ export const performanceChannelStyles = {
         color: 'text.secondary',
         minWidth: 22,
     },
+    // `&&` outranks the theme's colorPrimary override, so the lane colour wins.
     durationSlider: (color) => ({
         flex: 1,
-        color,
+        '&&': { color },
     }),
     // Sec / Bars: a segmented control on the control tone; the selected
     // segment is the one place a fully rounded end is used.

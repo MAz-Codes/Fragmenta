@@ -1252,7 +1252,7 @@ function InspectorRail({
                     <span style={{ display: 'flex' }}>
                         <Button
                             variant="contained"
-                            color="primary"
+                            color="warm"
                             size="medium"
                             fullWidth
                             startIcon={annotateStarting
@@ -2070,7 +2070,7 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             onClick={() => onAnnotate(clip.file_name)}
                             disabled={disabled}
                             aria-label={`Auto-annotate ${clip.file_name}`}
-                            sx={datasetStyles.rowAction}
+                            sx={datasetStyles.rowActionWarm}
                         >
                             <WandSparkles size={16} />
                         </IconButton>
