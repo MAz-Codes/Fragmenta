@@ -66,19 +66,19 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#F1EDE2', ink: '#373A30',
-        cool: '#A9B7D8', warm: '#D9B778', fresh: '#B5BE91', hot: '#D6A1A8',   // periwinkle, ochre, sage moss, dusty rose
-        // Exact values from the approved mockups, over the derived ones.
+        name: 'Linen', bg: '#F7F4EB', ink: '#373A30',
+        cool: '#B8B4E3', warm: '#E9C66B', fresh: '#B8CDA8', hot: '#E7A9B8',   // lilac, honey, pistachio, peony
+        // Hand-tuned over the derived values.
         exact: {
-            control: '#ECE8DF', controlHover: '#E4E0D6', section: '#F1EDE2',
-            textDim: '#46483E', textFaint: '#626359', navSelected: '#D3D8E2',
-            amber: '#4D68A9', amberHi: '#627BB8', amberLo: '#3F5893',
+            surface: '#FCFBF7', control: '#EAE7DE', controlHover: '#E2E0D6', section: '#F1EEE4',
+            textDim: '#46483E', textFaint: '#5A5B51', navSelected: '#DBD7E7',
+            amber: '#665EC3', amberHi: '#817ACD', amberLo: '#5046BA',
         },
         lanes: {
-            tints: ['#E3E2E0', '#ECDED6', '#E5E4D2', '#ECE2CD'],
-            playing: ['#D9DBDF', '#E8D3CE', '#DDDDC6', '#E9DBBE'],
-            deep: ['#627BB8', '#BA606C', '#78824D', '#9E762C'],
-            soft: ['#C9CFDC', '#E2C3C2', '#D0D3B5', '#E4CFA8'],
+            tints: ['#DFDCE8', '#F1D8D8', '#DFE5D2', '#F2E3BA'],
+            playing: ['#D6D3E7', '#EFCDD0', '#D6E0C8', '#F0DCA8'],
+            deep: ['#6B62C4', '#C8395C', '#5F7D48', '#926F16'],
+            soft: ['#CBC7E5', '#ECC0C7', '#CBD9BC', '#EDD491'],
         },
     },
 };
@@ -2336,8 +2336,7 @@ export const datasetStyles = {
     },
     waveCapsule: (t) => ({
         width: '100%',
-        maxWidth: 260,
-        height: 36,
+        height: 40,
         flexShrink: 0,
         boxSizing: 'border-box',
         px: '9px',
@@ -3118,7 +3117,7 @@ export const performancePanelStyles = {
     },
     channelsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, minmax(200px, 300px))',
+        gridTemplateColumns: 'repeat(4, minmax(200px, 1fr))',
         gap: 1.25,
         flex: 1,
         minWidth: 0,
@@ -3599,11 +3598,10 @@ export const performanceChannelStyles = {
     }),
     // Fragment history: no box or rule lines, just a small label and rows;
     // the loaded fragment gets a soft tint.
-    // Grows into the lane's free height, so more fragments show at once.
+    // Four rows tall at most; the rest scroll, so lanes stay one height.
     fragmentHistoryPanel: {
         overflow: 'hidden',
-        flex: 1,
-        minHeight: 3 * 28 + 22,
+        flex: '0 0 auto',
         display: 'flex',
         flexDirection: 'column',
     },
@@ -3628,12 +3626,10 @@ export const performanceChannelStyles = {
             bgcolor: (t) => t.palette.fragmenta.control,
         },
     },
-    // Rows are 26 px; three show before the list scrolls, so the lane never
-    // resizes as fragments accumulate.
+    // Rows are 36 px + 2 px gap; four show before the list scrolls, so the
+    // lane never resizes as fragments accumulate.
     fragmentHistoryList: {
-        flex: 1,
-        minHeight: 3 * 38,
-        height: 0,
+        height: 4 * 38,
         overflowY: 'auto',
         display: 'flex',
         flexDirection: 'column',
@@ -3643,8 +3639,7 @@ export const performanceChannelStyles = {
         ...perfTokens.caps,
         textAlign: 'center',
         color: 'text.disabled',
-        flex: 1,
-        minHeight: 3 * 38,
+        height: 4 * 38,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

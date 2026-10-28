@@ -177,6 +177,76 @@ const DRIFT_RESYNC = 0.03;        // s — beyond this, jump back with a crossfa
 // Beyond ±0.3% that's a different tempo, not drift: leave the clip alone.
 const DRIFT_MAX_FOLLOW = 0.003;
 
+/** The organic waveform shared by the lanes and the dataset bench: a soft
+ *  envelope (pastel → deep → pastel), an RMS body fading to the edges, and
+ *  exact thin peak bars on top. `peak`/`rms` hold one value per CSS pixel
+ *  column (0..1); `g` is already scaled to CSS pixels. */
+export function paintWave(g, n, cssW, cssH, peak, rms, color, pastel) {
+    const mid = cssH / 2;
+    const scale = (cssH - 8) / 2;
+    // Box-smoothing for the soft layers; the bars stay exact.
+    const smooth = (src, radius) => {
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            let sum = 0, cnt = 0;
+            for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) { sum += src[k]; cnt++; }
+            out[i] = sum / cnt;
+        }
+        return out;
+    };
+    const widen = (src, radius) => {
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            let m = 0;
+            for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) if (src[k] > m) m = src[k];
+            out[i] = m;
+        }
+        return out;
+    };
+    const env = smooth(widen(peak, 4), 3);
+    const body = smooth(rms, 2);
+    const shape = (amp) => {
+        g.beginPath();
+        g.moveTo(0, mid - amp(0));
+        for (let i = 1; i < n; i++) g.lineTo(i, mid - amp(i));
+        for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, mid + amp(i));
+        g.closePath();
+        g.fill();
+    };
+    const rgba = (hex, a) => {
+        const h = (hex || '#6B62C4').replace('#', '');
+        return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
+    };
+    const deep = color || '#6B62C4';
+    const light = pastel || deep;
+    // 1. Soft outer envelope: pastel → deep → pastel across the clip.
+    const across = g.createLinearGradient(0, 0, cssW, 0);
+    across.addColorStop(0, light);
+    across.addColorStop(0.5, deep);
+    across.addColorStop(1, light);
+    g.globalAlpha = 0.3;
+    g.fillStyle = across;
+    shape((i) => Math.max(1, env[i] * scale));
+    // 2. Body: the RMS, fading toward the edges.
+    const down = g.createLinearGradient(0, 0, 0, cssH);
+    down.addColorStop(0, rgba(deep, 0.12));
+    down.addColorStop(0.5, rgba(deep, 0.55));
+    down.addColorStop(1, rgba(deep, 0.12));
+    g.globalAlpha = 1;
+    g.fillStyle = down;
+    shape((i) => Math.max(0.5, Math.min(env[i], body[i] * 1.4) * scale));
+    // 3. Exact detail: a thin bar per 3 px at that window's true peak.
+    g.globalAlpha = 0.85;
+    g.fillStyle = deep;
+    for (let x = 0; x < n; x += 3) {
+        let p = 0;
+        for (let k = x; k < Math.min(n, x + 3); k++) if (peak[k] > p) p = peak[k];
+        const a = Math.max(0.5, p * scale);
+        g.fillRect(x + 0.8, mid - a, 1.4, 2 * a);
+    }
+    g.globalAlpha = 1;
+}
+
 export class ChannelStrip {
     constructor(masterBus, masterDelayInput, masterReverbInput) {
         const ctx = getAudioContext();
@@ -738,8 +808,6 @@ export class ChannelStrip {
         const ch1 = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : null;
         const cols = Math.max(1, Math.floor(cssW));
         const bucket = Math.max(1, Math.floor(ch0.length / cols));
-        const mid = cssH / 2;
-        const scale = (cssH - 8) / 2;
         const peak = new Float32Array(cols), rms = new Float32Array(cols);
         let n = 0;
         for (let i = 0; i < cols; i++, n++) {
@@ -757,67 +825,7 @@ export class ChannelStrip {
             rms[i] = Math.min(1, Math.sqrt(sq / (e - s)));
         }
         if (!n) return;
-        // Box-smoothing for the soft layers; the bars stay exact.
-        const smooth = (src, radius) => {
-            const out = new Float32Array(n);
-            for (let i = 0; i < n; i++) {
-                let sum = 0, cnt = 0;
-                for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) { sum += src[k]; cnt++; }
-                out[i] = sum / cnt;
-            }
-            return out;
-        };
-        const widen = (src, radius) => {
-            const out = new Float32Array(n);
-            for (let i = 0; i < n; i++) {
-                let m = 0;
-                for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) if (src[k] > m) m = src[k];
-                out[i] = m;
-            }
-            return out;
-        };
-        const env = smooth(widen(peak, 4), 3);
-        const body = smooth(rms, 2);
-        const shape = (amp) => {
-            g.beginPath();
-            g.moveTo(0, mid - amp(0));
-            for (let i = 1; i < n; i++) g.lineTo(i, mid - amp(i));
-            for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, mid + amp(i));
-            g.closePath();
-            g.fill();
-        };
-        const rgba = (hex, a) => {
-            const h = (hex || '#627BB8').replace('#', '');
-            return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
-        };
-        const deep = color || '#627BB8';
-        const light = pastel || deep;
-        // 1. Soft outer envelope: pastel → deep → pastel across the clip.
-        const across = g.createLinearGradient(0, 0, cssW, 0);
-        across.addColorStop(0, light);
-        across.addColorStop(0.5, deep);
-        across.addColorStop(1, light);
-        g.globalAlpha = 0.3;
-        g.fillStyle = across;
-        shape((i) => Math.max(1, env[i] * scale));
-        // 2. Body: the RMS, fading toward the edges.
-        const down = g.createLinearGradient(0, 0, 0, cssH);
-        down.addColorStop(0, rgba(deep, 0.12));
-        down.addColorStop(0.5, rgba(deep, 0.55));
-        down.addColorStop(1, rgba(deep, 0.12));
-        g.globalAlpha = 1;
-        g.fillStyle = down;
-        shape((i) => Math.max(0.5, Math.min(env[i], body[i] * 1.4) * scale));
-        // 3. Exact detail: a thin bar per 3 px at that window's true peak.
-        g.globalAlpha = 0.85;
-        g.fillStyle = deep;
-        for (let x = 0; x < n; x += 3) {
-            let p = 0;
-            for (let k = x; k < Math.min(n, x + 3); k++) if (peak[k] > p) p = peak[k];
-            const a = Math.max(0.5, p * scale);
-            g.fillRect(x + 0.8, mid - a, 1.4, 2 * a);
-        }
-        g.globalAlpha = 1;
+        paintWave(g, n, cssW, cssH, peak, rms, color, pastel);
     }
 
     dispose() {

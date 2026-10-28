@@ -64,6 +64,7 @@ import {
 import api from '../api';
 import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
+import { paintWave } from '../utils/performanceAudio';
 import { appStyles, datasetStyles } from '../theme';
 
 // Shared caveat for the switch/close confirms — the edits aren't lost, they
@@ -1826,12 +1827,22 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         setPeaks(null);
         setFailed(false);
         if (!projectName || !fileName) return;
-        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=80`;
+        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=400`;
         api.get(url)
             .then(({ data }) => { if (!cancelled) setPeaks(data?.peaks || []); })
             .catch(() => { if (!cancelled) setFailed(true); });
         return () => { cancelled = true; };
     }, [projectName, fileName]);
+
+    // The cell's width follows the window, so redraw when it changes.
+    const [width, setWidth] = useState(0);
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return undefined;
+        const ro = new ResizeObserver(() => setWidth(canvas.clientWidth));
+        ro.observe(canvas);
+        return () => ro.disconnect();
+    }, []);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -1839,47 +1850,43 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         const dpr = window.devicePixelRatio || 1;
         const w = canvas.clientWidth;
         const h = canvas.clientHeight;
-        if (canvas.width !== w * dpr) canvas.width = w * dpr;
-        if (canvas.height !== h * dpr) canvas.height = h * dpr;
+        if (!(w > 0 && h > 0)) return;
+        if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+        if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
         const ctx = canvas.getContext('2d');
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
 
+        const deep = theme.palette.perf.channelsDeep[0];
         if (!peaks || !peaks.length) {
-            ctx.fillStyle = 'rgba(0,0,0,0.08)';
-            const midY = h / 2;
-            ctx.fillRect(0, midY - 0.5, w, 1);
+            ctx.fillStyle = `${deep}33`;
+            ctx.fillRect(0, h / 2 - 0.5, w, 1);
             return;
         }
 
-        // Soft envelope under exact bars (slicing needs the real peaks); the
-        // played part in the deep accent, the rest dimmed.
-        const barCount = peaks.length;
-        const deep = theme.palette.perf.channelsDeep[0];
-        const midY = h / 2;
-        const scale = (h - 4) / 2;
-        ctx.beginPath();
-        ctx.moveTo(0, midY);
-        for (let i = 0; i < barCount; i++) ctx.lineTo((i + 0.5) * (w / barCount), midY - peaks[i] * scale);
-        ctx.lineTo(w, midY);
-        for (let i = barCount - 1; i >= 0; i--) ctx.lineTo((i + 0.5) * (w / barCount), midY + peaks[i] * scale);
-        ctx.closePath();
-        ctx.fillStyle = `${deep}2E`;
-        ctx.fill();
-        const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
-        const barWidth = Math.max(1, Math.min(2, w / barCount - 1.5));
-        for (let i = 0; i < barCount; i++) {
-            const barH = Math.max(1, peaks[i] * (h - 4));
-            const x = (i + 0.5) * (w / barCount) - barWidth / 2;
-            ctx.fillStyle = i <= playedIdx ? theme.palette.primary.main : `${deep}73`;
-            ctx.fillRect(x, (h - barH) / 2, barWidth, barH);
+        // Server peaks resampled to one per pixel column; the body stands in
+        // for the RMS the lanes compute from the decoded buffer.
+        const n = Math.max(1, Math.floor(w));
+        const peak = new Float32Array(n), rms = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            const x = (i / n) * (peaks.length - 1);
+            const k = Math.floor(x), f = x - k;
+            const v = peaks[k] * (1 - f) + (peaks[Math.min(peaks.length - 1, k + 1)] || 0) * f;
+            peak[i] = v;
+            rms[i] = v * 0.55;
         }
+        paintWave(ctx, n, w, h, peak, rms, deep, theme.palette.perf.channels[0]);
         if (isActive) {
+            // Played part deepened, then the playhead.
             const px = Math.min(w - 1, Math.max(0, progress * w));
+            ctx.globalCompositeOperation = 'source-atop';
+            ctx.fillStyle = `${deep}99`;
+            ctx.fillRect(0, 0, px, h);
+            ctx.globalCompositeOperation = 'source-over';
             ctx.fillStyle = theme.palette.text.primary;
-            ctx.fillRect(px - 0.75, 1, 1.5, h - 2);
+            ctx.fillRect(px - 0.75, 2, 1.5, h - 4);
         }
-    }, [peaks, isActive, progress, theme]);
+    }, [peaks, isActive, progress, theme, width]);
 
     // Translate a pointer position into a 0..1 offset in the clip.
     const seekTo = useCallback((clientX) => {
@@ -1896,9 +1903,6 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     }, []);
 
-    // 100px rather than the original 120: the inspector rail took horizontal
-    // room out of the table, and the file name has to survive on one line.
-    // The waveform still reads fine at this size.
     return (
         <Box sx={[datasetStyles.waveCapsule, { opacity: failed ? 0.3 : 1 }]}>
             <canvas
@@ -1915,7 +1919,7 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
                     if (!onSeek || e.button !== 0) return;
                     // Stops the row's text selection from kicking in mid-drag.
                     e.preventDefault();
-                    // Pointer capture keeps the drag alive past the 120px canvas.
+                    // Pointer capture keeps the drag alive past the canvas edge.
                     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
                     scrubbingRef.current = true;
                     seekTo(e.clientX);
