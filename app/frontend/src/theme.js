@@ -66,23 +66,33 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#E8E3DB', ink: '#24261F',
-        cool: '#45B8F5', warm: '#FFC65E', fresh: '#86A77C', hot: '#D7A29C',   // sky, golden yellow, sage green, dusty red
-        // Hand-tuned over the derived values.
+        name: 'Linen', bg: '#F4EFE5', ink: '#141414',
+        // Saturated mains for fills and marks; each has a faint partner for
+        // waveform layers, tints and soft states.
+        cool: '#1A49DE', warm: '#D58500', fresh: '#007B51', hot: '#C81E0F',   // blue, gold, green, red
+        faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
         exact: {
-            surface: '#F7F4EF', control: '#ECE7E0', controlHover: '#E3DED5', section: '#F0ECE5',
-            textDim: '#3B3D35', textFaint: '#55574E', navSelected: '#BAD7E2',
-            amber: '#08679A', amberHi: '#0A7FBE', amberLo: '#07527A',
+            surface: '#FAF8F3', control: '#E9E4DB', controlHover: '#E0DBD2', section: '#F0EBE1',
+            textDim: '#4A4843', textFaint: '#66625B', textMuted: '#908C84', navSelected: '#D5D5E4',
+            amber: '#1A49DE', amberHi: '#3C64E3', amberLo: '#153CB6',
+            success: '#007B51', error: '#C81E0F', warning: '#9A6000',
         },
         lanes: {
-            tints: ['#BED8E2', '#E2CAC3', '#CED3C1', '#EFDAB3'],
-            playing: ['#ADD4E4', '#E0C5BE', '#C7CFBB', '#F2D7A7'],
-            deep: ['#096CA1', '#A04B41', '#516C49', '#996300'],
-            soft: ['#8ECBE9', '#DEBCB5', '#ADBFA2', '#F6D290'],
+            tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
+            playing: ['#C7C9E4', '#F7D2C6', '#BBD1BF', '#ECD3A9'],
+            deep: ['#1A49DE', '#C81E0F', '#007B51', '#D58500'],
+            soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#E6BF7E'],
         },
     },
 };
 export const DEFAULT_PALETTE = 'linen';
+
+// Label colour for text/icons on a solid fill: white where it reads (the
+// saturated mains), ink otherwise (gold, faint tones, surfaces).
+export const onFill = (fill, ink = '#141414') => {
+    if (typeof fill !== 'string' || !/^#[0-9a-f]{6}$/i.test(fill)) return ink;
+    return contrastRatio('#FFFFFF', fill) >= 3.5 ? '#FFFFFF' : ink;
+};
 
 // Shape hierarchy, not one radius everywhere: large surfaces softly rounded,
 // controls compact, 999 only for selected states and circular precision
@@ -100,6 +110,7 @@ const luminance = (h) => {
     const [r, g, b] = hexRgb(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 };
+function contrastRatio(a, b) { return contrast(a, b); }
 const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 const hslToHex = (h, s, l) => {
     const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
@@ -165,6 +176,7 @@ function paletteTokens(P) {
         errorLo: deepen(P.hot, P.bg, 6),
         warning: deepen(P.warm, P.bg, 4.5),
         accents: { cool: P.cool, warm: P.warm, fresh: P.fresh, hot: P.hot },
+        faint: P.faint || { cool: P.cool, warm: P.warm, fresh: P.fresh, hot: P.hot },
         // Layered tones: ivory canvas → lifted surface → interactive control.
         surface: mixHex(P.bg, white, 0.55),
         control: mixHex(P.bg, P.ink, 0.06),
@@ -200,7 +212,7 @@ function paletteTokens(P) {
         masterHover: mixHex(P.cool, white, 0.25),
         play: P.cool,
         stop: t.control,
-        record: t.errorHi,
+        record: P.hot,
         cue: t.error,
         toggleOn: P.warm,
         toggleOnHover: mixHex(P.warm, white, 0.25),
@@ -1027,7 +1039,7 @@ function makePaletteTheme(LIGHT) {
     return createTheme(theme, {
         palette: {
             mode: 'light',
-            primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: LIGHT.onAccent },
+            primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: onFill(LIGHT.amber, LIGHT.text) },
             secondary: { main: LIGHT.blue, light: LIGHT.blueDim, dark: LIGHT.blueLo, contrastText: LIGHT.onAccent },
             background: { default: LIGHT.bg, paper: LIGHT.paper },
             text: { primary: LIGHT.text, secondary: LIGHT.textDim, disabled: LIGHT.textFaint },
@@ -1039,11 +1051,11 @@ function makePaletteTheme(LIGHT) {
                 disabledBackground: `rgba(${LIGHT.inkRgb}, 0.10)`,
             },
             divider: LIGHT.divider,
-            error: { main: LIGHT.error },
-            warning: { main: LIGHT.warning },
-            success: { main: LIGHT.success },
+            error: { main: LIGHT.error, contrastText: onFill(LIGHT.error, LIGHT.text) },
+            warning: { main: LIGHT.warning, contrastText: onFill(LIGHT.warning, LIGHT.text) },
+            success: { main: LIGHT.success, contrastText: onFill(LIGHT.success, LIGHT.text) },
             info: { main: LIGHT.blue },
-            warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
+            warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo, contrastText: onFill(LIGHT.accents.warm, LIGHT.text) },
             night: { main: LIGHT.night },
             // All palette tokens, and the Performance tab's colours.
             fragmenta: LIGHT,
@@ -1122,8 +1134,8 @@ function makePaletteTheme(LIGHT) {
                         style: {
                             backgroundImage: 'none',
                             backgroundColor: LIGHT.accents.warm,
-                            color: LIGHT.text,
-                            '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.warm, LIGHT.text, 0.07) },
+                            color: onFill(LIGHT.accents.warm),
+                            '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.warm, '#000000', 0.1) },
                         },
                     },
                 ],
@@ -1149,26 +1161,26 @@ function makePaletteTheme(LIGHT) {
                     containedPrimary: {
                         backgroundImage: 'none',
                         backgroundColor: LIGHT.accents.cool,
-                        color: LIGHT.text,
-                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.cool, LIGHT.text, 0.07) },
+                        color: onFill(LIGHT.accents.cool),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.cool, '#000000', 0.1) },
                     },
                     containedSecondary: {
                         backgroundImage: 'none',
                         backgroundColor: LIGHT.accents.fresh,
-                        color: LIGHT.text,
-                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, LIGHT.text, 0.07) },
+                        color: onFill(LIGHT.accents.fresh),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, '#000000', 0.1) },
                     },
                     containedSuccess: {
                         backgroundImage: 'none',
                         backgroundColor: LIGHT.accents.fresh,
-                        color: LIGHT.text,
-                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, LIGHT.text, 0.07) },
+                        color: onFill(LIGHT.accents.fresh),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, '#000000', 0.1) },
                     },
                     containedError: {
                         backgroundImage: 'none',
                         backgroundColor: LIGHT.accents.hot,
-                        color: LIGHT.text,
-                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.hot, LIGHT.text, 0.07) },
+                        color: onFill(LIGHT.accents.hot),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.hot, '#000000', 0.1) },
                     },
                     outlined: {
                         // No outline at rest: a tonal control surface, like the
@@ -1279,10 +1291,10 @@ function makePaletteTheme(LIGHT) {
                         color: LIGHT.text,
                         border: 'none',
                         borderRadius: 999,
-                        '&.MuiChip-filled.MuiChip-colorPrimary': { backgroundColor: LIGHT.accents.cool, color: LIGHT.text },
-                        '&.MuiChip-filled.MuiChip-colorSuccess': { backgroundColor: LIGHT.accents.fresh, color: LIGHT.text },
-                        '&.MuiChip-filled.MuiChip-colorWarning': { backgroundColor: LIGHT.accents.warm, color: LIGHT.text },
-                        '&.MuiChip-filled.MuiChip-colorError': { backgroundColor: LIGHT.accents.hot, color: LIGHT.text },
+                        '&.MuiChip-filled.MuiChip-colorPrimary': { backgroundColor: LIGHT.accents.cool, color: onFill(LIGHT.accents.cool) },
+                        '&.MuiChip-filled.MuiChip-colorSuccess': { backgroundColor: LIGHT.accents.fresh, color: onFill(LIGHT.accents.fresh) },
+                        '&.MuiChip-filled.MuiChip-colorWarning': { backgroundColor: LIGHT.accents.warm, color: onFill(LIGHT.accents.warm) },
+                        '&.MuiChip-filled.MuiChip-colorError': { backgroundColor: LIGHT.accents.hot, color: onFill(LIGHT.accents.hot) },
                     },
                     outlined: {
                         border: 'none',
@@ -1504,7 +1516,7 @@ function makePaletteTheme(LIGHT) {
                         '&.Mui-selected': {
                             backgroundColor: LIGHT.accents.cool,
                             backgroundImage: 'none',
-                            color: LIGHT.text,
+                            color: onFill(LIGHT.accents.cool),
                             fontWeight: 600,
                             boxShadow: 'none',
                             '&:hover': { backgroundImage: 'none', backgroundColor: LIGHT.accents.cool },
@@ -2259,15 +2271,15 @@ export const appToolbarStyles = {
         width: 34,
         height: 34,
         borderRadius: RADIUS.pill,
-        color: on ? t.palette.text.primary : t.palette.text.secondary,
+        color: on ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.secondary,
         backgroundColor: on ? t.palette.fragmenta.accents.cool : 'transparent',
-        '&:hover': { color: t.palette.text.primary, backgroundColor: on ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
+        '&:hover': { color: on ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary, backgroundColor: on ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
     }),
     update: (t) => ({
         width: 34,
         height: 34,
         borderRadius: RADIUS.pill,
-        color: t.palette.text.primary,
+        color: onFill(t.palette.fragmenta.accents.warm),
         backgroundColor: t.palette.fragmenta.accents.warm,
         '&:hover': { backgroundColor: t.palette.fragmenta.accents.warm, filter: 'brightness(0.97)' },
     }),
@@ -2322,7 +2334,7 @@ export const datasetStyles = {
         width: 36,
         height: 36,
         flexShrink: 0,
-        color: t.palette.text.primary,
+        color: isPlaying ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary,
         backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
         boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
         '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
@@ -2365,7 +2377,7 @@ export const datasetStyles = {
     rowActionWarm: (t) => ({
         width: 30,
         height: 30,
-        color: t.palette.text.primary,
+        color: onFill(t.palette.fragmenta.accents.warm),
         backgroundColor: t.palette.fragmenta.accents.warm,
         '&:hover': { backgroundColor: t.palette.fragmenta.warmHi, filter: 'brightness(0.96)' },
         '&.Mui-disabled': { backgroundColor: t.palette.fragmenta.control },
@@ -2574,7 +2586,7 @@ export const generatedFragmentsWindowStyles = {
         flexShrink: 0,
         width: 40,
         height: 40,
-        color: t.palette.text.primary,
+        color: isPlaying ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary,
         backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
         boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
         '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
@@ -2614,26 +2626,31 @@ export const trainingMonitorStyles = {
     headerIcon: { display: 'none' },
     headerTitle: {},  // typography handled by the h6 variant in theme
     // Status pill: tinted by state (training warm, done sage, error rose).
-    statusInline: (status) => (t) => ({
+    statusInline: (status) => (t) => {
+      const bg = status === 'live'
+          ? t.palette.fragmenta.accents.warm
+          : status === 'complete'
+              ? t.palette.fragmenta.accents.fresh
+              : status === 'error'
+                  ? t.palette.fragmenta.accents.hot
+                  : t.palette.fragmenta.control;
+      return {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
         height: 30,
         px: 1.5,
         borderRadius: RADIUS.pill,
-        backgroundColor: status === 'live'
-            ? t.palette.fragmenta.accents.warm
-            : status === 'complete'
-                ? t.palette.fragmenta.accents.fresh
-                : status === 'error'
-                    ? t.palette.fragmenta.accents.hot
-                    : t.palette.fragmenta.control,
-    }),
+        backgroundColor: bg,
+        color: onFill(bg),
+        '& .MuiTypography-root': { color: 'inherit' },
+      };
+    },
     statusDot: (status, animate = false) => ({
         width: 8,
         height: 8,
         borderRadius: '50%',
-        bgcolor: 'text.primary',
+        bgcolor: 'currentColor',
         opacity: status === 'idle' ? 0.45 : 1,
         animation: animate ? 'fragmenta-status-pulse 2s infinite' : 'none',
         '@keyframes fragmenta-status-pulse': {
@@ -3266,7 +3283,7 @@ export const performancePanelStyles = {
             minWidth: 0,
             lineHeight: 1,
             border: 'none',
-            color: theme.palette.perf.label,
+            color: onFill(fill),
             backgroundColor: fill,
             transition: 'background-color 160ms ease, filter 160ms ease',
             '&:hover': { border: 'none', backgroundColor: fill, filter: 'brightness(0.97)' },
@@ -3282,16 +3299,16 @@ export const performancePanelStyles = {
         width: 42,
         height: 42,
         borderRadius: RADIUS.pill,
-        color: theme.palette.perf.label,
+        color: onFill(color),
         backgroundColor: color,
         transition: 'background-color 160ms ease, filter 160ms ease, transform 160ms ease',
-        '&:hover': { color: theme.palette.perf.label, backgroundColor: color, filter: 'brightness(0.96)' },
+        '&:hover': { color: onFill(color), backgroundColor: color, filter: 'brightness(0.96)' },
         '&:active': { transform: 'scale(0.95)' },
         '&.Mui-focusVisible': {
-            color: theme.palette.perf.label,
+            color: onFill(color),
             backgroundColor: color,
             outline: 'none',
-            boxShadow: `0 0 0 2px ${theme.palette.perf.label}55`,
+            boxShadow: `0 0 0 2px ${onFill(color)}55`,
         },
         '&.Mui-disabled': {
             color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.35)`,
@@ -3337,7 +3354,7 @@ export const performanceChannelStyles = {
         fontSize: '0.75rem',
         fontWeight: perfTokens.weight.heavy,
         fontVariantNumeric: 'tabular-nums',
-        color: theme.palette.perf.label,
+        color: onFill(color),
         backgroundColor: color,
         boxShadow: playing ? `0 0 0 2px ${theme.palette.perf.label}` : 'none',
         transition: 'box-shadow 160ms ease',
@@ -3417,12 +3434,12 @@ export const performanceChannelStyles = {
         height: 28,
         borderRadius: RADIUS.pill,
         bgcolor: active ? color : 'transparent',
-        color: active ? theme.palette.perf.label : 'text.secondary',
+        color: active ? onFill(color) : 'text.secondary',
         fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
             bgcolor: active ? color : ON_TINT_HOVER,
-            color: 'text.primary',
+            color: active ? onFill(color) : 'text.primary',
         },
     }),
     // The lane's length select, on the tint.
@@ -3496,7 +3513,7 @@ export const performanceChannelStyles = {
         return {
             ...base,
             backgroundColor: color,
-            color: theme.palette.perf.label,
+            color: onFill(color),
             boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
             '&:hover': { filter: 'brightness(0.97)' },
             '&:active': { transform: 'scale(0.98)' },
@@ -3810,7 +3827,7 @@ export const performanceChannelStyles = {
         width: 36,
         height: 36,
         borderRadius: RADIUS.pill,
-        color: theme.palette.perf.label,
+        color: playing ? onFill(color) : theme.palette.perf.label,
         backgroundColor: playing ? color : theme.palette.fragmenta.surface,
         boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.08), 0 4px 10px rgba(${theme.palette.fragmenta.inkRgb}, 0.08)`,
         transition: 'background-color 160ms ease',
@@ -3860,12 +3877,12 @@ function smallToggle(theme, active, fill) {
         fontSize: '0.6875rem',
         fontWeight: 700,
         borderRadius: RADIUS.small,
-        color: active ? theme.palette.perf.label : 'text.secondary',
+        color: active ? onFill(fill) : 'text.secondary',
         backgroundColor: active ? fill : ON_TINT,
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
             backgroundColor: active ? fill : ON_TINT_HOVER,
-            color: 'text.primary',
+            color: active ? onFill(fill) : 'text.primary',
         },
     };
 }

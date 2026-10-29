@@ -49,7 +49,7 @@ import { extractError } from '../utils/errors';
 import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
-import { performancePanelStyles as styles, perfTokens } from '../theme';
+import { performancePanelStyles as styles, perfTokens, onFill } from '../theme';
 import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import MidiConfigMenu from './MidiConfigMenu';
 // setCueOutputPair is aliased: the component has a useState setter of the same
@@ -1105,7 +1105,9 @@ function PerformancePanelInner({
                                     : linkPeers > 0
                                         ? perfColors.master
                                         : perfColors.toggleOn,
-                                color: perfColors.label,
+                                color: onFill(!linkEnabled
+                                    ? perfColors.toggleOff
+                                    : linkPeers > 0 ? perfColors.master : perfColors.toggleOn),
                                 opacity: linkInstalling ? 0.55 : 1,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
@@ -1220,7 +1222,7 @@ function PerformancePanelInner({
                                 height: perfTokens.height.compact,
                                 borderRadius: '10px',
                                 bgcolor: midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff,
-                                color: perfColors.label,
+                                color: onFill(midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff),
                                 opacity: midi?.supported ? 1 : 0.45,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
@@ -2181,14 +2183,14 @@ function PerformancePanelInner({
                                 border: '1px solid',
                                 borderColor: promptInjectBpm ? perfColors.master : theme.palette.divider,
                                 backgroundColor: promptInjectBpm ? perfColors.master : 'transparent',
-                                color: promptInjectBpm ? perfColors.label : 'text.disabled',
+                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.disabled',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: perfTokens.weight.bold,
                                 fontVariantNumeric: 'tabular-nums',
                                 transition: 'background-color 120ms, color 120ms, border-color 120ms',
                                 '&:hover': {
                                     backgroundColor: promptInjectBpm ? perfColors.master : 'action.hover',
-                                    color: promptInjectBpm ? perfColors.label : 'text.secondary',
+                                    color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
                                 },
                             })}
                         >

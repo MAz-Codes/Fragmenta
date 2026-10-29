@@ -456,9 +456,9 @@ export default function PerformanceChannel({
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
             // Each channel's waveform is drawn in that channel's own colour.
-            strip.drawWaveform(canvasRef.current, deep, color);
+            strip.drawWaveform(canvasRef.current, deep, soft);
         }
-    }, [strip, deep, color]);
+    }, [strip, deep, soft]);
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 

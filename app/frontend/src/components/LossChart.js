@@ -44,7 +44,7 @@ export default function LossChart({ data, checkpoints = [], width = 600, height 
         grid: theme.palette.divider,
         axis: theme.palette.text.disabled,
         line: theme.palette.primary.main,
-        area: theme.palette.fragmenta.accents.cool,
+        area: theme.palette.fragmenta.faint.cool,
         checkpoint: theme.palette.fragmenta.accents.warm,
         checkpointRing: theme.palette.fragmenta.section,
         tooltipBg: theme.palette.text.primary,

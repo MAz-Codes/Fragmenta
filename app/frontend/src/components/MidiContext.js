@@ -401,7 +401,7 @@ export function MidiMappable({
                         fontSize: '0.5rem',
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
                         bgcolor: `rgba(${t.palette.perf.midiMappedRgb}, 0.85)`,
-                        color: t.palette.perf.label,
+                        color: '#FFFFFF',
                         px: 0.4,
                         py: 0.05,
                         borderRadius: 0.5,

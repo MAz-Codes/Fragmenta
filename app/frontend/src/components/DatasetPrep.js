@@ -1875,7 +1875,7 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
             peak[i] = v;
             rms[i] = v * 0.55;
         }
-        paintWave(ctx, n, w, h, peak, rms, deep, theme.palette.perf.channels[0]);
+        paintWave(ctx, n, w, h, peak, rms, deep, theme.palette.perf.channelsSoft[0]);
         if (isActive) {
             // Played part deepened, then the playhead.
             const px = Math.min(w - 1, Math.max(0, progress * w));

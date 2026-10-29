@@ -40,7 +40,7 @@ export default function GenerationWaveform({
     const theme = useTheme();
     // Deep shade for the played part and the detail, pastel for the soft layer.
     const color = colorProp || theme.palette.perf.channelsDeep[0];
-    const pastel = pastelProp || theme.palette.fragmenta.accents.cool;
+    const pastel = pastelProp || theme.palette.fragmenta.faint.cool;
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
     const scrubbingRef = useRef(false);
