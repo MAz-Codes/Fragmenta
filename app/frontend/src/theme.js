@@ -3679,12 +3679,15 @@ export const performanceChannelStyles = {
     // Fragment history: no box or rule lines, just a small label and rows;
     // the loaded fragment gets a soft tint.
     // Four rows tall at most; the rest scroll, so lanes stay one height.
-    fragmentHistoryPanel: {
+    // A rule underneath separates the list from the knobs below.
+    fragmentHistoryPanel: (theme) => ({
         overflow: 'hidden',
         flex: '0 0 auto',
         display: 'flex',
         flexDirection: 'column',
-    },
+        pb: 1.25,
+        borderBottom: `1px solid rgba(${theme.palette.fragmenta.inkRgb}, 0.14)`,
+    }),
     fragmentHistoryHeader: {
         display: 'flex',
         alignItems: 'center',
