@@ -34,6 +34,9 @@ All notable changes to Fragmenta are listed here. The format follows
   for 3.14 and the first start after updating rebuilds `venv/` by itself.
 
 ### Fixed
+- Mac: the toolbar said "Not detected · CPU mode" although models run on the
+  Apple GPU. It now shows free unified memory (what decides whether a model
+  fits), and Free GPU memory works there too.
 - Pre-encoding is much faster and lighter: each clip is encoded at its own
   length instead of the model's full window. Medium (SAME-L) pre-encoding
   now works without an NVIDIA GPU (CPU, Mac) in about 7 GB of memory;

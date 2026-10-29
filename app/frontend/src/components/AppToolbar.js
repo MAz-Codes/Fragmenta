@@ -29,27 +29,37 @@ export default function AppToolbar({
     onSettings,
 }) {
     const cuda = gpu && gpu.cuda;
-    const usedPct = cuda
-        ? Math.min(Math.max(((cuda.total - cuda.free) / cuda.total) * 100, 0), 100)
+    // Apple Silicon: the GPU works out of unified memory, so that's the
+    // meter (same meaning as free VRAM: whether a model fits).
+    const unified = !cuda && gpu && gpu.unified;
+    const mem = cuda || unified;
+    const usedPct = mem
+        ? Math.min(Math.max(((mem.total - mem.free) / mem.total) * 100, 0), 100)
         : 0;
 
     return (
         <Box role="toolbar" aria-label="App tools" sx={styles.root}>
-            <Box sx={styles.gpu}>
-                <Typography component="span" sx={styles.gpuLabel}>GPU</Typography>
-                {cuda ? (
-                    <>
-                        <Box sx={styles.meter} aria-hidden>
-                            <Box sx={styles.meterFill(usedPct)} />
-                        </Box>
-                        <Typography component="span" sx={styles.gpuText}>
-                            {cuda.free.toFixed(1)} / {Math.ceil(cuda.total)} GB free
-                        </Typography>
-                    </>
-                ) : (
-                    <Typography component="span" sx={styles.gpuText}>Not detected · CPU mode</Typography>
-                )}
-            </Box>
+            <Tooltip title={
+                unified ? `${unified.device} · unified memory, shared by the GPU and apps`
+                    : cuda ? `${cuda.device} · memory in use by every process`
+                        : 'No GPU found; models run on the CPU'
+            }>
+                <Box sx={styles.gpu}>
+                    <Typography component="span" sx={styles.gpuLabel}>{unified ? 'Memory' : 'GPU'}</Typography>
+                    {mem ? (
+                        <>
+                            <Box sx={styles.meter} aria-hidden>
+                                <Box sx={styles.meterFill(usedPct)} />
+                            </Box>
+                            <Typography component="span" sx={styles.gpuText}>
+                                {mem.free.toFixed(1)} / {Math.ceil(mem.total)} GB free
+                            </Typography>
+                        </>
+                    ) : (
+                        <Typography component="span" sx={styles.gpuText}>Not detected · CPU mode</Typography>
+                    )}
+                </Box>
+            </Tooltip>
             <Box sx={styles.actions}>
                 <Tooltip title="Get models">
                     <IconButton aria-label="Get models" onClick={onGetModels} sx={styles.button}>
@@ -68,7 +78,7 @@ export default function AppToolbar({
                         <IconButton
                             aria-label="Free GPU memory"
                             onClick={onFreeGPU}
-                            disabled={isFreeingGPU || !cuda}
+                            disabled={isFreeingGPU || !mem}
                             sx={styles.button}
                         >
                             {isFreeingGPU

@@ -2395,6 +2395,22 @@ def get_license_info():
             "error": str(e)
         }), 500
 
+_apple_chip = None
+
+
+def _apple_chip_name():
+    global _apple_chip
+    if _apple_chip is None:
+        import subprocess
+        try:
+            _apple_chip = subprocess.run(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                capture_output=True, text=True, timeout=3).stdout.strip() or 'Apple Silicon'
+        except Exception:
+            _apple_chip = 'Apple Silicon'
+    return _apple_chip
+
+
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
     _log_api_call('gpu_memory_status')
@@ -2464,6 +2480,19 @@ def get_gpu_memory_status():
                     print(
                         f"  Low GPU Memory: {final_free:.2f}GB free, {final_allocated:.2f}GB allocated")
                     _last_memory_warning_time = current_time
+        elif getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available():
+            # Apple Silicon: the GPU runs models out of unified memory, so the
+            # memory still available system-wide is what decides whether a
+            # model fits (MPS now, MLX later), like free VRAM on CUDA. It
+            # also counts a training run in another process.
+            vm = psutil.virtual_memory()
+            memory_info['unified'] = {
+                'total': vm.total / (1024**3),
+                'free': vm.available / (1024**3),
+                'device': _apple_chip_name(),
+                'engine': 'mps',
+                'fragmenta': torch.mps.driver_allocated_memory() / (1024**3),
+            }
         else:
             memory_info['cpu'] = {
                 'total': psutil.virtual_memory().total / (1024**3),
