@@ -72,7 +72,7 @@ export const PALETTES = {
         cool: '#1A49DE', warm: '#D58500', fresh: '#007B51', hot: '#C81E0F',   // blue, gold, green, red
         faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
         exact: {
-            surface: '#FAF8F3', control: '#E9E4DB', controlHover: '#E0DBD2', section: '#F0EBE1',
+            surface: '#FFFDF9', control: '#EEE9E0', controlHover: '#E5E0D6', section: '#F6F2EA',
             textDim: '#4A4843', textFaint: '#66625B', textMuted: '#908C84', navSelected: '#D5D5E4',
             amber: '#1A49DE', amberHi: '#3C64E3', amberLo: '#153CB6',
             success: '#007B51', error: '#C81E0F', warning: '#9A6000',
@@ -98,8 +98,8 @@ export const onFill = (fill, ink = '#141414') => {
 // controls compact, 999 only for selected states and circular precision
 // controls. px strings so they don't multiply by theme.shape.borderRadius.
 // Controls sitting on a lane's tint.
-export const ON_TINT = 'rgba(247, 244, 239, 0.72)';
-export const ON_TINT_HOVER = 'rgba(247, 244, 239, 0.92)';
+export const ON_TINT = 'rgba(255, 253, 249, 0.72)';
+export const ON_TINT_HOVER = 'rgba(255, 253, 249, 0.92)';
 export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
