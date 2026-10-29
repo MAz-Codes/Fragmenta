@@ -66,7 +66,7 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#F2EDE1', ink: '#141414',
+        name: 'Linen', bg: '#F2EDE1', ink: '#35392F',
         // Saturated mains for fills and marks; each has a faint partner for
         // waveform layers, tints and soft states.
         cool: '#A0B2D5', warm: '#FFB123', fresh: '#B3BE8C', hot: '#C18992',   // blue, gold, green, red
@@ -99,7 +99,7 @@ export const waveColor = (theme, index = 0) => {
 
 // Label colour for text/icons on a solid fill: white where it reads (the
 // saturated mains), ink otherwise (gold, faint tones, surfaces).
-export const onFill = (fill, ink = '#141414') => {
+export const onFill = (fill, ink = '#35392F') => {
     if (typeof fill !== 'string' || !/^#[0-9a-f]{6}$/i.test(fill)) return ink;
     return contrastRatio('#FFFFFF', fill) >= 3.5 ? '#FFFFFF' : ink;
 };
