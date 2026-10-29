@@ -1328,14 +1328,15 @@ function makePaletteTheme(LIGHT) {
             },
             // Sections inside a card: a tonal surface, no shadow (not a card
             // within a card).
-            // A section inside a card: the section tone, no shadow or rule.
+            // A section inside a card: the control tone (as dark as the fields, so
+            // it reads on the light card); fields inside it go light instead.
             MuiAccordion: {
                 styleOverrides: {
                     root: {
                         borderRadius: 24,
                         overflow: 'hidden',
                         marginBottom: 16,
-                        backgroundColor: LIGHT.section,
+                        backgroundColor: LIGHT.control,
                         backgroundImage: 'none',
                         boxShadow: 'none',
                         border: 'none',
@@ -1344,6 +1345,14 @@ function makePaletteTheme(LIGHT) {
                         '&:last-of-type': { borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
                         '&.Mui-expanded': { marginTop: 0, marginBottom: 16 },
                         '&.Mui-expanded:last-of-type': { marginBottom: 16 },
+                    },
+                },
+            },
+            MuiAccordionDetails: {
+                styleOverrides: {
+                    root: {
+                        '&& .MuiOutlinedInput-root, && .MuiOutlinedInput-root.Mui-focused': { backgroundColor: LIGHT.surface },
+                        '&& .MuiOutlinedInput-root:hover': { backgroundColor: LIGHT.bg },
                     },
                 },
             },
