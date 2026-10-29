@@ -23,7 +23,7 @@ APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
 
 try:
-    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
+    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip() or "1.0.0"
 except Exception:
     ABOUT_VERSION = "1.0.0"
 ABOUT_COPYRIGHT = "© 2026 Misagh Azimi · www.misaghazimi.com"
@@ -305,7 +305,7 @@ def ensure_desktop_entry() -> None:
         f"StartupWMClass={APP_WM_CLASS}\n"
         "NoDisplay=true\n"
     )
-    DESKTOP_ENTRY_PATH.write_text(contents)
+    DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
 
 
 def run_chromium_app_mode(chromium_path: str) -> int:

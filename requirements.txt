@@ -5,9 +5,9 @@ Flask-CORS>=4.0.0,<7.0
 requests>=2.28.0,<3.0
 packaging>=24
 
-torch==2.7.1
-torchaudio==2.7.1
-torchvision==0.22.1
+torch==2.11.0
+torchaudio==2.11.0
+torchvision==0.26.0
 
 transformers>=5.8.0
 huggingface-hub>=1.7.1
@@ -21,8 +21,7 @@ dill>=0.4.1
 
 librosa>=0.11.0,<0.12
 soundfile>=0.13.1
-# m4a/AAC decoding (FFmpeg); 18.1 is the last line with a cp311 wheel and its
-# abi3 build also covers 3.14.
+# m4a/AAC decoding (FFmpeg).
 av>=18.1,<20
 python-rtmidi>=1.5.0
 scipy>=1.13,<2
@@ -39,7 +38,6 @@ wget>=3.0
 braceexpand>=0.1
 webdataset>=0.2
 
-setuptools<70
 tqdm>=4.67,<5.0
 psutil>=5.9.0,<8.0
 omegaconf>=2.3.0,<3.0
@@ -50,6 +48,6 @@ python-dotenv>=1.0.0,<2.0
 pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
-flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl ; sys_platform == 'linux'
-# Windows: no official flash-attn wheel. My own build from upstream BSD-3 source.
-flash-attn @ https://github.com/MAz-Codes/Fragmenta/releases/download/flash-attn-win-v2.7.4.post1/flash_attn-2.7.4.post1-cp311-cp311-win_amd64.whl ; sys_platform == 'win32'
+# flash-attn (sa3-medium): no cp314 wheel exists yet; our own builds for
+# torch 2.11 / cu128 / cp314 (Linux + Windows) return here in M1.4. Until
+# then medium runs on the slower SDPA path.

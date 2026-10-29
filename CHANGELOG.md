@@ -26,6 +26,8 @@ All notable changes to Fragmenta are listed here. The format follows
 - Audio files are read the same way everywhere (datasets, training, edit
   uploads), without torchaudio's file loaders. m4a/AAC and AIFF clips are now
   used in training; before, they showed in the Dataset tab but were skipped.
+- Runs on Python 3.14 with PyTorch 2.11 (was 3.11 / 2.7). The launchers look
+  for 3.14 and the first start after updating rebuilds `venv/` by itself.
 
 ### Fixed
 - Pre-encoding is much faster and lighter: each clip is encoded at its own

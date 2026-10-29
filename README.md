@@ -8,7 +8,7 @@
 [![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20692998.svg)](https://doi.org/10.5281/zenodo.20692998)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
-[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/MAz-Codes)
 
@@ -60,7 +60,7 @@ Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple
 
 ## Run the App Locally
 
-> **Requirements:** Python 3.11 ([download](https://www.python.org/downloads/release/python-3119/)) — newer versions (3.12, 3.13) won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
+> **Requirements:** Python 3.14 ([download](https://www.python.org/downloads/)) — other versions won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
 
 Open your **Terminal** or **PowerShell** and paste the following:
 
@@ -77,7 +77,7 @@ Run the installer for your platform:
 | **macOS** | `fragmenta.command` |
 | **Windows** | `./fragmenta.bat` |
 
-The installer verifies Python 3.11 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster — re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
+The installer verifies Python 3.14 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster — re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
 
 
 
@@ -249,7 +249,7 @@ fragmenta/
 | GPU memory issues | Use the **Free GPU** button in the header, or reduce batch size |
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
 | Multi-channel audio in Performance mode (macOS) | The native macOS window can't route audio to separate output devices. Open Fragmenta in your browser instead: [http://localhost:5001](http://localhost:5001) |
-| Import errors | Verify Python 3.11 is installed — newer versions are not supported. [Download Python 3.11.9](https://www.python.org/downloads/release/python-3119/). If you previously ran the installer with the wrong Python version, delete the `venv/` folder and rerun. |
+| Import errors | Verify Python 3.14 is installed — other versions are not supported. [Download Python 3.14](https://www.python.org/downloads/). The installer rebuilds a `venv/` made with another Python by itself; if errors persist, delete `venv/` and rerun. |
 
 ---
 

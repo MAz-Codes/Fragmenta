@@ -29,6 +29,20 @@ STAMP_PATH = VENV_PATH / ".fragmenta-install-stamp"
 LAION_CLAP_SPEC = "laion-clap>=1.1.6"
 
 
+def _required_python() -> tuple[int, int]:
+    # .python-version is the one place the version lives; the launchers
+    # look for the same one.
+    try:
+        major, minor = (PROJECT_ROOT / ".python-version").read_text(encoding="utf-8").strip().split(".")[:2]
+        return int(major), int(minor)
+    except Exception:
+        return (3, 14)
+
+
+REQUIRED_PY = _required_python()
+REQUIRED_PY_STR = "%d.%d" % REQUIRED_PY
+
+
 def log(msg: str) -> None:
     print(f"[install] {msg}", flush=True)
 
@@ -44,28 +58,28 @@ def venv_python(path: Path = VENV_PATH) -> Path:
     return path / "bin" / "python"
 
 
-def is_py311(python: Path) -> bool:
+def is_required_py(python: Path) -> bool:
     try:
         out = subprocess.run(
             [str(python), "-c",
              "import sys; print('%d.%d' % sys.version_info[:2])"],
             capture_output=True, text=True, timeout=30,
         )
-        return out.returncode == 0 and out.stdout.strip() == "3.11"
+        return out.returncode == 0 and out.stdout.strip() == REQUIRED_PY_STR
     except Exception:
         return False
 
 
-def require_py311_host() -> None:
-    if sys.version_info[:2] != (3, 11):
+def require_host_py() -> None:
+    if sys.version_info[:2] != REQUIRED_PY:
         hint = (
             "the bundled Python looks wrong — reinstall Fragmenta."
             if PACKAGED else
-            "Install 3.11 from https://www.python.org/downloads/release/python-3119/ "
+            f"Install Python {REQUIRED_PY_STR} from https://www.python.org/downloads/ "
             "and run the launcher again."
         )
         fail(
-            f"this installer must run under Python 3.11 "
+            f"this installer must run under Python {REQUIRED_PY_STR} "
             f"(got {sys.version_info.major}.{sys.version_info.minor}). " + hint
         )
 
@@ -73,8 +87,9 @@ def require_py311_host() -> None:
 def _macos_link_libpython(venv_path: Path) -> None:
     if sys.platform != "darwin":
         return
-    src = Path(sys.base_prefix) / "lib" / "libpython3.11.dylib"
-    dst = venv_path / "lib" / "libpython3.11.dylib"
+    name = "libpython%d.%d.dylib" % sys.version_info[:2]
+    src = Path(sys.base_prefix) / "lib" / name
+    dst = venv_path / "lib" / name
     if src.exists() and not dst.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.symlink_to(src)
@@ -83,9 +98,9 @@ def _macos_link_libpython(venv_path: Path) -> None:
 def ensure_venv() -> Path:
     py = venv_python()
     if VENV_PATH.exists():
-        if py.exists() and is_py311(py):
+        if py.exists() and is_required_py(py):
             return py
-        log("existing venv is not Python 3.11 — recreating…")
+        log(f"existing venv is not Python {REQUIRED_PY_STR} — recreating…")
         shutil.rmtree(VENV_PATH, ignore_errors=True)
     log(f"creating virtual environment at {VENV_PATH} …")
     VENV_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -109,7 +124,7 @@ def deps_up_to_date() -> bool:
     if not STAMP_PATH.exists():
         return False
     try:
-        return STAMP_PATH.read_text().strip() == requirements_hash()
+        return STAMP_PATH.read_text(encoding="utf-8").strip() == requirements_hash()
     except Exception:
         return False
 
@@ -128,7 +143,7 @@ def install_dependencies(py: Path, force: bool = False) -> None:
         return
 
     log("installing dependencies (first run / requirements changed — this can take a few minutes)…")
-    pip(py, "install", "--upgrade", "pip", "setuptools<70", "wheel", "build")
+    pip(py, "install", "--upgrade", "pip", "setuptools", "wheel", "build")
 
     install_args = ["install", "-r", str(REQUIREMENTS), "--prefer-binary"]
     if WHEELS_DIR.is_dir():
@@ -140,7 +155,7 @@ def install_dependencies(py: Path, force: bool = False) -> None:
     if rc != 0:
         log("WARNING: laion-clap install failed — Rich auto-annotation may be unavailable.")
 
-    STAMP_PATH.write_text(requirements_hash())
+    STAMP_PATH.write_text(requirements_hash(), encoding="utf-8")
     log("dependencies installed; stamp written.")
 
 
@@ -156,7 +171,8 @@ def verify(py: Path) -> None:
     for name, snippet in checks:
         r = subprocess.run([str(py), "-c", snippet], capture_output=True, text=True)
         if r.returncode == 0:
-            print("  ✓ " + r.stdout.strip())
+            lines = r.stdout.strip().splitlines()
+            print("  ✓ " + (lines[-1] if lines else name))
         else:
             note = " (Linux + CUDA only)" if name == "flash_attn" else ""
             print(f"  · {name} unavailable{note}")
@@ -180,12 +196,12 @@ def main() -> None:
 
     if args.check:
         py = venv_python()
-        ok = VENV_PATH.exists() and py.exists() and is_py311(py)
-        print(f"venv:           {'present (py3.11)' if ok else 'missing / wrong python'}")
+        ok = VENV_PATH.exists() and py.exists() and is_required_py(py)
+        print(f"venv:           {f'present (py{REQUIRED_PY_STR})' if ok else 'missing / wrong python'}")
         print(f"dependencies:   {'up to date' if ok and deps_up_to_date() else 'install needed'}")
         sys.exit(0 if ok and deps_up_to_date() else 1)
 
-    require_py311_host()
+    require_host_py()
     py = ensure_venv()
     install_dependencies(py, force=args.reinstall)
     verify(py)

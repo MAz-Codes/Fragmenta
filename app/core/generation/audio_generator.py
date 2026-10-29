@@ -315,7 +315,7 @@ class AudioGenerator:
                         f"Checkpoint Manager."
                     ) from primary_err
                 import json
-                with open(config_path) as fh:
+                with open(config_path, encoding="utf-8") as fh:
                     model_config = json.load(fh)
                 from stable_audio_3.model_configs import localize_conditioners
                 localize_conditioners(model_config, str(config_path))

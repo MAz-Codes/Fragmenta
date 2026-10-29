@@ -500,7 +500,7 @@ class SA3Trainer:
             "steps": int(self.config.get("steps") or DEFAULT_STEPS),
             "lr": float(self.config.get("learningRate") or DEFAULT_LR),
             "batch_size": int(self.config.get("batchSize") or DEFAULT_BATCH_SIZE),
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
 
         self.status.update({
             "is_training": True,
@@ -740,7 +740,7 @@ class SA3Trainer:
         if not self.metrics_csv or not self.metrics_csv.exists():
             return
         try:
-            with open(self.metrics_csv) as f:
+            with open(self.metrics_csv, encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
         except Exception:
             return
@@ -812,7 +812,7 @@ class SA3Trainer:
         if not self.metrics_csv or not self.metrics_csv.exists():
             return
         try:
-            with open(self.metrics_csv) as f:
+            with open(self.metrics_csv, encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
             for row in reversed(rows):
                 for k in ("train/loss", "loss", "train_loss"):
@@ -852,7 +852,7 @@ def _write_pid_file(run_dir: Path, pid: int, run_name: str) -> None:
             "create_time": create_time,
             "run_name": run_name,
             "started_at": time.time(),
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Could not write PID file for %s: %s", run_name, exc)
 
@@ -862,7 +862,7 @@ def _read_pid_file(run_dir: Path) -> Optional[Dict[str, Any]]:
     if not pf.is_file():
         return None
     try:
-        meta = json.loads(pf.read_text())
+        meta = json.loads(pf.read_text(encoding="utf-8"))
         meta["pid"] = int(meta.get("pid") or 0)
         return meta
     except Exception:

@@ -101,7 +101,7 @@ DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 # file per-request would make a stale process report the new version and
 # defeat that check.
 try:
-    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
+    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text(encoding="utf-8").strip() or None
 except Exception:
     _APP_VERSION = None
 # Same idea for an update that keeps the version (a `git pull` between
@@ -141,7 +141,7 @@ def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[s
     metadata_path = model_dir / "training_metadata.json"
     if metadata_path.exists():
         try:
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
             base_model = metadata.get("base_model")
             if config_path is None:
@@ -790,7 +790,7 @@ def generate_audio():
                 "inpaint_ends": list(inpaint_ends) if inpaint_ends else None,
                 "edit_mode": edit_mode,
             }
-            with open(sidecar_path, "w") as f:
+            with open(sidecar_path, "w", encoding="utf-8") as f:
                 json.dump(sidecar, f, indent=2)
         except Exception as exc:
             logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
@@ -887,7 +887,7 @@ def list_loras():
                     model_name = run_dir.name
                     if meta_path.exists():
                         try:
-                            rm = json.loads(meta_path.read_text())
+                            rm = json.loads(meta_path.read_text(encoding="utf-8"))
                             base_model = rm.get("base_model")
                             model_name = rm.get("model_name") or model_name
                         except Exception:
@@ -942,7 +942,7 @@ def list_loras():
                         run_meta_path = run_dir / "training_metadata.json"
                         if run_meta_path.exists():
                             try:
-                                rm = json.loads(run_meta_path.read_text())
+                                rm = json.loads(run_meta_path.read_text(encoding="utf-8"))
                                 base_model = rm.get("base_model")
                             except Exception:
                                 pass
@@ -1141,7 +1141,7 @@ def save_performance_recording():
         "source": "performance",
     }
     try:
-        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2))
+        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning(f"Failed to write recording sidecar for {dest.name}: {exc}")
 
@@ -1180,7 +1180,7 @@ def list_fragments():
     # Sidecared generations
     for sidecar_path in output_dir.glob("*.wav.json"):
         try:
-            with open(sidecar_path) as f:
+            with open(sidecar_path, encoding="utf-8") as f:
                 meta = json.load(f)
             wav_name = meta.get("filename") or sidecar_path.name[:-len(".json")]
             wav_path = output_dir / wav_name
@@ -1311,7 +1311,7 @@ def clear_fragments():
         source = None
         if sidecar.is_file():
             try:
-                source = (json.loads(sidecar.read_text()) or {}).get("source")
+                source = (json.loads(sidecar.read_text(encoding="utf-8")) or {}).get("source")
             except Exception:
                 source = None
         if source == "performance":
@@ -1482,7 +1482,7 @@ def get_models():
                 meta_path = model_dir / "training_metadata.json"
                 if meta_path.exists():
                     try:
-                        if json.loads(meta_path.read_text()).get("mode") == "lora":
+                        if json.loads(meta_path.read_text(encoding="utf-8")).get("mode") == "lora":
                             continue
                     except Exception:
                         pass
