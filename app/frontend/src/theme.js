@@ -1502,12 +1502,12 @@ function makePaletteTheme(LIGHT) {
                     },
                 },
             },
-            // Segmented controls: a control-tone track (14 px, 3 px padding); the
-            // selected segment follows its corners at 11 px.
+            // Segmented controls: a fully rounded control-tone track with a pill
+            // for the selected segment.
             MuiToggleButtonGroup: {
                 styleOverrides: {
-                    root: { backgroundColor: LIGHT.control, borderRadius: 14, padding: 3, gap: 2 },
-                    grouped: { border: 'none !important', borderRadius: '11px !important', margin: '0 !important' },
+                    root: { backgroundColor: LIGHT.control, borderRadius: 999, padding: 3, gap: 2 },
+                    grouped: { border: 'none !important', borderRadius: '999px !important', margin: '0 !important' },
                 },
             },
             MuiToggleButton: {
@@ -1515,7 +1515,7 @@ function makePaletteTheme(LIGHT) {
                     root: {
                         textTransform: 'none',
                         border: 'none',
-                        borderRadius: 11,
+                        borderRadius: 999,
                         color: LIGHT.textDim,
                         fontWeight: 400,
                         padding: '6px 16px',
@@ -3430,7 +3430,7 @@ export const performanceChannelStyles = {
         '&&': { color },
     }),
     // Sec / Bars: a segmented control on the control tone; the selected
-    // segment follows its corners (14 - 3 px padding = 11 px).
+    // segment is a pill inside a fully rounded track.
     segmented: {
         display: 'inline-flex',
         alignItems: 'center',
@@ -3439,14 +3439,14 @@ export const performanceChannelStyles = {
         height: 34,
         boxSizing: 'border-box',
         flexShrink: 0,
-        borderRadius: RADIUS.control,
+        borderRadius: RADIUS.pill,
         backgroundColor: ON_TINT,
     },
     segment: (color, active) => (theme) => ({
         fontSize: '0.75rem',
         px: 1.4,
         height: 28,
-        borderRadius: '11px',  // the track's 14 minus its 3 px padding
+        borderRadius: RADIUS.pill,
         bgcolor: active ? color : 'transparent',
         color: active ? onFill(color) : 'text.secondary',
         fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
