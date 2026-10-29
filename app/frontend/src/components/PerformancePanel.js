@@ -1234,7 +1234,7 @@ function PerformancePanelInner({
                                 },
                             }}
                         >
-                            MIDI
+                            MIDI Learn
                         </ButtonBase>
                     </span>
                 </Tooltip>
@@ -1487,7 +1487,8 @@ function PerformancePanelInner({
                                 textAlign: 'right',
                                 fontVariantNumeric: 'tabular-nums',
                                 fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
+                                fontWeight: 600,
+                                paddingLeft: 0,
                                 paddingRight: 0,
                             },
                         }}
@@ -1500,10 +1501,11 @@ function PerformancePanelInner({
                         }}
                         sx={{
                             ...styles.pillControl,
-                            width: 92,
+                            width: 76,
                             '& .MuiOutlinedInput-root': {
                                 ...styles.pillControl['& .MuiOutlinedInput-root'],
-                                pr: 1,
+                                pl: 1.25,
+                                pr: 1.25,
                             },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                 WebkitAppearance: 'none',
@@ -1569,46 +1571,6 @@ function PerformancePanelInner({
                     </Tooltip>
                 </MidiMappable>
 
-                {/* Main / Cue output channel-pair selectors. Pushed to the right
-                    edge of the bar via ml: 'auto' so the transport controls keep
-                    their cluster on the left. Pairs are derived from the current
-                    device's maxChannelCount; Stage 1 stores the selection,
-                    Stage 2 wires the ChannelMergerNode routing. */}
-                {(() => {
-                    const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
-                    const pairs = Array.from({ length: pairCount }, (_, i) => ({
-                        value: i,
-                        label: `${i * 2 + 1}–${i * 2 + 2}`,
-                    }));
-                    const fieldGroup = (label, value, onChange) => (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Typography component="span" sx={perfTokens.labelMuted}>{label}</Typography>
-                            <FormControl size="small" sx={{ ...styles.pillControl, width: 84 }}>
-                                <Select value={value} onChange={onChange}>
-                                    {pairs.map(p => (
-                                        <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                            Ch {p.label}
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </Box>
-                    );
-                    return (
-                        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
-                            {fieldGroup(
-                                'Main out',
-                                Math.min(mainOutputPair, pairCount - 1),
-                                (e) => setMainOutputPair(Number(e.target.value)),
-                            )}
-                            {fieldGroup(
-                                'Cue out',
-                                Math.min(cueOutputPair, pairCount - 1),
-                                (e) => setCueOutputPair(Number(e.target.value)),
-                            )}
-                        </Box>
-                    );
-                })()}
             </Paper>
 
             {error && (
@@ -1708,6 +1670,36 @@ function PerformancePanelInner({
                         alignSelf: 'stretch',
                         mt: 'auto',
                     }}>
+                        {/* Output channel pairs (from the device's channel
+                            count), above the shared FX. */}
+                        {(() => {
+                            const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
+                            const pairs = Array.from({ length: pairCount }, (_, i) => ({
+                                value: i,
+                                label: `${i * 2 + 1}–${i * 2 + 2}`,
+                            }));
+                            const picker = (label, value, onChange) => (
+                                <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                                    <Select
+                                        value={Math.min(value, pairCount - 1)}
+                                        onChange={(e) => onChange(Number(e.target.value))}
+                                        renderValue={(v) => `${label} · ${pairs[v]?.label ?? '—'}`}
+                                    >
+                                        {pairs.map((p) => (
+                                            <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                                Ch {p.label}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            );
+                            return (
+                                <>
+                                    {picker('Main', mainOutputPair, setMainOutputPair)}
+                                    {picker('Cue', cueOutputPair, setCueOutputPair)}
+                                </>
+                            );
+                        })()}
                         <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
                             <Select
                                 value={masterReverbIR}

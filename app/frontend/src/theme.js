@@ -3105,8 +3105,11 @@ export const performancePanelStyles = {
             // text-overflow: ellipsis).
             padding: '0 32px 0 14px !important',
             lineHeight: `${perfTokens.height.compact}px`,
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            // Same face, size and weight as the Link / MIDI Learn buttons.
+            fontFamily: `${FONT_DISPLAY} !important`,
+            fontSize: `${perfTokens.fontSize.sm} !important`,
+            fontWeight: '600 !important',
+            letterSpacing: 'normal',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -3116,9 +3119,10 @@ export const performancePanelStyles = {
         // set `inputProps={{ style: { fontSize: perfTokens.fontSize.sm } }}`
         // to win against MUI's .MuiInputBase-inputSizeSmall 14px default.
         '& .MuiOutlinedInput-input': {
-            fontFamily: 'inherit',
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            fontFamily: `${FONT_DISPLAY} !important`,
+            fontSize: `${perfTokens.fontSize.sm} !important`,
+            fontWeight: '600 !important',
+            letterSpacing: 'normal',
         },
     },
     headerCard: (theme) => ({
