@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTheme } from '@mui/material/styles';
 import {
     Box,
     IconButton,
@@ -90,6 +91,7 @@ export default function ChannelFragmentHistory({
     onMove,
     onClearAll,
 }) {
+    const theme = useTheme();
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     // Id of the row whose name is being edited, plus the in-progress text.
     // Kept here rather than in the parent so a rename never re-renders the
@@ -143,6 +145,9 @@ export default function ChannelFragmentHistory({
                     {fragments.map((fragment, rowIndex) => {
                         const isAuditioning = auditioningId === fragment.id;
                         const isCommitted = committedId === fragment.id;
+                        // The loaded row is filled with the lane colour, so its
+                        // marks switch to the light surface tone to stay visible.
+                        const markColor = isCommitted ? theme.palette.fragmenta.surface : (deep || color);
                         const isEditing = editingId === fragment.id;
                         const displayName = fragment.label || `F${fragment.number}`;
                         return (
@@ -271,13 +276,13 @@ export default function ChannelFragmentHistory({
                                     <IconButton
                                         size="small"
                                         onClick={() => onToggleStar(fragment.id)}
-                                        sx={styles.fragmentIconBtn(deep || color, fragment.starred)}
+                                        sx={[styles.fragmentIconBtn(markColor, fragment.starred), isCommitted && { color: markColor }]}
                                         aria-label={fragment.starred ? 'Unstar fragment' : 'Star fragment'}
                                     >
                                         <StarIcon
                                             size={13}
-                                            color={fragment.starred ? (deep || color) : 'currentColor'}
-                                            fill={fragment.starred ? (deep || color) : 'none'}
+                                            color={fragment.starred || isCommitted ? markColor : 'currentColor'}
+                                            fill={fragment.starred ? markColor : 'none'}
                                             strokeWidth={2}
                                         />
                                     </IconButton>
@@ -286,7 +291,7 @@ export default function ChannelFragmentHistory({
                                 <IconButton
                                     size="small"
                                     onClick={() => onDelete(fragment.id)}
-                                    sx={styles.fragmentDeleteBtn}
+                                    sx={[styles.fragmentDeleteBtn, isCommitted && { color: markColor }]}
                                     aria-label="Delete fragment"
                                 >
                                     <DeleteIcon size={12} />
@@ -294,8 +299,8 @@ export default function ChannelFragmentHistory({
 
                                 {isCommitted ? (
                                     <Tooltip title={TIPS.fragments.commit(true)} placement="top" arrow enterDelay={300}>
-                                        <Box component="span" sx={[styles.fragmentLoadDot, { color: deep || color }]} aria-label="Loaded in channel">
-                                            <LoadDot loaded color={deep || color} />
+                                        <Box component="span" sx={styles.fragmentLoadDot} aria-label="Loaded in channel">
+                                            <LoadDot loaded color={markColor} />
                                         </Box>
                                     </Tooltip>
                                 ) : (
