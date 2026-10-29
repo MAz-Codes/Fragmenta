@@ -32,6 +32,9 @@ All notable changes to Fragmenta are listed here. The format follows
   used in training; before, they showed in the Dataset tab but were skipped.
 - Runs on Python 3.14 with PyTorch 2.11 (was 3.11 / 2.7). The launchers look
   for 3.14 and the first start after updating rebuilds `venv/` by itself.
+- Installs are exact: every dependency comes pinned with its checksum from
+  the lock for your platform (`locks/`), so every machine gets the same set.
+  Each install writes a log to `logs/install-*.log`.
 
 ### Fixed
 - Mac: the toolbar said "Not detected · CPU mode" although models run on the

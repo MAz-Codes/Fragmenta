@@ -54,9 +54,9 @@ Name: "{userdesktop}\Fragmenta"; Filename: "{app}\fragmenta.exe"; Tasks: desktop
 [Run]
 Filename: "{app}\fragmenta.exe"; Description: "Launch Fragmenta"; Flags: nowait postinstall skipifsilent
 
-; Remove the venv + caches created at runtime under %APPDATA% on uninstall is
+; Remove the venv + caches created at runtime under %LOCALAPPDATA% on uninstall is
 ; intentionally NOT done here — user data (models, projects, output) lives in
-; %APPDATA%\FragmentaDesktop and is preserved. Document this for users.
+; %LOCALAPPDATA%\FragmentaDesktop and is preserved. Document this for users.
 
 [Code]
 function WebView2Installed(): Boolean;

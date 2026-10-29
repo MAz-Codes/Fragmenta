@@ -12,10 +12,11 @@ def _default_user_data_dir() -> Path:
     models, output and logs all resolve to the same place.
     """
     if sys.platform == "win32":
-        return Path(os.environ["APPDATA"]) / "FragmentaDesktop"
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return Path(base) / "FragmentaDesktop"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "FragmentaDesktop"
-    return Path.home() / ".local" / "share" / "FragmentaDesktop"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "FragmentaDesktop"
 
 
 class ProjectConfig:
