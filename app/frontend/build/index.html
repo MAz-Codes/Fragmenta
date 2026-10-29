@@ -12,8 +12,8 @@
     <link rel="manifest" href="/manifest.json" />
 
     <style>
-      /* Layout floor, in CSS px (after the fit-to-window zoom below):
-         below it, scrollbars appear rather than the layout collapsing. */
+      /* Layout floor: below it, scrollbars appear rather than the layout
+         collapsing. */
       html, body {
         min-width: 1300px;
         min-height: 830px;
@@ -47,22 +47,6 @@
       }
     </style>
 
-    <script>
-      // Fit to window: the UI is laid out for a 1650x960 viewport and the
-      // whole page is zoomed so that fits any window, smaller or larger
-      // (0.6x-1.25x). Text, controls and layout scale together, so every
-      // screen shows the same composition instead of a cropped or sparse one.
-      (function () {
-        var W = 1650, H = 960;
-        function fit() {
-          var z = Math.min(window.innerWidth / W, window.innerHeight / H);
-          z = Math.max(0.6, Math.min(1.25, z));
-          document.documentElement.style.zoom = String(Math.round(z * 1000) / 1000);
-        }
-        fit();
-        window.addEventListener('resize', fit);
-      })();
-    </script>
     <title>Fragmenta</title>
     <script type="module" crossorigin src="/assets/index-CELO_Cjz.js"></script>
   </head>

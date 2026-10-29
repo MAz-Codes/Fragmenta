@@ -735,10 +735,8 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # The UI is laid out for a 1650x960 viewport and zooms itself to fit
-    # whatever window it gets (index.html), so the window only needs the
-    # right shape: that design size plus a title bar, scaled down evenly
-    # when it doesn't fit in 92% of the screen. Same composition everywhere.
+    # The UI reads best at ~1650x960: open at that size, scaled down evenly
+    # when it doesn't fit in 92% of the screen.
     design_w, design_h = 1650, 952
     fit = min(1.0, sw * 0.92 / design_w, sh * 0.92 / design_h)
     width, height = int(design_w * fit), int(design_h * fit)
