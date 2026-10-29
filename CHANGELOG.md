@@ -11,6 +11,10 @@ All notable changes to Fragmenta are listed here. The format follows
   up to an octave up or down in semitones without changing its length, so
   loops, cue points and Link timing stay put. Only what you hear changes,
   never the file. It rests at 0 st when you pass it; double-click to reset.
+- Mac: choose the output device in Settings → Audio, like on Windows. Fragmenta
+  makes it the Mac's sound output while it runs, so Main and Cue can go to
+  different channel pairs of an audio interface; the previous output comes
+  back when Fragmenta closes.
 
 ### Changed
 - Ableton Link: loops stay on Live's beat over long sessions. Fragmenta
