@@ -69,7 +69,7 @@ export const PALETTES = {
         name: 'Linen', bg: '#F2EDE1', ink: '#141414',
         // Saturated mains for fills and marks; each has a faint partner for
         // waveform layers, tints and soft states.
-        cool: '#A0B2D5', warm: '#E0B56F', fresh: '#B3BE8C', hot: '#C18992',   // blue, gold, green, red
+        cool: '#A0B2D5', warm: '#D48500', fresh: '#B3BE8C', hot: '#C18992',   // blue, gold, green, red
         faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
         exact: {
             surface: '#F8F7F1', control: '#EEE9E0', controlHover: '#E5E0D6', section: '#F6F2EA',
@@ -80,7 +80,7 @@ export const PALETTES = {
         lanes: {
             tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
             playing: ['#C7C9E4', '#F7D2C6', '#BBD1BF', '#ECD3A9'],
-            deep: ['#A0B2D5', '#C18992', '#B3BE8C', '#E0B56F'],
+            deep: ['#A0B2D5', '#C18992', '#B3BE8C', '#D48500'],
             soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#E6BF7E'],
         },
     },
@@ -1274,8 +1274,9 @@ function makePaletteTheme(LIGHT) {
             MuiMenu: {
                 defaultProps: { disableScrollLock: true },
                 styleOverrides: {
-                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
-                    list: { padding: 4 },
+                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised, backgroundColor: LIGHT.surface },
+                    // Inset so the rounded items sit inside the 24 px paper.
+                    list: { padding: 6, display: 'flex', flexDirection: 'column', gap: 2 },
                 },
             },
             MuiDrawer: {
@@ -1283,14 +1284,18 @@ function makePaletteTheme(LIGHT) {
             },
             MuiMenuItem: {
                 styleOverrides: {
+                    // 18 px: the menu's 24 minus its 6 px inset, so one- and
+                    // two-line items both follow the paper's corners.
                     root: {
-                        backgroundColor: LIGHT.paper,
-                        '&:hover': { backgroundColor: LIGHT.paperHi },
+                        borderRadius: 18,
+                        backgroundColor: 'transparent',
+                        '&:hover': { backgroundColor: LIGHT.control },
                         '&.Mui-selected': {
-                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.14)`,
-                            color: LIGHT.amberLo,
-                            '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.20)` },
+                            backgroundColor: LIGHT.navSelected,
+                            color: LIGHT.text,
+                            '&:hover': { backgroundColor: LIGHT.navSelected },
                         },
+                        '&.Mui-selected.Mui-focusVisible': { backgroundColor: LIGHT.navSelected },
                     },
                 },
             },
@@ -3503,7 +3508,7 @@ export const performanceChannelStyles = {
             minWidth: 96,
             height: 40,
             px: 1.5,
-            borderRadius: '14px',
+            borderRadius: RADIUS.pill,
             border: 'none',
             fontSize: '0.8125rem',
             fontWeight: 600,
