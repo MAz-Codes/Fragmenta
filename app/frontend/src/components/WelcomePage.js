@@ -75,7 +75,7 @@ export default function WelcomePage({ open, onClose, hideDontShowAgain = false }
                                 variant="contained"
                                 size="large"
                                 onClick={() => onClose(dontShowAgain)}
-                                sx={{ px: 4, minHeight: 48, borderRadius: '16px', fontSize: '0.95rem' }}
+                                sx={{ px: 4, minHeight: 48, borderRadius: '14px', fontSize: '0.95rem' }}
                             >
                                 Get started
                             </Button>

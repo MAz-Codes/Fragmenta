@@ -649,7 +649,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
     // project is open, the project itself.
     return (
         <Stack spacing={2}>
-        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
+        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: '24px' }}>
         <Stack spacing={2.5}>
             <Box>
                 <Box sx={{ ...appStyles.sectionCardHeader, mb: 0.5 }}>
@@ -728,7 +728,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         </Paper>
 
             {project && (
-                <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
+                <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: '24px' }}>
                 <Stack spacing={2}>
                     <ProjectHeader
                         project={project}
@@ -1948,7 +1948,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     const partiallySelected = totalSelected > 0 && !allSelected;
     if (!clips || clips.length === 0) {
         return (
-            <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+            <Paper variant="outlined" sx={{ borderRadius: '24px', overflow: 'hidden' }}>
                 <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                     <Typography variant="body2">
                         No clips yet. Use “Add audio” to bring in a folder.

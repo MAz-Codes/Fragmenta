@@ -103,13 +103,13 @@ export const onFill = (fill, ink = '#141414') => {
     return contrastRatio('#FFFFFF', fill) >= 3.5 ? '#FFFFFF' : ink;
 };
 
-// Shape hierarchy, not one radius everywhere: large surfaces softly rounded,
-// controls compact, 999 only for selected states and circular precision
-// controls. px strings so they don't multiply by theme.shape.borderRadius.
+// px strings so they don't multiply by theme.shape.borderRadius.
 // Controls sitting on a lane's tint.
 export const ON_TINT = 'rgba(248, 247, 241, 0.72)';
 export const ON_TINT_HOVER = 'rgba(248, 247, 241, 0.92)';
-export const RADIUS = { card: '24px', section: '18px', panel: '18px', input: '14px', control: '12px', small: '8px', pill: '999px' };
+// Two levels: cards 24 px, everything inside them (buttons, fields, selects,
+// sections, list rows, tiles) 14 px. 999 for circles and pills only.
+export const RADIUS = { card: '24px', section: '14px', panel: '24px', input: '14px', control: '14px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const rgbHex = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -729,7 +729,7 @@ let theme = createTheme({
                     // back to theme.shape.borderRadius (10) and produce an
                     // asymmetric squash when the Accordion has a div sibling
                     // on only one side.
-                    borderRadius: 25,
+                    borderRadius: 24,
                     overflow: 'hidden',
                     marginBottom: 16,
                     '&:before': { display: 'none' },
@@ -1150,10 +1150,10 @@ function makePaletteTheme(LIGHT) {
                 ],
                 styleOverrides: {
                     root: {
-                        borderRadius: 12,
+                        borderRadius: 14,
                         transition: 'background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
                     },
-                    sizeLarge: { borderRadius: 16, minHeight: 48 },
+                    sizeLarge: { borderRadius: 14, minHeight: 48 },
                     contained: {
                         backgroundImage: 'none',
                         boxShadow: 'none',
@@ -1256,6 +1256,7 @@ function makePaletteTheme(LIGHT) {
                         '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
                         '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: LIGHT.amber, borderWidth: '1.5px' },
                     },
+                    select: { borderRadius: RADIUS.input },
                 },
             },
             MuiModal: {
@@ -1265,13 +1266,13 @@ function makePaletteTheme(LIGHT) {
             MuiPopover: {
                 defaultProps: { disableScrollLock: true },
                 styleOverrides: {
-                    paper: { border: 'none', borderRadius: 16, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
+                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
                 },
             },
             MuiMenu: {
                 defaultProps: { disableScrollLock: true },
                 styleOverrides: {
-                    paper: { border: 'none', borderRadius: 16, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
+                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
                     list: { padding: 4 },
                 },
             },
@@ -1322,7 +1323,7 @@ function makePaletteTheme(LIGHT) {
             MuiAccordion: {
                 styleOverrides: {
                     root: {
-                        borderRadius: 18,
+                        borderRadius: 14,
                         overflow: 'hidden',
                         marginBottom: 16,
                         backgroundColor: LIGHT.section,
@@ -1330,8 +1331,8 @@ function makePaletteTheme(LIGHT) {
                         boxShadow: 'none',
                         border: 'none',
                         '&:before': { display: 'none' },
-                        '&:first-of-type': { borderTopLeftRadius: 18, borderTopRightRadius: 18 },
-                        '&:last-of-type': { borderBottomLeftRadius: 18, borderBottomRightRadius: 18 },
+                        '&:first-of-type': { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
+                        '&:last-of-type': { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
                         '&.Mui-expanded': { marginTop: 0, marginBottom: 16 },
                         '&.Mui-expanded:last-of-type': { marginBottom: 16 },
                     },
@@ -1780,7 +1781,7 @@ export const appStyles = {
         // breathe. Aligns with the industry-app feel — cards have room.
         p: { xs: 2.25, sm: 3 },
         mb: 2,
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         transition: 'all 0.3s ease',
     },
     // Sticks the Dataset Status card to the top of the viewport during
@@ -2057,7 +2058,7 @@ export const appStyles = {
     selectedModelCard: {
         p: { xs: 2.25, sm: 3 },
         mb: 2,
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         transition: 'all 0.3s ease',
     },
     boldBodyText: {
@@ -2326,8 +2327,8 @@ export const datasetStyles = {
             py: 0.75,
         },
         '& td': { borderBottom: 'none', py: 1.25, verticalAlign: 'middle' },
-        '& td:first-of-type': { borderRadius: '18px 0 0 18px' },
-        '& td:last-of-type': { borderRadius: '0 18px 18px 0' },
+        '& td:first-of-type': { borderRadius: '14px 0 0 14px' },
+        '& td:last-of-type': { borderRadius: '0 14px 14px 0' },
     }),
     clipRow: (isPlaying) => (t) => ({
         '& td': {
@@ -2393,7 +2394,7 @@ export const datasetStyles = {
     }),
     // Rail: each tool is its own soft card.
     railCard: (t) => ({
-        borderRadius: '22px',
+        borderRadius: RADIUS.card,
         backgroundColor: t.palette.fragmenta.surface,
         boxShadow: t.palette.fragmenta.shadowSoft,
         overflow: 'hidden',
@@ -2529,7 +2530,7 @@ export const generatedFragmentsWindowStyles = {
         alignItems: 'center',
         gap: 1.5,
         p: '10px 12px 10px 10px',
-        borderRadius: '20px',
+        borderRadius: RADIUS.control,
         backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
         transition: 'background-color 160ms ease',
         '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.7)` },
@@ -2732,7 +2733,7 @@ export const trainingMonitorStyles = {
         flexDirection: 'column',
         gap: 0.5,
         p: 1.5,
-        borderRadius: '16px',
+        borderRadius: RADIUS.control,
         backgroundColor: t.palette.fragmenta.section,
     }),
     metricLabel: {
@@ -2755,7 +2756,7 @@ export const trainingMonitorStyles = {
         gap: 1,
         p: 2,
         pb: 1.25,
-        borderRadius: '20px',
+        borderRadius: RADIUS.control,
         backgroundColor: t.palette.fragmenta.section,
     }),
     lossChartBox: {
@@ -3101,7 +3102,7 @@ export const performancePanelStyles = {
         alignItems: 'center',
         gap: 2,
         p: { xs: 1.25, sm: 1.75 },
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         border: '1px solid',
         borderColor: 'divider',
         bgcolor: 'background.paper',
@@ -3403,7 +3404,7 @@ export const performanceChannelStyles = {
             fontSize: '0.8125rem',
             padding: '11px 14px',
             backgroundColor: ON_TINT,
-            borderRadius: '16px',
+            borderRadius: RADIUS.control,
             transition: 'background-color 160ms ease',
             '&:hover': { backgroundColor: ON_TINT_HOVER },
             '&.Mui-focused': { backgroundColor: theme.palette.fragmenta.surface },
@@ -3462,7 +3463,7 @@ export const performanceChannelStyles = {
         flex: 1,
         '& .MuiOutlinedInput-root': {
             height: 34,
-            borderRadius: '10px',
+            borderRadius: RADIUS.control,
             backgroundColor: ON_TINT,
             '&:hover': { backgroundColor: ON_TINT_HOVER },
         },
