@@ -2827,7 +2827,8 @@ export const welcomePageStyles = {
         // only the inner content (logo, title, button) is visible.
         return {
             textAlign: 'center',
-            width: 'min(920px, 100%)',
+            // Wide enough for "Welcome to Fragmenta" on one line.
+            width: 'min(1040px, 100%)',
             border: 'none',
             borderRadius: 4,
             background: 'transparent',
@@ -2862,9 +2863,11 @@ export const welcomePageStyles = {
         fontFamily: FONT_LOGO,
         fontWeight: 400,
         color: 'text.primary',
-        mb: 1,
+        mb: { xs: 3, md: 4 },
         fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4rem' },
         letterSpacing: '0.02em',
+        // One line on the desktop; a phone (HF Space) may still wrap.
+        whiteSpace: { xs: 'normal', md: 'nowrap' },
     },
 };
 
