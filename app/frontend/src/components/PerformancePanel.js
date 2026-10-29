@@ -1881,7 +1881,7 @@ function PerformancePanelInner({
                                     fontWeight: perfTokens.weight.bold,
                                 },
                             }}
-                            sx={{ ...styles.pillControl, width: 78 }}
+                            sx={{ ...styles.pillControl, flex: 1 }}
                         />
                     </Box>
                 </Popover>
@@ -1922,22 +1922,21 @@ function PerformancePanelInner({
                                 height: perfTokens.height.compact,
                                 minWidth: 62,
                                 px: 1,
-                                borderRadius: 1.5,
-                                border: '1px solid',
-                                borderColor: promptInjectBpm ? perfColors.master : theme.palette.divider,
-                                backgroundColor: promptInjectBpm ? perfColors.master : 'transparent',
-                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.disabled',
+                                borderRadius: '999px',
+                                // Lights up only when on; otherwise a plain control pill.
+                                backgroundColor: promptInjectBpm ? perfColors.master : theme.palette.fragmenta.control,
+                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: perfTokens.weight.bold,
                                 fontVariantNumeric: 'tabular-nums',
                                 transition: 'background-color 120ms, color 120ms, border-color 120ms',
                                 '&:hover': {
-                                    backgroundColor: promptInjectBpm ? perfColors.master : 'action.hover',
+                                    backgroundColor: promptInjectBpm ? perfColors.master : theme.palette.fragmenta.controlHover,
                                     color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
                                 },
                             })}
                         >
-                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
+                            BPM
                         </ButtonBase>
                     </Tooltip>
                 </Box>
