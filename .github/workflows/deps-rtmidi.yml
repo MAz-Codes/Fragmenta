@@ -29,7 +29,8 @@ jobs:
         shell: bash
         run: |
           curl -sSL -o rtmidi.tar.gz "https://files.pythonhosted.org/packages/source/p/python_rtmidi/python_rtmidi-${RTMIDI_VERSION}.tar.gz"
-          echo "${RTMIDI_SHA256}  rtmidi.tar.gz" | shasum -a 256 -c -
+          # hashlib, not shasum: Git Bash on Windows has no shasum.
+          python -c "import hashlib,os,sys; h=hashlib.sha256(open('rtmidi.tar.gz','rb').read()).hexdigest(); print(h); sys.exit(h != os.environ['RTMIDI_SHA256'])"
           tar xzf rtmidi.tar.gz
 
       - uses: pypa/cibuildwheel@v4.3.5
@@ -42,7 +43,9 @@ jobs:
 
       - name: Checksums
         shell: bash
-        run: cd wheelhouse && shasum -a 256 *.whl | tee "SHA256SUMS-${{ matrix.os }}"
+        run: |
+          cd wheelhouse
+          python -c "import glob,hashlib; [print(hashlib.sha256(open(f,'rb').read()).hexdigest() + '  ' + f) for f in sorted(glob.glob('*.whl'))]" | tee "SHA256SUMS-${{ matrix.os }}"
 
       - uses: actions/upload-artifact@v7.0.2
         with:
