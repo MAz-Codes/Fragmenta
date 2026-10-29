@@ -60,6 +60,7 @@ import {
     X as CloseIcon,
     TextCursorInput,
     Undo2,
+    Tags as TagsIcon,
 } from 'lucide-react';
 import api from '../api';
 import PreEncodeProgress from './PreEncodeProgress';
@@ -815,7 +816,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
                         <Box
                             sx={{
-                                width: { xs: '100%', lg: 300 },
+                                // 300 px of cards plus 20 px each side, so the
+                                // scroll area doesn't clip the cards' shadows.
+                                width: { xs: '100%', lg: 340 },
+                                p: { lg: '20px' },
+                                m: { lg: '-20px' },
                                 flex: 'none',
                                 display: 'flex',
                                 flexDirection: 'column',
@@ -825,8 +830,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                 // window and scrollable on its own, or its lower
                                 // sections (an open vocabulary) can't be reached.
                                 position: { lg: 'sticky' },
-                                top: { lg: 16 },
-                                maxHeight: { lg: 'calc(100vh - 32px)' },
+                                top: { lg: -4 },
+                                maxHeight: { lg: 'calc(100vh + 8px)' },
                                 overflowY: { lg: 'auto' },
                             }}
                         >
@@ -1275,14 +1280,13 @@ function InspectorRail({
                         </Button>
                     </span>
                 </Tooltip>
+                {/* The vocabulary only feeds the Rich tier, so its button
+                    lives in the band that switched it on. */}
+                {tier === 'rich' && (
+                    <ClapVocabButton disabled={annotateBusy} requestConfirm={requestConfirm} />
+                )}
             </RailSection>
 
-            {/* Directly under Auto-annotate: the vocabulary only feeds the
-                Rich tier, so it belongs to the band that switched it on
-                rather than sitting at the far end of the rail. */}
-            {tier === 'rich' && (
-                <ClapVocabAccordion disabled={annotateBusy} requestConfirm={requestConfirm} />
-            )}
 
             <RailSection title="Inject text" icon={<TextCursorInput size={15} />}>
                 <PromptInjector
@@ -1335,28 +1339,27 @@ function InspectorRail({
 // `requestConfirm` is the parent's setConfirm — the confirm dialog lives at
 // the DatasetPrep level, so destructive actions down here route back up to
 // it rather than falling back to a browser-native prompt.
-function ClapVocabAccordion({ disabled, requestConfirm }) {
+function ClapVocabButton({ disabled, requestConfirm }) {
     const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
     const [overridden, setOverridden] = useState(false);
     const [dirty, setDirty] = useState(false);
     const [busy, setBusy] = useState(false);
     const [vocabError, setVocabError] = useState('');
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const { data } = await api.get('/api/annotator-labels');
-                if (cancelled) return;
-                setLabels(data.labels || { genre: [], mood: [], instruments: [] });
-                setOverridden(!!data.overridden);
-                setDirty(false);
-            } catch (e) {
-                if (!cancelled) setVocabError(extractError(e, 'Failed to load vocabulary'));
-            }
-        })();
-        return () => { cancelled = true; };
+    const [open, setOpen] = useState(false);
+
+    const load = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/annotator-labels');
+            setLabels(data.labels || { genre: [], mood: [], instruments: [] });
+            setOverridden(!!data.overridden);
+            setDirty(false);
+            setVocabError('');
+        } catch (e) {
+            setVocabError(extractError(e, 'Failed to load vocabulary'));
+        }
     }, []);
+    useEffect(() => { load(); }, [load]);
 
     function setCategory(cat, values) {
         setLabels((prev) => ({ ...prev, [cat]: values }));
@@ -1370,6 +1373,7 @@ function ClapVocabAccordion({ disabled, requestConfirm }) {
             await api.put('/api/annotator-labels', labels);
             setDirty(false);
             setOverridden(true);
+            setOpen(false);
         } catch (e) {
             setVocabError(extractError(e, 'Failed to save vocabulary'));
         } finally {
@@ -1405,73 +1409,58 @@ function ClapVocabAccordion({ disabled, requestConfirm }) {
 
     const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
 
+    // A button in the rail; the editing happens in a dialog (tag lists are far
+    // too tall for the rail). Cancel discards unsaved edits.
+    const cancel = () => { if (dirty) load(); setOpen(false); };
     return (
-        <Accordion
-            disableGutters
-            sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}
-        >
-            <AccordionSummary
-                expandIcon={<ChevronDownIcon size={18} />}
-                sx={{
-                    minHeight: 48,
-                    '&.Mui-expanded': { minHeight: 48 },
-                    '& .MuiAccordionSummary-content': {
-                        margin: '12px 0',
-                        '&.Mui-expanded': { margin: '12px 0' },
-                    },
-                }}
+        <>
+            <Button
+                variant="outlined"
+                fullWidth
+                startIcon={<TagsIcon size={16} />}
+                onClick={() => setOpen(true)}
+                disabled={disabled}
             >
-                <Typography variant="subtitle1">CLAP Vocabulary</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, alignSelf: 'center' }}>
-                    {overridden ? 'custom' : 'defaults'} · {tagCount} tags
-                </Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-                <Stack spacing={2}>
-                    <Typography variant="body2" color="text.secondary">
-                        Words CLAP scores each clip against. Empty categories are ignored. Tweak to match your dataset's territory.
-                    </Typography>
-                    <VocabCategory
-                        label="Genre"
-                        values={labels.genre || []}
-                        onChange={(v) => setCategory('genre', v)}
-                        disabled={disabled || busy}
-                    />
-                    <VocabCategory
-                        label="Mood"
-                        values={labels.mood || []}
-                        onChange={(v) => setCategory('mood', v)}
-                        disabled={disabled || busy}
-                    />
-                    <VocabCategory
-                        label="Instruments"
-                        values={labels.instruments || []}
-                        onChange={(v) => setCategory('instruments', v)}
-                        disabled={disabled || busy}
-                    />
-                    {vocabError && <Alert severity="error" onClose={() => setVocabError('')}>{vocabError}</Alert>}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Button
-                            variant="text"
-                            size="small"
-                            onClick={reset}
-                            disabled={disabled || busy || !overridden}
-                        >
-                            Reset to defaults
-                        </Button>
-                        <Box sx={{ flex: 1 }} />
-                        <Button
-                            variant="contained"
-                            size="small"
-                            onClick={save}
-                            disabled={disabled || busy || !dirty}
-                        >
-                            Save vocabulary
-                        </Button>
-                    </Box>
-                </Stack>
-            </AccordionDetails>
-        </Accordion>
+                CLAP vocabulary · {overridden ? 'custom' : 'defaults'} · {tagCount} tags
+            </Button>
+            <Dialog open={open} onClose={cancel} maxWidth="sm" fullWidth>
+                <DialogTitle>CLAP vocabulary</DialogTitle>
+                <DialogContent>
+                    <Stack spacing={2}>
+                        <Typography variant="body2" color="text.secondary">
+                            Words CLAP scores each clip against. Empty categories are ignored. Tweak to match your dataset's territory.
+                        </Typography>
+                        <VocabCategory
+                            label="Genre"
+                            values={labels.genre || []}
+                            onChange={(v) => setCategory('genre', v)}
+                            disabled={disabled || busy}
+                        />
+                        <VocabCategory
+                            label="Mood"
+                            values={labels.mood || []}
+                            onChange={(v) => setCategory('mood', v)}
+                            disabled={disabled || busy}
+                        />
+                        <VocabCategory
+                            label="Instruments"
+                            values={labels.instruments || []}
+                            onChange={(v) => setCategory('instruments', v)}
+                            disabled={disabled || busy}
+                        />
+                        {vocabError && <Alert severity="error" onClose={() => setVocabError('')}>{vocabError}</Alert>}
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button variant="text" onClick={reset} disabled={busy || !overridden}>
+                        Reset to defaults
+                    </Button>
+                    <Box sx={{ flex: 1 }} />
+                    <Button variant="outlined" onClick={cancel} disabled={busy}>Cancel</Button>
+                    <Button variant="contained" onClick={save} disabled={busy || !dirty}>Save</Button>
+                </DialogActions>
+            </Dialog>
+        </>
     );
 }
 
