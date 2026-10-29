@@ -1407,7 +1407,6 @@ function ClapVocabButton({ disabled, requestConfirm }) {
         });
     }
 
-
     // A button in the rail; the editing happens in a dialog (tag lists are far
     // too tall for the rail). Cancel discards unsaved edits.
     const cancel = () => { if (dirty) load(); setOpen(false); };
