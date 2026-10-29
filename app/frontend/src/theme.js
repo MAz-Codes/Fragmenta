@@ -3777,12 +3777,12 @@ export const performanceChannelStyles = {
         color: 'text.primary',
         flexShrink: 0,
     },
-    fragmentLoaded: {
-        fontSize: '0.625rem',
-        fontWeight: 600,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        color: 'text.primary',
+    fragmentLoadDot: {
+        width: 20,
+        height: 20,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
     },
     fragmentLabelText: {

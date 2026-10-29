@@ -17,13 +17,25 @@ import {
     Square as StopIcon,
     Star as StarIcon,
     Trash2 as DeleteIcon,
-    Check as CommitIcon,
     Eraser as ClearAllIcon,
     ChevronUp as MoveUpIcon,
     ChevronDown as MoveDownIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles } from '../theme';
 import { MidiMappable } from './MidiContext';
+
+// Load state: a full circle for the fragment loaded in the lane, a half-filled
+// one for the others (click to load).
+function LoadDot({ loaded, size = 12 }) {
+    const r = size / 2 - 1;
+    const c = size / 2;
+    return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+            <circle cx={c} cy={c} r={r} fill={loaded ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" />
+            {!loaded && <path d={`M ${c} ${c - r} A ${r} ${r} 0 0 0 ${c} ${c + r} Z`} fill="currentColor" />}
+        </svg>
+    );
+}
 
 /**
  * Per-channel rolling fragment history. Always visible (empty-state included)
@@ -283,7 +295,9 @@ export default function ChannelFragmentHistory({
 
                                 {isCommitted ? (
                                     <Tooltip title={TIPS.fragments.commit(true)} placement="top" arrow enterDelay={300}>
-                                        <Box component="span" sx={styles.fragmentLoaded}>Loaded</Box>
+                                        <Box component="span" sx={[styles.fragmentLoadDot, { color: deep || color }]} aria-label="Loaded in channel">
+                                            <LoadDot loaded />
+                                        </Box>
                                     </Tooltip>
                                 ) : (
                                     <Tooltip title={TIPS.fragments.commit(false)} placement="top" arrow enterDelay={300}>
@@ -293,7 +307,7 @@ export default function ChannelFragmentHistory({
                                             sx={styles.fragmentIconBtn(color, false)}
                                             aria-label="Load fragment into channel"
                                         >
-                                            <CommitIcon size={13} strokeWidth={2} />
+                                            <LoadDot loaded={false} />
                                         </IconButton>
                                     </Tooltip>
                                 )}
