@@ -735,15 +735,12 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # 75% of the screen's width. On a small screen 75% is cramped, so never
-    # go under the width we've always shipped unless that would take more
-    # than 90% of the screen. Capped because past ~1800px the layout just
-    # grows margins rather than showing more.
-    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 1800)
-    # Wider than the screen's own shape: no page needs more than ~950 px of
-    # height (the Dataset bench scrolls), so a 16:9 window at this width just
-    # added empty space under the content.
-    height = min(max(int(width / 1.85), 900), int(sh * 0.9))
+    # About two thirds of the screen's width, in a ~1.73:1 shape (tuned by
+    # eye on a 4K panel at 125%: 2018x1165 of a 3072x1728 desktop). On a small
+    # screen that's cramped, so never go under the width we've always shipped
+    # unless that would take more than 90% of the screen.
+    width = min(max(int(sw * 0.657), min(default_w, int(sw * 0.9))), 2200)
+    height = min(max(int(width / 1.732), 830), int(sh * 0.9))
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.
