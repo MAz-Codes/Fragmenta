@@ -1349,6 +1349,13 @@ function makePaletteTheme(LIGHT) {
                     },
                 },
             },
+            // Tag inputs wrap onto several lines, so they take the 24 px of
+            // taller elements, not the one-line pill.
+            MuiAutocomplete: {
+                styleOverrides: {
+                    inputRoot: { '&&': { borderRadius: RADIUS.section } },
+                },
+            },
             MuiAccordionDetails: {
                 styleOverrides: {
                     root: {

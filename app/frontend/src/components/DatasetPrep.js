@@ -821,9 +821,13 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                 flexDirection: 'column',
                                 gap: 2,
                                 // Sticky so the tools stay reachable while a
-                                // few hundred clips scroll past.
+                                // few hundred clips scroll past; capped to the
+                                // window and scrollable on its own, or its lower
+                                // sections (an open vocabulary) can't be reached.
                                 position: { lg: 'sticky' },
                                 top: { lg: 16 },
+                                maxHeight: { lg: 'calc(100vh - 32px)' },
+                                overflowY: { lg: 'auto' },
                             }}
                         >
                             <InspectorRail
