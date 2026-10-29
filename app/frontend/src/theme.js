@@ -3735,11 +3735,12 @@ export const performanceChannelStyles = {
         width: 20,
         height: 20,
         borderRadius: RADIUS.pill,
-        color: active ? theme.palette.perf.label : 'text.secondary',
+        // Active marks (a starred fragment) take the lane colour, not ink.
+        color: active ? color : 'text.secondary',
         backgroundColor: filled && active ? theme.palette.fragmenta.surface : 'transparent',
         boxShadow: filled && active ? theme.palette.fragmenta.shadowSoft : 'none',
         transition: 'background-color 160ms ease, color 160ms ease',
-        '&:hover': { color: 'text.primary', bgcolor: theme.palette.fragmenta.surface },
+        '&:hover': { color: active ? color : 'text.primary', bgcolor: theme.palette.fragmenta.surface },
         '&.Mui-disabled': filled && active
             ? { color: theme.palette.perf.label, backgroundColor: theme.palette.fragmenta.surface, opacity: 1 }
             : { color: 'text.secondary', opacity: 0.85 },

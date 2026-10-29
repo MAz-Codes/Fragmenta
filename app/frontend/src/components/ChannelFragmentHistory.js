@@ -26,12 +26,12 @@ import { MidiMappable } from './MidiContext';
 
 // Load state as a radio button: an empty ring, with a centre dot on the
 // fragment loaded in the lane (click an empty one to load it).
-function LoadDot({ loaded, size = 14 }) {
+function LoadDot({ loaded, color = 'currentColor', size = 14 }) {
     const c = size / 2;
     return (
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
-            <circle cx={c} cy={c} r={c - 1} fill="none" stroke="currentColor" strokeWidth="1.5" />
-            {loaded && <circle cx={c} cy={c} r={c - 4} fill="currentColor" />}
+            <circle cx={c} cy={c} r={c - 1} fill="none" stroke={color} strokeWidth="1.5" />
+            {loaded && <circle cx={c} cy={c} r={c - 4} fill={color} />}
         </svg>
     );
 }
@@ -295,7 +295,7 @@ export default function ChannelFragmentHistory({
                                 {isCommitted ? (
                                     <Tooltip title={TIPS.fragments.commit(true)} placement="top" arrow enterDelay={300}>
                                         <Box component="span" sx={[styles.fragmentLoadDot, { color: deep || color }]} aria-label="Loaded in channel">
-                                            <LoadDot loaded />
+                                            <LoadDot loaded color={deep || color} />
                                         </Box>
                                     </Tooltip>
                                 ) : (
