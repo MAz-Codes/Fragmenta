@@ -3242,11 +3242,14 @@ export const performancePanelStyles = {
         color: 'text.disabled',
     },
     // Tall, slim, rounded L/R meters with a dB scale beside them.
+    // The scale hangs off the left; matching space on the right keeps the
+    // two meters themselves centred under the knob and the dB readout.
     masterMeters: {
         display: 'flex',
         alignItems: 'flex-start',
         gap: '10px',
         height: 222,
+        pr: '32px',
     },
     masterScale: {
         position: 'relative',
