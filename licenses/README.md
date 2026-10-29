@@ -14,5 +14,6 @@ Also here, for code shipped inside the app:
 | File | What it is |
 |---|---|
 | [`SIGNALSMITH_STRETCH_LICENSE.txt`](SIGNALSMITH_STRETCH_LICENSE.txt) | MIT licence of Signalsmith Stretch (the Performance pitch knob's pitch shifter), from its upstream repository |
+| [`LGPL-2.1.txt`](LGPL-2.1.txt) | GNU Lesser General Public License 2.1 (from gnu.org), for LGPL libraries inside dependency wheels: libsndfile (soundfile) and libjack (the Linux python-rtmidi wheel) |
 
 The two verbatim files were taken from `stabilityai/stable-audio-3-{small-music,small-sfx,medium}-base` on Hugging Face on 2026-10-22 (identical in all three). The policies are snapshots of the pages above on the same date; the official versions are at those URLs.
