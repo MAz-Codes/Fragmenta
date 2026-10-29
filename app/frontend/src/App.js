@@ -26,6 +26,7 @@ import {
     AccordionSummary,
     AccordionDetails,
     FormControlLabel,
+    Checkbox,
     Switch,
     CssBaseline,
     ThemeProvider,
@@ -235,6 +236,24 @@ function App() {
     const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
     const [showRationale, setShowRationale] = useState(false);
     const [isTraining, setIsTraining] = useState(false);
+    // Training notice: shown on Start (unless dismissed for good); while
+    // training runs, the sidebar tabs and the top toolbar are locked.
+    const TRAINING_NOTICE_KEY = 'fragmenta.hideTrainingNotice';
+    const [trainingNoticeOpen, setTrainingNoticeOpen] = useState(false);
+    const [hideTrainingNotice, setHideTrainingNotice] = useState(false);
+    const requestStartTraining = () => {
+        let hidden = false;
+        try { hidden = window.localStorage.getItem(TRAINING_NOTICE_KEY) === 'true'; } catch { /* noop */ }
+        if (hidden) startTraining(false);
+        else setTrainingNoticeOpen(true);
+    };
+    const confirmTrainingNotice = () => {
+        if (hideTrainingNotice) {
+            try { window.localStorage.setItem(TRAINING_NOTICE_KEY, 'true'); } catch { /* noop */ }
+        }
+        setTrainingNoticeOpen(false);
+        startTraining(false);
+    };
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [trainingStatus, setTrainingStatus] = useState(null);
     const [trainingHistory, setTrainingHistory] = useState([]);
@@ -1385,7 +1404,12 @@ function App() {
                             </Box>
                         </Box>
 
-                        <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
+                        <Box
+                            sx={[appStyles.headerActionsContainer(isCompactLayout),
+                                isTraining && { pointerEvents: 'none', opacity: 0.45 }]}
+                            aria-disabled={isTraining || undefined}
+                            title={isTraining ? 'Locked while training runs' : undefined}
+                        >
                             <AppToolbar
                                 gpu={gpuMemoryStatus}
                                 isDocker={isDocker}
@@ -1413,10 +1437,11 @@ function App() {
                                 aria-label="main navigation tabs"
                                 sx={appStyles.navigationTabs(isCompactLayout, isIconOnlySidebar)}
                             >
-                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
-                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
-                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
+                                <Tab disabled={isTraining && tabValue !== 0} icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
+                                <Tab disabled={isTraining && tabValue !== 1} icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
+                                <Tab disabled={isTraining && tabValue !== 2} icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
                                 <Tab
+                                    disabled={isTraining && tabValue !== 3}
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
                                     label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
@@ -2088,7 +2113,7 @@ function App() {
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
-                                                        onClick={() => startTraining(false)}
+                                                        onClick={requestStartTraining}
                                                         disabled={isTraining || !trainingProject || !trainingConfig.baseModel || (() => {
                                                             // Check if the selected base model is downloaded
                                                             const baseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
@@ -2739,6 +2764,27 @@ function App() {
             </Snackbar>
 
             <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
+
+            <Dialog open={trainingNoticeOpen} onClose={() => setTrainingNoticeOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle>Training takes the whole machine</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary">
+                        Training uses most of your GPU and memory. To keep the app from crashing,
+                        the other pages and the top toolbar are locked until training finishes or
+                        you stop it.
+                    </Typography>
+                    <FormControlLabel
+                        sx={{ mt: 2 }}
+                        control={<Checkbox size="small" checked={hideTrainingNotice}
+                            onChange={(e) => setHideTrainingNotice(e.target.checked)} />}
+                        label={<Typography variant="body2">Don't show this again</Typography>}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button variant="outlined" onClick={() => setTrainingNoticeOpen(false)}>Cancel</Button>
+                    <Button variant="contained" onClick={confirmTrainingNotice}>Start training</Button>
+                </DialogActions>
+            </Dialog>
 
             <SettingsDialog
                 open={showSettings}
