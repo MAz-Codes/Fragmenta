@@ -40,6 +40,9 @@ jobs:
         env:
           CIBW_BUILD: cp314-manylinux_x86_64 cp314-win_amd64 cp314-macosx_arm64
           CIBW_ARCHS_MACOS: arm64
+          # The runner has MinGW's gcc on PATH and meson takes it; CPython on
+          # Windows is MSVC-built, and so are upstream's wheels.
+          CIBW_CONFIG_SETTINGS_WINDOWS: setup-args=--vsenv
 
       - name: Checksums
         shell: bash
