@@ -1748,7 +1748,7 @@ export const appStyles = {
             textAlign: (isCompactLayout || isIconOnly) ? 'center' : 'left',
             minHeight: 44,
             fontSize: '0.875rem',
-            fontWeight: 400,
+            fontWeight: 600,  // same face and weight as the Link / MIDI Learn buttons
             textTransform: 'none',
             color: 'text.secondary',
             borderRadius: 2,
