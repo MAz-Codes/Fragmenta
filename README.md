@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="app/frontend/public/fragmenta_icon_1024.png" alt="Fragmenta logo" width="150" />
+<img src="docs/logo.png" alt="Fragmenta logo" width="120" />
 
 # Fragmenta 
 
