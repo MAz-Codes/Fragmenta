@@ -69,7 +69,7 @@ export const PALETTES = {
         name: 'Linen', bg: '#F4EFE5', ink: '#141414',
         // Saturated mains for fills and marks; each has a faint partner for
         // waveform layers, tints and soft states.
-        cool: '#1A49DE', warm: '#D58500', fresh: '#007B51', hot: '#C81E0F',   // blue, gold, green, red
+        cool: '#A0B2D5', warm: '#E0B56F', fresh: '#B3BE8C', hot: '#C18992',   // blue, gold, green, red
         faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
         exact: {
             surface: '#FFFDF9', control: '#EEE9E0', controlHover: '#E5E0D6', section: '#F6F2EA',
@@ -80,7 +80,7 @@ export const PALETTES = {
         lanes: {
             tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
             playing: ['#C7C9E4', '#F7D2C6', '#BBD1BF', '#ECD3A9'],
-            deep: ['#1A49DE', '#C81E0F', '#007B51', '#D58500'],
+            deep: ['#A0B2D5', '#C18992', '#B3BE8C', '#E0B56F'],
             soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#E6BF7E'],
         },
     },
