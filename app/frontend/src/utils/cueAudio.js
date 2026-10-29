@@ -88,6 +88,14 @@ export function setCueOutputPair(pairIdx) {
     wireCuePair(currentCuePair);
 }
 
+// The output device changed underneath the context (macOS: the backend
+// switched the Mac's default output). Re-claim its channels if their number
+// changed; same rebuild as after setSinkId.
+export function refreshCueGraph() {
+    if (!ctx || !cueMerger) return;
+    if (cueMerger.numberOfInputs !== Math.max(2, ctx.destination.maxChannelCount || 2)) buildCueGraph();
+}
+
 // Re-route the cue context to a different output device. Pass '' (or 'default')
 // to revert to the system default output. Resolves to the actually-applied
 // sinkId so callers can confirm.

@@ -53,7 +53,7 @@ import { MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
 import { useAudioSettings } from './AudioSettingsContext';
 // setCueOutputPair is aliased: the component has a useState setter of the same
 // name which would otherwise shadow the import and leave cue routing dead.
-import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
+import { isCueSupported, listOutputDevices, refreshCueGraph, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
 import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
@@ -249,6 +249,7 @@ function PerformancePanelInner({
             await setCueDevice(outputDeviceId).catch(() => { /* logged in cueAudio */ });
         } else if (engine.refreshOutputGraph) {
             setMaxChannelCount(engine.refreshOutputGraph());
+            refreshCueGraph();
         }
     }, [cueSupported, outputDeviceId]);
 
@@ -271,6 +272,37 @@ function PerformancePanelInner({
         return () => ctx.removeEventListener('statechange', onStateChange);
     }, []);
 
+    // macOS (WKWebView, no setSinkId): the backend lists the Mac's output
+    // devices and makes the chosen one the default output; the page plays on
+    // the default device with all its channels, so the pairs work as usual.
+    // null = not available (other platforms, or Chromium on a Mac).
+    const [systemOutputs, setSystemOutputs] = useState(null);
+    const [systemOutput, setSystemOutput] = useState('');
+    const refreshSystemOutputs = useCallback(async () => {
+        if (cueSupported) return;
+        try {
+            const { data } = await api.get('/api/audio/outputs');
+            if (!data?.available) return;
+            setSystemOutputs(data.outputs || []);
+            setSystemOutput(data.current || '');
+        } catch { /* backend without the route: leave it unavailable */ }
+    }, [cueSupported]);
+    useEffect(() => { refreshSystemOutputs(); }, [refreshSystemOutputs]);
+    const pickSystemOutput = useCallback(async (uid) => {
+        if (!uid) return;
+        try {
+            const { data } = await api.post('/api/audio/outputs/select', { uid });
+            setSystemOutput(data?.current || uid);
+        } catch (err) {
+            console.warn('[PerformancePanel] output switch failed', err);
+            refreshSystemOutputs();
+            return;
+        }
+        // The context follows the new default device; give Core Audio a
+        // moment, then re-claim its channel count for the pair selectors.
+        setTimeout(() => bindAudioOutput(), 300);
+    }, [bindAudioOutput, refreshSystemOutputs]);
+
     const refreshAudioDevices = useCallback(async () => {
         if (!cueSupported) return;
         try {
@@ -290,9 +322,21 @@ function PerformancePanelInner({
     const { setApi: publishAudioSettings } = useAudioSettings();
     const refreshAudioSettings = useCallback(() => {
         refreshAudioDevices();
+        refreshSystemOutputs();
         bindAudioOutput();
-    }, [refreshAudioDevices, bindAudioOutput]);
+    }, [refreshAudioDevices, refreshSystemOutputs, bindAudioOutput]);
     useEffect(() => {
+        if (!cueSupported && systemOutputs) {
+            publishAudioSettings({
+                supported: true,
+                systemOutput: true,
+                deviceId: systemOutput,
+                devices: systemOutputs.map((o) => ({ deviceId: o.uid, label: o.name })),
+                refresh: refreshAudioSettings,
+                pick: pickSystemOutput,
+            });
+            return;
+        }
         publishAudioSettings({
             supported: cueSupported,
             deviceId: outputDeviceId,
@@ -300,7 +344,8 @@ function PerformancePanelInner({
             refresh: refreshAudioSettings,
             pick: setOutputDeviceId,
         });
-    }, [publishAudioSettings, cueSupported, outputDeviceId, audioDevices, refreshAudioSettings]);
+    }, [publishAudioSettings, cueSupported, outputDeviceId, audioDevices, refreshAudioSettings,
+        systemOutputs, systemOutput, pickSystemOutput]);
     useEffect(() => () => publishAudioSettings(null), [publishAudioSettings]);
 
     // Restore App-level state (model, steps, seed) once on mount via the setter

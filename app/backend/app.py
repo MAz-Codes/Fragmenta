@@ -3485,6 +3485,31 @@ def midi_select():
     return jsonify({"current": midi_input.current_port()})
 
 
+# --- Output device on macOS -------------------------------------------------
+# WKWebView can't pick an output device itself, so on macOS the backend makes
+# the chosen device the Mac's default output (Core Audio). Elsewhere the
+# engine picks it in the page (setSinkId) and this reports unavailable.
+@app.route('/api/audio/outputs', methods=['GET'])
+def audio_outputs():
+    from app.core.audio import macos_output
+    return jsonify({
+        "available": macos_output.is_available(),
+        "outputs": macos_output.list_outputs(),
+        "current": macos_output.current_output(),
+    })
+
+
+@app.route('/api/audio/outputs/select', methods=['POST'])
+def audio_outputs_select():
+    from app.core.audio import macos_output
+    data = request.get_json(silent=True) or {}
+    uid = data.get('uid')
+    if not isinstance(uid, str) or not macos_output.select_output(uid):
+        return jsonify(APIResponse.error(
+            "Could not switch to that output device.", status_code=400)), 400
+    return jsonify({"current": macos_output.current_output()})
+
+
 @app.route('/api/midi/stream', methods=['GET'])
 def midi_stream():
     """Server-Sent Events stream of incoming MIDI from the open port. Each
@@ -3559,4 +3584,6 @@ if __name__ == '__main__':
     flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
     # Only the real server checks for updates (not imports or test clients).
     update_check.start_background_checker()
+    from app.core.audio import macos_output
+    macos_output.start()
     app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)

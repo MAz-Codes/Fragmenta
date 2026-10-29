@@ -53,7 +53,7 @@ function AudioSettingsPanel({ open }) {
                 value={known ? api.deviceId : ''}
                 onChange={(e) => api.pick(e.target.value)}
             >
-                <MenuItem value="">System device (default)</MenuItem>
+                {!api.systemOutput && <MenuItem value="">System device (default)</MenuItem>}
                 {devices.map((d, i) => (
                     <MenuItem key={d.deviceId} value={d.deviceId}>
                         {d.label || `Output ${i + 1}`}
@@ -63,6 +63,11 @@ function AudioSettingsPanel({ open }) {
             {devices.length === 0 && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                     No additional output devices detected.
+                </Typography>
+            )}
+            {api.systemOutput && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                    This becomes the Mac's sound output while Fragmenta runs; the previous one comes back when it closes.
                 </Typography>
             )}
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
