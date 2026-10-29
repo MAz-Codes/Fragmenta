@@ -1502,14 +1502,12 @@ function makePaletteTheme(LIGHT) {
                     },
                 },
             },
-            // Segmented controls: a tonal track, the selected segment a soft
-            // pill of the accent (the one place a fully rounded end is used).
-            // Segmented controls: a control-tone track; the selected segment is
-            // a 999 pill in the cool pastel.
+            // Segmented controls: a control-tone track (14 px, 3 px padding); the
+            // selected segment follows its corners at 11 px.
             MuiToggleButtonGroup: {
                 styleOverrides: {
                     root: { backgroundColor: LIGHT.control, borderRadius: 14, padding: 3, gap: 2 },
-                    grouped: { border: 'none !important', borderRadius: '999px !important', margin: '0 !important' },
+                    grouped: { border: 'none !important', borderRadius: '11px !important', margin: '0 !important' },
                 },
             },
             MuiToggleButton: {
@@ -1517,7 +1515,7 @@ function makePaletteTheme(LIGHT) {
                     root: {
                         textTransform: 'none',
                         border: 'none',
-                        borderRadius: 999,
+                        borderRadius: 11,
                         color: LIGHT.textDim,
                         fontWeight: 400,
                         padding: '6px 16px',
@@ -3448,7 +3446,7 @@ export const performanceChannelStyles = {
         fontSize: '0.75rem',
         px: 1.4,
         height: 28,
-        borderRadius: RADIUS.pill,
+        borderRadius: '11px',  // the track's 14 minus its 3 px padding
         bgcolor: active ? color : 'transparent',
         color: active ? onFill(color) : 'text.secondary',
         fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
