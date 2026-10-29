@@ -80,8 +80,9 @@ export const PALETTES = {
         lanes: {
             tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
             playing: ['#C7C9E4', '#F7D2C6', '#BBD1BF', '#ECD3A9'],
-            deep: ['#A0B2D5', '#C18992', '#B3BE8C', '#FFB123'],
-            soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#E6BF7E'],
+            main: ['#A0B2D5', '#C18992', '#B3BE8C', '#E0B56F'],  // lane 4: its own gold
+            deep: ['#A0B2D5', '#C18992', '#B3BE8C', '#E0B56F'],
+            soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#EFE2CC'],
         },
     },
 };
@@ -209,7 +210,8 @@ function paletteTokens(P) {
     t.shadowSoft = `0 1px 2px rgba(${t.inkRgb}, 0.04), 0 6px 20px rgba(${t.inkRgb}, 0.05)`;
     t.shadowRaised = `0 2px 6px rgba(${t.inkRgb}, 0.06), 0 14px 32px rgba(${t.inkRgb}, 0.08)`;
     // Performance tab: pastel fills with ink labels.
-    const channels = [P.cool, P.hot, P.fresh, P.warm, P.cool, P.hot, P.fresh, P.warm];
+    const laneMains = P.lanes?.main || [P.cool, P.hot, P.fresh, P.warm];
+    const channels = [...laneMains, ...laneMains];
     t.perf = {
         channels,
         // Lane cards sit on pale tints of their colour; arcs, waveforms and
