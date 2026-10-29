@@ -207,8 +207,9 @@ function paletteTokens(P) {
         hiRgb: rgbStr(t.onAccent),
     });
     // Diffuse, low-opacity shadows, only where something is elevated.
-    t.shadowSoft = `0 1px 2px rgba(${t.inkRgb}, 0.04), 0 6px 20px rgba(${t.inkRgb}, 0.05)`;
-    t.shadowRaised = `0 2px 6px rgba(${t.inkRgb}, 0.06), 0 14px 32px rgba(${t.inkRgb}, 0.08)`;
+    // No vertical offset: the shadow surrounds the card evenly on all sides.
+    t.shadowSoft = `0 0 2px rgba(${t.inkRgb}, 0.06), 0 0 22px rgba(${t.inkRgb}, 0.08)`;
+    t.shadowRaised = `0 0 4px rgba(${t.inkRgb}, 0.08), 0 0 32px rgba(${t.inkRgb}, 0.11)`;
     // Performance tab: pastel fills with ink labels.
     const laneMains = P.lanes?.main || [P.cool, P.hot, P.fresh, P.warm];
     const channels = [...laneMains, ...laneMains];
