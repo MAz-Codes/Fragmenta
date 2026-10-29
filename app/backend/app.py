@@ -1743,8 +1743,9 @@ def link_install():
     """Install LinkPython-extern via pip, on-demand and with user consent.
 
     Restricted to localhost — running pip as a side effect of an HTTP call is
-    only reasonable when the caller is the local user. In frozen PyInstaller
-    builds there's no pip, so we report that clearly instead of failing weirdly.
+    only reasonable when the caller is the local user. Packaged builds carry it
+    in their lock (an exact sync would remove anything pip added), so there it
+    never installs; source installs get the same pinned version.
     """
     # Localhost-only: prevents a remote attacker on the same Flask host (e.g. a
     # Docker image bound to 0.0.0.0) from installing arbitrary packages.
@@ -1752,7 +1753,13 @@ def link_install():
     if remote not in ('127.0.0.1', '::1', 'localhost'):
         return jsonify({'error': 'install endpoint is only accessible from localhost'}), 403
 
-    if getattr(sys, 'frozen', False):
+    from app.core.audio.link_sync import get_link_bridge
+    if get_link_bridge().available:
+        return jsonify({'success': True, 'available': True})
+
+    # The bootstrapper runs the venv's normal Python (not frozen), so the
+    # packaged flag is the check that matters there.
+    if getattr(sys, 'frozen', False) or os.environ.get('FRAGMENTA_PACKAGED') == '1':
         return jsonify({
             'success': False,
             'error': 'Automatic install is not available in the packaged desktop build. '
@@ -1767,7 +1774,7 @@ def link_install():
         proc = subprocess.run(
             [sys.executable, '-m', 'pip', 'install',
              '--disable-pip-version-check', '--quiet',
-             'LinkPython-extern'],
+             'LinkPython-extern==1.3.0'],  # same pin as locks/ (packaging/lock.py)
             capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
