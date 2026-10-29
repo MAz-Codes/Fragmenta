@@ -735,18 +735,15 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # 75% of the screen, in the screen's own shape — independent width and
-    # height caps gave a ~3:2 box on 16:9 panels. On a small screen 75% is
-    # cramped, so never go under the width we've always shipped unless that
-    # would take more than 90% of the screen. Capped because past ~2000px the
-    # layout just grows margins rather than showing more. Height always
-    # follows from the width: flooring it separately (as before) broke the
-    # shape on every screen under ~1900 wide. The shape follows the screen
-    # between 16:10 and 16:9, so an ultrawide doesn't get a letterbox and a
-    # portrait monitor doesn't get a tower.
-    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 2000)
-    shape = min(max(sw / sh, 1.6), 16 / 9)
-    height = min(int(width / shape), int(sh * 0.9))
+    # 75% of the screen's width. On a small screen 75% is cramped, so never
+    # go under the width we've always shipped unless that would take more
+    # than 90% of the screen. Capped because past ~1800px the layout just
+    # grows margins rather than showing more.
+    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 1800)
+    # Wider than the screen's own shape: no page needs more than ~950 px of
+    # height (the Dataset bench scrolls), so a 16:9 window at this width just
+    # added empty space under the content.
+    height = min(max(int(width / 1.85), 900), int(sh * 0.9))
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.

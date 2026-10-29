@@ -23,6 +23,10 @@
         min-width: 1300px;
         min-height: 830px;
       }
+      /* Type scale: every font size in the app is in rem, so this one value
+         sets how large all text reads (18px root instead of 16px) while
+         spacing and control heights, in px, stay put. */
+      html { font-size: 112.5%; }
 
       /* Local variable fonts — ship with the app, no network dependency. */
       @font-face {
