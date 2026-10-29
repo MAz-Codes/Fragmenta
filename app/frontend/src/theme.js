@@ -3495,10 +3495,18 @@ export const performanceChannelStyles = {
         '& .MuiOutlinedInput-root': {
             height: 34,
             borderRadius: RADIUS.control,
-            backgroundColor: ON_TINT,
-            '&:hover': { backgroundColor: ON_TINT_HOVER },
+            // On the lane tint, like the prompt and M / S / SC; doubled class
+            // so it wins over pillControl's solid field tone.
+            '&.MuiOutlinedInput-root': { backgroundColor: ON_TINT },
+            '&.MuiOutlinedInput-root:hover': { backgroundColor: ON_TINT_HOVER },
         },
         '& .MuiSelect-select': { lineHeight: '34px', fontSize: '0.75rem' },
+    },
+    // A bare Select sitting on the lane tint: the same translucent tone as
+    // the prompt and M / S / SC (its root is the input itself).
+    onTintField: {
+        '&&': { backgroundColor: ON_TINT },
+        '&&:hover': { backgroundColor: ON_TINT_HOVER },
     },
     // The ×N batch select next to Generate: tonal, no outline.
     channelPillControl: (theme) => ({
@@ -3506,8 +3514,8 @@ export const performanceChannelStyles = {
             fontFamily: 'inherit',
             height: 40,
             borderRadius: RADIUS.control,
-            backgroundColor: ON_TINT,
-            '&:hover': { backgroundColor: ON_TINT_HOVER },
+            '&.MuiOutlinedInput-root': { backgroundColor: ON_TINT },
+            '&.MuiOutlinedInput-root:hover': { backgroundColor: ON_TINT_HOVER },
         },
         '& fieldset': { border: 'none' },
         '& .MuiSelect-select': {
@@ -3878,7 +3886,7 @@ export const performanceChannelStyles = {
         boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.08), 0 4px 10px rgba(${theme.palette.fragmenta.inkRgb}, 0.08)`,
         transition: 'background-color 160ms ease',
         '&:hover': { backgroundColor: playing ? color : theme.palette.fragmenta.paperHi },
-        '&.Mui-disabled': { color: 'text.disabled', boxShadow: 'none', backgroundColor: 'transparent' },
+        '&.Mui-disabled': { color: 'text.disabled', boxShadow: 'none', backgroundColor: ON_TINT },
     }),
     loopBtn: (soft, active) => (theme) => ({
         width: 30,

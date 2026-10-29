@@ -1021,7 +1021,7 @@ export default function PerformanceChannel({
                             value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
                             onChange={(e) => setBars(Number(e.target.value))}
                             size="small"
-                            sx={[panelStyles.pillControl, styles.laneSelect]}
+                            sx={[panelStyles.pillControl, styles.laneSelect, styles.onTintField]}
                         >
                             {availableBars.map(b => (
                                 <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
@@ -1106,7 +1106,7 @@ export default function PerformanceChannel({
                             onChange={(e) => setBatchSize(Number(e.target.value))}
                             disabled={generating}
                             size="small"
-                            sx={[styles.channelPillControl, { width: 54, flexShrink: 0 }]}
+                            sx={[styles.channelPillControl, styles.onTintField, { width: 54, flexShrink: 0 }]}
                             renderValue={(v) => `×${v}`}
                         >
                             {BATCH_OPTIONS.map((n) => (
