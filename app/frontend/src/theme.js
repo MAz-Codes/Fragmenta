@@ -25,6 +25,8 @@ const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, mono
 // gives the cards a strong, distinctive header voice that doesn't compete
 // with body Inter.
 const FONT_DISPLAY = '"Bricolage Grotesque", "Inter Tight", system-ui, sans-serif';
+// The Fragmenta wordmark (header, Welcome, About): never the UI fonts.
+const FONT_LOGO = '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -1665,13 +1667,13 @@ export const appStyles = {
         backgroundPosition: 'center',
         filter: 'drop-shadow(0 2px 6px rgba(55, 58, 48, 0.18))',
     },
+    // The wordmark keeps the logo font (Bitcount Single).
     title: {
         color: 'text.primary',
-        fontFamily: FONT_DISPLAY,
-        fontWeight: 600,
-        fontSize: { xs: '1.3rem', sm: '1.4rem' },
-        letterSpacing: '-0.02em',
-        fontVariationSettings: '"opsz" 72',
+        fontFamily: FONT_LOGO,
+        fontWeight: 400,
+        fontSize: { xs: '1.5rem', sm: '1.65rem' },
+        letterSpacing: '0.02em',
         lineHeight: 1.1,
     },
     headerActionsContainer: (isCompactLayout) => ({
@@ -2853,14 +2855,14 @@ export const welcomePageStyles = {
             mb: { xs: 3.5, sm: 5 },
         };
     },
+    // "Welcome to Fragmenta" in the logo font, as before the redesign.
     title: {
-        fontFamily: FONT_DISPLAY,
-        fontWeight: 600,
+        fontFamily: FONT_LOGO,
+        fontWeight: 400,
         color: 'text.primary',
         mb: 1,
-        fontSize: { xs: '2.5rem', sm: '3.25rem', md: '3.75rem' },
-        letterSpacing: '-0.03em',
-        fontVariationSettings: '"opsz" 96',
+        fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4rem' },
+        letterSpacing: '0.02em',
     },
 };
 
