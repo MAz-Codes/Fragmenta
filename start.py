@@ -735,19 +735,18 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # A fixed target, not a share of the screen: ~1650 x 950 logical px reads
-    # right (tuned by eye on a 4K panel at 125%), and a share that suits a big
-    # desktop leaves a laptop with a cramped window. On a screen narrower
-    # than that, take nearly all of it.
-    width = max(min(1650, int(sw * 0.94)), min(min_w, sw))
-    height = min(max(int(width / 1.732), 830), int(sh * 0.92))
+    # The UI is laid out for a 1650x960 viewport and zooms itself to fit
+    # whatever window it gets (index.html), so the window only needs the
+    # right shape: that design size plus a title bar, scaled down evenly
+    # when it doesn't fit in 92% of the screen. Same composition everywhere.
+    design_w, design_h = 1650, 952
+    fit = min(1.0, sw * 0.92 / design_w, sh * 0.92 / design_h)
+    width, height = int(design_w * fit), int(design_h * fit)
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.
     min_w = min(min_w, max(640, sw - 80))
     min_h = min(min_h, max(480, sh - 80))
-    # And never open smaller than the minimum.
-    width, height = max(width, min_w), max(height, min_h)
 
     print(f"Screen {sw}x{sh} -> window {width}x{height}")
     return width, height, min_w, min_h

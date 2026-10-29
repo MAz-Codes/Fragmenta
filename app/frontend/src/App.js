@@ -541,11 +541,7 @@ function App() {
     // Vertical icon-only mode: between the compact (horizontal) threshold
     // and a custom upper bound. The MUI `lg` breakpoint at 1200 was too
     // eager — labels collapsed while there was still plenty of room.
-    const isNarrowSidebar = useMediaQuery('(min-width: 900px) and (max-width: 1099.95px)');
-    // Performance needs the width for four lanes and the master, so on a
-    // laptop-sized window (under 1500 px) its rail drops to icons too.
-    const isPerfNarrow = useMediaQuery('(min-width: 900px) and (max-width: 1499.95px)');
-    const isIconOnlySidebar = isNarrowSidebar || (tabValue === 3 && isPerfNarrow);
+    const isIconOnlySidebar = useMediaQuery('(min-width: 900px) and (max-width: 1099.95px)');
     // Mobile/very-small width — the nav rail goes horizontal (compact)
     // AND drops the text labels, matching the icon-only treatment used
     // on mid-size vertical.
