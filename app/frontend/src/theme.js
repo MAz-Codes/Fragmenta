@@ -169,9 +169,11 @@ function paletteTokens(P) {
         textFaint: inkAt(P.ink, P.bg, 4.5),
         onAccent: mixHex(P.bg, white, 0.8),
         // Primary: deepened cool accent (text and thin lines stay legible).
-        amber: deepen(P.cool, P.bg, 4.5),
-        amberHi: deepen(P.cool, P.bg, 3),
-        amberLo: deepen(P.cool, P.bg, 6),
+        // Primary: the main blue itself for fills and marks (focus ring,
+        // sliders, checked controls); amberLo is for text, so it's the ink.
+        amber: P.cool,
+        amberHi: P.cool,
+        amberLo: P.ink,
         warm: deepen(P.warm, P.bg, 3),
         warmHi: P.warm,
         warmLo: deepen(P.warm, P.bg, 4.5),
@@ -1356,6 +1358,9 @@ function makePaletteTheme(LIGHT) {
                     inputRoot: { '&&': { borderRadius: RADIUS.section } },
                 },
             },
+            // Focused labels stay ink; the field's ring carries the colour.
+            MuiInputLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
+            MuiFormLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
             MuiAccordionDetails: {
                 styleOverrides: {
                     root: {
@@ -1688,7 +1693,7 @@ export const appStyles = {
     }),
     emphasizedPrimaryBody2: {
         fontWeight: 'bold',
-        color: 'primary.main',
+        color: 'primary.dark',
     },
     advancedSettingsDetails: {
         // Pure pass-through. No maxHeight / inner scroll — that was
@@ -1767,7 +1772,7 @@ export const appStyles = {
                 color: 'text.primary',
                 fontWeight: 600,
                 backgroundColor: (t) => t.palette.fragmenta.navSelected,
-                '& svg': { color: (t) => t.palette.primary.main },
+                '& svg': { color: (t) => t.palette.text.primary },
             },
             '&:hover': {
                 color: 'text.primary',
@@ -1832,7 +1837,7 @@ export const appStyles = {
     },
     modelMissingLink: {
         fontWeight: 600,
-        color: 'primary.main',
+        color: 'primary.dark',
         textDecoration: 'none',
         '&:hover': {
             textDecoration: 'underline',
@@ -2158,7 +2163,7 @@ export const appStyles = {
         },
     },
     dockIconButtonAccent: {
-        color: 'primary.main',
+        color: 'primary.dark',
         '&:hover': {
             color: 'primary.light',
             backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.10)`,
@@ -2185,7 +2190,7 @@ export const appStyles = {
             background: isDark
                 ? 'linear-gradient(145deg, rgba(18, 25, 38, 0.96) 0%, rgba(12, 19, 30, 0.96) 100%)'
                 : 'linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            color: isDark ? 'primary.light' : 'primary.main',
+            color: isDark ? 'primary.light' : 'primary.dark',
             boxShadow: isDark
                 ? '0 14px 24px rgba(4, 8, 14, 0.5)'
                 : '0 14px 24px rgba(15, 23, 42, 0.14)',
@@ -3145,7 +3150,7 @@ export const performancePanelStyles = {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
-        color: 'primary.main',
+        color: 'primary.dark',
     },
     title: {
         fontWeight: 400,

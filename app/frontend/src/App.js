@@ -1633,7 +1633,7 @@ function App() {
                                                                                     setTrainingBaseModelSelectOpen(false);
                                                                                     setCheckpointMgrOpen(true);
                                                                                 }}
-                                                                                sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                sx={{ opacity: 1, color: 'primary.dark' }}
                                                                             >
                                                                                 <CloudDownloadIcon size={16} />
                                                                             </IconButton>
@@ -2204,7 +2204,7 @@ function App() {
                                                                                             setGenerationModelSelectOpen(false);
                                                                                             setCheckpointMgrOpen(true);
                                                                                         }}
-                                                                                        sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                        sx={{ opacity: 1, color: 'primary.dark' }}
                                                                                     >
                                                                                         <CloudDownloadIcon size={16} />
                                                                                     </IconButton>

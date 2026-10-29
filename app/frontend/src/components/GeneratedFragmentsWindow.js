@@ -590,7 +590,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                                 size="small"
                                                 onClick={() => downloadFragment(fragment)}
                                                 aria-label="Download fragment"
-                                                sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
+                                                sx={{ color: 'text.disabled', '&:hover': { color: 'text.primary', bgcolor: 'action.hover' } }}
                                             >
                                                 <DownloadIcon size={16} />
                                             </IconButton>
@@ -601,7 +601,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                                 size="small"
                                                 onClick={() => revealInFolder(fragment)}
                                                 aria-label="Show in folder"
-                                                sx={{ color: 'text.disabled', '&:hover': { color: 'primary.main', bgcolor: 'action.hover' } }}
+                                                sx={{ color: 'text.disabled', '&:hover': { color: 'text.primary', bgcolor: 'action.hover' } }}
                                             >
                                                 <RevealIcon size={16} />
                                             </IconButton>

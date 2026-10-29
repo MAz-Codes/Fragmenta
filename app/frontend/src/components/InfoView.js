@@ -79,7 +79,7 @@ function InfoViewBar({ hint }) {
                     animation: 'fragmenta-fade-up 240ms cubic-bezier(0.16, 1, 0.3, 1)',
                 })}
             >
-                <Box component="span" sx={{ flexShrink: 0, display: 'inline-flex', color: 'primary.main' }}>
+                <Box component="span" sx={{ flexShrink: 0, display: 'inline-flex', color: 'primary.dark' }}>
                     <InfoIcon size={15} />
                 </Box>
                 <Typography variant="body2" sx={{ color: 'text.primary', lineHeight: 1.3 }}>

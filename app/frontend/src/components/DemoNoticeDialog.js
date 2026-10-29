@@ -84,7 +84,7 @@ export default function DemoNoticeDialog({ open, onClose }) {
                 {/* The Space is a hosted service of the models, so the Gemma
                     Terms (§3.1) want the use restrictions agreed to by its
                     users; continuing is that agreement. */}
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2.5, lineHeight: 1.6, textAlign: 'center', '& a': { color: 'primary.main' } }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2.5, lineHeight: 1.6, textAlign: 'center', '& a': { color: 'primary.dark' } }}>
                     By continuing you agree to the{' '}
                     <a href={`${LICENSES_URL}/STABILITY_AI_COMMUNITY_LICENSE.md`} target="_blank" rel="noopener noreferrer">Stability AI Community License</a>,
                     the <a href={`${LICENSES_URL}/GEMMA_TERMS_OF_USE.md`} target="_blank" rel="noopener noreferrer">Gemma Terms of Use</a> and

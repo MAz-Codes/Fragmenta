@@ -21,7 +21,7 @@ import { APP_VERSION } from '../version';
 
 const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/tree/main/licenses';
 const NOTICE_SX = { display: 'block', fontSize: '0.65rem', lineHeight: 1.5, mt: 0.5 };
-const LINK_SX = { color: 'primary.main', textDecoration: 'underline', fontSize: '0.65rem' };
+const LINK_SX = { color: 'primary.dark', textDecoration: 'underline', fontSize: '0.65rem' };
 
 /**
  * "About Fragmenta" dialog — logo + title, short intro, three doc buttons
@@ -85,7 +85,7 @@ export default function AboutDialog({
                     Fragmenta is an open source, local-first suit to prepare datasets, train, generate and perform with text-to-audio diffusion models.
                     Made by the composer and researcher{' '}
                     <Typography component="a" href="https://www.misaghazimi.com" target="_blank" rel="noopener noreferrer"
-                        sx={{ font: 'inherit', color: 'primary.main', textDecoration: 'underline' }}>
+                        sx={{ font: 'inherit', color: 'primary.dark', textDecoration: 'underline' }}>
                         Misagh Azimi
                     </Typography>.
                 </Typography>

@@ -2380,7 +2380,7 @@ function IngestDialog({ open, projectName, ingestMode, onClose, onIngested, isDo
 
                         {folder ? (
                             <>
-                                <Typography variant="body2" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                                <Typography variant="body2" sx={{ color: 'primary.dark', fontWeight: 600 }}>
                                     {scanning
                                         ? 'Counting audio…'
                                         : count != null
