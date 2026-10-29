@@ -19,7 +19,7 @@
     <img
       src="docs/fragmenta.gif"
       alt="Watch the Fragmenta video"
-      width="1036"
+      width="1200"
     />
   </a>
   <br />
