@@ -33,11 +33,9 @@ import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
     Trash2 as DeleteIcon,
-    Settings as SettingsIcon,
     Save as SaveIcon,
     X as CloseXIcon,
     Headphones as CueIcon,
-    Volume2 as AudioSetupIcon,
     RotateCcw as RestoreIcon,
     CloudDownload as DownloadIcon,
     Circle as RecordIcon,
@@ -50,8 +48,8 @@ import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../ut
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
 import { performancePanelStyles as styles, perfTokens, onFill } from '../theme';
-import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
-import MidiConfigMenu from './MidiConfigMenu';
+import { MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
+import { useAudioSettings } from './AudioSettingsContext';
 // setCueOutputPair is aliased: the component has a useState setter of the same
 // name which would otherwise shadow the import and leave cue routing dead.
 import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
@@ -120,18 +118,16 @@ export default function PerformancePanel(props) {
     // Reset key for the inner panel. Bumping it forces a full remount of
     // PerformancePanelInner, which makes usePerformanceSession re-read from
     // localStorage and every PerformanceChannel re-hydrate from IDB. The
-    // MidiProvider sits outside so MIDI mappings survive a reset (they
-    // have their own clearMidiConfig pathway when needed).
+    // MidiProvider sits in App (Settings shows the MIDI setup), so MIDI
+    // mappings survive a reset.
     const [resetKey, setResetKey] = useState(0);
     const triggerReset = useCallback(() => setResetKey((k) => k + 1), []);
     return (
-        <MidiProvider>
-            <PerformancePanelInner
-                key={resetKey}
-                {...props}
-                onPresetLoaded={triggerReset}
-            />
-        </MidiProvider>
+        <PerformancePanelInner
+            key={resetKey}
+            {...props}
+            onPresetLoaded={triggerReset}
+        />
     );
 }
 
@@ -225,7 +221,6 @@ function PerformancePanelInner({
     const cueSupported = useMemo(() => isCueSupported(), []);
     const [outputDeviceId, setOutputDeviceId] = useState(session.outputDeviceId ?? session.cueDeviceId ?? '');
     const [audioDevices, setAudioDevices] = useState([]);
-    const [audioMenuAnchor, setAudioMenuAnchor] = useState(null);
     const [maxChannelCount, setMaxChannelCount] = useState(2);
     const [mainOutputPair, setMainOutputPair] = useState(session.mainOutputPair ?? 0);
     const [cueOutputPair, setCueOutputPair] = useState(session.cueOutputPair ?? 0);
@@ -286,19 +281,26 @@ function PerformancePanelInner({
         }
     }, [cueSupported]);
 
-    const handleOpenAudioMenu = (e) => {
-        setAudioMenuAnchor(e.currentTarget);
+    // The output device is picked in the app's Settings dialog; publish what
+    // it needs. Opening it is a user gesture, so the context can resume and
+    // report the device's real channel count: rebind then, so the pair
+    // selectors are populated even if the mount-time binding ran against a
+    // suspended context.
+    const { setApi: publishAudioSettings } = useAudioSettings();
+    const refreshAudioSettings = useCallback(() => {
         refreshAudioDevices();
-        // User gesture: contexts can resume now, so the device's real channel
-        // count is readable — rebind so the pair selectors are populated even
-        // if the mount-time binding ran against a suspended context.
         bindAudioOutput();
-    };
-    const handleCloseAudioMenu = () => setAudioMenuAnchor(null);
-    const handlePickAudioDevice = (id) => {
-        setOutputDeviceId(id);
-        handleCloseAudioMenu();
-    };
+    }, [refreshAudioDevices, bindAudioOutput]);
+    useEffect(() => {
+        publishAudioSettings({
+            supported: cueSupported,
+            deviceId: outputDeviceId,
+            devices: audioDevices,
+            refresh: refreshAudioSettings,
+            pick: setOutputDeviceId,
+        });
+    }, [publishAudioSettings, cueSupported, outputDeviceId, audioDevices, refreshAudioSettings]);
+    useEffect(() => () => publishAudioSettings(null), [publishAudioSettings]);
 
     // Restore App-level state (model, steps, seed) once on mount via the setter
     // props the panel was given. The panel doesn't own those, so this is the
@@ -881,7 +883,6 @@ function PerformancePanelInner({
     }, []);
 
     const midi = useMidi();
-    const [midiMenuAnchor, setMidiMenuAnchor] = useState(null);
 
     useEffect(() => {
         if (!midi?.learnMode) return undefined;
@@ -1237,132 +1238,7 @@ function PerformancePanelInner({
                         </ButtonBase>
                     </span>
                 </Tooltip>
-                <Tooltip title={TIPS.perf.midiSettings}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <IconButton
-                            size="small"
-                            onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
-                            sx={styles.compactIconBtn('lg')}
-                        >
-                            <SettingsIcon size={perfTokens.icon.md} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <MidiConfigMenu
-                    anchorEl={midiMenuAnchor}
-                    open={Boolean(midiMenuAnchor)}
-                    onClose={() => setMidiMenuAnchor(null)}
-                />
 
-                <Tooltip
-                    title={TIPS.perf.audioSetup(cueSupported)}
-                >
-                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <IconButton
-                            size="small"
-                            onClick={handleOpenAudioMenu}
-                            disabled={!cueSupported}
-                            sx={styles.compactIconBtn('lg')}
-                        >
-                            <AudioSetupIcon size={perfTokens.icon.md} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <Menu
-                    anchorEl={audioMenuAnchor}
-                    open={Boolean(audioMenuAnchor)}
-                    onClose={handleCloseAudioMenu}
-                    MenuListProps={{ sx: { py: 0 } }}
-                    PaperProps={{
-                        sx: {
-                            width: 300,
-                            borderRadius: 2,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                        },
-                    }}
-                >
-                    {/* Title bar — matches the Presets / MIDI menus. */}
-                    <Box sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        px: 1.5,
-                        pt: 1.25,
-                        pb: 1,
-                    }}>
-                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
-                            Audio Output
-                        </Typography>
-                        <IconButton onClick={handleCloseAudioMenu} sx={styles.compactIconBtn('md')}>
-                            <CloseXIcon size={perfTokens.icon.sm} />
-                        </IconButton>
-                    </Box>
-
-                    <Divider />
-
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block' }}>
-                            Output device
-                        </Typography>
-                    </Box>
-                    <Box sx={{ pb: 0.75, px: 0.75 }}>
-                        <MenuItem
-                            onClick={() => handlePickAudioDevice('')}
-                            selected={outputDeviceId === ''}
-                            sx={{
-                                borderRadius: 1,
-                                py: 0.5,
-                                px: 1,
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: 500,
-                            }}
-                        >
-                            <Box component="span" sx={{
-                                flex: 1,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                            }}>
-                                System device (default)
-                            </Box>
-                        </MenuItem>
-                        {audioDevices.length === 0 && (
-                            <Box sx={{ px: 1, py: 0.5 }}>
-                                <Typography sx={{
-                                    fontSize: perfTokens.fontSize.xs,
-                                    color: 'text.disabled',
-                                    fontStyle: 'italic',
-                                }}>
-                                    No additional output devices detected
-                                </Typography>
-                            </Box>
-                        )}
-                        {audioDevices.map(d => (
-                            <MenuItem
-                                key={d.deviceId}
-                                onClick={() => handlePickAudioDevice(d.deviceId)}
-                                selected={outputDeviceId === d.deviceId}
-                                sx={{
-                                    borderRadius: 1,
-                                    py: 0.5,
-                                    px: 1,
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: 500,
-                                }}
-                            >
-                                <Box component="span" sx={{
-                                    flex: 1,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                }}>
-                                    {d.label || `Output (${d.deviceId.slice(0, 6)}…)`}
-                                </Box>
-                            </MenuItem>
-                        ))}
-                    </Box>
-                </Menu>
 
                 <Tooltip title={TIPS.perf.presets}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>

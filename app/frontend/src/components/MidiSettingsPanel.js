@@ -1,6 +1,5 @@
 import React, { useEffect } from 'react';
 import {
-    Popover,
     Box,
     Typography,
     FormControl,
@@ -13,18 +12,20 @@ import {
     ToggleButtonGroup,
     Alert,
 } from '@mui/material';
-import { Trash2 as DeleteIcon, X as CloseIcon } from 'lucide-react';
+import { Trash2 as DeleteIcon } from 'lucide-react';
 import { useMidi, formatMidi } from './MidiContext';
 import Tooltip from './Tooltip';
 import { TIPS } from '../tooltips';
-import { perfTokens, performancePanelStyles as panelStyles } from '../theme';
+import { appStyles, perfTokens, performancePanelStyles as panelStyles } from '../theme';
 
 const CHANNEL_OPTIONS = [
     { value: 0, label: 'Any' },
     ...Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `Ch ${i + 1}` })),
 ];
 
-export default function MidiConfigMenu({ anchorEl, open, onClose }) {
+// The MIDI settings (device, channel filter, takeover, mappings), shown as
+// the MIDI tab of the app's Settings dialog.
+export default function MidiSettingsPanel({ open = true }) {
     const ctx = useMidi();
     const refreshInputs = ctx?.refreshInputs;
     // Devices are otherwise only enumerated on provider mount, so a
@@ -50,47 +51,9 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
     const sortedMappings = [...config.mappings].sort((a, b) => a.label.localeCompare(b.label));
 
     return (
-        <Popover
-            anchorEl={anchorEl}
-            open={open}
-            onClose={onClose}
-            anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-            transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-            slotProps={{
-                paper: {
-                    sx: {
-                        width: 360,
-                        maxHeight: '70vh',
-                        p: 0,
-                        borderRadius: 2,
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        overflow: 'hidden',
-                    },
-                },
-            }}
-        >
-            {/* Title bar — same pattern as Presets / Audio menus. */}
-            <Box sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                px: 1.5,
-                pt: 1.25,
-                pb: 1,
-            }}>
-                <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
-                    MIDI Settings
-                </Typography>
-                <IconButton onClick={onClose} sx={panelStyles.compactIconBtn('md')}>
-                    <CloseIcon size={perfTokens.icon.sm} />
-                </IconButton>
-            </Box>
-
-            <Divider />
-
+        <Box>
             {!supported && (
-                <Box sx={{ px: 1.5, pt: 1.25 }}>
+                <Box sx={{ px: 0, pt: 1.25 }}>
                     <Alert severity="warning" sx={{ py: 0.5 }}>
                         {permissionError || 'Web MIDI is not available in this browser. Try Chrome / Edge / Electron.'}
                     </Alert>
@@ -99,7 +62,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
 
             {/* SETTINGS — input device + channel filter + takeover. */}
             <Box sx={{
-                px: 1.5,
+                px: 0,
                 pt: 1.25,
                 pb: 1.25,
                 display: 'flex',
@@ -108,7 +71,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
             }}>
                 <Box>
                     <Tooltip title={TIPS.midi.device}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                        <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
                             Input device
                         </Typography>
                     </Tooltip>
@@ -151,7 +114,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                 <Box sx={{ display: 'flex', gap: 1 }}>
                     <Box sx={{ flex: 1 }}>
                         <Tooltip title={TIPS.midi.channelFilter}>
-                            <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                            <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
                                 Channel filter
                             </Typography>
                         </Tooltip>
@@ -171,7 +134,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
 
                     <Box sx={{ flex: 1 }}>
                         <Tooltip title={TIPS.midi.takeover}>
-                            <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block', mb: 0.5 }}>
+                            <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
                                 Takeover
                             </Typography>
                         </Tooltip>
@@ -193,7 +156,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
             <Divider />
 
             {/* MAPPINGS — header row + bordered scrollable list. */}
-            <Box sx={{ px: 1.5, pt: 1.25, pb: 1.25 }}>
+            <Box sx={{ px: 0, pt: 1.25, pb: 1.25 }}>
                 <Box sx={{
                     display: 'flex',
                     alignItems: 'center',
@@ -201,7 +164,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     mb: 0.75,
                 }}>
                     <Tooltip title={TIPS.midi.mappings}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'inline-block' }}>
+                        <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block' }}>
                             Mappings ({config.mappings.length})
                         </Typography>
                     </Tooltip>
@@ -235,7 +198,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     }}
                 >
                     {sortedMappings.length === 0 ? (
-                        <Box sx={{ px: 1.5, py: 1.5, textAlign: 'center' }}>
+                        <Box sx={{ px: 0, py: 1.5, textAlign: 'center' }}>
                             <Typography sx={{
                                 fontSize: perfTokens.fontSize.xs,
                                 color: 'text.disabled',
@@ -298,7 +261,7 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
             <Divider />
 
             {/* Footer help text. */}
-            <Box sx={{ px: 1.5, pt: 1, pb: 1.25 }}>
+            <Box sx={{ px: 0, pt: 1, pb: 1.25 }}>
                 <Typography sx={{
                     color: 'text.disabled',
                     fontSize: perfTokens.fontSize.xs,
@@ -309,6 +272,6 @@ export default function MidiConfigMenu({ anchorEl, open, onClose }) {
                     value. Right-click a control while in MIDI mode to clear its mapping.
                 </Typography>
             </Box>
-        </Popover>
+        </Box>
     );
 }

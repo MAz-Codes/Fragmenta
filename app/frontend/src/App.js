@@ -69,6 +69,9 @@ import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
+import SettingsDialog from './components/SettingsDialog';
+import { AudioSettingsProvider } from './components/AudioSettingsContext';
+import { MidiProvider } from './components/MidiContext';
 import { formatDuration } from './utils/format';
 import { appStyles, lightTheme } from './theme';
 
@@ -93,6 +96,7 @@ const readStoredTab = () => {
 };
 
 function App() {
+    const [showSettings, setShowSettings] = useState(false);
     const [tabValue, setTabValue] = useState(readStoredTab);
     // Lags behind tabValue by ~fadeDuration so content swap happens
     // while the panel is invisible (cross-fade between pages).
@@ -1336,6 +1340,8 @@ function App() {
         <ThemeProvider theme={appTheme}>
             <CssBaseline />
             <InfoViewProvider enabled={infoViewEnabled}>
+            <MidiProvider>
+            <AudioSettingsProvider>
             <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
@@ -1393,7 +1399,7 @@ function App() {
                                 onToggleInfoView={toggleInfoView}
                                 updateVisible={updates.visible}
                                 onShowUpdate={() => setShowUpdateDialog(true)}
-                                onAbout={() => setShowInfoDialog(true)}
+                                onSettings={() => setShowSettings(true)}
                             />
                         </Box>
                     </Box>
@@ -2736,6 +2742,12 @@ function App() {
 
             <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
 
+            <SettingsDialog
+                open={showSettings}
+                onClose={() => setShowSettings(false)}
+                onAbout={() => { setShowSettings(false); setShowInfoDialog(true); }}
+            />
+
             <AboutDialog
                 open={showInfoDialog}
                 onClose={() => setShowInfoDialog(false)}
@@ -2896,6 +2908,8 @@ function App() {
                     refreshAllModels();
                 }}
             />
+            </AudioSettingsProvider>
+            </MidiProvider>
             </InfoViewProvider>
         </ThemeProvider>
     );

@@ -5,15 +5,15 @@ import {
     Download as DownloadIcon,
     FolderOpen as FolderOpenIcon,
     HelpCircle as InfoViewIcon,
-    Info as InfoIcon,
     RefreshCw as RefreshIcon,
+    Settings as SettingsIcon,
 } from 'lucide-react';
 import Tooltip from './Tooltip';
 import { appToolbarStyles as styles } from '../theme';
 
 /**
  * Top-right app toolbar, on every page: GPU memory, then the app-wide
- * actions (get models, outputs folder, free GPU, Info View, update, About).
+ * actions (get models, outputs folder, free GPU, Info View, update, settings).
  */
 export default function AppToolbar({
     gpu,
@@ -26,7 +26,7 @@ export default function AppToolbar({
     onToggleInfoView,
     updateVisible,
     onShowUpdate,
-    onAbout,
+    onSettings,
 }) {
     const cuda = gpu && gpu.cuda;
     const usedPct = cuda
@@ -94,9 +94,9 @@ export default function AppToolbar({
                         </IconButton>
                     </Tooltip>
                 )}
-                <Tooltip title="About Fragmenta">
-                    <IconButton aria-label="About Fragmenta" onClick={onAbout} sx={styles.button}>
-                        <InfoIcon size={16} strokeWidth={1.8} />
+                <Tooltip title="Settings: audio, MIDI, about">
+                    <IconButton aria-label="Settings" onClick={onSettings} sx={styles.button}>
+                        <SettingsIcon size={16} strokeWidth={1.8} />
                     </IconButton>
                 </Tooltip>
             </Box>
