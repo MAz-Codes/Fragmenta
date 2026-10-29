@@ -146,8 +146,8 @@ export default function ChannelFragmentHistory({
                         const isAuditioning = auditioningId === fragment.id;
                         const isCommitted = committedId === fragment.id;
                         // The loaded row is filled with the lane colour, so its
-                        // marks switch to the light surface tone to stay visible.
-                        const markColor = isCommitted ? theme.palette.fragmenta.surface : (deep || color);
+                        // marks switch to ink to stay visible.
+                        const markColor = isCommitted ? theme.palette.text.primary : (deep || color);
                         const isEditing = editingId === fragment.id;
                         const displayName = fragment.label || `F${fragment.number}`;
                         return (
