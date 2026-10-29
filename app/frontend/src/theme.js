@@ -1742,6 +1742,8 @@ export const appStyles = {
         '& .MuiTabs-indicator': {
             display: 'none',
         },
+        // Locked tabs (while training runs) read clearly as unavailable.
+        '& .MuiTab-root.Mui-disabled': { opacity: 0.35 },
         '& .MuiTab-root': {
             alignItems: 'center',
             justifyContent: (isCompactLayout || isIconOnly) ? 'center' : 'flex-start',

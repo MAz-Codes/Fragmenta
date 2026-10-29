@@ -2770,7 +2770,7 @@ function App() {
                 <DialogContent>
                     <Typography variant="body2" color="text.secondary">
                         Training uses most of your GPU and memory. To keep the app from crashing,
-                        the other pages and the top toolbar are locked until training finishes or
+                        the other tabs and the top toolbar are locked until training finishes or
                         you stop it.
                     </Typography>
                     <FormControlLabel
