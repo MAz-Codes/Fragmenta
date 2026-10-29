@@ -1407,7 +1407,6 @@ function ClapVocabButton({ disabled, requestConfirm }) {
         });
     }
 
-    const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
 
     // A button in the rail; the editing happens in a dialog (tag lists are far
     // too tall for the rail). Cancel discards unsaved edits.
@@ -1421,7 +1420,7 @@ function ClapVocabButton({ disabled, requestConfirm }) {
                 onClick={() => setOpen(true)}
                 disabled={disabled}
             >
-                CLAP vocabulary · {overridden ? 'custom' : 'defaults'} · {tagCount} tags
+                Edit CLAP vocabulary
             </Button>
             <Dialog open={open} onClose={cancel} maxWidth="sm" fullWidth>
                 <DialogTitle>CLAP vocabulary</DialogTitle>
