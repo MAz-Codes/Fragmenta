@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve & fetch a relocatable standalone CPython 3.11 (python-build-standalone).
+"""Resolve & fetch a relocatable standalone CPython 3.14 (python-build-standalone).
 
 We ship our own Python so the user needs nothing preinstalled. These are
 Astral's `python-build-standalone` "install_only" builds — self-contained and
@@ -22,8 +22,8 @@ import zipfile
 from pathlib import Path
 
 # --- Pins (verify against the releases page when bumping) --------------------
-PBS_RELEASE = "20250612"      # python-build-standalone release tag (a date)
-PY_VERSION = "3.11.13"        # CPython version within that release
+PBS_RELEASE = "20261026"      # python-build-standalone release tag (a date)
+PY_VERSION = "3.14.10"        # CPython version within that release
 _BASE = "https://github.com/astral-sh/python-build-standalone/releases/download"
 
 # target key -> (asset triple, archive extension)
@@ -54,7 +54,7 @@ def fetch(target: str, dest: Path) -> Path:
     """Download + extract standalone Python into ``dest`` (normalised layout).
 
     The archive extracts to a top-level ``python/`` dir; we move it to ``dest``
-    so the result is ``dest/bin/python3.11`` (unix) or ``dest/python.exe`` (win).
+    so the result is ``dest/bin/python3.14`` (unix) or ``dest/python.exe`` (win).
     """
     url = asset_url(target)
     triple, ext = TARGETS[target]
@@ -90,9 +90,9 @@ def fetch(target: str, dest: Path) -> Path:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Fetch standalone CPython 3.11")
+    ap = argparse.ArgumentParser(description="Fetch standalone CPython 3.14")
     ap.add_argument("--target", default=None, help="macos-arm64 | windows-x64 (default: auto)")
-    ap.add_argument("--dest", type=Path, help="destination dir (becomes python-3.11/); required unless --url-only")
+    ap.add_argument("--dest", type=Path, help="destination dir (becomes python-3.14/); required unless --url-only")
     ap.add_argument("--url-only", action="store_true", help="print the asset URL and exit")
     args = ap.parse_args()
 

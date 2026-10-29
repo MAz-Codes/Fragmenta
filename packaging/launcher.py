@@ -5,7 +5,7 @@ This is the tiny entry point that PyInstaller freezes into the shipped
 executable (`Fragmenta.app` on macOS, `fragmenta.exe` on Windows). It does
 NOT contain torch or any app dependency — it only:
 
-  1. locates the bundled standalone Python 3.11 and the app code (the
+  1. locates the bundled standalone Python 3.14 and the app code (the
      "payload") next to itself,
   2. sets ``FRAGMENTA_PACKAGED=1`` so install.py / config.py resolve the
      writable user-data dir,
@@ -29,7 +29,7 @@ first run, so this launcher and its frozen binary stay small (stdlib + Tk only).
 Layout it expects (see packaging/assemble.py):
 
     <payload>/
-    ├── python-3.11/        standalone CPython (bin/python3.11 | python.exe)
+    ├── python-3.14/        standalone CPython (bin/python3.14 | python.exe)
     ├── install.py  start.py  requirements.txt
     ├── app/  vendor/  utils/  config/
     └── LICENSE  NOTICE.md
@@ -84,8 +84,8 @@ def _payload_dir() -> Path:
 
 def _bundled_python(payload: Path) -> Path:
     if os.name == "nt":
-        return payload / "python-3.11" / "python.exe"
-    return payload / "python-3.11" / "bin" / "python3.11"
+        return payload / "python-3.14" / "python.exe"
+    return payload / "python-3.14" / "bin" / "python3.14"
 
 
 def _status_from_line(line: str) -> "str | None":
@@ -99,7 +99,7 @@ def _status_from_line(line: str) -> "str | None":
         return "Preparing package installer…"
     if "installing dependencies" in low:
         return "Downloading components — this can take a few minutes…"
-    if "collecting torch" in low or "torch-2.7.1" in low:
+    if "collecting torch" in low or "torch-2." in low:
         return "Installing PyTorch…"
     if "laion-clap" in low:
         return "Installing audio model tools…"

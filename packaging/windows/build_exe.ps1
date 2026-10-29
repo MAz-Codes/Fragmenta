@@ -38,7 +38,7 @@ python packaging\assemble.py --target windows-x64 --out $PAYLOAD
 # ship (it bundles Tkinter, so PyInstaller captures the splash). Keeping the
 # tools here means the build box needs no preinstalled PyInstaller/Pillow and the
 # shipped payload Python stays pristine.
-$PbsPy     = Join-Path $PAYLOAD "python-3.11\python.exe"
+$PbsPy     = Join-Path $PAYLOAD "python-3.14\python.exe"
 $BuildVenv = Join-Path $DIST "_buildvenv"
 & $PbsPy -c "import tkinter" 2>$null
 if ($LASTEXITCODE -ne 0) {

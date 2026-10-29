@@ -40,7 +40,7 @@ python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$PAYLOAD"
 # PyInstaller picks up the splash for free and the build needs nothing
 # preinstalled. PyInstaller lives in a throwaway venv built from that interpreter
 # so the shipped payload Python stays pristine (no PyInstaller riding along).
-PBS_PY="$PAYLOAD/python-3.11/bin/python3.11"
+PBS_PY="$PAYLOAD/python-3.14/bin/python3.14"
 BUILD_VENV="$DIST/_buildvenv"
 "$PBS_PY" -c "import tkinter" 2>/dev/null || {
     echo "ERROR: the bundled standalone Python lacks Tkinter — the first-run splash" >&2
@@ -73,7 +73,7 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/fragmenta.icns"
 if [[ -n "${MAC_SIGN_IDENTITY:-}" ]]; then
     echo "==> codesign (hardened runtime)"
     # Sign nested Mach-O (bundled Python + any dylibs) first, then the app.
-    find "$APP/Contents/Resources/python-3.11" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
+    find "$APP/Contents/Resources/python-3.14" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
         -exec codesign --force --options runtime --timestamp \
         --entitlements packaging/macos/entitlements.plist --sign "$MAC_SIGN_IDENTITY" {} + || true
     codesign --force --options runtime --timestamp \

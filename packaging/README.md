@@ -8,7 +8,7 @@ Linux is not packaged — it builds from source (`./fragmenta.sh`).
 ## The model
 
 A **thin native launcher** is frozen with PyInstaller. It carries no torch — it
-just locates the bundled **standalone Python 3.11** and the **app code** next to
+just locates the bundled **standalone Python 3.14** and the **app code** next to
 itself, sets `FRAGMENTA_PACKAGED=1`, and runs `install.py --launch`. On first
 run `install.py` builds a venv in the user-data dir and pip-installs the deps
 (torch/SA3/flash-attn resolved for the real machine); later launches are the
@@ -16,7 +16,7 @@ fast idempotent path.
 
 ```
 launcher.py ──frozen──▶ Fragmenta.app / fragmenta.exe
-                        └─ runs ─▶ python-3.11/  install.py --launch
+                        └─ runs ─▶ python-3.14/  install.py --launch
                                                  └─ venv in user-data dir ─▶ start.py
 ```
 
@@ -29,7 +29,7 @@ keying off `FRAGMENTA_PACKAGED`.
 | File | Role |
 |---|---|
 | `launcher.py` | Stdlib-only launcher; PyInstaller target. |
-| `python_standalone.py` | Resolve/download `python-build-standalone` CPython 3.11. Pins at the top — bump there. |
+| `python_standalone.py` | Resolve/download `python-build-standalone` CPython 3.14. Pins at the top — bump there. |
 | `assemble.py` | Build the staged **payload** (app code via `git archive` + standalone Python). |
 | `macos/build_dmg.sh` | `.app` + sign + notarize + `.dmg`. |
 | `macos/Info.plist.in`, `macos/entitlements.plist` | App metadata; hardened-runtime entitlements (needed for unsigned pip dylibs). |

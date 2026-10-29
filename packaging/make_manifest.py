@@ -52,7 +52,7 @@ def sha256(path: Path) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--requires-python", required=True, help="major.minor the release runs on, e.g. 3.11")
+    p.add_argument("--requires-python", required=True, help="major.minor the release runs on, e.g. 3.14")
     p.add_argument("--reinstall-required", action="store_true", help="source installs can't update in place")
     p.add_argument("--upgrade-guide-url", help="page explaining a major upgrade (must be on the GitHub repo)")
     p.add_argument("--critical", action="store_true", help="security or data-loss fix")
@@ -63,7 +63,7 @@ def main() -> None:
     args = p.parse_args()
 
     if not re.fullmatch(r"\d+\.\d+", args.requires_python):
-        raise SystemExit("--requires-python must look like 3.11")
+        raise SystemExit("--requires-python must look like 3.14")
     if args.upgrade_guide_url and not args.upgrade_guide_url.startswith(REPO + "/"):
         raise SystemExit("--upgrade-guide-url must be on the Fragmenta GitHub repo")
 

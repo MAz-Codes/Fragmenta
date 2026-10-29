@@ -5,7 +5,7 @@ Produces the staging tree that the per-OS packagers (macos/build_dmg.sh,
 windows/fragmenta.iss) wrap into a `.dmg` / `.exe`:
 
     <staging>/                     ← the "payload"
-    ├── python-3.11/               standalone CPython (unless --skip-python)
+    ├── python-3.14/               standalone CPython (unless --skip-python)
     ├── install.py  start.py  requirements.txt
     ├── app/  vendor/  utils/  config/
     ├── LICENSE  NOTICE.md  VERSION
@@ -120,7 +120,7 @@ def main() -> None:
     if not args.skip_python:
         import python_standalone as pbs
         target = args.target or pbs.default_target()
-        pbs.fetch(target, staging / "python-3.11")
+        pbs.fetch(target, staging / "python-3.14")
     else:
         target = args.target or "skipped"
         print("[assemble] --skip-python: not fetching standalone Python")
