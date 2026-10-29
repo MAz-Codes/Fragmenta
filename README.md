@@ -95,7 +95,7 @@ The Checkpoint Manager downloads models for you. The **Base** models (e.g. Small
 >
 
 ### 1. Dataset
-<img src="app/frontend/public/dataset.png" width="100%" alt="Dataset Workbench">
+<img src="docs/Dataset.png" width="100%" alt="Dataset Workbench">
 
 Datasets are built in the **Dataset Workbench** (the *Dataset* tab) — an in-app workspace that takes you from raw audio to a captioned, training-ready dataset without spreadsheets or leaving the app. Everything is scoped to a **project**: a folder of audio clips and their text prompts.
 
@@ -117,7 +117,7 @@ The finished project shows up directly in the Training tab — no export step.
 
 
 ### 2. Train
-<img src="app/frontend/public/training.png" width="100%" alt="Training">
+<img src="docs/Training.png" width="100%" alt="Training">
 
 Training produces a **LoRA adapter** against a `*-base` checkpoint (`sa3-small-music-base`, `sa3-small-sfx-base`, or `sa3-medium-base`).
 
@@ -131,7 +131,7 @@ Pick a project from the Dataset Workbench, choose an **adapter type** (`dora-row
 
 
 ### 3. Generate
-<img src="app/frontend/public/generate.png" width="100%" alt="Generate">
+<img src="docs/Generation.png" width="100%" alt="Generate">
 
 Use base or distilled models to generate audio from text prompts — up to 120 s on the Small models, 380 s on Medium. If you've trained a LoRA, pick one and dial in a multiplier to control how strongly the adapter biases the output.
 
@@ -144,7 +144,7 @@ Use base or distilled models to generate audio from text prompts — up to 120 s
 
 
 ### 4. Performance
-<img src="app/frontend/public/performance.png" width="100%" alt="Performance Mode">
+<img src="docs/Performance.png" width="100%" alt="Performance Mode">
 
 This is a 4-channel diffusion sampler designed for live performance use. Each channel has its own prompt, generated clip, transport, and effect chain.
 
