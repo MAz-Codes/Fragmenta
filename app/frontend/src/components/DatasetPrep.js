@@ -65,7 +65,7 @@ import api from '../api';
 import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
 import { paintWave } from '../utils/performanceAudio';
-import { appStyles, datasetStyles } from '../theme';
+import { appStyles, datasetStyles, waveColor } from '../theme';
 
 // Shared caveat for the switch/close confirms — the edits aren't lost, they
 // just aren't durable yet, and that distinction is the whole point of asking.
@@ -645,7 +645,10 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         });
     }
 
+    // Two cards: the workbench header (title, load/new, errors) and, once a
+    // project is open, the project itself.
     return (
+        <Stack spacing={2}>
         <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
         <Stack spacing={2.5}>
             <Box>
@@ -678,7 +681,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 <Typography variant="body2" color="text.secondary">
                     Create a new dataset or load and edit one. 
                 </Typography>
-                <Typography variant="body2" color="text.secondary" paddingBottom={2}>
+                <Typography variant="body2" color="text.secondary">
                      You can auto-annotate using Librosa and CLAP or annotate everything manually.
                 </Typography>
             </Box>
@@ -721,8 +724,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                     </Box>
                 </Alert>
             )}
+        </Stack>
+        </Paper>
 
             {project && (
+                <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
                 <Stack spacing={2}>
                     <ProjectHeader
                         project={project}
@@ -866,6 +872,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                         onError={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
                     />
                 </Stack>
+                </Paper>
             )}
 
             <CreateProjectDialog
@@ -979,7 +986,6 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 </Snackbar>
             </Portal>
         </Stack>
-        </Paper>
     );
 }
 
@@ -1815,7 +1821,7 @@ function HealthSection({ health, onSelectFiles }) {
     );
 }
 
-function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
+function Waveform({ projectName, fileName, isActive, progress, onSeek, colorIndex = 0 }) {
     const canvasRef = useRef(null);
     const theme = useTheme();
     const [peaks, setPeaks] = useState(null);
@@ -1857,7 +1863,7 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
 
-        const deep = theme.palette.perf.channelsDeep[0];
+        const { main: deep, faint } = waveColor(theme, colorIndex);
         if (!peaks || !peaks.length) {
             ctx.fillStyle = `${deep}33`;
             ctx.fillRect(0, h / 2 - 0.5, w, 1);
@@ -1875,18 +1881,19 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
             peak[i] = v;
             rms[i] = v * 0.55;
         }
-        paintWave(ctx, n, w, h, peak, rms, deep, theme.palette.perf.channelsSoft[0]);
+        // The faint accent at rest; the main one marks what has played.
+        paintWave(ctx, n, w, h, peak, rms, faint, faint);
         if (isActive) {
-            // Played part deepened, then the playhead.
+            // Played part in the main colour, then the playhead.
             const px = Math.min(w - 1, Math.max(0, progress * w));
             ctx.globalCompositeOperation = 'source-atop';
-            ctx.fillStyle = `${deep}99`;
+            ctx.fillStyle = deep;
             ctx.fillRect(0, 0, px, h);
             ctx.globalCompositeOperation = 'source-over';
             ctx.fillStyle = theme.palette.text.primary;
             ctx.fillRect(px - 0.75, 2, 1.5, h - 4);
         }
-    }, [peaks, isActive, progress, theme, width]);
+    }, [peaks, isActive, progress, theme, width, colorIndex]);
 
     // Translate a pointer position into a 0..1 offset in the clip.
     const seekTo = useCallback((clientX) => {
@@ -1971,9 +1978,10 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {clips.map((c) => (
+                        {clips.map((c, i) => (
                             <ClipRow
                                 key={c.file_name}
+                                colorIndex={i}
                                 projectName={projectName}
                                 clip={c}
                                 isPlaying={playingFile === c.file_name}
@@ -2001,7 +2009,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
 // identity intentionally ignored — they're stable in behavior, just inline
 // arrows from the parent, and re-creating a row only to re-bind a click
 // handler isn't worth the work. playProgress only matters on the active row.
-const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
+const ClipRow = React.memo(function ClipRow({ projectName, clip, colorIndex, isPlaying, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
@@ -2017,32 +2025,36 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                 />
             </TableCell>
             <TableCell>
-                <Stack direction="row" alignItems="center" spacing={1.5}>
-                    <IconButton
-                        size="small"
-                        onClick={() => onPlayToggle(clip.file_name)}
-                        aria-label={isPlaying ? `Pause ${clip.file_name}` : `Play ${clip.file_name}`}
-                        sx={datasetStyles.playButton(isPlaying)}
+                {/* Name on top; the play button sits level with the waveform. */}
+                <Stack spacing={0.75}>
+                    {/* overflowWrap rather than break-all: a name only breaks
+                        when it genuinely can't fit. */}
+                    <Typography
+                        variant="body2"
+                        title={clip.file_name}
+                        sx={datasetStyles.fileName}
                     >
-                        {isPlaying ? <PauseIcon size={13} fill="currentColor" /> : <PlayIcon size={13} fill="currentColor" />}
-                    </IconButton>
-                    <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-                        {/* overflowWrap rather than break-all: a name only breaks
-                            when it genuinely can't fit. */}
-                        <Typography
-                            variant="body2"
-                            title={clip.file_name}
-                            sx={datasetStyles.fileName}
+                        {clip.file_name}
+                    </Typography>
+                    <Stack direction="row" alignItems="center" spacing={1.5}>
+                        <IconButton
+                            size="small"
+                            onClick={() => onPlayToggle(clip.file_name)}
+                            aria-label={isPlaying ? `Pause ${clip.file_name}` : `Play ${clip.file_name}`}
+                            sx={datasetStyles.playButton(isPlaying)}
                         >
-                            {clip.file_name}
-                        </Typography>
-                        <Waveform
-                            projectName={projectName}
-                            fileName={clip.file_name}
-                            isActive={isPlaying}
-                            progress={playProgress}
-                            onSeek={onSeek}
-                        />
+                            {isPlaying ? <PauseIcon size={13} fill="currentColor" /> : <PlayIcon size={13} fill="currentColor" />}
+                        </IconButton>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Waveform
+                                projectName={projectName}
+                                fileName={clip.file_name}
+                                isActive={isPlaying}
+                                progress={playProgress}
+                                onSeek={onSeek}
+                                colorIndex={colorIndex}
+                            />
+                        </Box>
                     </Stack>
                 </Stack>
             </TableCell>

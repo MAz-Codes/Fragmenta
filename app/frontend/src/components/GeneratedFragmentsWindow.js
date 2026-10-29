@@ -16,7 +16,8 @@ import {
     FolderOpen as RevealIcon,
     Download as DownloadIcon,
 } from 'lucide-react';
-import { generatedFragmentsWindowStyles } from '../theme';
+import { useTheme } from '@mui/material/styles';
+import { generatedFragmentsWindowStyles, waveColor } from '../theme';
 import GenerationWaveform from './GenerationWaveform';
 import api from '../api';
 import { setFragmentDragPayload, clearFragmentDragPayload } from '../utils/fragmentDrag';
@@ -72,6 +73,7 @@ function evictPreloadEntry(frag) {
 }
 
 export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearAll, isDocker = false }) {
+    const theme = useTheme();
     const [playingFragment, setPlayingFragment] = useState(null);
     const [playingTime, setPlayingTime] = useState(0);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -444,7 +446,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                 </Box>
             ) : (
                 <List sx={generatedFragmentsWindowStyles.listRoot}>
-                    {fragments.slice().reverse().map((fragment) => {
+                    {fragments.slice().reverse().map((fragment, fragmentIndex) => {
                         const isPlaying = playingFragment === fragment.id;
                         const ago = relativeTime(fragment.createdAt);
                         // CFG, seed, full timestamp, and model go in the info
@@ -554,6 +556,8 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                     blob={effectiveBlob(fragment)}
                                     audioUrl={effectiveUrl(fragment)}
                                     height={40}
+                                    color={waveColor(theme, fragmentIndex).main}
+                                    pastel={waveColor(theme, fragmentIndex).faint}
                                     currentTime={isPlaying ? playingTime : 0}
                                     duration={audioRefs.current[fragment.id]?.duration || fragment.duration || 0}
                                     onSeek={(frac) => handleSeek(fragment, frac)}

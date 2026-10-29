@@ -142,8 +142,8 @@ export default function GenerationWaveform({
 
         if (!peaks) return;
 
-        // Organic capsule: a soft gradient envelope, the body dimmed where
-        // it hasn't played yet and in the deep colour where it has.
+        // Organic capsule: a soft gradient envelope, the body in the faint
+        // colour where it hasn't played yet and the main colour where it has.
         const n = peaks.length / 2;
         const mid = height / 2;
         const scale = (height - 6) / 2;
@@ -173,8 +173,9 @@ export default function GenerationWaveform({
         shape((i) => Math.max(1, smooth[i] * scale));
         const progressFrac = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
         const body = (i) => Math.max(0.5, amp[i] * scale * 0.7);
-        ctx.globalAlpha = 0.28;
-        ctx.fillStyle = color;
+        // At rest the body is the faint colour; the played part the main one.
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = pastel;
         shape(body);
         if (progressFrac > 0) {
             ctx.save();
@@ -182,6 +183,7 @@ export default function GenerationWaveform({
             ctx.rect(0, 0, progressFrac * width, height);
             ctx.clip();
             ctx.globalAlpha = 0.9;
+            ctx.fillStyle = color;
             shape(body);
             ctx.restore();
         }

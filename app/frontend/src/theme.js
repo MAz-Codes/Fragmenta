@@ -87,6 +87,15 @@ export const PALETTES = {
 };
 export const DEFAULT_PALETTE = 'linen';
 
+// Waveform colours for lists (dataset clips, generated fragments): the four
+// accents in turn, green → blue → red → gold, so a long list isn't one hue.
+const WAVE_ORDER = ['fresh', 'cool', 'hot', 'warm'];
+export const waveColor = (theme, index = 0) => {
+    const key = WAVE_ORDER[((index % 4) + 4) % 4];
+    const f = theme.palette.fragmenta;
+    return { main: f.accents[key], faint: f.faint[key] };
+};
+
 // Label colour for text/icons on a solid fill: white where it reads (the
 // saturated mains), ink otherwise (gold, faint tones, surfaces).
 export const onFill = (fill, ink = '#141414') => {
@@ -1187,11 +1196,11 @@ function makePaletteTheme(LIGHT) {
                         // rest of the interactive chrome.
                         border: '1px solid transparent',
                         backgroundColor: LIGHT.control,
-                        color: LIGHT.amberLo,
+                        color: LIGHT.text,
                         '&:hover': {
                             border: '1px solid transparent',
                             backgroundColor: LIGHT.controlHover,
-                            color: LIGHT.amberLo,
+                            color: LIGHT.text,
                         },
                         '&.Mui-disabled': {
                             border: '1px solid transparent',
@@ -1680,11 +1689,11 @@ export const appStyles = {
     }),
     navPaper: (isCompactLayout, isIconOnly) => ({
         width: isCompactLayout ? '100%' : isIconOnly ? 64 : 220,
-        borderRadius: RADIUS.panel,
+        borderRadius: RADIUS.card,
         overflow: 'hidden',
-        // Quiet rail: no card of its own, it sits on the canvas.
-        backgroundColor: 'transparent',
-        boxShadow: 'none',
+        // Its own card, lifted off the canvas like the page cards.
+        backgroundColor: (t) => t.palette.fragmenta.surface,
+        boxShadow: (t) => t.palette.fragmenta.shadowSoft,
         display: 'flex',
         flexDirection: 'column',
         // Vertical mode: `position: fixed` so the rail is anchored to
@@ -2625,12 +2634,12 @@ export const trainingMonitorStyles = {
     },
     headerIcon: { display: 'none' },
     headerTitle: {},  // typography handled by the h6 variant in theme
-    // Status pill: tinted by state (training warm, done sage, error rose).
+    // Status pill: tinted by state (training green, done blue, error red).
     statusInline: (status) => (t) => {
       const bg = status === 'live'
-          ? t.palette.fragmenta.accents.warm
+          ? t.palette.fragmenta.accents.fresh
           : status === 'complete'
-              ? t.palette.fragmenta.accents.fresh
+              ? t.palette.fragmenta.accents.cool
               : status === 'error'
                   ? t.palette.fragmenta.accents.hot
                   : t.palette.fragmenta.control;
