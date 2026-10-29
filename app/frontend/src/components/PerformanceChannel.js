@@ -1322,8 +1322,9 @@ export default function PerformanceChannel({
                     max={1}
                     value={knobs.pan ?? 0}
                     onChange={handlePan}
-                    sx={{ alignItems: 'center' }}
+                    sx={{ gridColumn: 'span 2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 1 }}
                 >
+                    <Box component="span" sx={styles.pitchRangeLabel}>L</Box>
                     <RotaryKnob
                         value={knobs.pan ?? 0}
                         min={-1}
@@ -1333,11 +1334,12 @@ export default function PerformanceChannel({
                         detent={0.06}
                         size={52}
                         color={deep}
-                        label="Pan"
+                        valueInside={false}
                         format={fmtPan}
                         ariaLabel={`Pan · ${ctrlLabel('Pan')}`}
                         onChange={handlePan}
                     />
+                    <Box component="span" sx={styles.pitchRangeLabel}>R</Box>
                 </MidiMappable>
                 <MidiMappable
                     id={ctrlId('pitch')}
@@ -1348,8 +1350,9 @@ export default function PerformanceChannel({
                     max={PITCH_RANGE}
                     value={knobs.pitch ?? 0}
                     onChange={(v) => handleKnob('pitch', v)}
-                    sx={{ alignItems: 'center' }}
+                    sx={{ gridColumn: 'span 2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 1 }}
                 >
+                    <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE}</Box>
                     <RotaryKnob
                         value={knobs.pitch ?? 0}
                         min={-PITCH_RANGE}
@@ -1357,11 +1360,12 @@ export default function PerformanceChannel({
                         size={52}
                         color={deep}
                         busy={pitchBusy}
-                        label="Tune"
-                        format={(v) => `${fmtSemitones(v)} st`}
+                        valueInside={false}
+                        format={fmtSemitones}
                         ariaLabel="Tune in semitones"
                         onChange={(v) => handleKnob('pitch', v)}
                     />
+                    <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE}</Box>
                 </MidiMappable>
             </Box>
 

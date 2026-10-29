@@ -3587,17 +3587,15 @@ export const performanceChannelStyles = {
         fontVariantNumeric: 'tabular-nums',
         lineHeight: 1,
     },
-    // Waveform: open and borderless on a faint veil, softly rounded. Not
-    // clipped, so the loop brackets can sit on the very edges.
-    // Waveform: a tall capsule. The waveform and its overlays sit in an
-    // inner box inset from the round ends (waveformInner), so nothing is
-    // clipped by the caps and the trim maths stays in one box.
+    // Waveform: a softly rounded panel (24 px, not a full capsule, whose
+    // round ends cut into the wave). The waveform and its overlays sit in
+    // an inset inner box, so the trim maths stays in one box.
     waveformWrap: {
         position: 'relative',
         height: 96,
-        borderRadius: RADIUS.pill,
+        borderRadius: RADIUS.section,
         backgroundColor: 'rgba(255, 255, 255, 0.42)',
-        px: '18px',
+        px: '12px',
         boxSizing: 'border-box',
     },
     waveformInner: {
