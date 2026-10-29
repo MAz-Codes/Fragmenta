@@ -82,35 +82,26 @@ export default function SettingsDialog({ open, onClose, aboutProps }) {
     return (
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth aria-label="Settings">
             <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, minHeight: 520 }}>
-                <Tabs
-                    orientation="vertical"
-                    value={tab}
-                    onChange={(_, v) => setTab(v)}
-                    sx={{
-                        flexShrink: 0,
-                        width: 150,
-                        '& .MuiTabs-indicator': { display: 'none' },
-                        '& .MuiTabs-flexContainer': { gap: 0.5 },
-                        '& .MuiTab-root': {
-                            minHeight: 40,
-                            justifyContent: 'flex-start',
-                            gap: 1,
-                            px: 1.5,
-                            borderRadius: '999px',
-                            textTransform: 'none',
-                            fontSize: '0.9rem',
-                            color: 'text.secondary',
-                        },
-                        '& .MuiTab-root.Mui-selected': {
-                            color: 'text.primary',
-                            backgroundColor: (t) => t.palette.fragmenta.navSelected,
-                        },
-                    }}
-                >
-                    <Tab icon={<InfoIcon size={16} />} iconPosition="start" label="About" />
-                    <Tab icon={<AudioIcon size={16} />} iconPosition="start" label="Audio" />
-                    <Tab icon={<MidiIcon size={16} />} iconPosition="start" label="MIDI" />
-                </Tabs>
+                {/* The same card and tabs as the app's left sidebar. */}
+                <Box sx={(t) => ({
+                    flexShrink: 0,
+                    width: 200,
+                    alignSelf: 'flex-start',
+                    borderRadius: '24px',
+                    backgroundColor: t.palette.fragmenta.surface,
+                    boxShadow: t.palette.fragmenta.shadowSoft,
+                })}>
+                    <Tabs
+                        orientation="vertical"
+                        value={tab}
+                        onChange={(_, v) => setTab(v)}
+                        sx={appStyles.navigationTabs(false, false)}
+                    >
+                        <Tab icon={<InfoIcon size={20} />} iconPosition="start" label="About" />
+                        <Tab icon={<AudioIcon size={20} />} iconPosition="start" label="Audio" />
+                        <Tab icon={<MidiIcon size={20} />} iconPosition="start" label="MIDI" />
+                    </Tabs>
+                </Box>
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                     {tab === 0 && <AboutPanel {...aboutProps} />}
                     {tab === 1 && <AudioSettingsPanel open={open} />}
