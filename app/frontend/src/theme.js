@@ -3430,7 +3430,7 @@ export const performanceChannelStyles = {
         '&&': { color },
     }),
     // Sec / Bars: a segmented control on the control tone; the selected
-    // segment is the one place a fully rounded end is used.
+    // segment follows its corners (14 - 3 px padding = 11 px).
     segmented: {
         display: 'inline-flex',
         alignItems: 'center',
