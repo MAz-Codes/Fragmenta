@@ -75,6 +75,7 @@ const PITCH_RANGE = 12;
 // updates the knob at once but renders only where it comes to rest.
 const PITCH_SETTLE_MS = 120;
 const fmtSemitones = (v) => (v > 0 ? `+${v}` : `${v}`);
+const fmtPan = (v) => (Math.abs(v) < 0.005 ? 'C' : `${v < 0 ? 'L' : 'R'} ${Math.round(Math.abs(v) * 100)}`);
 
 // Map a bipolar filter position (-1..+1) to the (LPF, HPF) frequencies that
 // the engine's two biquads need. 20 Hz / 20 kHz are the bypass anchors on
@@ -1149,37 +1150,6 @@ export default function PerformanceChannel({
                     </MidiMappable>
                     )}
 
-                    {/* Pitch — right-aligned at the end of the row: -12 st,
-                        knob, +12 st. Centre detent, double-click for 0 st. */}
-                    <Box
-                        title="Pitch, in semitones · double-click for 0 st"
-                        sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}
-                    >
-                        <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE}</Box>
-                        <MidiMappable
-                            id={ctrlId('pitch')}
-                            label={ctrlLabel('Pitch')}
-                            kind="continuous"
-                            curve="linear"
-                            min={-PITCH_RANGE}
-                            max={PITCH_RANGE}
-                            value={knobs.pitch ?? 0}
-                            onChange={(v) => handleKnob('pitch', v)}
-                        >
-                            <RotaryKnob
-                                value={knobs.pitch ?? 0}
-                                min={-PITCH_RANGE}
-                                max={PITCH_RANGE}
-                                color={deep}
-                                size={36}
-                                busy={pitchBusy}
-                                format={fmtSemitones}
-                                ariaLabel="Pitch in semitones"
-                                onChange={(v) => handleKnob('pitch', v)}
-                            />
-                        </MidiMappable>
-                        <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE}</Box>
-                    </Box>
                 </Box>
 
                 {channelError && (
@@ -1341,46 +1311,58 @@ export default function PerformanceChannel({
                 onClearAll={handleClearFragments}
             />
 
-            <Box sx={{ px: 0.5 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', minWidth: 28 }}>PAN</Box>
-                    <MidiMappable
-                        id={ctrlId('pan')}
-                        label={ctrlLabel('Pan')}
-                        kind="continuous"
+            {/* Pan and Tune: knobs in the same style and grid as the strip
+                below. Both have a centre detent; Tune is whole semitones. */}
+            <Box sx={styles.knobsGrid}>
+                <MidiMappable
+                    id={ctrlId('pan')}
+                    label={ctrlLabel('Pan')}
+                    kind="continuous"
+                    min={-1}
+                    max={1}
+                    value={knobs.pan ?? 0}
+                    onChange={handlePan}
+                    sx={{ alignItems: 'center' }}
+                >
+                    <RotaryKnob
+                        value={knobs.pan ?? 0}
                         min={-1}
                         max={1}
-                        value={knobs.pan ?? 0}
+                        step={0.01}
+                        center={0}
+                        detent={0.06}
+                        size={52}
+                        color={deep}
+                        label="Pan"
+                        format={fmtPan}
+                        ariaLabel={`Pan · ${ctrlLabel('Pan')}`}
                         onChange={handlePan}
-                        sx={{ flex: 1, flexDirection: 'row' }}
-                    >
-                        <Slider
-                            value={knobs.pan ?? 0}
-                            onChange={(_, v) => handlePan(v)}
-                            min={-1}
-                            max={1}
-                            step={0.01}
-                            size="small"
-                            track={false}
-                            marks={[{ value: 0 }]}
-                            sx={{
-                                flex: 1,
-                                color: deep,
-                                '& .MuiSlider-mark': {
-                                    width: 2,
-                                    height: 10,
-                                    borderRadius: 1,
-                                    backgroundColor: 'text.secondary',
-                                    opacity: 0.8,
-                                },
-                                '& .MuiSlider-markActive': {
-                                    backgroundColor: 'text.secondary',
-                                    opacity: 0.8,
-                                },
-                            }}
-                        />
-                    </MidiMappable>
-                </Box>
+                    />
+                </MidiMappable>
+                <MidiMappable
+                    id={ctrlId('pitch')}
+                    label={ctrlLabel('Pitch')}
+                    kind="continuous"
+                    curve="linear"
+                    min={-PITCH_RANGE}
+                    max={PITCH_RANGE}
+                    value={knobs.pitch ?? 0}
+                    onChange={(v) => handleKnob('pitch', v)}
+                    sx={{ alignItems: 'center' }}
+                >
+                    <RotaryKnob
+                        value={knobs.pitch ?? 0}
+                        min={-PITCH_RANGE}
+                        max={PITCH_RANGE}
+                        size={52}
+                        color={deep}
+                        busy={pitchBusy}
+                        label="Tune"
+                        format={(v) => `${fmtSemitones(v)} st`}
+                        ariaLabel="Tune in semitones"
+                        onChange={(v) => handleKnob('pitch', v)}
+                    />
+                </MidiMappable>
             </Box>
 
             {/* Gain and effects: one strip of compact knobs, each with a fine
