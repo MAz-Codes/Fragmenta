@@ -3686,7 +3686,7 @@ export const performanceChannelStyles = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: RADIUS.pill,
+        borderRadius: RADIUS.section,
         backgroundColor: 'rgba(255, 255, 255, 0.3)',
     },
     fragmentRow: (soft, isCommitted, isAuditioning) => () => ({
