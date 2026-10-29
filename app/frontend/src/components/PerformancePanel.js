@@ -41,6 +41,7 @@ import {
     Circle as RecordIcon,
     Minus as MinusIcon,
     Plus as PlusIcon,
+    ChevronDown as ChevronDownIcon,
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
@@ -202,7 +203,6 @@ function PerformancePanelInner({
     );
     const [promptKey, setPromptKey] = useState(session.promptKey ?? '');
     const [promptInjectBpm, setPromptInjectBpm] = useState(session.promptInjectBpm ?? false);
-    const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
     const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
     const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
 
@@ -286,6 +286,7 @@ function PerformancePanelInner({
     // report the device's real channel count: rebind then, so the pair
     // selectors are populated even if the mount-time binding ran against a
     // suspended context.
+    const [genMenuAnchor, setGenMenuAnchor] = useState(null);
     const { setApi: publishAudioSettings } = useAudioSettings();
     const refreshAudioSettings = useCallback(() => {
         refreshAudioDevices();
@@ -332,7 +333,6 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
     useEffect(() => { updateGlobal('promptKey', promptKey); }, [promptKey, updateGlobal]);
     useEffect(() => { updateGlobal('promptInjectBpm', promptInjectBpm); }, [promptInjectBpm, updateGlobal]);
-    useEffect(() => { updateGlobal('promptTimeSig', promptTimeSig); }, [promptTimeSig, updateGlobal]);
     useEffect(() => {
         updateGlobal('masterReverbIR', masterReverbIR);
         engineRef.current?.setMasterReverbIR?.(masterReverbIR);
@@ -481,6 +481,17 @@ function PerformancePanelInner({
     const isDistilledSA3 = !!resolvedBaseModel
         && resolvedBaseModel.startsWith('sa3-')
         && !resolvedBaseModel.endsWith('-base');
+
+    // The generation pill's label: model · LoRA · steps.
+    const genSummary = (() => {
+        if (!selectedModel) return 'Choose a model';
+        const base = baseModels.find((m) => m.name === selectedModel);
+        const modelName = base ? (base.displayName || base.name) : selectedModel;
+        const lora = selectedLora
+            ? (availableLoras.find((l) => l.path === selectedLora || (l.all_checkpoints || []).includes(selectedLora))?.name || 'LoRA')
+            : 'No LoRA';
+        return `${modelName} · ${lora} · ${isDistilledSA3 ? 8 : steps} steps`;
+    })();
 
     // Split baseModels by `kind` for the model-picker grouping. The render
     // helper is also hoisted to component scope so its MenuItems land as
@@ -916,9 +927,6 @@ function PerformancePanelInner({
         }
         if (promptInjectBpm && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
             additions.push(`${Math.round(bpm)} BPM`);
-        }
-        if (promptTimeSig.trim() && !lower.includes(promptTimeSig.trim().toLowerCase())) {
-            additions.push(promptTimeSig.trim());
         }
         const finalPrompt = additions.length > 0
             ? `${trimmed}${trimmed ? ', ' : ''}${additions.join(', ')}`
@@ -1571,6 +1579,368 @@ function PerformancePanelInner({
                     </Tooltip>
                 </MidiMappable>
 
+                {/* Generation settings: one summary pill; the model, LoRA,
+                    steps and seed live in its popover (set once, rarely
+                    changed mid-set). */}
+                <ButtonBase
+                    onClick={(e) => setGenMenuAnchor(e.currentTarget)}
+                    aria-label="Generation settings"
+                    sx={(theme) => ({
+                        ml: 'auto',
+                        height: perfTokens.height.compact,
+                        px: 1.75,
+                        gap: 0.75,
+                        maxWidth: 360,
+                        borderRadius: '999px',
+                        bgcolor: theme.palette.fragmenta.control,
+                        fontSize: perfTokens.fontSize.sm,
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        '&:hover': { bgcolor: theme.palette.fragmenta.controlHover },
+                    })}
+                >
+                    <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {genSummary}
+                    </Box>
+                    <ChevronDownIcon size={14} />
+                </ButtonBase>
+                <Popover
+                    open={Boolean(genMenuAnchor)}
+                    anchorEl={genMenuAnchor}
+                    onClose={() => setGenMenuAnchor(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+                    slotProps={{ paper: { sx: { width: 340, p: 2.5, mt: 1, display: 'flex', flexDirection: 'column', gap: 2 } } }}
+                >
+                    <Box>
+                        <Box component="div" sx={{ ...perfTokens.caps, color: 'text.secondary', mb: 0.75 }}>Model</Box>
+                    <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                        <Select
+                            value={selectedModel || ''}
+                            onChange={handleModelChange}
+                            displayEmpty
+                            renderValue={(value) => {
+                                if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
+                                const base = baseModels.find((m) => m.name === value);
+                                if (base) return base.displayName || base.name;
+                                return value;
+                            }}
+                        >
+                            {/* Distilled (post-trained) and Base SA3 variants are
+                                split by their `kind` field. modelRow is defined
+                                inline at component scope so MUI Select sees the
+                                generated MenuItems as direct flat children — wrapping
+                                them in an IIFE-returned Fragment broke selection
+                                (Select couldn't find the option matching `value`). */}
+                            {distilledBaseModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Distilled ──
+                                </MenuItem>
+                            )}
+                            {distilledBaseModels.map(renderBaseModelRow)}
+                            {trueBaseModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Base ──
+                                </MenuItem>
+                            )}
+                            {trueBaseModels.map(renderBaseModelRow)}
+                            {availableModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Fine-tuned ──
+                                </MenuItem>
+                            )}
+                            {availableModels.map((model) => (
+                                <MenuItem
+                                    key={model.name}
+                                    value={String(model.name)}
+                                    sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
+                                >
+                                    <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {model.name}
+                                    </Box>
+                                    <Tooltip title={TIPS.perf.deleteFineTuned}>
+                                        <IconButton
+                                            size="small"
+                                            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                e.preventDefault();
+                                                handleDeleteFineTuned(model.name);
+                                            }}
+                                            sx={styles.compactIconBtn('md', 'danger')}
+                                        >
+                                            <DeleteIcon size={perfTokens.icon.md} />
+                                        </IconButton>
+                                    </Tooltip>
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                    </Box>
+                    <Box>
+                        <Box component="div" sx={{ ...perfTokens.caps, color: 'text.secondary', mb: 0.75 }}>LoRA</Box>
+                    {/* Combined LoRA + checkpoint picker — every option is a
+                        specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
+                        show a ListSubheader with the LoRA name + delete, then one
+                        MenuItem per checkpoint indented below. Single-checkpoint
+                        LoRAs collapse to one MenuItem with the LoRA name and
+                        inline delete. Saves the separate Ckpt dropdown's slot. */}
+                    {(() => {
+                        const isBaseModel = baseModels.some(m => m.name === selectedModel);
+                        const compatibleLoras = isBaseModel
+                            ? filterLorasForModel(availableLoras, selectedModel)
+                            : [];
+                        const findLoraForPath = (path) => compatibleLoras.find(
+                            l => l.path === path || (l.all_checkpoints || []).includes(path)
+                        );
+                        const parseCheckpointLabel = (filepath) => {
+                            const name = (filepath || '').split('/').pop() || filepath || '';
+                            const m = name.match(/epoch=(\d+)-step=(\d+)/);
+                            if (m) return `Ep ${m[1]} · ${m[2]}`;
+                            return name.replace(/\.ckpt$/i, '');
+                        };
+                        const loraDisabled = compatibleLoras.length === 0;
+
+                        const deleteBtn = (loraName, size = 'md') => (
+                            <Tooltip title={TIPS.perf.deleteLora}>
+                                <IconButton
+                                    size="small"
+                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        handleDeleteLora(loraName);
+                                    }}
+                                    sx={styles.compactIconBtn(size, 'danger')}
+                                >
+                                    <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
+                                </IconButton>
+                            </Tooltip>
+                        );
+
+                        return (
+                            <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: '100%' }}>
+                                <Select
+                                    value={selectedLora || ''}
+                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                    displayEmpty
+                                    renderValue={(value) => {
+                                        if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
+                                        const lora = findLoraForPath(value);
+                                        if (!lora) return value;
+                                        const ckpts = lora.all_checkpoints || [lora.path];
+                                        return ckpts.length === 1
+                                            ? lora.name
+                                            : `${lora.name} · ${parseCheckpointLabel(value)}`;
+                                    }}
+                                    MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
+                                >
+                                    <MenuItem value="">
+                                        <em>No LoRA</em>
+                                    </MenuItem>
+                                    {compatibleLoras.flatMap((lora) => {
+                                        const ckpts = lora.all_checkpoints || [lora.path];
+                                        if (ckpts.length <= 1) {
+                                            // Single-checkpoint LoRA collapses to one row
+                                            // with the LoRA name and inline delete.
+                                            return [
+                                                <MenuItem
+                                                    key={`${lora.name}::${ckpts[0]}`}
+                                                    value={ckpts[0]}
+                                                    sx={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: 1,
+                                                        pr: 0.5,
+                                                        fontSize: perfTokens.fontSize.sm,
+                                                    }}
+                                                >
+                                                    <Box component="span" sx={{
+                                                        flex: 1,
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap',
+                                                    }}>
+                                                        {lora.name}
+                                                    </Box>
+                                                    {deleteBtn(lora.name)}
+                                                </MenuItem>,
+                                            ];
+                                        }
+                                        // Multi-checkpoint LoRA — subheader with name +
+                                        // delete, then one MenuItem per checkpoint.
+                                        return [
+                                            <ListSubheader
+                                                key={`${lora.name}::header`}
+                                                disableSticky
+                                                sx={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    gap: 1,
+                                                    pr: 0.5,
+                                                    lineHeight: 1.6,
+                                                    fontSize: perfTokens.fontSize.xs,
+                                                    color: 'text.secondary',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: perfTokens.letterSpacing.wide,
+                                                    bgcolor: 'background.paper',
+                                                }}
+                                            >
+                                                <Box component="span" sx={{
+                                                    flex: 1,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {lora.name}
+                                                </Box>
+                                                {deleteBtn(lora.name, 'sm')}
+                                            </ListSubheader>,
+                                            ...ckpts.map((ckpt, i) => (
+                                                <MenuItem
+                                                    key={`${lora.name}::${ckpt}`}
+                                                    value={ckpt}
+                                                    sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
+                                                >
+                                                    {parseCheckpointLabel(ckpt)}
+                                                    {i === ckpts.length - 1 ? ' (latest)' : ''}
+                                                </MenuItem>
+                                            )),
+                                        ];
+                                    })}
+                                </Select>
+                            </FormControl>
+                        );
+                    })()}
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', width: 56 }}>
+                            Steps
+                        </Box>
+                        <Tooltip
+                            placement="right"
+                            title={TIPS.perf.steps(isDistilledSA3)}
+                        >
+                            <FormControl size="small" sx={{ ...styles.pillControl, width: 90 }}>
+
+                                <Select
+                                    value={isDistilledSA3 ? 8 : steps}
+                                    onChange={(e) => onStepsChange?.(Number(e.target.value))}
+                                    disabled={isDistilledSA3}
+                                    renderValue={(value) => `${value}`}
+                                >
+                                    {isDistilledSA3 && (
+                                        <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                            8 (locked)
+                                        </MenuItem>
+                                    )}
+                                    {[50, 100, 150, 200, 250].map((n) => (
+                                        <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                            {n}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Tooltip>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', width: 56 }}>
+                            Seed
+                        </Box>
+                        <FormControlLabel
+                            sx={{ mr: 0, ml: 0.25 }}
+                            control={
+                                <Switch
+                                    size="small"
+                                    checked={randomSeed}
+                                    onChange={(e) => onRandomSeedChange?.(e.target.checked)}
+                                />
+                            }
+                            label={
+                                <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                    Random
+                                </Typography>
+                            }
+                        />
+                        <TextField
+                            size="small"
+                            type="number"
+                            placeholder="42"
+                            value={seedValue}
+                            onChange={(e) => onSeedValueChange?.(e.target.value)}
+                            disabled={randomSeed}
+                            // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
+                            inputProps={{
+                                min: 0,
+                                max: 4294967295,
+                                step: 1,
+                                style: {
+                                    fontVariantNumeric: 'tabular-nums',
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 78 }}
+                        />
+                    </Box>
+                </Popover>
+
+                {/* Prompt auto-inject — Key and the master tempo, appended to
+                    every generated prompt when set. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Add to prompt
+                    </Box>
+                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Key"
+                            value={promptKey}
+                            onChange={(e) => setPromptKey(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Key to inject into prompt',
+                                style: {
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 78 }}
+                        />
+                    </Tooltip>
+                    <Tooltip
+                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
+                        placement="top"
+                        arrow
+                        enterDelay={500}
+                    >
+                        <ButtonBase
+                            onClick={() => setPromptInjectBpm((p) => !p)}
+                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
+                            aria-pressed={promptInjectBpm}
+                            sx={(theme) => ({
+                                height: perfTokens.height.compact,
+                                minWidth: 62,
+                                px: 1,
+                                borderRadius: 1.5,
+                                border: '1px solid',
+                                borderColor: promptInjectBpm ? perfColors.master : theme.palette.divider,
+                                backgroundColor: promptInjectBpm ? perfColors.master : 'transparent',
+                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.disabled',
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
+                                fontVariantNumeric: 'tabular-nums',
+                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
+                                '&:hover': {
+                                    backgroundColor: promptInjectBpm ? perfColors.master : 'action.hover',
+                                    color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
+                                },
+                            })}
+                        >
+                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
+                        </ButtonBase>
+                    </Tooltip>
+                </Box>
             </Paper>
 
             {error && (
@@ -1736,354 +2106,6 @@ function PerformancePanelInner({
                 </Box>
             </Box>
 
-            <Paper sx={{ ...styles.barCard, gap: 2.5, mt: 1 }}>
-                {/* Model + artifact pickers — moved here from the top row so the
-                    primary strip stays just BPM + transport. Each is gated so
-                    they only appear when relevant. */}
-                <FormControl size="small" sx={{ ...styles.pillControl, width: 140 }}>
-                    <Select
-                        value={selectedModel || ''}
-                        onChange={handleModelChange}
-                        displayEmpty
-                        renderValue={(value) => {
-                            if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
-                            const base = baseModels.find((m) => m.name === value);
-                            if (base) return base.displayName || base.name;
-                            return value;
-                        }}
-                    >
-                        {/* Distilled (post-trained) and Base SA3 variants are
-                            split by their `kind` field. modelRow is defined
-                            inline at component scope so MUI Select sees the
-                            generated MenuItems as direct flat children — wrapping
-                            them in an IIFE-returned Fragment broke selection
-                            (Select couldn't find the option matching `value`). */}
-                        {distilledBaseModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Distilled ──
-                            </MenuItem>
-                        )}
-                        {distilledBaseModels.map(renderBaseModelRow)}
-                        {trueBaseModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Base ──
-                            </MenuItem>
-                        )}
-                        {trueBaseModels.map(renderBaseModelRow)}
-                        {availableModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Fine-tuned ──
-                            </MenuItem>
-                        )}
-                        {availableModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
-                            >
-                                <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {model.name}
-                                </Box>
-                                <Tooltip title={TIPS.perf.deleteFineTuned}>
-                                    <IconButton
-                                        size="small"
-                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            e.preventDefault();
-                                            handleDeleteFineTuned(model.name);
-                                        }}
-                                        sx={styles.compactIconBtn('md', 'danger')}
-                                    >
-                                        <DeleteIcon size={perfTokens.icon.md} />
-                                    </IconButton>
-                                </Tooltip>
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-
-                {/* Combined LoRA + checkpoint picker — every option is a
-                    specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
-                    show a ListSubheader with the LoRA name + delete, then one
-                    MenuItem per checkpoint indented below. Single-checkpoint
-                    LoRAs collapse to one MenuItem with the LoRA name and
-                    inline delete. Saves the separate Ckpt dropdown's slot. */}
-                {(() => {
-                    const isBaseModel = baseModels.some(m => m.name === selectedModel);
-                    const compatibleLoras = isBaseModel
-                        ? filterLorasForModel(availableLoras, selectedModel)
-                        : [];
-                    const findLoraForPath = (path) => compatibleLoras.find(
-                        l => l.path === path || (l.all_checkpoints || []).includes(path)
-                    );
-                    const parseCheckpointLabel = (filepath) => {
-                        const name = (filepath || '').split('/').pop() || filepath || '';
-                        const m = name.match(/epoch=(\d+)-step=(\d+)/);
-                        if (m) return `Ep ${m[1]} · ${m[2]}`;
-                        return name.replace(/\.ckpt$/i, '');
-                    };
-                    const loraDisabled = compatibleLoras.length === 0;
-
-                    const deleteBtn = (loraName, size = 'md') => (
-                        <Tooltip title={TIPS.perf.deleteLora}>
-                            <IconButton
-                                size="small"
-                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    handleDeleteLora(loraName);
-                                }}
-                                sx={styles.compactIconBtn(size, 'danger')}
-                            >
-                                <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
-                            </IconButton>
-                        </Tooltip>
-                    );
-
-                    return (
-                        <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 180 }}>
-                            <Select
-                                value={selectedLora || ''}
-                                onChange={(e) => onSelectLora?.(String(e.target.value))}
-                                displayEmpty
-                                renderValue={(value) => {
-                                    if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
-                                    const lora = findLoraForPath(value);
-                                    if (!lora) return value;
-                                    const ckpts = lora.all_checkpoints || [lora.path];
-                                    return ckpts.length === 1
-                                        ? lora.name
-                                        : `${lora.name} · ${parseCheckpointLabel(value)}`;
-                                }}
-                                MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
-                            >
-                                <MenuItem value="">
-                                    <em>No LoRA</em>
-                                </MenuItem>
-                                {compatibleLoras.flatMap((lora) => {
-                                    const ckpts = lora.all_checkpoints || [lora.path];
-                                    if (ckpts.length <= 1) {
-                                        // Single-checkpoint LoRA collapses to one row
-                                        // with the LoRA name and inline delete.
-                                        return [
-                                            <MenuItem
-                                                key={`${lora.name}::${ckpts[0]}`}
-                                                value={ckpts[0]}
-                                                sx={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    gap: 1,
-                                                    pr: 0.5,
-                                                    fontSize: perfTokens.fontSize.sm,
-                                                }}
-                                            >
-                                                <Box component="span" sx={{
-                                                    flex: 1,
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}>
-                                                    {lora.name}
-                                                </Box>
-                                                {deleteBtn(lora.name)}
-                                            </MenuItem>,
-                                        ];
-                                    }
-                                    // Multi-checkpoint LoRA — subheader with name +
-                                    // delete, then one MenuItem per checkpoint.
-                                    return [
-                                        <ListSubheader
-                                            key={`${lora.name}::header`}
-                                            disableSticky
-                                            sx={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'space-between',
-                                                gap: 1,
-                                                pr: 0.5,
-                                                lineHeight: 1.6,
-                                                fontSize: perfTokens.fontSize.xs,
-                                                color: 'text.secondary',
-                                                textTransform: 'uppercase',
-                                                letterSpacing: perfTokens.letterSpacing.wide,
-                                                bgcolor: 'background.paper',
-                                            }}
-                                        >
-                                            <Box component="span" sx={{
-                                                flex: 1,
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                            }}>
-                                                {lora.name}
-                                            </Box>
-                                            {deleteBtn(lora.name, 'sm')}
-                                        </ListSubheader>,
-                                        ...ckpts.map((ckpt, i) => (
-                                            <MenuItem
-                                                key={`${lora.name}::${ckpt}`}
-                                                value={ckpt}
-                                                sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
-                                            >
-                                                {parseCheckpointLabel(ckpt)}
-                                                {i === ckpts.length - 1 ? ' (latest)' : ''}
-                                            </MenuItem>
-                                        )),
-                                    ];
-                                })}
-                            </Select>
-                        </FormControl>
-                    );
-                })()}
-
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Steps
-                    </Box>
-                    <Tooltip
-                        placement="right"
-                        title={TIPS.perf.steps(isDistilledSA3)}
-                    >
-                        <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
-
-                            <Select
-                                value={isDistilledSA3 ? 8 : steps}
-                                onChange={(e) => onStepsChange?.(Number(e.target.value))}
-                                disabled={isDistilledSA3}
-                                renderValue={(value) => `${value}`}
-                            >
-                                {isDistilledSA3 && (
-                                    <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                        8 (locked)
-                                    </MenuItem>
-                                )}
-                                {[50, 100, 150, 200, 250].map((n) => (
-                                    <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
-                                        {n}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Tooltip>
-                </Box>
-
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Seed
-                    </Box>
-                    <FormControlLabel
-                        sx={{ mr: 0, ml: 0.25 }}
-                        control={
-                            <Switch
-                                size="small"
-                                checked={randomSeed}
-                                onChange={(e) => onRandomSeedChange?.(e.target.checked)}
-                            />
-                        }
-                        label={
-                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                Random
-                            </Typography>
-                        }
-                    />
-                    <TextField
-                        size="small"
-                        type="number"
-                        placeholder="42"
-                        value={seedValue}
-                        onChange={(e) => onSeedValueChange?.(e.target.value)}
-                        disabled={randomSeed}
-                        // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
-                        inputProps={{
-                            min: 0,
-                            max: 4294967295,
-                            step: 1,
-                            style: {
-                                fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
-                            },
-                        }}
-                        sx={{ ...styles.pillControl, width: 78 }}
-                    />
-                </Box>
-
-                {/* Prompt auto-inject — Key / Tempo / Time sig fields. Each
-                    is appended to every generated prompt when populated; empty
-                    fields are skipped. Replaces the old Auto BPM toggle. */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Add to prompt
-                    </Box>
-                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
-                        <TextField
-                            size="small"
-                            placeholder="Key"
-                            value={promptKey}
-                            onChange={(e) => setPromptKey(e.target.value)}
-                            inputProps={{
-                                'aria-label': 'Key to inject into prompt',
-                                style: {
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: perfTokens.weight.bold,
-                                },
-                            }}
-                            sx={{ ...styles.pillControl, width: 78 }}
-                        />
-                    </Tooltip>
-                    <Tooltip
-                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
-                        placement="top"
-                        arrow
-                        enterDelay={500}
-                    >
-                        <ButtonBase
-                            onClick={() => setPromptInjectBpm((p) => !p)}
-                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
-                            aria-pressed={promptInjectBpm}
-                            sx={(theme) => ({
-                                height: perfTokens.height.compact,
-                                minWidth: 62,
-                                px: 1,
-                                borderRadius: 1.5,
-                                border: '1px solid',
-                                borderColor: promptInjectBpm ? perfColors.master : theme.palette.divider,
-                                backgroundColor: promptInjectBpm ? perfColors.master : 'transparent',
-                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.disabled',
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
-                                fontVariantNumeric: 'tabular-nums',
-                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
-                                '&:hover': {
-                                    backgroundColor: promptInjectBpm ? perfColors.master : 'action.hover',
-                                    color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
-                                },
-                            })}
-                        >
-                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
-                        </ButtonBase>
-                    </Tooltip>
-                    <Tooltip title={TIPS.perf.timeSig} placement="top" arrow enterDelay={500}>
-                        <TextField
-                            size="small"
-                            placeholder="Time"
-                            value={promptTimeSig}
-                            onChange={(e) => setPromptTimeSig(e.target.value)}
-                            inputProps={{
-                                'aria-label': 'Time signature to inject into prompt',
-                                style: {
-                                    fontVariantNumeric: 'tabular-nums',
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: perfTokens.weight.bold,
-                                },
-                            }}
-                            sx={{ ...styles.pillControl, width: 62 }}
-                        />
-                    </Tooltip>
-                </Box>
-            </Paper>
 
             {/* Name + save dialog for a finished master recording. */}
             <Dialog
