@@ -2,6 +2,7 @@ import numpy as np
 import json
 import os
 import dill
+import math
 import random
 import time
 import torch
@@ -12,7 +13,7 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T, VolumeNorm, strip_trailing_silence
-from .audio_io import AUDIO_EXTENSIONS, read_audio  # Fragmenta: soundfile + PyAV, no torchaudio I/O
+from .audio_io import AUDIO_EXTENSIONS, audio_length, read_audio  # Fragmenta: soundfile + PyAV, no torchaudio I/O
 
 # Fragmenta: a sample that fails, is silent or is rejected is replaced by
 # another random one. Upstream recursed with no limit (a dataset of bad files
@@ -248,14 +249,27 @@ class SampleDataset(torch.utils.data.Dataset):
 
         print(f'Found {len(self.filenames)} files')
 
-    def load_file(self, filename):
-        audio, in_sr = read_audio(filename)  # Fragmenta: was torchaudio.load
+    def load_file(self, filename, offset=0.0, duration=None):
+        audio, in_sr = read_audio(filename, duration=duration, offset=offset)  # Fragmenta: was torchaudio.load
 
         if in_sr != self.sr:
             resample_tf = T.Resample(in_sr, self.sr)
             audio = resample_tf(audio)
 
         return audio
+
+    def _long_file_window(self, filename):
+        """(offset_s, total_s) of the window to read when `filename` is
+        longer than the crop window, else None. Fragmenta."""
+        frames, in_sr = audio_length(filename)
+        if not frames or not in_sr:
+            return None
+        total_s = frames / in_sr
+        window_s = self.pad_crop.n_samples / self.sr
+        if total_s <= window_s:
+            return None
+        offset_s = random.uniform(0, total_s - window_s) if self.pad_crop.randomize else 0.0
+        return offset_s, total_s
 
     def __len__(self):
         return len(self.filenames)
@@ -267,14 +281,32 @@ class SampleDataset(torch.utils.data.Dataset):
         audio_filename = self.filenames[idx]
         try:
             start_time = time.time()
-            audio = self.load_file(audio_filename)
+            # Fragmenta: a file longer than the window is read only for the
+            # window it contributes, so loading and loudness normalisation
+            # cost one window, not the whole file (a 33-minute track peaked at
+            # 15 GB of RAM for a 285 s crop). Timing info is still reported
+            # against the whole file, as pad_crop would.
+            window = self._long_file_window(audio_filename)
+            if window is None:
+                audio = self.load_file(audio_filename)
+            else:
+                audio = self.load_file(audio_filename, offset=window[0],
+                                       duration=self.pad_crop.n_samples / self.sr)
 
             audio = self.volume_norm(audio)
 
-            if self.strip_silence:
+            if self.strip_silence and window is None:
                 audio = strip_trailing_silence(audio, self.sr)
 
             audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio)
+            if window is not None:
+                offset_s, total_s = window
+                n = self.pad_crop.n_samples
+                total = int(round(total_s * self.sr))
+                offset = int(round(offset_s * self.sr))
+                t_start, t_end = offset / max(total, n), (offset + n) / max(total, n)
+                seconds_start = math.floor(offset_s)
+                seconds_total = math.ceil(total_s)
 
             # Check for silence
             if is_silence(audio):

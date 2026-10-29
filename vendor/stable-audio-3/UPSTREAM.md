@@ -88,6 +88,16 @@ Every local edit carries a `# Fragmenta:` comment in the code.
   for a random other clip (duplicate latents) and trains one with an empty
   `.txt` on an empty prompt. 2026-10-27.
 
+- Long files read only the crop window. 2026-10-29.
+  `stable_audio_3/data/dataset.py` (`SampleDataset._long_file_window`,
+  `load_file(offset, duration)`) and `data/audio_io.py` (`read_audio(offset=)`,
+  `audio_length`): a file longer than `sample_size` is decoded and
+  loudness-normalised for the window it contributes only, not in full. A
+  33-minute track peaked at 15 GB of RAM for a 285 s crop and got the
+  pre-encode OOM-killed; now 2.7 GB. `seconds_start` / `seconds_total` /
+  `timestamps` are still computed against the whole file. Loudness is now
+  measured on the window, not the whole track.
+
 ## Dropped at the 2026-10-27 bump
 
 - `stable_audio_3/models/lora/model.py` — the `apply_lora()` removal-branch

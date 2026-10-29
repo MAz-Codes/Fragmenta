@@ -13,23 +13,44 @@ import torch
 AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".opus", ".aif", ".aiff", ".m4a", ".aac")
 
 
-def read_audio(path, duration=None):
+def read_audio(path, duration=None, offset=0.0):
     """Decode `path` to (float32 tensor [channels, samples], sample_rate).
 
-    `duration` (seconds) stops early, so a long file isn't decoded in full
-    when only its start is needed.
+    `offset` (seconds) starts later and `duration` (seconds) stops early, so a
+    long file isn't decoded in full when only a window of it is needed.
     """
     try:
         with sf.SoundFile(str(path)) as f:
             sr = f.samplerate
+            if offset:
+                f.seek(int(offset * sr))
             frames = -1 if duration is None else int(duration * sr)
             data = f.read(frames=frames, dtype="float32", always_2d=True)   # [samples, channels]
         return torch.from_numpy(np.ascontiguousarray(data.T)), sr
     except (sf.LibsndfileError, RuntimeError):
-        return _read_with_av(path, duration)
+        return _read_with_av(path, duration, offset)
 
 
-def _read_with_av(path, duration=None):
+def audio_length(path):
+    """(frames, sample_rate) from the header, or (None, None)."""
+    try:
+        info = sf.info(str(path))
+        return info.frames, info.samplerate
+    except (sf.LibsndfileError, RuntimeError):
+        pass
+    try:
+        import av
+        with av.open(str(path)) as container:
+            stream = next((s for s in container.streams if s.type == "audio"), None)
+            if stream is None or not container.duration:
+                return None, None
+            sr = stream.codec_context.sample_rate
+            return int(container.duration / 1_000_000 * sr), sr
+    except Exception:
+        return None, None
+
+
+def _read_with_av(path, duration=None, offset=0.0):
     import av
 
     with av.open(str(path)) as container:
@@ -40,7 +61,8 @@ def _read_with_av(path, duration=None):
         # Planar float32 at the source rate and layout: frames come out as
         # [channels, samples] arrays.
         resampler = av.AudioResampler(format="fltp", layout=stream.codec_context.layout, rate=sr)
-        limit = None if duration is None else int(duration * sr)
+        skip = int(offset * sr)
+        limit = None if duration is None else int(duration * sr) + skip
         chunks, total = [], 0
         for frame in container.decode(stream):
             for out in resampler.resample(frame):
@@ -55,6 +77,8 @@ def _read_with_av(path, duration=None):
     data = np.concatenate(chunks, axis=1).astype(np.float32, copy=False)
     if limit is not None:
         data = data[:, :limit]
+    if skip:
+        data = data[:, skip:]
     return torch.from_numpy(np.ascontiguousarray(data)), sr
 
 

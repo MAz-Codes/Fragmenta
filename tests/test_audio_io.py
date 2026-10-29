@@ -117,6 +117,21 @@ def main():
         lens = [sf.info(str(p)).frames / SR for p in out]
         check(f"{ext} source slices into WAVs", len(out) == 2 and all(abs(x - 1.5) < 1e-3 for x in lens), str(lens))
 
+    print("=== long files: read only the crop window ===")
+    off, _ = audio_io.read_audio(files[".wav"], offset=1.0, duration=1.0)
+    check("offset+duration reads the right slice", np.allclose(off.numpy(), data[:, SR:2 * SR], atol=1e-3))
+    off_m4a, _ = audio_io.read_audio(files[".m4a"], offset=1.0, duration=1.0)
+    check("offset works through PyAV too", abs(off_m4a.shape[1] - SR) < 2048, str(off_m4a.shape))
+    from stable_audio_3.data.dataset import LocalDatasetConfig, SampleDataset
+    longdir = tmp / "long"
+    longdir.mkdir()
+    sf.write(str(longdir / "long.wav"), tone(seconds=12.0).T, SR)
+    ds_long = SampleDataset([LocalDatasetConfig(id="l", path=str(longdir))], sample_size=2 * SR, sample_rate=SR, volume_norm=True, pad=False)
+    a, inf = ds_long[0]
+    check("long file → one window, timing against the whole file",
+          a.shape[-1] == 2 * SR and inf["seconds_total"] == 12 and 0 <= inf["seconds_start"] <= 10,
+          f"{a.shape} {inf['seconds_start']}/{inf['seconds_total']}")
+
     print("=== training scan + bounded retries ===")
     from stable_audio_3.data.dataset import LocalDatasetConfig, SampleDataset, get_audio_filenames
     proj = tmp / "proj"
