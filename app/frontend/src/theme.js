@@ -2547,6 +2547,12 @@ export const generatedFragmentsWindowStyles = {
         gap: 1,
         minWidth: 0,
     },
+    rowWave: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+    },
     fragmentMeta: {
         flex: 1,
         minWidth: 0,

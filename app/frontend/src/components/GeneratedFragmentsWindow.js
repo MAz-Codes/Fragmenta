@@ -471,15 +471,6 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 key={fragment.id}
                                 sx={generatedFragmentsWindowStyles.listItem(isPlaying)}
                             >
-                                <IconButton
-                                    size="small"
-                                    onClick={() => handlePlayPause(fragment)}
-                                    aria-label={isPlaying ? 'Stop' : 'Play'}
-                                    sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
-                                >
-                                    {isPlaying ? <StopIcon size={14} fill="currentColor" /> : <PlayIcon size={14} fill="currentColor" />}
-                                </IconButton>
-
                                 <Box sx={generatedFragmentsWindowStyles.rowBody}>
                                 <Box sx={generatedFragmentsWindowStyles.rowTop}>
 
@@ -552,6 +543,17 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                 </Typography>
                                 </Box>
 
+                                {/* Play, waveform and actions on one line under the title. */}
+                                <Box sx={generatedFragmentsWindowStyles.rowWave}>
+                                <IconButton
+                                    size="small"
+                                    onClick={() => handlePlayPause(fragment)}
+                                    aria-label={isPlaying ? 'Stop' : 'Play'}
+                                    sx={generatedFragmentsWindowStyles.playPauseButton(isPlaying)}
+                                >
+                                    {isPlaying ? <StopIcon size={14} fill="currentColor" /> : <PlayIcon size={14} fill="currentColor" />}
+                                </IconButton>
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
                                 <GenerationWaveform
                                     blob={effectiveBlob(fragment)}
                                     audioUrl={effectiveUrl(fragment)}
@@ -622,6 +624,8 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                                         </IconButton>
                                     </Tooltip>
                                 )}
+                                </Box>
+                                </Box>
 
                                 <audio
                                     ref={el => setAudioRef(fragment.id, el)}
