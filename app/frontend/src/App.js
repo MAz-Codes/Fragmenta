@@ -1451,9 +1451,12 @@ function App() {
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Train a LoRA</Typography>
                                                 </Box>
 
+                                                <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
+                                                    Name
+                                                </Typography>
                                                 <TextField
                                                     fullWidth
-                                                    label="Name"
+                                                    inputProps={{ 'aria-label': 'LoRA name' }}
                                                     value={trainingConfig.modelName}
                                                     onChange={(e) => setTrainingConfig({
                                                         ...trainingConfig,
