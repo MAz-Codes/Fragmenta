@@ -73,9 +73,9 @@ export const PALETTES = {
         faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
         exact: {
             surface: '#F8F7F1', control: '#EEE9E0', controlHover: '#E5E0D6', section: '#F6F2EA',
-            textDim: '#4A4843', textFaint: '#66625B', textMuted: '#908C84', navSelected: '#D5D5E4',
-            amber: '#1A49DE', amberHi: '#3C64E3', amberLo: '#153CB6',
-            success: '#007B51', error: '#C81E0F', warning: '#9A6000',
+            textDim: '#4A4843', textFaint: '#66625B', textMuted: '#908C84',
+            // Selected-nav tone, accent text, focus and status colours are
+            // derived from the mains (paletteTokens), so they follow them.
         },
         lanes: {
             tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
