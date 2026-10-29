@@ -107,9 +107,10 @@ export const onFill = (fill, ink = '#141414') => {
 // Controls sitting on a lane's tint.
 export const ON_TINT = 'rgba(248, 247, 241, 0.72)';
 export const ON_TINT_HOVER = 'rgba(248, 247, 241, 0.92)';
-// Two levels: cards 24 px, everything inside them (buttons, fields, selects,
-// sections, list rows, tiles) 14 px. 999 for circles and pills only.
-export const RADIUS = { card: '24px', section: '14px', panel: '24px', input: '14px', control: '14px', small: '8px', pill: '999px' };
+// Cards 24 px. Inside them everything one line tall (buttons, fields, selects,
+// segmented controls) is a full pill; taller things (multi-line fields,
+// sections, list rows, tiles) take the card's 24 px.
+export const RADIUS = { card: '24px', section: '24px', panel: '24px', input: '999px', control: '999px', small: '8px', pill: '999px' };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const rgbHex = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -1150,10 +1151,10 @@ function makePaletteTheme(LIGHT) {
                 ],
                 styleOverrides: {
                     root: {
-                        borderRadius: 14,
+                        borderRadius: 999,
                         transition: 'background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
                     },
-                    sizeLarge: { borderRadius: 14, minHeight: 48 },
+                    sizeLarge: { borderRadius: 999, minHeight: 48 },
                     contained: {
                         backgroundImage: 'none',
                         boxShadow: 'none',
@@ -1235,6 +1236,7 @@ function makePaletteTheme(LIGHT) {
                         '& .MuiOutlinedInput-root': {
                             backgroundColor: LIGHT.control,
                             borderRadius: RADIUS.input,
+                            '&.MuiInputBase-multiline': { borderRadius: RADIUS.section },
                             transition: 'background-color 160ms ease',
                             '& fieldset': { borderColor: 'transparent' },
                             '&:hover': { backgroundColor: LIGHT.controlHover },
@@ -1323,7 +1325,7 @@ function makePaletteTheme(LIGHT) {
             MuiAccordion: {
                 styleOverrides: {
                     root: {
-                        borderRadius: 14,
+                        borderRadius: 24,
                         overflow: 'hidden',
                         marginBottom: 16,
                         backgroundColor: LIGHT.section,
@@ -1331,8 +1333,8 @@ function makePaletteTheme(LIGHT) {
                         boxShadow: 'none',
                         border: 'none',
                         '&:before': { display: 'none' },
-                        '&:first-of-type': { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
-                        '&:last-of-type': { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
+                        '&:first-of-type': { borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+                        '&:last-of-type': { borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
                         '&.Mui-expanded': { marginTop: 0, marginBottom: 16 },
                         '&.Mui-expanded:last-of-type': { marginBottom: 16 },
                     },
@@ -1733,7 +1735,7 @@ export const appStyles = {
             '& .MuiTab-iconWrapper': {
                 marginBottom: '0 !important',
             },
-            borderRadius: '14px',
+            borderRadius: RADIUS.pill,
             transition: 'background-color 160ms ease, color 160ms ease',
             '& svg': { strokeWidth: 1.6 },
             // Selected: a soft tint of the accent, no outline.
@@ -2325,8 +2327,8 @@ export const datasetStyles = {
             py: 0.75,
         },
         '& td': { borderBottom: 'none', py: 1.25, verticalAlign: 'middle' },
-        '& td:first-of-type': { borderRadius: '14px 0 0 14px' },
-        '& td:last-of-type': { borderRadius: '0 14px 14px 0' },
+        '& td:first-of-type': { borderRadius: '24px 0 0 24px' },
+        '& td:last-of-type': { borderRadius: '0 24px 24px 0' },
     }),
     clipRow: (isPlaying) => (t) => ({
         '& td': {
@@ -2528,7 +2530,7 @@ export const generatedFragmentsWindowStyles = {
         alignItems: 'center',
         gap: 1.5,
         p: '10px 12px 10px 10px',
-        borderRadius: RADIUS.control,
+        borderRadius: RADIUS.section,
         backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
         transition: 'background-color 160ms ease',
         '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.7)` },
@@ -2731,7 +2733,7 @@ export const trainingMonitorStyles = {
         flexDirection: 'column',
         gap: 0.5,
         p: 1.5,
-        borderRadius: RADIUS.control,
+        borderRadius: RADIUS.section,
         backgroundColor: t.palette.fragmenta.section,
     }),
     metricLabel: {
@@ -2754,7 +2756,7 @@ export const trainingMonitorStyles = {
         gap: 1,
         p: 2,
         pb: 1.25,
-        borderRadius: RADIUS.control,
+        borderRadius: RADIUS.section,
         backgroundColor: t.palette.fragmenta.section,
     }),
     lossChartBox: {
@@ -3402,7 +3404,7 @@ export const performanceChannelStyles = {
             fontSize: '0.8125rem',
             padding: '11px 14px',
             backgroundColor: ON_TINT,
-            borderRadius: RADIUS.control,
+            borderRadius: RADIUS.section,
             transition: 'background-color 160ms ease',
             '&:hover': { backgroundColor: ON_TINT_HOVER },
             '&.Mui-focused': { backgroundColor: theme.palette.fragmenta.surface },
@@ -3540,7 +3542,7 @@ export const performanceChannelStyles = {
         bottom: 0,
         width: `${Math.max(0, Math.min(100, progressPct))}%`,
         backgroundColor: color,
-        borderRadius: '14px',
+        borderRadius: RADIUS.pill,
         transition: 'width 250ms ease-out',
         pointerEvents: 'none',
         zIndex: 0,
@@ -3684,7 +3686,7 @@ export const performanceChannelStyles = {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: '14px',
+        borderRadius: RADIUS.pill,
         backgroundColor: 'rgba(255, 255, 255, 0.3)',
     },
     fragmentRow: (soft, isCommitted, isAuditioning) => () => ({
@@ -3694,7 +3696,7 @@ export const performanceChannelStyles = {
         pl: '5px',
         pr: 1.25,
         minHeight: 36,
-        borderRadius: '14px',
+        borderRadius: RADIUS.section,
         bgcolor: isCommitted || isAuditioning ? soft : 'transparent',
         '&:hover': { bgcolor: isCommitted || isAuditioning ? soft : ON_TINT },
         '& .frag-reorder': { opacity: 0, transition: 'opacity 120ms ease' },

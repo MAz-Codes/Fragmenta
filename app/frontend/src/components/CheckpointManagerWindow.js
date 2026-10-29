@@ -234,7 +234,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
                                     {group.hint}
                                 </Typography>
-                                <Box sx={(t) => ({ borderRadius: '14px', backgroundColor: t.palette.fragmenta.section, p: '4px', display: 'flex', flexDirection: 'column', gap: '2px' })}>
+                                <Box sx={(t) => ({ borderRadius: '24px', backgroundColor: t.palette.fragmenta.section, p: '4px', display: 'flex', flexDirection: 'column', gap: '2px' })}>
                                     {rows.map(c => (
                                         <CheckpointRow
                                             key={c.id}

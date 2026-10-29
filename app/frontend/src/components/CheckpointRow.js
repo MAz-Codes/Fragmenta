@@ -187,7 +187,7 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
             sx={{
                 py: 1.25,
                 px: 1.5,
-                borderRadius: '14px',
+                borderRadius: '24px',
                 '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.55)' },
             }}
         >

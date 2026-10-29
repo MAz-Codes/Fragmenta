@@ -1095,7 +1095,7 @@ function PerformancePanelInner({
                                 px: 1.75,
                                 minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '14px',
+                                borderRadius: '999px',
                                 // Three states matching Ableton Live's button:
                                 // off → gray, on/no peers → yellow (broadcasting,
                                 // alone), on/peers → teal (sync'd with at least
@@ -1142,7 +1142,7 @@ function PerformancePanelInner({
                                     fontWeight: 600,
                                     px: 1.5,
                                     height: perfTokens.height.compact,
-                                    borderRadius: '14px',
+                                    borderRadius: '999px',
                                     backgroundColor: (t) => t.palette.fragmenta.control,
                                     color: 'text.secondary',
                                     '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.controlHover },
@@ -1220,7 +1220,7 @@ function PerformancePanelInner({
                                 px: 1.75,
                                 minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '14px',
+                                borderRadius: '999px',
                                 bgcolor: midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff,
                                 color: onFill(midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff),
                                 opacity: midi?.supported ? 1 : 0.45,
