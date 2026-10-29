@@ -1657,6 +1657,9 @@ export const appStyles = {
         alignItems: 'center',
         gap: { xs: 1, sm: 1.5 },
         py: 0,
+        // Bitcount's letters sit high in their line box: nudge the wordmark
+        // down so its body (not the g's descender) centres on the logo.
+        '& h1': { position: 'relative', top: '0.08em' },
     },
     logo: {
         width: 40,
