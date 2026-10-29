@@ -3104,7 +3104,9 @@ export const performancePanelStyles = {
             // shorthand correctly across all themes — explicit is safer.
             // Line-height matched to parent height vertical-centers the
             // text without `display: flex` (which would kill
-            // text-overflow: ellipsis).
+            // text-overflow: ellipsis). The global MuiSelect override sets
+            // display: flex, so block is restored here explicitly.
+            display: 'block',
             padding: '0 32px 0 14px !important',
             lineHeight: `${perfTokens.height.compact}px`,
             // Same face, size and weight as the Link / MIDI Learn buttons.

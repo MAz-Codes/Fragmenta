@@ -66,7 +66,7 @@ function AudioSettingsPanel({ open }) {
                 </Typography>
             )}
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-                Main and cue channel pairs are chosen in the Performance toolbar.
+                Main and cue channel pairs are chosen on the Performance master strip.
             </Typography>
         </Box>
     );
