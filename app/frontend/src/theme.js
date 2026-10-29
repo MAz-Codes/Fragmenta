@@ -66,7 +66,7 @@ const DARK = {
 // hue is used instead (`deepen`, below).
 export const PALETTES = {
     linen: {
-        name: 'Linen', bg: '#F4EFE5', ink: '#141414',
+        name: 'Linen', bg: '#F2EDE1', ink: '#141414',
         // Saturated mains for fills and marks; each has a faint partner for
         // waveform layers, tints and soft states.
         cool: '#A0B2D5', warm: '#E0B56F', fresh: '#B3BE8C', hot: '#C18992',   // blue, gold, green, red
