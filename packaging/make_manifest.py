@@ -9,10 +9,10 @@ releases/latest/download/latest.json exists the moment it's published.
     # 1.2.x (source-only release, Python 3.11)
     python packaging/make_manifest.py --requires-python 3.11
 
-    # 1.3.0 (installers; source installs must reinstall)
+    # 2.0.0 (installers; source installs must reinstall)
     python packaging/make_manifest.py --requires-python 3.14 --reinstall-required \\
         --upgrade-guide-url https://github.com/MAz-Codes/Fragmenta/blob/main/docs/UPGRADING.md \\
-        --artifact macos-arm64=dist/Fragmenta-1.3.0-macOS-arm64.dmg ...
+        --artifact macos-arm64=dist/Fragmenta-2.0.0-macOS-arm64.dmg ...
 
 Schema: redesign/UPDATE_NOTIFIER.md §2.1.
 """

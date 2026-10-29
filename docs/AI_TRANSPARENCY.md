@@ -34,7 +34,7 @@ In October 2026 we tested Meta's AudioSeal watermark on Fragmenta's own generati
 
 ## What comes next
 
-Fragmenta 1.3 adds **signed, time-stamped metadata** (C2PA Content Credentials) to exported files, verifiable with public C2PA tools. Like the tags above, it doesn't touch the audio.
+Fragmenta 2.0 adds **signed, time-stamped metadata** (C2PA Content Credentials) to exported files, verifiable with public C2PA tools. Like the tags above, it doesn't touch the audio.
 
 ## Code of Practice
 
@@ -42,10 +42,10 @@ Fragmenta has not signed the EU Code of Practice on Transparency of AI-Generated
 
 | Code measure | Fragmenta |
 |---|---|
-| At least two machine-readable marking techniques | Metadata now; signed metadata (C2PA) in 1.3; no watermark (see above) |
-| Signed, time-stamped metadata | 1.3 (C2PA) |
-| A free way to detect the marks | Standard tag readers now; public C2PA verifiers from 1.3 |
-| Interoperable detection | Public formats: WAV INFO tags and the IPTC vocabulary now, the C2PA standard in 1.3 |
-| Users asked not to remove the marks | This page and the README now; the end-user terms in 1.3 |
+| At least two machine-readable marking techniques | Metadata now; signed metadata (C2PA) in 2.0; no watermark (see above) |
+| Signed, time-stamped metadata | 2.0 (C2PA) |
+| A free way to detect the marks | Standard tag readers now; public C2PA verifiers from 2.0 |
+| Interoperable detection | Public formats: WAV INFO tags and the IPTC vocabulary now, the C2PA standard in 2.0 |
+| Users asked not to remove the marks | This page and the README now; the end-user terms in 2.0 |
 
 Questions: please open an issue on the [GitHub repository](https://github.com/MAz-Codes/Fragmenta).
