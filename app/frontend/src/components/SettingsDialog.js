@@ -80,8 +80,17 @@ export default function SettingsDialog({ open, onClose, aboutProps }) {
     const [tab, setTab] = useState(0);
     useEffect(() => { if (open) setTab(0); }, [open]);
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth aria-label="Settings">
-            <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, minHeight: 520 }}>
+        // Fixed at the About page's size: every tab gets the same window, and
+        // longer pages (the MIDI mappings) scroll inside it.
+        <Dialog
+            open={open}
+            onClose={onClose}
+            maxWidth="md"
+            fullWidth
+            aria-label="Settings"
+            PaperProps={{ sx: { height: 'min(660px, calc(100vh - 64px))' } }}
+        >
+            <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, overflow: 'hidden' }}>
                 {/* The same card and tabs as the app's left sidebar. */}
                 <Box sx={(t) => ({
                     flexShrink: 0,
@@ -102,7 +111,7 @@ export default function SettingsDialog({ open, onClose, aboutProps }) {
                         <Tab icon={<MidiIcon size={20} />} iconPosition="start" label="MIDI" />
                     </Tabs>
                 </Box>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', pr: 0.5 }}>
                     {tab === 0 && <AboutPanel {...aboutProps} />}
                     {tab === 1 && <AudioSettingsPanel open={open} />}
                     {tab === 2 && <MidiSettingsPanel open={open} />}
