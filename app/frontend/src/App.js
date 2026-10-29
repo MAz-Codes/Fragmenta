@@ -53,7 +53,6 @@ import {
     CheckCircle2 as CheckCircleIcon,
 } from 'lucide-react';
 import api from './api';
-import AboutDialog from './components/AboutDialog';
 import UpdateDialog from './components/UpdateDialog';
 import useUpdateStatus from './components/useUpdateStatus';
 import { InfoViewProvider } from './components/InfoView';
@@ -136,7 +135,6 @@ function App() {
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
-    const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     // Web/Docker deployments have no host desktop: there's no folder to open
     // and no OS file manager to reveal in. We swap those affordances for an
@@ -2745,16 +2743,12 @@ function App() {
             <SettingsDialog
                 open={showSettings}
                 onClose={() => setShowSettings(false)}
-                onAbout={() => { setShowSettings(false); setShowInfoDialog(true); }}
-            />
-
-            <AboutDialog
-                open={showInfoDialog}
-                onClose={() => setShowInfoDialog(false)}
-                onOpenDocumentation={handleOpenDocumentation}
-                isOpeningDocumentation={isOpeningDocumentation}
-                update={updates}
-                onShowUpdate={() => { setShowInfoDialog(false); setShowUpdateDialog(true); }}
+                aboutProps={{
+                    onOpenDocumentation: handleOpenDocumentation,
+                    isOpeningDocumentation,
+                    update: updates,
+                    onShowUpdate: () => { setShowSettings(false); setShowUpdateDialog(true); },
+                }}
             />
 
             <Dialog

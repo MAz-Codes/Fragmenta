@@ -5,14 +5,14 @@ import {
     Dialog,
     DialogActions,
     DialogContent,
-    DialogTitle,
     MenuItem,
     Select,
     Tab,
     Tabs,
     Typography,
 } from '@mui/material';
-import { Info as InfoIcon } from 'lucide-react';
+import { Info as InfoIcon, Volume2 as AudioIcon, Piano as MidiIcon } from 'lucide-react';
+import { AboutPanel } from './AboutDialog';
 import MidiSettingsPanel from './MidiSettingsPanel';
 import { useAudioSettings } from './AudioSettingsContext';
 import { appStyles } from '../theme';
@@ -54,9 +54,9 @@ function AudioSettingsPanel({ open }) {
                 onChange={(e) => api.pick(e.target.value)}
             >
                 <MenuItem value="">System device (default)</MenuItem>
-                {devices.map((d) => (
+                {devices.map((d, i) => (
                     <MenuItem key={d.deviceId} value={d.deviceId}>
-                        {d.label || `Output (${d.deviceId.slice(0, 6)}…)`}
+                        {d.label || `Output ${i + 1}`}
                     </MenuItem>
                 ))}
             </Select>
@@ -73,32 +73,52 @@ function AudioSettingsPanel({ open }) {
 }
 
 /**
- * App settings (the gear in the top toolbar): audio output and MIDI, with
- * About one click away.
+ * Settings (the gear in the top toolbar): About first, exactly as the old
+ * About dialog, then Audio and MIDI, as tabs down the left side.
  */
-export default function SettingsDialog({ open, onClose, onAbout }) {
+export default function SettingsDialog({ open, onClose, aboutProps }) {
     const [tab, setTab] = useState(0);
+    useEffect(() => { if (open) setTab(0); }, [open]);
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-            <DialogTitle>Settings</DialogTitle>
-            <DialogContent>
+        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth aria-label="Settings">
+            <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, minHeight: 520 }}>
                 <Tabs
+                    orientation="vertical"
                     value={tab}
                     onChange={(_, v) => setTab(v)}
-                    sx={{ mb: 2.5, minHeight: 0 }}
+                    sx={{
+                        flexShrink: 0,
+                        width: 150,
+                        '& .MuiTabs-indicator': { display: 'none' },
+                        '& .MuiTabs-flexContainer': { gap: 0.5 },
+                        '& .MuiTab-root': {
+                            minHeight: 40,
+                            justifyContent: 'flex-start',
+                            gap: 1,
+                            px: 1.5,
+                            borderRadius: '999px',
+                            textTransform: 'none',
+                            fontSize: '0.9rem',
+                            color: 'text.secondary',
+                        },
+                        '& .MuiTab-root.Mui-selected': {
+                            color: 'text.primary',
+                            backgroundColor: (t) => t.palette.fragmenta.navSelected,
+                        },
+                    }}
                 >
-                    <Tab label="Audio" />
-                    <Tab label="MIDI" />
+                    <Tab icon={<InfoIcon size={16} />} iconPosition="start" label="About" />
+                    <Tab icon={<AudioIcon size={16} />} iconPosition="start" label="Audio" />
+                    <Tab icon={<MidiIcon size={16} />} iconPosition="start" label="MIDI" />
                 </Tabs>
-                {tab === 0 && <AudioSettingsPanel open={open} />}
-                {tab === 1 && <MidiSettingsPanel open={open} />}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                    {tab === 0 && <AboutPanel {...aboutProps} />}
+                    {tab === 1 && <AudioSettingsPanel open={open} />}
+                    {tab === 2 && <MidiSettingsPanel open={open} />}
+                </Box>
             </DialogContent>
             <DialogActions>
-                <Button variant="text" startIcon={<InfoIcon size={16} />} onClick={onAbout}>
-                    About Fragmenta
-                </Button>
-                <Box sx={{ flex: 1 }} />
-                <Button variant="outlined" onClick={onClose}>Done</Button>
+                <Button onClick={onClose}>Close</Button>
             </DialogActions>
         </Dialog>
     );

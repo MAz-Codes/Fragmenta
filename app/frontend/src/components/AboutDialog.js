@@ -2,10 +2,6 @@ import React from 'react';
 import {
     Box,
     Button,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
     Checkbox,
     FormControlLabel,
     Typography,
@@ -24,13 +20,11 @@ const NOTICE_SX = { display: 'block', fontSize: '0.65rem', lineHeight: 1.5, mt: 
 const LINK_SX = { color: 'primary.dark', textDecoration: 'underline', fontSize: '0.65rem' };
 
 /**
- * "About Fragmenta" dialog — logo + title, short intro, three doc buttons
- * (About / Documentation / Tutorials), and the model-license attribution
- * footer (Stability AI + Gemma notices).
+ * "About Fragmenta" — logo + title, short intro, three doc buttons
+ * (About / Documentation / Tutorials), updates, and the model-license
+ * attribution footer (Stability AI + Gemma notices).
  *
  * Props:
- *   open:                       bool
- *   onClose:                    () => void
  *   onOpenDocumentation:        ('about' | 'documentation' | 'tutorials') => void
  *   isOpeningDocumentation:     bool — disables the doc buttons while a
  *                               native open-file call is in flight
@@ -45,9 +39,9 @@ function updateLine(s) {
     return 'Not checked for updates yet';
 }
 
-export default function AboutDialog({
-    open,
-    onClose,
+// The About page: the first page of the Settings dialog (gear in the top
+// toolbar), shown exactly as the old About dialog.
+export function AboutPanel({
     onOpenDocumentation,
     isOpeningDocumentation,
     update,
@@ -56,14 +50,8 @@ export default function AboutDialog({
     const us = update && update.status;
     const showUpdates = Boolean(us && us.disabled_reason !== 'hf_space');
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
-            aria-labelledby="about-documentation-dialog-title"
-            maxWidth="sm"
-            fullWidth
-        >
-            <DialogTitle id="about-documentation-dialog-title">
+        <Box>
+            <Box sx={{ pb: 1 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
                     <Box sx={{
                         ...appStyles.logo,
@@ -79,8 +67,7 @@ export default function AboutDialog({
                         v{APP_VERSION}
                     </Typography>
                 </Box>
-            </DialogTitle>
-            <DialogContent>
+            </Box>
                 <Typography sx={appStyles.infoDialogIntro}>
                     Fragmenta is an open source, local-first suit to prepare datasets, train, generate and perform with text-to-audio diffusion models.
                     Made by the composer and researcher{' '}
@@ -197,10 +184,6 @@ export default function AboutDialog({
                         </Typography>
                     </Typography>
                 </Box>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={onClose}>Close</Button>
-            </DialogActions>
-        </Dialog>
+        </Box>
     );
 }
