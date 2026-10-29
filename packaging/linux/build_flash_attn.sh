@@ -23,11 +23,12 @@ PY_TAG="${PY_TAG:-cp314-cp314}"
 # (RTX 50xx), same as the Windows build. Upstream's 90/100 (H100, B200) are
 # datacenter cards and would double the build. FA2 doesn't support older GPUs.
 ARCHS="${FLASH_ATTN_CUDA_ARCHS:-80;120}"
-# Each ptxas process can take several GB (2 jobs × 4 threads was OOM-killed
-# in 18 GB), and on a 30 GB desktop a 20 GB cap starved the session itself.
-# Defaults stay small and slow; raise them on a bigger build machine.
+# One backward-kernel compile (cicc) takes most of 12 GB by itself: 2 in
+# parallel were OOM-killed at 12 GB, 2 × 4 at 18 GB, and on a 30 GB desktop a
+# 20 GB cap starved the session itself. So one at a time — many hours; raise
+# MAX_JOBS / NVCC_THREADS / MEM_LIMIT on a bigger build machine.
 MAX_JOBS="${MAX_JOBS:-1}"
-NVCC_THREADS="${NVCC_THREADS:-2}"
+NVCC_THREADS="${NVCC_THREADS:-1}"
 MEM_LIMIT="${MEM_LIMIT:-12g}"
 CPU_LIMIT="${CPU_LIMIT:-10}"
 IMAGE="quay.io/pypa/manylinux_2_28_x86_64"
@@ -69,6 +70,7 @@ docker run --rm \
 
         FLASH_ATTENTION_FORCE_BUILD=TRUE pip wheel "flash-attn==${FA_VERSION}" \
             --no-build-isolation --no-deps -w /out
+        echo "peak container memory: $(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 )) MB"
         cd /out && sha256sum flash_attn-*.whl | tee SHA256SUMS
         chown -R "${HOST_UID}:${HOST_GID}" /out
     '
