@@ -1491,6 +1491,9 @@ function VocabCategory({ label, values, onChange, disabled }) {
                     label={label}
                     placeholder="Add tag, press Enter"
                     size="small"
+                    // Wraps onto several lines: the 24 px of taller elements,
+                    // not the one-line pill.
+                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: '24px' } }}
                 />
             )}
         />

@@ -1351,13 +1351,6 @@ function makePaletteTheme(LIGHT) {
                     },
                 },
             },
-            // Tag inputs wrap onto several lines, so they take the 24 px of
-            // taller elements, not the one-line pill.
-            MuiAutocomplete: {
-                styleOverrides: {
-                    inputRoot: { '&&': { borderRadius: RADIUS.section } },
-                },
-            },
             // Focused labels stay ink; the field's ring carries the colour.
             MuiInputLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
             MuiFormLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
