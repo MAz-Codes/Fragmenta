@@ -163,8 +163,8 @@ export default function ChannelFragmentHistory({
                                 sx={[
                                     styles.fragmentRow(soft || color, isCommitted, isAuditioning),
                                     {
-                                        cursor: isEditing ? 'default' : 'grab',
-                                        '&:active': { cursor: isEditing ? 'default' : 'grabbing' },
+                                        // Pointing hand on hover (rows are still draggable).
+                                        cursor: isEditing ? 'default' : 'pointer',
                                     },
                                 ]}
                             >
