@@ -65,13 +65,10 @@ function AudioSettingsPanel({ open }) {
                     No additional output devices detected.
                 </Typography>
             )}
-            {api.systemOutput && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                    This becomes the Mac's sound output while Fragmenta runs; the previous one comes back when it closes.
-                </Typography>
-            )}
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
-                Main and cue channel pairs are chosen on the Performance master strip.
+                {api.systemOutput
+                    ? "The Mac's output until Fragmenta closes. Main and cue pairs: master strip."
+                    : 'Main and cue channel pairs are chosen on the Performance master strip.'}
             </Typography>
         </Box>
     );
