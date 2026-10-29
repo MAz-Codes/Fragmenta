@@ -48,15 +48,16 @@
     </style>
 
     <script>
-      // Fit to window: the UI is laid out for a 1650x960 viewport and the
-      // whole page is zoomed so that fits any window, smaller or larger
-      // (0.6x-1.25x). Text, controls and layout scale together, so every
-      // screen shows the same composition instead of a cropped or sparse one.
+      // Fit to window: the UI is laid out for a 1650x960 viewport, and on a
+      // smaller window the whole page zooms down (to 0.6x) so it still fits:
+      // text, controls and layout scale together. Never above 1: the layout
+      // already fills a bigger window, and zooming up scaled the full-height
+      // parts past the window (a scrollbar on large screens).
       (function () {
         var W = 1650, H = 960;
         function fit() {
           var z = Math.min(window.innerWidth / W, window.innerHeight / H);
-          z = Math.max(0.6, Math.min(1.25, z));
+          z = Math.max(0.6, Math.min(1, z));
           document.documentElement.style.zoom = String(Math.round(z * 1000) / 1000);
         }
         fit();
