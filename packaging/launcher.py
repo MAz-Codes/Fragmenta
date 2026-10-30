@@ -57,10 +57,10 @@ UI_READY_SENTINEL = "__FRAGMENTA_UI_READY__"
 SPLASH_AFTER_SECONDS = 2.5
 
 # Brand palette (matches start.py's window background).
-_BG = "#0D1117"
-_FG = "#E6EDF3"
-_SUBFG = "#8B949E"
-_ACCENT = "#2F81F7"
+_BG = "#F2EDE1"
+_FG = "#35392F"
+_SUBFG = "#66625B"
+_ACCENT = "#A0B2D5"
 
 
 def _bundle_root() -> Path:
@@ -249,7 +249,7 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
     try:
         style = ttk.Style(root)
         style.theme_use("clam")
-        style.configure("Frag.Horizontal.TProgressbar", troughcolor="#161B22",
+        style.configure("Frag.Horizontal.TProgressbar", troughcolor="#E5E0D6",
                         background=_ACCENT, bordercolor=_BG,
                         lightcolor=_ACCENT, darkcolor=_ACCENT)
         bar_style = {"style": "Frag.Horizontal.TProgressbar"}

@@ -801,7 +801,7 @@ def run_pywebview_mode() -> int:
                 width=win_w,
                 height=win_h,
                 min_size=(min_w, min_h),
-                background_color="#0D1117",
+                background_color="#F2EDE1",  # Linen's background, shown until the page paints
             )
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
