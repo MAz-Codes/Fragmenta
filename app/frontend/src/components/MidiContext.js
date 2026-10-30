@@ -205,12 +205,14 @@ export function MidiProvider({ children }) {
     }, [dispatchMessage]);
 
     // Tell the backend which port to open. The stream only carries the open
-    // port's events, so device selection happens server-side.
+    // port's events, so device selection happens server-side. Runs again when
+    // the saved device reappears, so plugging it back in reconnects its mappings.
+    const savedDevicePresent = inputs.some((i) => i.id === config.deviceId);
     useEffect(() => {
         if (!supported) return;
         api.post('/api/midi/select', { port_id: config.deviceId || null })
             .catch(() => { /* non-fatal */ });
-    }, [config.deviceId, supported]);
+    }, [config.deviceId, supported, savedDevicePresent]);
 
     function applyContinuous(sub, mapping, midiValue, takeover) {
         const norm = midiValue / 127;

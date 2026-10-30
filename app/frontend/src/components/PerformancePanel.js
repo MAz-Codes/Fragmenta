@@ -325,6 +325,11 @@ function PerformancePanelInner({
         refreshSystemOutputs();
         bindAudioOutput();
     }, [refreshAudioDevices, refreshSystemOutputs, bindAudioOutput]);
+    // For polling while Settings is open: the lists only, nothing rebinds.
+    const rescanAudioDevices = useCallback(() => {
+        refreshAudioDevices();
+        refreshSystemOutputs();
+    }, [refreshAudioDevices, refreshSystemOutputs]);
     useEffect(() => {
         if (!cueSupported && systemOutputs) {
             publishAudioSettings({
@@ -333,6 +338,7 @@ function PerformancePanelInner({
                 deviceId: systemOutput,
                 devices: systemOutputs.map((o) => ({ deviceId: o.uid, label: o.name })),
                 refresh: refreshAudioSettings,
+                rescan: rescanAudioDevices,
                 pick: pickSystemOutput,
             });
             return;
@@ -342,10 +348,11 @@ function PerformancePanelInner({
             deviceId: outputDeviceId,
             devices: audioDevices,
             refresh: refreshAudioSettings,
+            rescan: rescanAudioDevices,
             pick: setOutputDeviceId,
         });
     }, [publishAudioSettings, cueSupported, outputDeviceId, audioDevices, refreshAudioSettings,
-        systemOutputs, systemOutput, pickSystemOutput]);
+        rescanAudioDevices, systemOutputs, systemOutput, pickSystemOutput]);
     useEffect(() => () => publishAudioSettings(null), [publishAudioSettings]);
 
     // Restore App-level state (model, steps, seed) once on mount via the setter

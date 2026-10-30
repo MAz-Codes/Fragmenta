@@ -17,11 +17,25 @@ import MidiSettingsPanel from './MidiSettingsPanel';
 import { useAudioSettings } from './AudioSettingsContext';
 import { appStyles } from '../theme';
 
+// How often an open Settings tab looks for devices plugged in or removed.
+const DEVICE_POLL_MS = 3000;
+
 function AudioSettingsPanel({ open }) {
     const { api } = useAudioSettings();
     const refresh = api?.refresh;
+    const rescan = api?.rescan;
     // Devices plugged in mid-session only show up after a fresh enumeration.
     useEffect(() => { if (open) refresh?.(); }, [open, refresh]);
+    useEffect(() => {
+        if (!open || !rescan) return undefined;
+        const timer = setInterval(rescan, DEVICE_POLL_MS);
+        const media = navigator.mediaDevices;
+        media?.addEventListener?.('devicechange', rescan);
+        return () => {
+            clearInterval(timer);
+            media?.removeEventListener?.('devicechange', rescan);
+        };
+    }, [open, rescan]);
 
     if (!api) {
         return (
@@ -67,6 +81,7 @@ function AudioSettingsPanel({ open }) {
                     No additional output devices detected.
                 </Typography>
             )}
+            <Button size="small" onClick={() => refresh?.()} sx={{ mt: 1 }}>Refresh devices</Button>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
                 {api.systemOutput
                     ? "The Mac's output until Fragmenta closes. Main and cue pairs: master strip."

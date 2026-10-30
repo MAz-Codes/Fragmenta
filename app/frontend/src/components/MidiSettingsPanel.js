@@ -18,6 +18,9 @@ import Tooltip from './Tooltip';
 import { TIPS } from '../tooltips';
 import { appStyles, perfTokens, performancePanelStyles as panelStyles } from '../theme';
 
+// How often the open tab looks for controllers plugged in or removed.
+const DEVICE_POLL_MS = 3000;
+
 const CHANNEL_OPTIONS = [
     { value: 0, label: 'Any' },
     ...Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `Ch ${i + 1}` })),
@@ -30,9 +33,12 @@ export default function MidiSettingsPanel({ open = true }) {
     const refreshInputs = ctx?.refreshInputs;
     // Devices are otherwise only enumerated on provider mount, so a
     // controller plugged in mid-session would never show up until a page
-    // reload. Re-enumerate each time the menu opens.
+    // reload. Re-enumerate when the menu opens, and keep looking while it is.
     useEffect(() => {
-        if (open) refreshInputs?.();
+        if (!open || !refreshInputs) return undefined;
+        refreshInputs();
+        const timer = setInterval(refreshInputs, DEVICE_POLL_MS);
+        return () => clearInterval(timer);
     }, [open, refreshInputs]);
     if (!ctx) return null;
 
@@ -109,6 +115,7 @@ export default function MidiSettingsPanel({ open = true }) {
                             Saved device "{config.deviceName}" not connected
                         </Typography>
                     )}
+                    <Button size="small" onClick={() => refreshInputs?.()} sx={{ mt: 0.5 }}>Refresh devices</Button>
                 </Box>
 
                 <Box sx={{ display: 'flex', gap: 1 }}>

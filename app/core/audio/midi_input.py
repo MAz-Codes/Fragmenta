@@ -19,6 +19,7 @@ import os
 import queue
 import sys
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 
@@ -68,6 +69,45 @@ _current_port: Optional[str] = None  # name of the open port, or None
 _subscribers: List["queue.Queue"] = []
 
 
+_coremidi_lock = threading.Lock()
+_coremidi_started = False
+
+
+def _ensure_coremidi_runloop() -> None:
+    """Let a long-running process see MIDI devices plugged in after it started.
+
+    CoreMIDI updates its device list on the run loop of the thread that created
+    the process's first client, and our Flask threads don't run one, so a new
+    device stayed invisible until the app restarted. Keep one thread, with a
+    client and a run loop, for the life of the process. macOS only.
+    """
+    global _coremidi_started
+    if sys.platform != "darwin" or not _RTMIDI_OK:
+        return
+    with _coremidi_lock:
+        if _coremidi_started:
+            return
+        _coremidi_started = True
+    ready = threading.Event()
+
+    def pump() -> None:
+        try:
+            cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+            cf.CFRunLoopRunInMode.restype = ctypes.c_int32
+            cf.CFRunLoopRunInMode.argtypes = [ctypes.c_void_p, ctypes.c_double, ctypes.c_bool]
+            mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+            client = rtmidi.MidiIn()  # noqa: F841 - kept alive with the thread
+        finally:
+            ready.set()
+        run_finished = 1  # kCFRunLoopRunFinished: no sources yet, so it returns at once
+        while True:
+            if cf.CFRunLoopRunInMode(mode, 1.0, False) == run_finished:
+                time.sleep(0.25)
+
+    threading.Thread(target=pump, name="coremidi-runloop", daemon=True).start()
+    ready.wait(timeout=2)
+
+
 def is_available() -> bool:
     """True if the native MIDI backend is importable."""
     return _RTMIDI_OK
@@ -78,6 +118,7 @@ def list_inputs() -> List[Dict[str, Any]]:
     shuffles); `index` is its current rtmidi index."""
     if not _RTMIDI_OK:
         return []
+    _ensure_coremidi_runloop()
     mi = rtmidi.MidiIn()
     try:
         names = mi.get_ports()
@@ -147,6 +188,7 @@ def open_input(port_id: Optional[str]) -> bool:
     the current port. Returns True on success (or on a pure close)."""
     if not _RTMIDI_OK:
         return False
+    _ensure_coremidi_runloop()
     with _select_lock:
         _close_input_locked()
         if not port_id:
