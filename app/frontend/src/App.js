@@ -759,12 +759,10 @@ function App() {
     }, []);
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            fetchGpuMemoryStatus();
-        }, isTraining ? 2000 : 10000);
-
+        // Often enough to catch a model loading for a short generation.
+        const interval = setInterval(fetchGpuMemoryStatus, 3000);
         return () => clearInterval(interval);
-    }, [isTraining]);
+    }, []);
 
     useEffect(() => {
         // Debounced preview of total_steps + resolved checkpoint cadence so the
