@@ -2418,6 +2418,22 @@ def _apple_chip_name():
     return _apple_chip
 
 
+def _nvidia_smi_memory_gb():
+    """(used, total) GiB of GPU 0 across every process, or None if unavailable."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '-i', '0', '--query-gpu=memory.used,memory.total',
+             '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=2,
+            # No console window flashing up on each poll from a windowed app.
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        used_mib, total_mib = (float(v) for v in result.stdout.strip().split(','))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return (used_mib / 1024, total_mib / 1024) if total_mib > 0 else None
+
+
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
     _log_api_call('gpu_memory_status')
@@ -2442,14 +2458,20 @@ def get_gpu_memory_status():
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
 
-            # Device-wide usage across ALL processes via the CUDA driver.
-            # torch.cuda.memory_*() only sees THIS process, so it misses a
-            # training/generation subprocess running elsewhere — which is why the
-            # indicator read near-empty during training. mem_get_info() reports
-            # the driver's true device free/total, covering every process.
-            device_free_gb, device_total_gb = (
-                b / (1024**3) for b in torch.cuda.mem_get_info(0))
-            device_used_gb = device_total_gb - device_free_gb
+            # Device-wide usage across ALL processes. torch.cuda.memory_*() only
+            # sees THIS process, so it misses a training/generation subprocess
+            # running elsewhere. On Windows (WDDM) mem_get_info() didn't follow
+            # one either, staying put while nvidia-smi moved, so ask nvidia-smi
+            # and keep mem_get_info() for when it can't be run.
+            smi = _nvidia_smi_memory_gb()
+            memory_source = "nvidia-smi" if smi else "cuda-driver"
+            if smi:
+                device_used_gb, device_total_gb = smi
+                device_free_gb = device_total_gb - device_used_gb
+            else:
+                device_free_gb, device_total_gb = (
+                    b / (1024**3) for b in torch.cuda.mem_get_info(0))
+                device_used_gb = device_total_gb - device_free_gb
 
             nvidia_used_gb = device_used_gb
             nvidia_total_gb = device_total_gb
@@ -2462,7 +2484,6 @@ def get_gpu_memory_status():
             final_allocated = device_used_gb
             final_cached = cached_memory
             final_free = device_free_gb
-            memory_source = "cuda-driver"
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
