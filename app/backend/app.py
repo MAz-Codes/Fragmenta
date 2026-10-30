@@ -2105,6 +2105,7 @@ def get_debug_stats():
 _gpu_memory_cache = {}
 _gpu_memory_cache_time = 0
 _gpu_memory_cache_duration = 2.0
+_nvidia_smi_failure_logged = False
 
 _last_memory_warning_time = 0
 _memory_warning_interval = 30
@@ -2421,17 +2422,24 @@ def _apple_chip_name():
 def _nvidia_smi_memory_gb():
     """(used, total) GiB of GPU 0 across every process, or None if unavailable."""
     import subprocess
+    global _nvidia_smi_failure_logged
     try:
         result = subprocess.run(
             ['nvidia-smi', '-i', '0', '--query-gpu=memory.used,memory.total',
              '--format=csv,noheader,nounits'],
-            capture_output=True, text=True, timeout=2,
+            capture_output=True, text=True, timeout=5,
             # No console window flashing up on each poll from a windowed app.
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         used_mib, total_mib = (float(v) for v in result.stdout.strip().split(','))
-    except (OSError, subprocess.SubprocessError, ValueError):
+        if total_mib <= 0:
+            raise ValueError(f"total {total_mib}")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # The fallback can stay fixed on Windows, so say why it's in use.
+        if not _nvidia_smi_failure_logged:
+            logger.warning("nvidia-smi memory reading failed (%s); using the CUDA driver's figure", exc)
+            _nvidia_smi_failure_logged = True
         return None
-    return (used_mib / 1024, total_mib / 1024) if total_mib > 0 else None
+    return used_mib / 1024, total_mib / 1024
 
 
 @app.route('/api/gpu-memory-status', methods=['GET'])
