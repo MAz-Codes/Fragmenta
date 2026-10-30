@@ -3128,6 +3128,14 @@ def clip_audio_route(name, file_name):
         audio_path = Path(clip.path)
     if not audio_path.exists():
         return jsonify({'error': 'Audio file missing on disk'}), 404
+    # Web engines can't play every format we accept; the player falls back to this.
+    if request.args.get('format') == 'wav':
+        from app.core.audio.decode import playable_wav
+        try:
+            return send_file(str(playable_wav(audio_path)), mimetype='audio/wav', conditional=True)
+        except Exception as exc:
+            logger.warning("Couldn't convert %s for playback: %s", audio_path.name, exc)
+            return jsonify({'error': 'Could not decode this audio file'}), 415
     return send_file(str(audio_path), conditional=True)
 
 

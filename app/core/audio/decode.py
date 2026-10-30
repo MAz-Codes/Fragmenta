@@ -8,7 +8,10 @@ librosa 1.0. The implementation lives in the vendored package
 is imported on first use, so importing this module stays cheap (no torch).
 """
 
+import hashlib
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 # Every format Fragmenta accepts, everywhere (ingest, training, edit uploads).
@@ -39,6 +42,38 @@ def load_mono(path, sr=None, duration=None):
         y = librosa.resample(y, orig_sr=in_sr, target_sr=sr, res_type="soxr_hq")
         return y, sr
     return y, in_sr
+
+
+_playback_lock = threading.Lock()
+
+
+def playable_wav(path):
+    """A 16-bit WAV copy of `path`, for web engines that can't play its format.
+
+    Range requests need a real file, and re-decoding on each would be slow, so
+    the copy is kept in the temp folder. Only the latest one stays: this is for
+    auditioning one clip at a time.
+    """
+    path = Path(path)
+    stat = path.stat()
+    key = hashlib.sha256(f"{path}|{stat.st_mtime_ns}|{stat.st_size}".encode("utf-8")).hexdigest()[:32]
+    folder = Path(tempfile.gettempdir()) / "fragmenta-playback"
+    out = folder / f"{key}.wav"
+    with _playback_lock:
+        if out.exists():
+            return out
+        import soundfile as sf
+        audio, sr = read_audio(path)
+        folder.mkdir(exist_ok=True)
+        for old in folder.glob("*.wav"):
+            try:
+                old.unlink()
+            except OSError:
+                pass  # still being sent (Windows); the next conversion gets it
+        tmp = out.with_suffix(".tmp")
+        sf.write(str(tmp), audio.numpy().T, sr, format="WAV", subtype="PCM_16")
+        tmp.replace(out)
+    return out
 
 
 def audio_duration(path):

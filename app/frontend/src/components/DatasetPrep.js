@@ -201,7 +201,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         pendingSeekRef.current = null;
         setPlayProgress(0);
         setPlayingFile(fileName);
-        audio.play().catch(() => {
+        audio.play().catch((err) => {
+            if (isHandledPlayError(err)) return;
             setPlayingFile(null);
         });
     }, [selectedName, playingFile]);
@@ -246,7 +247,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         setPlayProgress(frac);
         setPlayingFile(fileName);
         playingFileRef.current = fileName;
-        audio.play().catch(() => {
+        audio.play().catch((err) => {
+            if (isHandledPlayError(err)) return;
             setPlayingFile(null);
             playingFileRef.current = null;
         });
@@ -878,7 +880,25 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                             }
                         }}
                         onEnded={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
-                        onError={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
+                        onError={(e) => {
+                            const a = e.currentTarget;
+                            const file = loadedFileRef.current;
+                            // The web engine can't play this format (FLAC on
+                            // macOS): retry once with the backend's WAV copy.
+                            if (file && !a.src.includes('format=wav')) {
+                                a.src = `${a.src}?format=wav`;
+                                setPlayingFile(file);
+                                playingFileRef.current = file;
+                                a.play().catch((err) => {
+                                    if (!isHandledPlayError(err)) setPlayingFile(null);
+                                });
+                                return;
+                            }
+                            pendingSeekRef.current = null;
+                            setPlayingFile(null);
+                            setPlayProgress(0);
+                            if (file) setError(`Couldn't play ${file}.`);
+                        }}
                     />
                 </Stack>
                 </Paper>
@@ -2577,3 +2597,9 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
 
 // ---------- utils ----------------------------------------------------------
 
+
+// A rejected play() that the <audio> element's onError deals with (unplayable
+// format), or that only means a newer source replaced this one.
+function isHandledPlayError(err) {
+    return err?.name === 'NotSupportedError' || err?.name === 'AbortError';
+}
