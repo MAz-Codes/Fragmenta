@@ -334,8 +334,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         # to be worked out in the scaled coordinate space, not raw pixels.
         logical = (int(screen[0] / scale), int(screen[1] / scale)) if screen else None
         win_w, win_h, _, _ = _window_geometry(logical)
-        if screen:
-            print(f"Screen {screen[0]}x{screen[1]} -> scale {scale}, window {win_w}x{win_h} dip")
 
         launch_args_base = [
             chromium_path,
@@ -748,7 +746,6 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     min_w = min(min_w, max(640, sw - 80))
     min_h = min(min_h, max(480, sh - 80))
 
-    print(f"Screen {sw}x{sh} -> window {width}x{height}")
     return width, height, min_w, min_h
 
 
