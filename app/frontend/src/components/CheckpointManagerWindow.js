@@ -222,8 +222,8 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                     )}
 
                     {[
-                        { kind: 'post-trained', label: 'Distilled (fast)', hint: '8 steps, cfg locked at 1.0. Prompt, duration and seed only.' },
-                        { kind: 'base', label: 'Base (full control)', hint: 'CFG-aware. ~50 steps, cfg ~7. Cfg-scale and steps are live controls.' },
+                        { kind: 'post-trained', label: 'Distilled (fast)', hint: 'Faster generation.' },
+                        { kind: 'base', label: 'Base (full control)', hint: 'Needed for training. Slower generation, better quality.' },
                         { kind: 'tagger', label: 'Auto-annotation tools', hint: 'Optional helpers for dataset prep. CLAP scores audio against your vocabulary.' },
                     ].map(group => {
                         const rows = catalog.filter(c => c.kind === group.kind);
