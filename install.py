@@ -8,6 +8,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import ssl
 import subprocess
 import sys
@@ -57,6 +58,7 @@ MIN_NVIDIA_DRIVER = 570  # the cu128 torch builds need R570
 MIN_MACOS = (14, 0)
 MIN_WINDOWS_BUILD = 17763  # Windows 10 1809
 MIN_GLIBC = (2, 28)
+BACKEND_START_TIMEOUT = 180  # a first start compiles every module
 
 
 def _required_python() -> tuple[int, int]:
@@ -531,6 +533,143 @@ def preflight(full: bool = False) -> dict:
     return report
 
 
+def _check(name: str, ok: bool, detail: str = "") -> dict:
+    log(f"{'PASS' if ok else 'FAIL'}  {name}" + (f": {detail}" if detail else ""))
+    return {"name": name, "ok": ok, "detail": detail}
+
+
+def _self_test_env() -> dict:
+    # What the shell happens to have on its path mustn't help or break this.
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"} | {"PYTHONIOENCODING": "utf-8"}
+
+
+def _import_checks(py: Path, lock: Path | None) -> list[dict]:
+    vendor = str(PROJECT_ROOT / "vendor" / "stable-audio-3")
+    snippets = {
+        "torch": "import torch; print(torch.__version__, 'with CUDA' if torch.cuda.is_available() else 'without CUDA')",
+        "stable_audio_3": f"import sys; sys.path.insert(0, {vendor!r}); import stable_audio_3",
+        "soundfile": "import soundfile",
+        "av": "import av",
+        "flask": "import flask",
+    }
+    if lock and "flash-attn" in lock.read_text(encoding="utf-8").lower().replace("_", "-"):
+        snippets["flash_attn"] = "import flash_attn"
+    checks = []
+    for name, snippet in snippets.items():
+        r = subprocess.run([str(py), "-c", snippet], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=_self_test_env(), cwd=PROJECT_ROOT)
+        lines = (r.stdout if r.returncode == 0 else r.stderr).strip().splitlines()
+        checks.append(_check(f"import {name}", r.returncode == 0, lines[-1] if lines else ""))
+    return checks
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _local_get(url: str) -> tuple[int, str]:
+    # No proxy: a proxy setting must not catch requests to this machine.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=30) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
+def _last_lines(path: Path, count: int = 3) -> str:
+    try:
+        return " | ".join(path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-count:])
+    except OSError:
+        return ""
+
+
+def _backend_checks(py: Path, timeout: float = BACKEND_START_TIMEOUT) -> list[dict]:
+    """Start the backend alone on a free port (no window, and no clash with a
+    Fragmenta already running) and ask it whether it works."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    backend_log = LOG_DIR / "self-test-backend.log"
+    port = _free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = {**_self_test_env(), "FLASK_HOST": "127.0.0.1", "FLASK_PORT": str(port)}
+    with open(backend_log, "w", encoding="utf-8") as out:
+        proc = subprocess.Popen([str(py), "-m", "app.backend.app"], cwd=PROJECT_ROOT, env=env,
+                                stdout=out, stderr=subprocess.STDOUT)
+    try:
+        started = time.monotonic()
+        while True:
+            if proc.poll() is not None:
+                return [_check("backend starts", False, f"exit {proc.returncode}: {_last_lines(backend_log)}")]
+            if time.monotonic() - started > timeout:
+                return [_check("backend starts", False, f"no answer in {timeout:.0f} s: {_last_lines(backend_log)}")]
+            try:
+                status, _body = _local_get(f"{base}/api/health")
+                if status == 200:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        checks = [_check("backend starts", True, f"{time.monotonic() - started:.1f} s")]
+
+        # /api/health doesn't set the app up; any other route does.
+        status, body = _local_get(f"{base}/api/version")
+        checks.append(_check("backend sets up", status == 200, f"HTTP {status}" + ("" if status == 200 else f": {body[:200]}")))
+        health = json.loads(_local_get(f"{base}/api/health")[1])
+        checks.append(_check("no setup errors", bool(health.get("components_ready")) and not health.get("init_error"),
+                             str(health.get("init_error") or "")))
+        version_file = PROJECT_ROOT / "VERSION"
+        expected = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else None
+        checks.append(_check("runs this version", health.get("version") == expected,
+                             f"{health.get('version')} (expected {expected})"))
+        status, body = _local_get(f"{base}/")
+        checks.append(_check("serves the UI", status == 200 and "<html" in body.lower(), f"HTTP {status}"))
+        return checks
+    except Exception as exc:
+        return [_check("backend answers", False, repr(exc))]
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def self_test() -> int:
+    """Install if needed, then check the result works, with no window and no
+    model download. Exit 0 when everything passed; logs/self-test.json has the
+    details, for builds whose launcher has no console to print to."""
+    started = time.monotonic()
+    checks: list[dict] = []
+    try:
+        report = preflight()
+        checks.append(_check("preflight", report["ok"], "; ".join(f["message"] for f in report["failures"])))
+        if report["ok"]:
+            require_host_py()
+            py = ensure_venv()
+            install_dependencies(py)
+            checks.append(_check("install", True))
+            checks += _import_checks(py, platform_lock())
+            checks += _backend_checks(py)
+    except SystemExit as exc:
+        checks.append(_check("install", False, f"exit {exc.code}"))
+    except Exception as exc:
+        checks.append(_check("self-test", False, repr(exc)))
+
+    ok = all(c["ok"] for c in checks)
+    result = {"ok": ok, "seconds": round(time.monotonic() - started, 1), "checks": checks}
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        (LOG_DIR / "self-test.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    failed = sum(not c["ok"] for c in checks)
+    log(f"self-test {'passed' if ok else f'FAILED ({failed} of {len(checks)})'} in {result['seconds']} s")
+    return 0 if ok else 1
+
+
 def launch(py: Path) -> "None":
     log("starting Fragmenta…")
     if _log_file:
@@ -546,6 +685,7 @@ def main() -> None:
     ap.add_argument("--check", action="store_true", help="report status only; change nothing")
     ap.add_argument("--preflight", action="store_true", help="print what would stop an install or launch, as JSON")
     ap.add_argument("--full", action="store_true", help="with --preflight: run the network and GPU checks anyway")
+    ap.add_argument("--self-test", action="store_true", help="install if needed, check it works, open no window")
     args = ap.parse_args()
 
     if args.preflight:
@@ -567,6 +707,8 @@ def main() -> None:
         sys.exit(0 if ok and deps_up_to_date(lock) else 1)
 
     log(f"install log: {open_log()}")
+    if args.self_test:
+        sys.exit(self_test())
     require_host_py()
     py = ensure_venv()
     install_dependencies(py, force=args.reinstall)

@@ -18,6 +18,9 @@ NOT contain torch or any app dependency — it only:
      setup fails it turns into an error window: what went wrong, plus
      [Retry] [Open log] [Copy diagnostics] [Quit].
 
+``--self-test`` skips the window: it runs ``install.py --self-test`` and exits 0
+or not, so a build can be checked without anyone clicking anything.
+
 First-run setup (build venv → pip-install torch/SA3 → download models) takes
 minutes, during which no app window exists yet. To keep the app responsive and
 informative we pipe the child's output, forward it to our own stdout (so a
@@ -359,6 +362,29 @@ class _Run:
             self.report = _run_preflight(python, install_py, env, full=True) or self.report
         code, message = _classify_failure(list(self.tail))
         self._fail(code, message, self.returncode)
+
+
+def _self_test(bundle: Path) -> int:
+    python = _bundled_python(bundle)
+    install_py = bundle / "payload" / "install.py"
+    missing = [str(p) for p in (python, install_py) if not p.exists()]
+    if missing:
+        _dbg("self-test: damaged install, missing " + ", ".join(missing))
+        return 2
+    try:
+        import tkinter  # noqa: F401  (a frozen build must carry the window's toolkit)
+    except Exception as exc:
+        _dbg(f"self-test: no Tk in this build: {exc!r}")
+        return 3
+    env = {**os.environ, "FRAGMENTA_PACKAGED": "1", "PYTHONIOENCODING": "utf-8"}
+    flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    proc = subprocess.Popen([str(python), str(install_py), "--self-test"], cwd=str(install_py.parent), env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                            errors="replace", bufsize=1, **flags)
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        _echo(line)
+    return proc.wait()
 
 
 def _diagnostics(run: _Run) -> str:
@@ -706,6 +732,9 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
 
 
 def main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return _self_test(_bundle_root())
+
     run = _Run(_bundle_root())
 
     # Phase 1: warm launches reach readiness fast — don't flash a splash.

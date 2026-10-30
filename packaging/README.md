@@ -30,7 +30,7 @@ Read-only bundle code + writable user-data dir (`~/Library/Application Support/F
 
 | File | Role |
 |---|---|
-| `launcher.py` | Stdlib-only launcher; PyInstaller target. |
+| `launcher.py` | Stdlib-only launcher; PyInstaller target. `--self-test` installs, checks the app works and exits 0 or not, with no window and no model download (`logs/self-test.json` has the details). |
 | `python_standalone.py` | Download `python-build-standalone` CPython 3.14 into `runtime/python`. Version + per-target SHA-256 pinned at the top; a mismatch is refused. |
 | `uv_standalone.py` | Download the pinned uv into `runtime/uv`, same pinning. |
 | `fetch.py` | Checksum-verified download with retries; safe extraction (`filter="data"`). |

@@ -342,6 +342,148 @@ def test_diagnostics_work_when_nothing_ran():
         assert "Problem: corrupt" in launcher._diagnostics(run)
 
 
+# --- self-test ---------------------------------------------------------------
+
+FAKE_BACKEND = textwrap.dedent("""\
+    import http.server, json, os, sys
+    mode = os.environ["FAKE_BACKEND"]
+    if mode == "crash":
+        print("ImportError: no module named x", flush=True)
+        sys.exit(5)
+    if mode == "hang":
+        import time
+        time.sleep(60)
+    state = {"ready": False}
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+        def do_GET(self):
+            code, body = 200, ""
+            if self.path == "/api/health":
+                body = json.dumps({"version": "9.9" if mode == "old-version" else "1.0", "components_ready": state["ready"],
+                                   "init_error": "no model dir" if mode == "bad-setup" else None})
+            elif self.path == "/api/version":
+                state["ready"] = mode != "bad-setup"
+                code = 503 if mode == "bad-setup" else 200
+                body = "{}"
+            elif mode == "no-ui":
+                code = 404
+            else:
+                body = "<!doctype html><html></html>"
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(body.encode())
+    http.server.HTTPServer((os.environ["FLASK_HOST"], int(os.environ["FLASK_PORT"])), H).serve_forever()
+""")
+
+
+def backend_checks(mode, timeout=30.0):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "VERSION").write_text("1.0")
+        (root / "app" / "backend").mkdir(parents=True)
+        (root / "app" / "backend" / "app.py").write_text(FAKE_BACKEND)
+        with mock.patch.multiple(install, PROJECT_ROOT=root, LOG_DIR=root / "logs"), \
+                mock.patch.object(install, "log"), mock.patch.dict(os.environ, {"FAKE_BACKEND": mode}):
+            return {c["name"]: c for c in install._backend_checks(Path(sys.executable), timeout=timeout)}
+
+
+def test_a_working_backend_passes_every_check():
+    checks = backend_checks("ok")
+    assert len(checks) == 5 and all(c["ok"] for c in checks.values()), checks
+
+
+def test_backend_that_crashes_fails_fast_and_says_why():
+    start = time.monotonic()
+    check = backend_checks("crash")["backend starts"]
+    assert not check["ok"] and "exit 5" in check["detail"] and "no module named x" in check["detail"], check
+    assert time.monotonic() - start < 15
+
+
+def test_backend_that_never_answers_times_out():
+    assert "no answer" in backend_checks("hang", timeout=2)["backend starts"]["detail"]
+
+
+def test_setup_error_fails():
+    checks = backend_checks("bad-setup")
+    assert not checks["backend sets up"]["ok"] and "no model dir" in checks["no setup errors"]["detail"], checks
+
+
+def test_wrong_version_fails():
+    assert not backend_checks("old-version")["runs this version"]["ok"]
+
+
+def test_missing_ui_fails():
+    assert not backend_checks("no-ui")["serves the UI"]["ok"]
+
+
+def test_a_proxy_setting_doesnt_catch_local_requests():
+    with mock.patch.dict(os.environ, {"HTTP_PROXY": "http://127.0.0.1:9", "http_proxy": "http://127.0.0.1:9"}):
+        assert all(c["ok"] for c in backend_checks("ok").values())
+
+
+def self_test_result(preflight_ok=True, install_exit=None, imports_ok=True, backend_ok=True):
+    with tempfile.TemporaryDirectory() as tmp:
+        logs = Path(tmp)
+        report = {"ok": preflight_ok, "failures": [] if preflight_ok else [{"code": "disk", "message": "No room."}]}
+        install_step = mock.Mock(side_effect=SystemExit(install_exit) if install_exit else None)
+        backend = mock.Mock(return_value=[{"name": "backend starts", "ok": backend_ok, "detail": ""}])
+        with mock.patch.object(install, "LOG_DIR", logs), mock.patch.object(install, "log"), \
+                mock.patch.object(install, "preflight", return_value=report), \
+                mock.patch.object(install, "require_host_py"), mock.patch.object(install, "ensure_venv"), \
+                mock.patch.object(install, "install_dependencies", install_step), \
+                mock.patch.object(install, "platform_lock", return_value=None), \
+                mock.patch.object(install, "_import_checks", return_value=[{"name": "import torch", "ok": imports_ok, "detail": ""}]), \
+                mock.patch.object(install, "_backend_checks", backend):
+            code = install.self_test()
+        return code, json.loads((logs / "self-test.json").read_text()), install_step.called, backend.called
+
+
+def test_self_test_passes_and_writes_its_result():
+    code, result, _installed, _backend = self_test_result()
+    assert code == 0 and result["ok"] and [c["name"] for c in result["checks"]][:2] == ["preflight", "install"]
+
+
+def test_failed_preflight_stops_before_installing():
+    code, result, installed, _backend = self_test_result(preflight_ok=False)
+    assert code == 1 and not result["ok"] and not installed and "No room." in result["checks"][0]["detail"]
+
+
+def test_failed_install_is_reported_not_raised():
+    code, result, _installed, backend = self_test_result(install_exit=1)
+    assert code == 1 and result["checks"][-1]["name"] == "install" and not backend
+
+
+def test_any_failed_check_fails_the_self_test():
+    assert self_test_result(imports_ok=False)[0] == 1
+    assert self_test_result(backend_ok=False)[0] == 1
+
+
+def launcher_self_test(bundle_dir, script=None):
+    env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+    env["FRAGMENTA_BUNDLE"] = str(bundle_dir)
+    env["FAKE_MODE"] = "unused"
+    return subprocess.run([sys.executable, str(ROOT / "packaging" / "launcher.py"), "--self-test"], env=env,
+                          capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+
+def test_launcher_passes_on_install_py_self_test_and_its_exit_code():
+    with Bundle() as b:
+        (b.path / "payload" / "install.py").write_text(
+            "import os, sys\n"
+            "assert sys.argv[1:] == ['--self-test'] and os.environ['FRAGMENTA_PACKAGED'] == '1'\n"
+            "print('[install] PASS  é✓', flush=True)\n"
+            "sys.exit(7)\n", encoding="utf-8")
+        out = launcher_self_test(b.path)
+    assert out.returncode == 7 and "PASS  é✓" in out.stdout, out
+
+
+def test_launcher_self_test_on_a_damaged_install_exits_2():
+    with tempfile.TemporaryDirectory() as tmp:
+        out = launcher_self_test(tmp)
+    assert out.returncode == 2 and "damaged install" in out.stderr, out
+
+
 # --- the window's hand-drawn shapes -------------------------------------------
 
 def test_window_text_avoids_characters_the_linux_fonts_lack():
