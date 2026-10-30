@@ -178,6 +178,9 @@ def train(args):
         drop_last=True,
         collate_fn=collation_fn,
         worker_init_fn=functools.partial(_worker_seed_init, base_seed=seed),
+        # Fragmenta: keep workers between epochs. Windows and macOS spawn them,
+        # re-importing torch each time: a pause on every pass over the dataset.
+        persistent_workers=args.num_workers > 0,
     )
 
     lora_state_dict = None

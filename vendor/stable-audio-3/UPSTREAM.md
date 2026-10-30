@@ -35,6 +35,8 @@ Every local edit carries a `# Fragmenta:` comment in the code.
   - Spawn-safe DataLoader workers (Windows/macOS): a top-level
     `_worker_seed_init` via `functools.partial` instead of a lambda, and
     `caption_metadata_fn` imports `Path` locally.
+  - `persistent_workers` on the training DataLoader: spawned workers otherwise
+    re-import torch at the start of every epoch (2026-10-30).
   - `volume_norm=True` on the dataset (−16 LUFS, matching pre-encode).
   - `CSVLogger(flush_logs_every_n_steps=1)` so the UI's loss curve is live.
   - `--no_demo` flag to skip demo rendering entirely.
