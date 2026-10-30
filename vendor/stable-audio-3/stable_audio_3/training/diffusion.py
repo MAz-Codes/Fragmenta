@@ -5,7 +5,7 @@ import os
 import torch
 import gc
 import typing as tp
-import torchaudio
+from stable_audio_3.data.audio_io import write_audio  # Fragmenta: no torchaudio I/O
 
 from einops import rearrange
 from safetensors.torch import save_file
@@ -626,7 +626,10 @@ class DiffusionCondTrainingWrapper(pl.LightningModule):
             **get_lora_state_dict(self.diffusion.model),
             **get_lora_state_dict(self.diffusion.conditioner)
         }
-        save_lora_safetensors(state_dict, self.lora_config, path)
+        # Pass the model so dora-* row norms are baked in at save time; see
+        # get_dora_norm_state_dict. Cheap, and it spares loaders a base-model load.
+        save_lora_safetensors(state_dict, self.lora_config, path,
+                              model=[self.diffusion.model, self.diffusion.conditioner])
 
     def on_save_checkpoint(self, checkpoint):
         if self.lora_config is not None:
@@ -933,7 +936,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
 
                     filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
                     combined_audio = combined_audio.to(torch.float32).div(torch.max(torch.abs(combined_audio))).mul(32767).to(torch.int16).cpu()
-                    torchaudio.save(filename, combined_audio, self.sample_rate)
+                    write_audio(filename, combined_audio, self.sample_rate)
 
                     log_audio(trainer.logger, f'demo_cfg_{cfg_scale}', filename, self.sample_rate)
                     log_image(trainer.logger, f'demo_melspec_left_cfg_{cfg_scale}', audio_spectrogram_image(combined_audio, context_mask=combined_mask))
@@ -1121,7 +1124,7 @@ class DiffusionCondInpaintDemoCallback(pl.Callback):
                             combined_mask = torch.cat(mask_parts, dim=-1) if mask_parts else None
                             filename = f'demo_teacher_target_{trainer.global_step:08}.wav'
                             combined_audio = combined_audio.to(torch.float32).div(torch.max(torch.abs(combined_audio))).mul(32767).to(torch.int16).cpu()
-                            torchaudio.save(filename, combined_audio, self.sample_rate)
+                            write_audio(filename, combined_audio, self.sample_rate)
                             log_audio(trainer.logger, f'demo_teacher_target', filename, self.sample_rate)
                             log_image(trainer.logger, f'demo_teacher_target_melspec', audio_spectrogram_image(combined_audio, context_mask=combined_mask))
                             os.remove(filename)

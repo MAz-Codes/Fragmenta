@@ -1,0 +1,65 @@
+<!-- DJ cue point: real Web Audio render of the shipped ChannelStrip (companion
+     to test_cue_point.mjs). Serve the repo root and open in Chromium/WebKit:
+       python3 -m http.server 8765 --bind 127.0.0.1 -d <repo>
+       http://127.0.0.1:8765/tests/test_cue_point_render.html
+     The page title becomes the JSON result. Expected (region 2-8 s, cue 5 s):
+       loop: 0 cue, 2 mid-loop, 3 in-point, 6 cue, 8 mid-loop, 9 in-point
+       oneShot: 0 cue, 2 mid-loop (nothing after the out-point)
+       OUT-POINT, before-loop and after-loop are never heard. -->
+<!doctype html><meta charset="utf-8"><title>running</title><pre id="out">pending</pre>
+<script type="module">
+// Real Web Audio render of the shipped ChannelStrip. A 10 s clip carries
+// 30 ms 1 kHz bursts whose amplitude identifies them; we record which burst
+// is heard when. Region = [2 s, 8 s), cue = 5 s.
+const SR = 44100, DUR = 10, RENDER = 12;
+const MARKERS = [ {t: 1, a: 0.95, name: 'before-loop'}, {t: 2, a: 0.3, name: 'in-point'},
+                  {t: 5, a: 0.5, name: 'cue'}, {t: 7, a: 0.7, name: 'mid-loop'},
+                  {t: 8, a: 0.6, name: 'OUT-POINT'}, {t: 9, a: 0.85, name: 'after-loop'} ];
+let n = 0;
+async function scenario(setup) {
+    const off = new OfflineAudioContext(2, SR * RENDER, SR);
+    window.AudioContext = function () { return off; };
+    const { ChannelStrip } = await import(`../app/frontend/src/utils/performanceAudio.js?s=${n++}`);
+    const buf = off.createBuffer(2, SR * DUR, SR);
+    for (let c = 0; c < 2; c++) {
+        const d = buf.getChannelData(c);
+        for (const m of MARKERS) {
+            const s0 = Math.round(m.t * SR);
+            for (let i = 0; i < SR * 0.03; i++) d[s0 + i] = m.a * Math.sin(2 * Math.PI * 1000 * i / SR);
+        }
+    }
+    const strip = new ChannelStrip(off.destination, null, null);
+    strip.buffer = buf;
+    const probes = [];
+    await setup(strip, off, probes);
+    const r = await off.startRendering();
+    const x = r.getChannelData(0);
+    // Onsets: first sample above 0.05 after ≥ 50 ms of quiet; identify by peak.
+    const heard = []; let quietSince = -Infinity;
+    for (let i = 0; i < x.length; i++) {
+        if (Math.abs(x[i]) > 0.05) {
+            if (i - quietSince > SR * 0.05) {
+                let pk = 0; for (let j = i; j < Math.min(x.length, i + SR * 0.03); j++) pk = Math.max(pk, Math.abs(x[j]));
+                const m = MARKERS.reduce((b, k) => Math.abs(k.a - pk) < Math.abs(b.a - pk) ? k : b);
+                heard.push([+(i / SR).toFixed(3), m.name]);
+            }
+            quietSince = i;
+        }
+    }
+    let lastSound = 0; for (let i = 0; i < x.length; i++) if (Math.abs(x[i]) > 1e-4) lastSound = i / SR;
+    return { heard, lastSound: +lastSound.toFixed(3), probes };
+}
+try {
+const res = {};
+res.noCue = await scenario(async (s) => { s.setRegion(0.2, 0.8); s.play(true, 0); });
+res.loop = await scenario(async (s) => { s.setRegion(0.2, 0.8); s.setLaunchStart(0.5); s.play(true, 0); });
+res.oneShot = await scenario(async (s) => { s.setRegion(0.2, 0.8); s.setLaunchStart(0.5); s.play(false, 0); });
+res.retrigger = await scenario(async (s) => { s.setRegion(0.2, 0.8); s.setLaunchStart(0.5); s.playAt(true, 0); });
+res.liveRetarget = await scenario(async (s, off, probes) => {
+    s.setRegion(0.2, 0.8); s.setLaunchStart(0.5); s.play(true, 0);
+    off.suspend(1.0).then(() => { s.setRegion(0.2, 0.75); off.resume(); });
+    for (const t of [0.5, 1.5, 2.6, 6.0]) off.suspend(t).then(() => { probes.push([t, +(s.getPlayPosition() * DUR).toFixed(3)]); off.resume(); });
+});
+document.title = JSON.stringify(res);
+} catch (e) { document.title = 'ERR: ' + (e && e.stack || e); }
+</script>

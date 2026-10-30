@@ -25,32 +25,36 @@ import {
     InputAdornment,
     Popover,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import RotaryKnob from './RotaryKnob';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
     Play as PlayAllIcon,
     Square as StopAllIcon,
     Trash2 as DeleteIcon,
-    Settings as SettingsIcon,
     Save as SaveIcon,
     X as CloseXIcon,
     Headphones as CueIcon,
-    Volume2 as AudioSetupIcon,
     RotateCcw as RestoreIcon,
     CloudDownload as DownloadIcon,
     Circle as RecordIcon,
+    Minus as MinusIcon,
+    Plus as PlusIcon,
+    ChevronDown as ChevronDownIcon,
 } from 'lucide-react';
 import api from '../api';
 import { extractError } from '../utils/errors';
 import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
 import PerformanceChannel from './PerformanceChannel';
 import { PerformanceEngine, IMPULSE_RESPONSES, MASTER_DELAY_DIVISIONS } from '../utils/performanceAudio';
-import { performancePanelStyles as styles, perfTokens } from '../theme';
-import { MidiProvider, MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
-import MidiConfigMenu from './MidiConfigMenu';
+import { performancePanelStyles as styles, perfTokens, onFill } from '../theme';
+import { MidiMappable, useMidi, clearMidiConfig } from './MidiContext';
+import { useAudioSettings } from './AudioSettingsContext';
 // setCueOutputPair is aliased: the component has a useState setter of the same
 // name which would otherwise shadow the import and leave cue routing dead.
-import { isCueSupported, listOutputDevices, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
+import { isCueSupported, listOutputDevices, refreshCueGraph, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
+import { setMediaOutputDevice } from '../utils/mediaOutput';
 import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
@@ -67,19 +71,23 @@ import {
     clearScope as clearFragmentScope,
 } from '../utils/fragmentStorage';
 
+// Link fine-tune range (ms). Wide enough for Bluetooth headphones, whose
+// 150–300 ms the browser often doesn't report as output latency.
+const LINK_OFFSET_MIN = -200;
+const LINK_OFFSET_MAX = 500;
+
 const CHANNEL_COUNT = 4;
-const MASTER_COLOR = '#35C2D4';
-// Transport colors (original): Play uses the master cyan, Stop the error red,
-// Record its own red — kept as icon-only buttons.
-const RECORD_COLOR = '#E5484D';   // record red
-const STOP_COLOR = '#F2A06A';     // light orange — kept distinct from record red
-const PLAY_COLOR = '#35C2D4';     // master cyan
+// Master, transport and Link/MIDI colours come from the palette
+// (theme.palette.perf): pastel fills with ink labels.
 const MASTER_DB_MIN = -60;
 // +6 dB of boost headroom above unity; the fader taper (faderLaw) puts unity
 // at ~80% of throw, not the very top.
 const MASTER_DB_MAX = FADER_MAX_DB;
 const MASTER_DB_DEFAULT = -3;
 const METER_FLOOR_DB = -60;
+const PEAK_HOLD_MS = 1500;
+// Scale beside the master meters (dB).
+const METER_SCALE_DB = [0, -6, -12, -24, METER_FLOOR_DB];
 const BPM_MIN = 20;
 const BPM_MAX = 300;
 const BPM_DEFAULT = 120;
@@ -112,18 +120,16 @@ export default function PerformancePanel(props) {
     // Reset key for the inner panel. Bumping it forces a full remount of
     // PerformancePanelInner, which makes usePerformanceSession re-read from
     // localStorage and every PerformanceChannel re-hydrate from IDB. The
-    // MidiProvider sits outside so MIDI mappings survive a reset (they
-    // have their own clearMidiConfig pathway when needed).
+    // MidiProvider sits in App (Settings shows the MIDI setup), so MIDI
+    // mappings survive a reset.
     const [resetKey, setResetKey] = useState(0);
     const triggerReset = useCallback(() => setResetKey((k) => k + 1), []);
     return (
-        <MidiProvider>
-            <PerformancePanelInner
-                key={resetKey}
-                {...props}
-                onPresetLoaded={triggerReset}
-            />
-        </MidiProvider>
+        <PerformancePanelInner
+            key={resetKey}
+            {...props}
+            onPresetLoaded={triggerReset}
+        />
     );
 }
 
@@ -151,6 +157,7 @@ function PerformancePanelInner({
     // at full frame rate behind every other tab.
     active = true,
 }) {
+    const perfColors = useTheme().palette.perf;
     const {
         session, updateGlobal, updateChannel, cancelPendingPersist,
     } = usePerformanceSession(CHANNEL_COUNT);
@@ -166,8 +173,12 @@ function PerformancePanelInner({
     }, [active]);
 
     const engineRef = useRef(null);
-    const meterFillRef = useRef(null);
-    const peakHoldRef = useRef({ db: METER_FLOOR_DB, decayedAt: performance.now() });
+    // Left/right master meters: fill and peak-hold marker per channel.
+    const meterFillRefs = [useRef(null), useRef(null)];
+    const peakMarkerRefs = [useRef(null), useRef(null)];
+    // Peak markers hold the loudest level for PEAK_HOLD_MS, then fall.
+    const peakMarkRef = useRef([{ db: METER_FLOOR_DB, until: 0, at: 0 }, { db: METER_FLOOR_DB, until: 0, at: 0 }]);
+    const peakHoldRef = useRef([0, 1].map(() => ({ db: METER_FLOOR_DB, decayedAt: performance.now() })));
     const meterRafRef = useRef(null);
     const [engineReady, setEngineReady] = useState(false);
     const [masterDb, setMasterDb] = useState(session.masterDb ?? MASTER_DB_DEFAULT);
@@ -188,6 +199,9 @@ function PerformancePanelInner({
     const [measuredLatencyMs, setMeasuredLatencyMs] = useState(null);
     const [launchQuantum, setLaunchQuantum] = useState(session.launchQuantum ?? LAUNCH_Q_DEFAULT);
     const wasPlayingRef = useRef(false);
+    // Recent Link polls, for placing Link's clock on performance.now() — see
+    // the poll below.
+    const linkClockRef = useRef([]);
     const bpmOriginRef = useRef('user');
     const [peakLabelDb, setPeakLabelDb] = useState(METER_FLOOR_DB);
     // Mirror of peakLabelDb for the RAF tick's 0.5 dB hysteresis gate. The
@@ -200,7 +214,6 @@ function PerformancePanelInner({
     );
     const [promptKey, setPromptKey] = useState(session.promptKey ?? '');
     const [promptInjectBpm, setPromptInjectBpm] = useState(session.promptInjectBpm ?? false);
-    const [promptTimeSig, setPromptTimeSig] = useState(session.promptTimeSig ?? '');
     const [masterReverbIR, setMasterReverbIR] = useState(session.masterReverbIR ?? 'hall');
     const [masterDelayDivision, setMasterDelayDivision] = useState(session.masterDelayDivision ?? '1/4');
 
@@ -219,12 +232,15 @@ function PerformancePanelInner({
     const cueSupported = useMemo(() => isCueSupported(), []);
     const [outputDeviceId, setOutputDeviceId] = useState(session.outputDeviceId ?? session.cueDeviceId ?? '');
     const [audioDevices, setAudioDevices] = useState([]);
-    const [audioMenuAnchor, setAudioMenuAnchor] = useState(null);
     const [maxChannelCount, setMaxChannelCount] = useState(2);
     const [mainOutputPair, setMainOutputPair] = useState(session.mainOutputPair ?? 0);
     const [cueOutputPair, setCueOutputPair] = useState(session.cueOutputPair ?? 0);
 
     useEffect(() => { updateGlobal('outputDeviceId', outputDeviceId); }, [outputDeviceId, updateGlobal]);
+    // The other pages' players follow the same device. This panel stays mounted.
+    useEffect(() => {
+        if (cueSupported) setMediaOutputDevice(outputDeviceId);
+    }, [cueSupported, outputDeviceId]);
     useEffect(() => {
         updateGlobal('mainOutputPair', mainOutputPair);
         engineRef.current?.setMainOutputPair?.(mainOutputPair);
@@ -248,6 +264,7 @@ function PerformancePanelInner({
             await setCueDevice(outputDeviceId).catch(() => { /* logged in cueAudio */ });
         } else if (engine.refreshOutputGraph) {
             setMaxChannelCount(engine.refreshOutputGraph());
+            refreshCueGraph();
         }
     }, [cueSupported, outputDeviceId]);
 
@@ -270,6 +287,37 @@ function PerformancePanelInner({
         return () => ctx.removeEventListener('statechange', onStateChange);
     }, []);
 
+    // macOS (WKWebView, no setSinkId): the backend lists the Mac's output
+    // devices and makes the chosen one the default output; the page plays on
+    // the default device with all its channels, so the pairs work as usual.
+    // null = not available (other platforms, or Chromium on a Mac).
+    const [systemOutputs, setSystemOutputs] = useState(null);
+    const [systemOutput, setSystemOutput] = useState('');
+    const refreshSystemOutputs = useCallback(async () => {
+        if (cueSupported) return;
+        try {
+            const { data } = await api.get('/api/audio/outputs');
+            if (!data?.available) return;
+            setSystemOutputs(data.outputs || []);
+            setSystemOutput(data.current || '');
+        } catch { /* backend without the route: leave it unavailable */ }
+    }, [cueSupported]);
+    useEffect(() => { refreshSystemOutputs(); }, [refreshSystemOutputs]);
+    const pickSystemOutput = useCallback(async (uid) => {
+        if (!uid) return;
+        try {
+            const { data } = await api.post('/api/audio/outputs/select', { uid });
+            setSystemOutput(data?.current || uid);
+        } catch (err) {
+            console.warn('[PerformancePanel] output switch failed', err);
+            refreshSystemOutputs();
+            return;
+        }
+        // The context follows the new default device; give Core Audio a
+        // moment, then re-claim its channel count for the pair selectors.
+        setTimeout(() => bindAudioOutput(), 300);
+    }, [bindAudioOutput, refreshSystemOutputs]);
+
     const refreshAudioDevices = useCallback(async () => {
         if (!cueSupported) return;
         try {
@@ -280,19 +328,47 @@ function PerformancePanelInner({
         }
     }, [cueSupported]);
 
-    const handleOpenAudioMenu = (e) => {
-        setAudioMenuAnchor(e.currentTarget);
+    // The output device is picked in the app's Settings dialog; publish what
+    // it needs. Opening it is a user gesture, so the context can resume and
+    // report the device's real channel count: rebind then, so the pair
+    // selectors are populated even if the mount-time binding ran against a
+    // suspended context.
+    const [genMenuAnchor, setGenMenuAnchor] = useState(null);
+    const { setApi: publishAudioSettings } = useAudioSettings();
+    const refreshAudioSettings = useCallback(() => {
         refreshAudioDevices();
-        // User gesture: contexts can resume now, so the device's real channel
-        // count is readable — rebind so the pair selectors are populated even
-        // if the mount-time binding ran against a suspended context.
+        refreshSystemOutputs();
         bindAudioOutput();
-    };
-    const handleCloseAudioMenu = () => setAudioMenuAnchor(null);
-    const handlePickAudioDevice = (id) => {
-        setOutputDeviceId(id);
-        handleCloseAudioMenu();
-    };
+    }, [refreshAudioDevices, refreshSystemOutputs, bindAudioOutput]);
+    // For polling while Settings is open: the lists only, nothing rebinds.
+    const rescanAudioDevices = useCallback(() => {
+        refreshAudioDevices();
+        refreshSystemOutputs();
+    }, [refreshAudioDevices, refreshSystemOutputs]);
+    useEffect(() => {
+        if (!cueSupported && systemOutputs) {
+            publishAudioSettings({
+                supported: true,
+                systemOutput: true,
+                deviceId: systemOutput,
+                devices: systemOutputs.map((o) => ({ deviceId: o.uid, label: o.name })),
+                refresh: refreshAudioSettings,
+                rescan: rescanAudioDevices,
+                pick: pickSystemOutput,
+            });
+            return;
+        }
+        publishAudioSettings({
+            supported: cueSupported,
+            deviceId: outputDeviceId,
+            devices: audioDevices,
+            refresh: refreshAudioSettings,
+            rescan: rescanAudioDevices,
+            pick: setOutputDeviceId,
+        });
+    }, [publishAudioSettings, cueSupported, outputDeviceId, audioDevices, refreshAudioSettings,
+        rescanAudioDevices, systemOutputs, systemOutput, pickSystemOutput]);
+    useEffect(() => () => publishAudioSettings(null), [publishAudioSettings]);
 
     // Restore App-level state (model, steps, seed) once on mount via the setter
     // props the panel was given. The panel doesn't own those, so this is the
@@ -324,7 +400,6 @@ function PerformancePanelInner({
     useEffect(() => { updateGlobal('masterDb', masterDb); }, [masterDb, updateGlobal]);
     useEffect(() => { updateGlobal('promptKey', promptKey); }, [promptKey, updateGlobal]);
     useEffect(() => { updateGlobal('promptInjectBpm', promptInjectBpm); }, [promptInjectBpm, updateGlobal]);
-    useEffect(() => { updateGlobal('promptTimeSig', promptTimeSig); }, [promptTimeSig, updateGlobal]);
     useEffect(() => {
         updateGlobal('masterReverbIR', masterReverbIR);
         engineRef.current?.setMasterReverbIR?.(masterReverbIR);
@@ -474,6 +549,17 @@ function PerformancePanelInner({
         && resolvedBaseModel.startsWith('sa3-')
         && !resolvedBaseModel.endsWith('-base');
 
+    // The generation pill's label: model · LoRA · steps.
+    const genSummary = (() => {
+        if (!selectedModel) return 'Choose a model';
+        const base = baseModels.find((m) => m.name === selectedModel);
+        const modelName = base ? (base.displayName || base.name) : selectedModel;
+        const lora = selectedLora
+            ? (availableLoras.find((l) => l.path === selectedLora || (l.all_checkpoints || []).includes(selectedLora))?.name || 'LoRA')
+            : 'No LoRA';
+        return `${modelName} · ${lora} · ${isDistilledSA3 ? 8 : steps} steps`;
+    })();
+
     // Split baseModels by `kind` for the model-picker grouping. The render
     // helper is also hoisted to component scope so its MenuItems land as
     // direct children of <Select>, not nested inside a Fragment.
@@ -545,27 +631,41 @@ function PerformancePanelInner({
     // mounted behind other tabs).
     useEffect(() => {
         if (!active) return undefined;
+        const toPct = (db) => Math.max(0, Math.min(100, ((db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100));
         const tick = () => {
             const now = performance.now();
             const engine = engineRef.current;
-            const peakAmp = engine ? engine.getMasterPeak() : 0;
-            const instantDb = ampToDb(peakAmp);
-            const hold = peakHoldRef.current;
-            const elapsed = now - hold.decayedAt;
-            let displayDb = hold.db - (elapsed / 1000) * 24;
-            if (instantDb > displayDb) displayDb = instantDb;
-            if (displayDb < METER_FLOOR_DB) displayDb = METER_FLOOR_DB;
-            hold.db = displayDb;
-            hold.decayedAt = now;
-
-            const fill = meterFillRef.current;
-            if (fill) {
-                const pct = ((displayDb - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100;
-                fill.style.height = `${Math.max(0, Math.min(100, pct))}%`;
-            }
-            if (Math.abs(displayDb - peakLabelDbRef.current) > 0.5) {
-                peakLabelDbRef.current = displayDb;
-                setPeakLabelDb(displayDb);
+            const peaks = engine ? engine.getMasterPeaks() : [0, 0];
+            let loudest = METER_FLOOR_DB;
+            peaks.forEach((amp, ch) => {
+                const instantDb = ampToDb(amp);
+                const hold = peakHoldRef.current[ch];
+                let displayDb = hold.db - ((now - hold.decayedAt) / 1000) * 24;
+                if (instantDb > displayDb) displayDb = instantDb;
+                if (displayDb < METER_FLOOR_DB) displayDb = METER_FLOOR_DB;
+                hold.db = displayDb;
+                hold.decayedAt = now;
+                if (displayDb > loudest) loudest = displayDb;
+                const fill = meterFillRefs[ch].current;
+                // The gradient spans the whole track; the clip reveals it.
+                if (fill) fill.style.clipPath = `inset(${100 - toPct(displayDb)}% 0 0 0 round 999px)`;
+                const mark = peakMarkRef.current[ch];
+                if (instantDb >= mark.db) {
+                    mark.db = instantDb;
+                    mark.until = now + PEAK_HOLD_MS;
+                } else if (now > mark.until) {
+                    mark.db = Math.max(METER_FLOOR_DB, mark.db - ((now - mark.at) / 1000) * 20);
+                }
+                mark.at = now;
+                const marker = peakMarkerRefs[ch].current;
+                if (marker) {
+                    marker.style.bottom = `calc(${toPct(mark.db)}% - 2px)`;
+                    marker.style.opacity = mark.db > METER_FLOOR_DB + 1 ? '0.8' : '0';
+                }
+            });
+            if (Math.abs(loudest - peakLabelDbRef.current) > 0.5) {
+                peakLabelDbRef.current = loudest;
+                setPeakLabelDb(loudest);
             }
             meterRafRef.current = requestAnimationFrame(tick);
         };
@@ -699,11 +799,25 @@ function PerformancePanelInner({
             const sentAt = performance.now();
             try {
                 const r = await api.get('/api/link/state');
-                // Best estimate of when the backend sampled the Link clock: the
-                // round-trip midpoint (assumes ~symmetric latency). Stamping at
-                // send-time biased the beat ~½ RTT into the future, nudging
-                // quantized launches early.
-                const capturedAt = (sentAt + performance.now()) / 2;
+                const receivedAt = performance.now();
+                // When the backend read Link's clock, on our clock. The round
+                // trip's midpoint is only right when the request didn't wait
+                // on the way: a slow answer put single snapshots tens of ms
+                // off, which skewed launches and the drift correction. So the
+                // midpoints only estimate the offset between the two clocks —
+                // NTP-style, from the fastest round trip of the last 5 s, which
+                // brackets the read most tightly — and every snapshot is then
+                // placed by Link's own timestamp. Bindings without a clock
+                // fall back to the midpoint.
+                let capturedAt = (sentAt + receivedAt) / 2;
+                const micros = Number(r.data?.time_micros) || 0;
+                if (micros > 0) {
+                    const samples = linkClockRef.current;
+                    samples.push({ rtt: receivedAt - sentAt, offset: capturedAt - micros / 1000, at: receivedAt });
+                    while (samples.length > 1 && receivedAt - samples[0].at > 5000) samples.shift();
+                    const best = samples.reduce((a, b) => (b.rtt < a.rtt ? b : a));
+                    capturedAt = micros / 1000 + best.offset;
+                }
                 if (cancelled || !r.data?.enabled) return;
                 const serverBpm = Math.round(r.data.bpm);
                 if (serverBpm >= BPM_MIN && serverBpm <= BPM_MAX) {
@@ -762,6 +876,7 @@ function PerformancePanelInner({
     }, [linkOffsetKey]);
     useEffect(() => { engineRef.current?.setLinkOffsetMs(linkOffsetMs); }, [linkOffsetMs]);
     const updateLinkOffset = useCallback((ms) => {
+        ms = Math.max(LINK_OFFSET_MIN, Math.min(LINK_OFFSET_MAX, Math.round(ms)));
         setLinkOffsetMs(ms);
         try { window.localStorage.setItem(linkOffsetKey, String(ms)); } catch { /* private mode */ }
     }, [linkOffsetKey]);
@@ -846,7 +961,6 @@ function PerformancePanelInner({
     }, []);
 
     const midi = useMidi();
-    const [midiMenuAnchor, setMidiMenuAnchor] = useState(null);
 
     useEffect(() => {
         if (!midi?.learnMode) return undefined;
@@ -896,9 +1010,6 @@ function PerformancePanelInner({
         }
         if (promptInjectBpm && !/\b\d{2,3}\s*bpm\b/i.test(trimmed)) {
             additions.push(`${Math.round(bpm)} BPM`);
-        }
-        if (promptTimeSig.trim() && !lower.includes(promptTimeSig.trim().toLowerCase())) {
-            additions.push(promptTimeSig.trim());
         }
         const finalPrompt = additions.length > 0
             ? `${trimmed}${trimmed ? ', ' : ''}${additions.join(', ')}`
@@ -1075,31 +1186,33 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 0.5,
-                                minWidth: 38,
+                                px: 1.75,
+                                minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '2px',
+                                borderRadius: '999px',
                                 // Three states matching Ableton Live's button:
                                 // off → gray, on/no peers → yellow (broadcasting,
                                 // alone), on/peers → teal (sync'd with at least
                                 // one other app).
                                 bgcolor: !linkEnabled
-                                    ? '#6e6e6e'
+                                    ? perfColors.toggleOff
                                     : linkPeers > 0
-                                        ? MASTER_COLOR
-                                        : '#F5C542',
-                                color: linkEnabled ? '#000' : '#2a2a2a',
+                                        ? perfColors.master
+                                        : perfColors.toggleOn,
+                                color: onFill(!linkEnabled
+                                    ? perfColors.toggleOff
+                                    : linkPeers > 0 ? perfColors.master : perfColors.toggleOn),
                                 opacity: linkInstalling ? 0.55 : 1,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
                                     bgcolor: !linkEnabled
-                                        ? '#7d7d7d'
+                                        ? perfColors.toggleOffHover
                                         : linkPeers > 0
-                                            ? '#4DD0DE'
-                                            : '#FFD54F',
+                                            ? perfColors.masterHover
+                                            : perfColors.toggleOnHover,
                                 },
                                 '&.Mui-disabled': {
-                                    color: linkEnabled ? '#000' : '#2a2a2a',
+                                    color: perfColors.label,
                                 },
                             }}
                         >
@@ -1121,13 +1234,12 @@ function PerformancePanelInner({
                                 sx={{
                                     fontSize: perfTokens.fontSize.sm,
                                     fontWeight: 600,
-                                    px: 0.75,
+                                    px: 1.5,
                                     height: perfTokens.height.compact,
-                                    borderRadius: '2px',
-                                    border: '1px solid',
-                                    borderColor: 'divider',
+                                    borderRadius: '999px',
+                                    backgroundColor: (t) => t.palette.fragmenta.control,
                                     color: 'text.secondary',
-                                    '&:hover': { color: 'text.primary' },
+                                    '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.controlHover },
                                 }}
                             >
                                 {measuredLatencyMs === null
@@ -1142,27 +1254,34 @@ function PerformancePanelInner({
                             anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
                             transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
                         >
-                            <Box sx={{ p: 2, width: 300 }}>
-                                <Typography variant="subtitle2">Link sync</Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
-                                    This output adds {measuredLatencyMs ?? '…'} ms of delay. Fragmenta plays that
-                                    much earlier so its beats land with your Link peers.
-                                </Typography>
-                                <Typography variant="caption">
-                                    Fine-tune: {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
-                                    {' '}<Typography component="span" variant="caption" color="text.secondary">
-                                        (saved for this output)
+                            <Box sx={{ p: 2, width: 240 }}>
+                                <Typography variant="subtitle2" sx={{ mb: 1 }}>Link sync</Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 30 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>Output delay</Typography>
+                                    <Typography variant="caption">{measuredLatencyMs ?? '…'} ms</Typography>
+                                </Box>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                                    <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>Offset</Typography>
+                                    <Typography variant="caption" sx={{ mr: 0.5 }}>
+                                        {linkOffsetMs > 0 ? '+' : ''}{linkOffsetMs} ms
                                     </Typography>
-                                </Typography>
+                                    <IconButton size="small" aria-label="1 ms less" onClick={() => updateLinkOffset(linkOffsetMs - 1)}>
+                                        <MinusIcon size={14} />
+                                    </IconButton>
+                                    <IconButton size="small" aria-label="1 ms more" onClick={() => updateLinkOffset(linkOffsetMs + 1)}>
+                                        <PlusIcon size={14} />
+                                    </IconButton>
+                                </Box>
                                 <Slider
-                                    size="small" min={-50} max={150} step={1}
+                                    size="small" min={LINK_OFFSET_MIN} max={LINK_OFFSET_MAX} step={1}
                                     value={linkOffsetMs}
                                     onChange={(_, v) => updateLinkOffset(v)}
+                                    marks={[{ value: 0 }]}
                                     aria-label="Link offset in milliseconds"
                                 />
                                 <Box sx={{ display: 'flex', gap: 1 }}>
                                     <Button size="small" variant={calibrating ? 'contained' : 'outlined'} onClick={toggleCalibration}>
-                                        {calibrating ? 'Stop clicks' : 'Calibrate by ear'}
+                                        {calibrating ? 'Stop' : 'Calibrate'}
                                     </Button>
                                     <Button size="small" onClick={() => updateLinkOffset(0)} disabled={linkOffsetMs === 0}>
                                         Reset
@@ -1170,8 +1289,7 @@ function PerformancePanelInner({
                                 </Box>
                                 {calibrating && (
                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                                        Turn on Live's metronome and press play. Move the slider until
-                                        Fragmenta's click and Live's sound as one.
+                                        Match the clicks to Live's metronome.
                                     </Typography>
                                 )}
                             </Box>
@@ -1193,152 +1311,27 @@ function PerformancePanelInner({
                                 justifyContent: 'center',
                                 fontSize: perfTokens.fontSize.sm,
                                 fontWeight: 600,
-                                px: 0.5,
-                                minWidth: 38,
+                                px: 1.75,
+                                minWidth: 52,
                                 height: perfTokens.height.compact,
-                                borderRadius: '2px',
-                                bgcolor: midi?.learnMode ? '#F5C542' : '#6e6e6e',
-                                color: midi?.learnMode ? '#000' : '#2a2a2a',
+                                borderRadius: '999px',
+                                bgcolor: midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff,
+                                color: onFill(midi?.learnMode ? perfColors.toggleOn : perfColors.toggleOff),
                                 opacity: midi?.supported ? 1 : 0.45,
                                 transition: 'background-color 120ms',
                                 '&:hover': {
-                                    bgcolor: midi?.learnMode ? '#FFD54F' : '#7d7d7d',
+                                    bgcolor: midi?.learnMode ? perfColors.toggleOnHover : perfColors.toggleOffHover,
                                 },
                                 '&.Mui-disabled': {
-                                    color: '#2a2a2a',
+                                    color: perfColors.label,
                                 },
                             }}
                         >
-                            MIDI
+                            MIDI Learn
                         </ButtonBase>
                     </span>
                 </Tooltip>
-                <Tooltip title={TIPS.perf.midiSettings}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <IconButton
-                            size="small"
-                            onClick={(e) => setMidiMenuAnchor(e.currentTarget)}
-                            sx={styles.compactIconBtn('lg')}
-                        >
-                            <SettingsIcon size={perfTokens.icon.md} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <MidiConfigMenu
-                    anchorEl={midiMenuAnchor}
-                    open={Boolean(midiMenuAnchor)}
-                    onClose={() => setMidiMenuAnchor(null)}
-                />
 
-                <Tooltip
-                    title={TIPS.perf.audioSetup(cueSupported)}
-                >
-                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-                        <IconButton
-                            size="small"
-                            onClick={handleOpenAudioMenu}
-                            disabled={!cueSupported}
-                            sx={styles.compactIconBtn('lg')}
-                        >
-                            <AudioSetupIcon size={perfTokens.icon.md} />
-                        </IconButton>
-                    </span>
-                </Tooltip>
-                <Menu
-                    anchorEl={audioMenuAnchor}
-                    open={Boolean(audioMenuAnchor)}
-                    onClose={handleCloseAudioMenu}
-                    MenuListProps={{ sx: { py: 0 } }}
-                    PaperProps={{
-                        sx: {
-                            width: 300,
-                            borderRadius: 2,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                        },
-                    }}
-                >
-                    {/* Title bar — matches the Presets / MIDI menus. */}
-                    <Box sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        px: 1.5,
-                        pt: 1.25,
-                        pb: 1,
-                    }}>
-                        <Typography sx={{ ...perfTokens.caps, color: 'text.secondary' }}>
-                            Audio Output
-                        </Typography>
-                        <IconButton onClick={handleCloseAudioMenu} sx={styles.compactIconBtn('md')}>
-                            <CloseXIcon size={perfTokens.icon.sm} />
-                        </IconButton>
-                    </Box>
-
-                    <Divider />
-
-                    <Box sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
-                        <Typography sx={{ ...perfTokens.labelMuted, display: 'block' }}>
-                            Output device
-                        </Typography>
-                    </Box>
-                    <Box sx={{ pb: 0.75, px: 0.75 }}>
-                        <MenuItem
-                            onClick={() => handlePickAudioDevice('')}
-                            selected={outputDeviceId === ''}
-                            sx={{
-                                borderRadius: 1,
-                                py: 0.5,
-                                px: 1,
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: 500,
-                            }}
-                        >
-                            <Box component="span" sx={{
-                                flex: 1,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                            }}>
-                                System device (default)
-                            </Box>
-                        </MenuItem>
-                        {audioDevices.length === 0 && (
-                            <Box sx={{ px: 1, py: 0.5 }}>
-                                <Typography sx={{
-                                    fontSize: perfTokens.fontSize.xs,
-                                    color: 'text.disabled',
-                                    fontStyle: 'italic',
-                                }}>
-                                    No additional output devices detected
-                                </Typography>
-                            </Box>
-                        )}
-                        {audioDevices.map(d => (
-                            <MenuItem
-                                key={d.deviceId}
-                                onClick={() => handlePickAudioDevice(d.deviceId)}
-                                selected={outputDeviceId === d.deviceId}
-                                sx={{
-                                    borderRadius: 1,
-                                    py: 0.5,
-                                    px: 1,
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: 500,
-                                }}
-                            >
-                                <Box component="span" sx={{
-                                    flex: 1,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                }}>
-                                    {d.label || `Output (${d.deviceId.slice(0, 6)}…)`}
-                                </Box>
-                            </MenuItem>
-                        ))}
-                    </Box>
-                </Menu>
 
                 <Tooltip title={TIPS.perf.presets}>
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
@@ -1587,7 +1580,8 @@ function PerformancePanelInner({
                                 textAlign: 'right',
                                 fontVariantNumeric: 'tabular-nums',
                                 fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
+                                fontWeight: 600,
+                                paddingLeft: 0,
                                 paddingRight: 0,
                             },
                         }}
@@ -1600,10 +1594,11 @@ function PerformancePanelInner({
                         }}
                         sx={{
                             ...styles.pillControl,
-                            width: 92,
+                            width: 76,
                             '& .MuiOutlinedInput-root': {
                                 ...styles.pillControl['& .MuiOutlinedInput-root'],
-                                pr: 1,
+                                pl: 1.25,
+                                pr: 1.25,
                             },
                             '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': {
                                 WebkitAppearance: 'none',
@@ -1626,7 +1621,7 @@ function PerformancePanelInner({
                                 onClick={handlePlayAll}
                                 disabled={!anyLoaded}
                                 aria-label="Play All"
-                                sx={styles.masterIconBtn(PLAY_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.play)}
                             >
                                 <PlayAllIcon size={14} fill="currentColor" />
                             </IconButton>
@@ -1641,7 +1636,7 @@ function PerformancePanelInner({
                                 onClick={handleStopAll}
                                 disabled={!anyPlaying}
                                 aria-label="Stop All"
-                                sx={styles.masterIconBtn(STOP_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.stop)}
                             >
                                 <StopAllIcon size={14} fill="currentColor" />
                             </IconButton>
@@ -1659,7 +1654,7 @@ function PerformancePanelInner({
                                 disableRipple
                                 onClick={handleToggleRecord}
                                 aria-label={recording ? 'Stop recording' : 'Record performance'}
-                                sx={styles.masterIconBtn(RECORD_COLOR)}
+                                sx={styles.masterIconBtn(perfColors.record)}
                             >
                                 {recording
                                     ? <StopAllIcon size={14} fill="currentColor" />
@@ -1669,46 +1664,367 @@ function PerformancePanelInner({
                     </Tooltip>
                 </MidiMappable>
 
-                {/* Main / Cue output channel-pair selectors. Pushed to the right
-                    edge of the bar via ml: 'auto' so the transport controls keep
-                    their cluster on the left. Pairs are derived from the current
-                    device's maxChannelCount; Stage 1 stores the selection,
-                    Stage 2 wires the ChannelMergerNode routing. */}
-                {(() => {
-                    const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
-                    const pairs = Array.from({ length: pairCount }, (_, i) => ({
-                        value: i,
-                        label: `${i * 2 + 1}–${i * 2 + 2}`,
-                    }));
-                    const fieldGroup = (label, value, onChange) => (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                            <Typography component="span" sx={perfTokens.labelMuted}>{label}</Typography>
-                            <FormControl size="small" sx={{ ...styles.pillControl, width: 84 }}>
-                                <Select value={value} onChange={onChange}>
-                                    {pairs.map(p => (
-                                        <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                            Ch {p.label}
+                {/* Generation settings: one summary pill; the model, LoRA,
+                    steps and seed live in its popover (set once, rarely
+                    changed mid-set). */}
+                <ButtonBase
+                    onClick={(e) => setGenMenuAnchor(e.currentTarget)}
+                    aria-label="Generation settings"
+                    sx={(theme) => ({
+                        ml: 'auto',
+                        height: perfTokens.height.compact,
+                        px: 1.75,
+                        gap: 0.75,
+                        maxWidth: 360,
+                        borderRadius: '999px',
+                        bgcolor: theme.palette.fragmenta.control,
+                        fontSize: perfTokens.fontSize.sm,
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        '&:hover': { bgcolor: theme.palette.fragmenta.controlHover },
+                    })}
+                >
+                    <Box component="span" sx={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {genSummary}
+                    </Box>
+                    <ChevronDownIcon size={14} />
+                </ButtonBase>
+                <Popover
+                    open={Boolean(genMenuAnchor)}
+                    anchorEl={genMenuAnchor}
+                    onClose={() => setGenMenuAnchor(null)}
+                    anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+                    transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+                    slotProps={{ paper: { sx: { width: 340, p: 2.5, mt: 1, display: 'flex', flexDirection: 'column', gap: 2 } } }}
+                >
+                    <Box>
+                        <Box component="div" sx={{ ...perfTokens.caps, color: 'text.secondary', mb: 0.75 }}>Model</Box>
+                    <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                        <Select
+                            value={selectedModel || ''}
+                            onChange={handleModelChange}
+                            displayEmpty
+                            renderValue={(value) => {
+                                if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
+                                const base = baseModels.find((m) => m.name === value);
+                                if (base) return base.displayName || base.name;
+                                return value;
+                            }}
+                        >
+                            {/* Distilled (post-trained) and Base SA3 variants are
+                                split by their `kind` field. modelRow is defined
+                                inline at component scope so MUI Select sees the
+                                generated MenuItems as direct flat children — wrapping
+                                them in an IIFE-returned Fragment broke selection
+                                (Select couldn't find the option matching `value`). */}
+                            {distilledBaseModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Distilled ──
+                                </MenuItem>
+                            )}
+                            {distilledBaseModels.map(renderBaseModelRow)}
+                            {trueBaseModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Base ──
+                                </MenuItem>
+                            )}
+                            {trueBaseModels.map(renderBaseModelRow)}
+                            {availableModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Fine-tuned ──
+                                </MenuItem>
+                            )}
+                            {availableModels.map((model) => (
+                                <MenuItem
+                                    key={model.name}
+                                    value={String(model.name)}
+                                    sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
+                                >
+                                    <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {model.name}
+                                    </Box>
+                                    <Tooltip title={TIPS.perf.deleteFineTuned}>
+                                        <IconButton
+                                            size="small"
+                                            onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                e.preventDefault();
+                                                handleDeleteFineTuned(model.name);
+                                            }}
+                                            sx={styles.compactIconBtn('md', 'danger')}
+                                        >
+                                            <DeleteIcon size={perfTokens.icon.md} />
+                                        </IconButton>
+                                    </Tooltip>
+                                </MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                    </Box>
+                    <Box>
+                        <Box component="div" sx={{ ...perfTokens.caps, color: 'text.secondary', mb: 0.75 }}>LoRA</Box>
+                    {/* Combined LoRA + checkpoint picker — every option is a
+                        specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
+                        show a ListSubheader with the LoRA name + delete, then one
+                        MenuItem per checkpoint indented below. Single-checkpoint
+                        LoRAs collapse to one MenuItem with the LoRA name and
+                        inline delete. Saves the separate Ckpt dropdown's slot. */}
+                    {(() => {
+                        const isBaseModel = baseModels.some(m => m.name === selectedModel);
+                        const compatibleLoras = isBaseModel
+                            ? filterLorasForModel(availableLoras, selectedModel)
+                            : [];
+                        const findLoraForPath = (path) => compatibleLoras.find(
+                            l => l.path === path || (l.all_checkpoints || []).includes(path)
+                        );
+                        const parseCheckpointLabel = (filepath) => {
+                            const name = (filepath || '').split('/').pop() || filepath || '';
+                            const m = name.match(/epoch=(\d+)-step=(\d+)/);
+                            if (m) return `Ep ${m[1]} · ${m[2]}`;
+                            return name.replace(/\.ckpt$/i, '');
+                        };
+                        const loraDisabled = compatibleLoras.length === 0;
+
+                        const deleteBtn = (loraName, size = 'md') => (
+                            <Tooltip title={TIPS.perf.deleteLora}>
+                                <IconButton
+                                    size="small"
+                                    onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        handleDeleteLora(loraName);
+                                    }}
+                                    sx={styles.compactIconBtn(size, 'danger')}
+                                >
+                                    <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
+                                </IconButton>
+                            </Tooltip>
+                        );
+
+                        return (
+                            <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: '100%' }}>
+                                <Select
+                                    value={selectedLora || ''}
+                                    onChange={(e) => onSelectLora?.(String(e.target.value))}
+                                    displayEmpty
+                                    renderValue={(value) => {
+                                        if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
+                                        const lora = findLoraForPath(value);
+                                        if (!lora) return value;
+                                        const ckpts = lora.all_checkpoints || [lora.path];
+                                        return ckpts.length === 1
+                                            ? lora.name
+                                            : `${lora.name} · ${parseCheckpointLabel(value)}`;
+                                    }}
+                                    MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
+                                >
+                                    <MenuItem value="">
+                                        <em>No LoRA</em>
+                                    </MenuItem>
+                                    {compatibleLoras.flatMap((lora) => {
+                                        const ckpts = lora.all_checkpoints || [lora.path];
+                                        if (ckpts.length <= 1) {
+                                            // Single-checkpoint LoRA collapses to one row
+                                            // with the LoRA name and inline delete.
+                                            return [
+                                                <MenuItem
+                                                    key={`${lora.name}::${ckpts[0]}`}
+                                                    value={ckpts[0]}
+                                                    sx={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: 1,
+                                                        pr: 0.5,
+                                                        fontSize: perfTokens.fontSize.sm,
+                                                    }}
+                                                >
+                                                    <Box component="span" sx={{
+                                                        flex: 1,
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis',
+                                                        whiteSpace: 'nowrap',
+                                                    }}>
+                                                        {lora.name}
+                                                    </Box>
+                                                    {deleteBtn(lora.name)}
+                                                </MenuItem>,
+                                            ];
+                                        }
+                                        // Multi-checkpoint LoRA — subheader with name +
+                                        // delete, then one MenuItem per checkpoint.
+                                        return [
+                                            <ListSubheader
+                                                key={`${lora.name}::header`}
+                                                disableSticky
+                                                sx={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    gap: 1,
+                                                    pr: 0.5,
+                                                    lineHeight: 1.6,
+                                                    fontSize: perfTokens.fontSize.xs,
+                                                    color: 'text.secondary',
+                                                    textTransform: 'uppercase',
+                                                    letterSpacing: perfTokens.letterSpacing.wide,
+                                                    bgcolor: 'background.paper',
+                                                }}
+                                            >
+                                                <Box component="span" sx={{
+                                                    flex: 1,
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {lora.name}
+                                                </Box>
+                                                {deleteBtn(lora.name, 'sm')}
+                                            </ListSubheader>,
+                                            ...ckpts.map((ckpt, i) => (
+                                                <MenuItem
+                                                    key={`${lora.name}::${ckpt}`}
+                                                    value={ckpt}
+                                                    sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
+                                                >
+                                                    {parseCheckpointLabel(ckpt)}
+                                                    {i === ckpts.length - 1 ? ' (latest)' : ''}
+                                                </MenuItem>
+                                            )),
+                                        ];
+                                    })}
+                                </Select>
+                            </FormControl>
+                        );
+                    })()}
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', width: 56 }}>
+                            Steps
+                        </Box>
+                        <Tooltip
+                            placement="right"
+                            title={TIPS.perf.steps(isDistilledSA3)}
+                        >
+                            <FormControl size="small" sx={{ ...styles.pillControl, width: 90 }}>
+
+                                <Select
+                                    value={isDistilledSA3 ? 8 : steps}
+                                    onChange={(e) => onStepsChange?.(Number(e.target.value))}
+                                    disabled={isDistilledSA3}
+                                    renderValue={(value) => `${value}`}
+                                >
+                                    {isDistilledSA3 && (
+                                        <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                            8 (locked)
+                                        </MenuItem>
+                                    )}
+                                    {[50, 100, 150, 200, 250].map((n) => (
+                                        <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
+                                            {n}
                                         </MenuItem>
                                     ))}
                                 </Select>
                             </FormControl>
+                        </Tooltip>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', width: 56 }}>
+                            Seed
                         </Box>
-                    );
-                    return (
-                        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1 }}>
-                            {fieldGroup(
-                                'Main out',
-                                Math.min(mainOutputPair, pairCount - 1),
-                                (e) => setMainOutputPair(Number(e.target.value)),
-                            )}
-                            {fieldGroup(
-                                'Cue out',
-                                Math.min(cueOutputPair, pairCount - 1),
-                                (e) => setCueOutputPair(Number(e.target.value)),
-                            )}
-                        </Box>
-                    );
-                })()}
+                        <FormControlLabel
+                            sx={{ mr: 0, ml: 0.25 }}
+                            control={
+                                <Switch
+                                    size="small"
+                                    checked={randomSeed}
+                                    onChange={(e) => onRandomSeedChange?.(e.target.checked)}
+                                />
+                            }
+                            label={
+                                <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                    Random
+                                </Typography>
+                            }
+                        />
+                        <TextField
+                            size="small"
+                            type="number"
+                            placeholder="42"
+                            value={seedValue}
+                            onChange={(e) => onSeedValueChange?.(e.target.value)}
+                            disabled={randomSeed}
+                            // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
+                            inputProps={{
+                                min: 0,
+                                max: 4294967295,
+                                step: 1,
+                                style: {
+                                    fontVariantNumeric: 'tabular-nums',
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, flex: 1 }}
+                        />
+                    </Box>
+                </Popover>
+
+                {/* Prompt auto-inject — Key and the master tempo, appended to
+                    every generated prompt when set. */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <Box component="span" sx={perfTokens.labelMuted}>
+                        Add to prompt
+                    </Box>
+                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
+                        <TextField
+                            size="small"
+                            placeholder="Key"
+                            value={promptKey}
+                            onChange={(e) => setPromptKey(e.target.value)}
+                            inputProps={{
+                                'aria-label': 'Key to inject into prompt',
+                                style: {
+                                    fontSize: perfTokens.fontSize.sm,
+                                    fontWeight: perfTokens.weight.bold,
+                                },
+                            }}
+                            sx={{ ...styles.pillControl, width: 78 }}
+                        />
+                    </Tooltip>
+                    <Tooltip
+                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
+                        placement="top"
+                        arrow
+                        enterDelay={500}
+                    >
+                        <ButtonBase
+                            onClick={() => setPromptInjectBpm((p) => !p)}
+                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
+                            aria-pressed={promptInjectBpm}
+                            sx={(theme) => ({
+                                height: perfTokens.height.compact,
+                                minWidth: 62,
+                                px: 1,
+                                borderRadius: '999px',
+                                // Lights up only when on; otherwise a plain control pill.
+                                backgroundColor: promptInjectBpm ? perfColors.master : theme.palette.fragmenta.control,
+                                color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
+                                fontSize: perfTokens.fontSize.sm,
+                                fontWeight: perfTokens.weight.bold,
+                                fontVariantNumeric: 'tabular-nums',
+                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
+                                '&:hover': {
+                                    backgroundColor: promptInjectBpm ? perfColors.master : theme.palette.fragmenta.controlHover,
+                                    color: promptInjectBpm ? onFill(perfColors.master) : 'text.secondary',
+                                },
+                            })}
+                        >
+                            BPM
+                        </ButtonBase>
+                    </Tooltip>
+                </Box>
             </Paper>
 
             {error && (
@@ -1741,83 +2057,63 @@ function PerformancePanelInner({
                     ))}
                 </Box>
 
-                <Box sx={styles.masterStrip(MASTER_COLOR)}>
-                    <Box sx={styles.masterHeader(MASTER_COLOR)}>
-                        <Box sx={styles.masterBadge(MASTER_COLOR)}>Master</Box>
+                <Box sx={styles.masterStrip(perfColors.master)}>
+                    <Box sx={styles.masterHeader(perfColors.master)}>
+                        <Box sx={styles.masterBadge(perfColors.master)}>Master</Box>
                     </Box>
 
-                    {/* Middle group — fader+meter (fixed height) plus the
-                        DBFS/Pk readouts, vertically centered in the remaining
-                        space between the header and the FX pickers below. */}
-                    <Box sx={{
-                        flex: 1,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 0.5,
-                        minHeight: 0,
-                    }}>
-                        <Box sx={styles.masterFaderWrap}>
-                            <Box sx={styles.masterMeterTrack}>
-                                <Box ref={meterFillRef} sx={styles.masterMeterFill(MASTER_COLOR)} />
-                                <Box sx={styles.masterMeterSegments} />
+                    {/* Output level: a big knob on the fader taper (faderLaw), so
+                        MIDI and the stored value stay in dB. Double-click: 0 dB. */}
+                    <MidiMappable
+                        id="master.fader"
+                        label="Master Fader"
+                        kind="continuous"
+                        curve="fader"
+                        min={MASTER_DB_MIN}
+                        max={MASTER_DB_MAX}
+                        value={masterDb}
+                        onChange={(v) => handleMasterChange(null, v)}
+                    >
+                        <RotaryKnob
+                            value={faderDbToPos(masterDb)}
+                            min={0}
+                            max={1}
+                            step={0.005}
+                            detent={0}
+                            center={FADER_UNITY_POS}
+                            origin={0}
+                            size={96}
+                            valueInside={false}
+                            ariaLabel="Master output level"
+                            format={(pos) => `${formatDb(faderPosToDb(pos))} dB`}
+                            onChange={(pos) => handleMasterChange(null, faderPosToDb(pos))}
+                        />
+                    </MidiMappable>
+                    <Box sx={styles.masterReadouts}>
+                        <Typography sx={styles.masterValue}>{formatDb(masterDb)} dB</Typography>
+                        <Typography sx={styles.masterCaption}>Output</Typography>
+                    </Box>
+
+                    {/* Left/right meters on a dB scale, with peak-hold markers. */}
+                    <Box sx={styles.masterMeters} role="img" aria-label="Master output meters">
+                        <Box sx={styles.masterScale} aria-hidden>
+                            {METER_SCALE_DB.map((db) => (
+                                <Box key={db} component="span" sx={styles.masterScaleLabel(((db - METER_FLOOR_DB) / -METER_FLOOR_DB) * 100)}>
+                                    {db === METER_FLOOR_DB ? '−∞' : db === 0 ? '0' : `−${-db}`}
+                                </Box>
+                            ))}
+                        </Box>
+                        {['L', 'R'].map((ch, i) => (
+                            <Box key={ch} sx={styles.masterMeterCol}>
+                                <Box sx={styles.masterMeterTrack}>
+                                    <Box ref={meterFillRefs[i]} sx={styles.masterMeterFill(perfColors.master)} />
+                                    <Box ref={peakMarkerRefs[i]} sx={styles.masterPeakMarker} />
+                                </Box>
+                                <Typography component="span" sx={styles.masterMeterLabel}>{ch}</Typography>
                             </Box>
-                            <MidiMappable
-                                id="master.fader"
-                                label="Master Fader"
-                                kind="continuous"
-                                curve="fader"
-                                min={MASTER_DB_MIN}
-                                max={MASTER_DB_MAX}
-                                value={masterDb}
-                                onChange={(v) => handleMasterChange(null, v)}
-                                sx={{
-                                    alignSelf: 'stretch',
-                                    // Fixed-width lane wide enough for the 16 px
-                                    // thumb plus a touch of hit area. Without an
-                                    // explicit width the wrapper would either
-                                    // collapse to nothing (no flex parent on the
-                                    // slider) or stretch to fill (with flex: 1),
-                                    // which pinned the fader to the left edge.
-                                    width: 20,
-                                    display: 'flex',
-                                    justifyContent: 'center',
-                                }}
-                            >
-                                <Slider
-                                    orientation="vertical"
-                                    // Slider travels in tapered POSITION space
-                                    // (0..1); the dB value rides through
-                                    // faderLaw so unity sits ~80% up with
-                                    // boost above. handleMasterChange stays in
-                                    // dB (readout, MIDI, engine unchanged).
-                                    value={faderDbToPos(masterDb)}
-                                    onChange={(_, pos) => handleMasterChange(null, faderPosToDb(pos))}
-                                    min={0}
-                                    max={1}
-                                    step={0.002}
-                                    marks={[{ value: FADER_UNITY_POS }]}
-                                    sx={styles.masterFader(MASTER_COLOR)}
-                                />
-                            </MidiMappable>
-                        </Box>
-
-                        <Box sx={styles.masterReadouts}>
-                            <Typography sx={styles.masterValue}>
-                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                    DBFS
-                                </Box>
-                                {' '}{formatDb(masterDb)}
-                            </Typography>
-                            <Typography sx={styles.masterPeakValue}>
-                                <Box component="span" sx={{ ...perfTokens.caps, color: 'inherit' }}>
-                                    Pk
-                                </Box>
-                                {' '}{formatDb(peakLabelDb)}
-                            </Typography>
-                        </Box>
+                        ))}
                     </Box>
+                    <Typography sx={styles.masterPeakValue}>Peak {formatDb(peakLabelDb)} dB</Typography>
 
                     {/* Master FX pickers — Reverb IR and Delay division.
                         No wet sliders: the shared FX run always-on, and the
@@ -1826,9 +2122,39 @@ function PerformancePanelInner({
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 0.75,
-                        pt: 0.75,
-                        borderTop: `1px solid ${MASTER_COLOR}33`,
+                        alignSelf: 'stretch',
+                        mt: 'auto',
                     }}>
+                        {/* Output channel pairs (from the device's channel
+                            count), above the shared FX. */}
+                        {(() => {
+                            const pairCount = Math.max(1, Math.floor(maxChannelCount / 2));
+                            const pairs = Array.from({ length: pairCount }, (_, i) => ({
+                                value: i,
+                                label: `${i * 2 + 1}–${i * 2 + 2}`,
+                            }));
+                            const picker = (label, value, onChange) => (
+                                <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
+                                    <Select
+                                        value={Math.min(value, pairCount - 1)}
+                                        onChange={(e) => onChange(Number(e.target.value))}
+                                        renderValue={(v) => `${label} · ${pairs[v]?.label ?? '—'}`}
+                                    >
+                                        {pairs.map((p) => (
+                                            <MenuItem key={p.value} value={p.value} sx={{ fontSize: perfTokens.fontSize.sm }}>
+                                                Ch {p.label}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            );
+                            return (
+                                <>
+                                    {picker('Main', mainOutputPair, setMainOutputPair)}
+                                    {picker('Cue', cueOutputPair, setCueOutputPair)}
+                                </>
+                            );
+                        })()}
                         <FormControl size="small" sx={{ ...styles.pillControl, width: '100%' }}>
                             <Select
                                 value={masterReverbIR}
@@ -1865,354 +2191,6 @@ function PerformancePanelInner({
                 </Box>
             </Box>
 
-            <Paper sx={{ ...styles.barCard, gap: 2.5, mt: 1 }}>
-                {/* Model + artifact pickers — moved here from the top row so the
-                    primary strip stays just BPM + transport. Each is gated so
-                    they only appear when relevant. */}
-                <FormControl size="small" sx={{ ...styles.pillControl, width: 140 }}>
-                    <Select
-                        value={selectedModel || ''}
-                        onChange={handleModelChange}
-                        displayEmpty
-                        renderValue={(value) => {
-                            if (!value) return <em style={{ opacity: 0.6 }}>Model</em>;
-                            const base = baseModels.find((m) => m.name === value);
-                            if (base) return base.displayName || base.name;
-                            return value;
-                        }}
-                    >
-                        {/* Distilled (post-trained) and Base SA3 variants are
-                            split by their `kind` field. modelRow is defined
-                            inline at component scope so MUI Select sees the
-                            generated MenuItems as direct flat children — wrapping
-                            them in an IIFE-returned Fragment broke selection
-                            (Select couldn't find the option matching `value`). */}
-                        {distilledBaseModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Distilled ──
-                            </MenuItem>
-                        )}
-                        {distilledBaseModels.map(renderBaseModelRow)}
-                        {trueBaseModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Base ──
-                            </MenuItem>
-                        )}
-                        {trueBaseModels.map(renderBaseModelRow)}
-                        {availableModels.length > 0 && (
-                            <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
-                                ── Fine-tuned ──
-                            </MenuItem>
-                        )}
-                        {availableModels.map((model) => (
-                            <MenuItem
-                                key={model.name}
-                                value={String(model.name)}
-                                sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, pr: 0.5, fontSize: perfTokens.fontSize.sm }}
-                            >
-                                <Box component="span" sx={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {model.name}
-                                </Box>
-                                <Tooltip title={TIPS.perf.deleteFineTuned}>
-                                    <IconButton
-                                        size="small"
-                                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            e.preventDefault();
-                                            handleDeleteFineTuned(model.name);
-                                        }}
-                                        sx={styles.compactIconBtn('md', 'danger')}
-                                    >
-                                        <DeleteIcon size={perfTokens.icon.md} />
-                                    </IconButton>
-                                </Tooltip>
-                            </MenuItem>
-                        ))}
-                    </Select>
-                </FormControl>
-
-                {/* Combined LoRA + checkpoint picker — every option is a
-                    specific (LoRA, checkpoint) pair. Multi-checkpoint LoRAs
-                    show a ListSubheader with the LoRA name + delete, then one
-                    MenuItem per checkpoint indented below. Single-checkpoint
-                    LoRAs collapse to one MenuItem with the LoRA name and
-                    inline delete. Saves the separate Ckpt dropdown's slot. */}
-                {(() => {
-                    const isBaseModel = baseModels.some(m => m.name === selectedModel);
-                    const compatibleLoras = isBaseModel
-                        ? filterLorasForModel(availableLoras, selectedModel)
-                        : [];
-                    const findLoraForPath = (path) => compatibleLoras.find(
-                        l => l.path === path || (l.all_checkpoints || []).includes(path)
-                    );
-                    const parseCheckpointLabel = (filepath) => {
-                        const name = (filepath || '').split('/').pop() || filepath || '';
-                        const m = name.match(/epoch=(\d+)-step=(\d+)/);
-                        if (m) return `Ep ${m[1]} · ${m[2]}`;
-                        return name.replace(/\.ckpt$/i, '');
-                    };
-                    const loraDisabled = compatibleLoras.length === 0;
-
-                    const deleteBtn = (loraName, size = 'md') => (
-                        <Tooltip title={TIPS.perf.deleteLora}>
-                            <IconButton
-                                size="small"
-                                onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    handleDeleteLora(loraName);
-                                }}
-                                sx={styles.compactIconBtn(size, 'danger')}
-                            >
-                                <DeleteIcon size={perfTokens.icon[size === 'sm' ? 'sm' : 'md']} />
-                            </IconButton>
-                        </Tooltip>
-                    );
-
-                    return (
-                        <FormControl size="small" disabled={loraDisabled} sx={{ ...styles.pillControl, width: 180 }}>
-                            <Select
-                                value={selectedLora || ''}
-                                onChange={(e) => onSelectLora?.(String(e.target.value))}
-                                displayEmpty
-                                renderValue={(value) => {
-                                    if (!value) return <em style={{ opacity: 0.6 }}>No LoRA</em>;
-                                    const lora = findLoraForPath(value);
-                                    if (!lora) return value;
-                                    const ckpts = lora.all_checkpoints || [lora.path];
-                                    return ckpts.length === 1
-                                        ? lora.name
-                                        : `${lora.name} · ${parseCheckpointLabel(value)}`;
-                                }}
-                                MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
-                            >
-                                <MenuItem value="">
-                                    <em>No LoRA</em>
-                                </MenuItem>
-                                {compatibleLoras.flatMap((lora) => {
-                                    const ckpts = lora.all_checkpoints || [lora.path];
-                                    if (ckpts.length <= 1) {
-                                        // Single-checkpoint LoRA collapses to one row
-                                        // with the LoRA name and inline delete.
-                                        return [
-                                            <MenuItem
-                                                key={`${lora.name}::${ckpts[0]}`}
-                                                value={ckpts[0]}
-                                                sx={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    gap: 1,
-                                                    pr: 0.5,
-                                                    fontSize: perfTokens.fontSize.sm,
-                                                }}
-                                            >
-                                                <Box component="span" sx={{
-                                                    flex: 1,
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                }}>
-                                                    {lora.name}
-                                                </Box>
-                                                {deleteBtn(lora.name)}
-                                            </MenuItem>,
-                                        ];
-                                    }
-                                    // Multi-checkpoint LoRA — subheader with name +
-                                    // delete, then one MenuItem per checkpoint.
-                                    return [
-                                        <ListSubheader
-                                            key={`${lora.name}::header`}
-                                            disableSticky
-                                            sx={{
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'space-between',
-                                                gap: 1,
-                                                pr: 0.5,
-                                                lineHeight: 1.6,
-                                                fontSize: perfTokens.fontSize.xs,
-                                                color: 'text.secondary',
-                                                textTransform: 'uppercase',
-                                                letterSpacing: perfTokens.letterSpacing.wide,
-                                                bgcolor: 'background.paper',
-                                            }}
-                                        >
-                                            <Box component="span" sx={{
-                                                flex: 1,
-                                                overflow: 'hidden',
-                                                textOverflow: 'ellipsis',
-                                                whiteSpace: 'nowrap',
-                                            }}>
-                                                {lora.name}
-                                            </Box>
-                                            {deleteBtn(lora.name, 'sm')}
-                                        </ListSubheader>,
-                                        ...ckpts.map((ckpt, i) => (
-                                            <MenuItem
-                                                key={`${lora.name}::${ckpt}`}
-                                                value={ckpt}
-                                                sx={{ fontSize: perfTokens.fontSize.sm, pl: 3 }}
-                                            >
-                                                {parseCheckpointLabel(ckpt)}
-                                                {i === ckpts.length - 1 ? ' (latest)' : ''}
-                                            </MenuItem>
-                                        )),
-                                    ];
-                                })}
-                            </Select>
-                        </FormControl>
-                    );
-                })()}
-
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Steps
-                    </Box>
-                    <Tooltip
-                        placement="right"
-                        title={TIPS.perf.steps(isDistilledSA3)}
-                    >
-                        <FormControl size="small" sx={{ ...styles.pillControl, width: 68 }}>
-
-                            <Select
-                                value={isDistilledSA3 ? 8 : steps}
-                                onChange={(e) => onStepsChange?.(Number(e.target.value))}
-                                disabled={isDistilledSA3}
-                                renderValue={(value) => `${value}`}
-                            >
-                                {isDistilledSA3 && (
-                                    <MenuItem value={8} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                        8 (locked)
-                                    </MenuItem>
-                                )}
-                                {[50, 100, 150, 200, 250].map((n) => (
-                                    <MenuItem key={n} value={n} sx={{ fontSize: perfTokens.fontSize.sm, fontVariantNumeric: 'tabular-nums' }}>
-                                        {n}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Tooltip>
-                </Box>
-
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Seed
-                    </Box>
-                    <FormControlLabel
-                        sx={{ mr: 0, ml: 0.25 }}
-                        control={
-                            <Switch
-                                size="small"
-                                checked={randomSeed}
-                                onChange={(e) => onRandomSeedChange?.(e.target.checked)}
-                            />
-                        }
-                        label={
-                            <Typography component="span" sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                Random
-                            </Typography>
-                        }
-                    />
-                    <TextField
-                        size="small"
-                        type="number"
-                        placeholder="42"
-                        value={seedValue}
-                        onChange={(e) => onSeedValueChange?.(e.target.value)}
-                        disabled={randomSeed}
-                        // inputProps.style wins against MuiInputBase-inputSizeSmall's 14px default.
-                        inputProps={{
-                            min: 0,
-                            max: 4294967295,
-                            step: 1,
-                            style: {
-                                fontVariantNumeric: 'tabular-nums',
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
-                            },
-                        }}
-                        sx={{ ...styles.pillControl, width: 78 }}
-                    />
-                </Box>
-
-                {/* Prompt auto-inject — Key / Tempo / Time sig fields. Each
-                    is appended to every generated prompt when populated; empty
-                    fields are skipped. Replaces the old Auto BPM toggle. */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Box component="span" sx={perfTokens.labelMuted}>
-                        Inject
-                    </Box>
-                    <Tooltip title={TIPS.perf.promptKey} placement="top" arrow enterDelay={500}>
-                        <TextField
-                            size="small"
-                            placeholder="Key"
-                            value={promptKey}
-                            onChange={(e) => setPromptKey(e.target.value)}
-                            inputProps={{
-                                'aria-label': 'Key to inject into prompt',
-                                style: {
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: perfTokens.weight.bold,
-                                },
-                            }}
-                            sx={{ ...styles.pillControl, width: 78 }}
-                        />
-                    </Tooltip>
-                    <Tooltip
-                        title={TIPS.perf.bpmInject(promptInjectBpm, bpm)}
-                        placement="top"
-                        arrow
-                        enterDelay={500}
-                    >
-                        <ButtonBase
-                            onClick={() => setPromptInjectBpm((p) => !p)}
-                            aria-label={promptInjectBpm ? 'Disable master BPM injection' : 'Enable master BPM injection'}
-                            aria-pressed={promptInjectBpm}
-                            sx={(theme) => ({
-                                height: perfTokens.height.compact,
-                                minWidth: 62,
-                                px: 1,
-                                borderRadius: 1.5,
-                                border: '1px solid',
-                                borderColor: promptInjectBpm ? MASTER_COLOR : theme.palette.divider,
-                                backgroundColor: promptInjectBpm ? MASTER_COLOR : 'transparent',
-                                color: promptInjectBpm ? '#0c1018' : 'text.disabled',
-                                fontSize: perfTokens.fontSize.sm,
-                                fontWeight: perfTokens.weight.bold,
-                                fontVariantNumeric: 'tabular-nums',
-                                transition: 'background-color 120ms, color 120ms, border-color 120ms',
-                                '&:hover': {
-                                    backgroundColor: promptInjectBpm ? MASTER_COLOR : 'action.hover',
-                                    color: promptInjectBpm ? '#0c1018' : 'text.secondary',
-                                },
-                            })}
-                        >
-                            {promptInjectBpm ? `${Math.round(bpm)} BPM` : 'BPM'}
-                        </ButtonBase>
-                    </Tooltip>
-                    <Tooltip title={TIPS.perf.timeSig} placement="top" arrow enterDelay={500}>
-                        <TextField
-                            size="small"
-                            placeholder="Time"
-                            value={promptTimeSig}
-                            onChange={(e) => setPromptTimeSig(e.target.value)}
-                            inputProps={{
-                                'aria-label': 'Time signature to inject into prompt',
-                                style: {
-                                    fontVariantNumeric: 'tabular-nums',
-                                    fontSize: perfTokens.fontSize.sm,
-                                    fontWeight: perfTokens.weight.bold,
-                                },
-                            }}
-                            sx={{ ...styles.pillControl, width: 62 }}
-                        />
-                    </Tooltip>
-                </Box>
-            </Paper>
 
             {/* Name + save dialog for a finished master recording. */}
             <Dialog

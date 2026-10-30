@@ -1,0 +1,56 @@
+# python-rtmidi 1.5.8 has no wheels for Python 3.14 (upstream PR #229 is still
+# open), so we build them from the PyPI sdist with upstream's own cibuildwheel
+# recipe (pyproject: manylinux_2_28, bundled JACK, libasound left to the
+# system). Dev-only, like the rest of the build tooling: runs when this file
+# changes on dev/2.0. The wheels land as an artifact; publishing them is a
+# separate, manual step.
+name: deps · python-rtmidi cp314
+
+on:
+  push:
+    branches: [dev/2.0]
+    paths: [.github/workflows/deps-rtmidi.yml]
+  workflow_dispatch:
+
+env:
+  RTMIDI_VERSION: 1.5.8
+  RTMIDI_SHA256: 7f9ade68b068ae09000ecb562ae9521da3a234361ad5449e83fc734544d004fa
+
+jobs:
+  wheels:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+    steps:
+      - name: Fetch the sdist
+        shell: bash
+        run: |
+          curl -sSL -o rtmidi.tar.gz "https://files.pythonhosted.org/packages/source/p/python_rtmidi/python_rtmidi-${RTMIDI_VERSION}.tar.gz"
+          # hashlib, not shasum: Git Bash on Windows has no shasum.
+          python -c "import hashlib,os,sys; h=hashlib.sha256(open('rtmidi.tar.gz','rb').read()).hexdigest(); print(h); sys.exit(h != os.environ['RTMIDI_SHA256'])"
+          tar xzf rtmidi.tar.gz
+
+      - uses: pypa/cibuildwheel@v4.3.5
+        with:
+          package-dir: python_rtmidi-${{ env.RTMIDI_VERSION }}
+          output-dir: wheelhouse
+        env:
+          CIBW_BUILD: cp314-manylinux_x86_64 cp314-win_amd64 cp314-macosx_arm64
+          CIBW_ARCHS_MACOS: arm64
+          # The runner has MinGW's gcc on PATH and meson takes it; CPython on
+          # Windows is MSVC-built, and so are upstream's wheels.
+          CIBW_CONFIG_SETTINGS_WINDOWS: setup-args=--vsenv
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd wheelhouse
+          python -c "import glob,hashlib; [print(hashlib.sha256(open(f,'rb').read()).hexdigest() + '  ' + f) for f in sorted(glob.glob('*.whl'))]" | tee "SHA256SUMS-${{ matrix.os }}"
+
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: python-rtmidi-${{ env.RTMIDI_VERSION }}-cp314-${{ matrix.os }}
+          path: wheelhouse/

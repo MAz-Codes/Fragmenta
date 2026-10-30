@@ -15,9 +15,11 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from app.core.audio.decode import AUDIO_EXTENSIONS, load_mono  # one list, one decoder
+
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac")
+
 
 CLAP_CKPT_FILENAME = "music_audioset_epoch_15_esc_90.14.pt"
 CLAP_REPO = "lukewys/laion_clap"
@@ -63,6 +65,21 @@ CLAP_MIN_TAIL = CLAP_WIN // 2
 # to gate on tau alone.
 CLAP_TAU = {"genre": 0.10, "mood": 0.10, "instruments": 0.12}
 CLAP_MARGIN = 0.01
+
+# "VocalType: Instrumental" is only written when CLAP is confident there are no
+# vocals; otherwise the segment is dropped. SA3's docs define no value for vocal
+# tracks, so there is nothing else to write. Vocals can be brief or late, so this
+# scores each 10 s window of up to 10 minutes and looks at the 90th percentile of
+# (vocal - instrumental) similarity. Calibrated on 20 full mixes from one artist,
+# labelled by whether a vocal stem exists: at this cut 5 of 6 instrumentals are
+# tagged and 1 of 14 vocal tracks is wrongly tagged. Small set; recalibrate if
+# a wider one disagrees.
+CLAP_VOCAL_PROMPTS = {
+    "vocal": ["a song with vocals", "a person singing", "music with a singer and lyrics"],
+    "instrumental": ["instrumental music", "instrumental music with no vocals", "music without singing"],
+}
+CLAP_VOCAL_MAX_WINDOWS = 60
+CLAP_INSTRUMENTAL_MAX_P90 = 0.01
 
 KEY_NAMES_SHARP = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 KEY_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
@@ -351,8 +368,8 @@ class _ClapTagger:
         self._label_embeds[key] = embed
         return embed
 
-    def _embed_audio(self, audio_path: Path):
-        """Deterministic whole-clip embedding: mean-pool over 10 s windows.
+    def _embed_windows(self, audio_path: Path):
+        """Deterministic per-window embeddings over non-overlapping 10 s windows.
 
         Each window is exactly CLAP_WIN samples, so laion_clap's rand_trunc
         path never fires (overflow=0) and repeated runs produce identical
@@ -363,11 +380,10 @@ class _ClapTagger:
         import numpy as np
         import torch
 
-        # Decode only what the windowing below can use (CLAP_MAX_WINDOWS x
-        # 10 s). Without the cap a 2-hour file decodes fully into RAM
-        # (~1.3 GB of float32 at 48 kHz) just to embed its first 2 minutes.
-        y, _ = librosa.load(str(audio_path), sr=CLAP_SR, mono=True,
-                            duration=CLAP_MAX_WINDOWS * 10)
+        # Decode only what the windowing below can use (CLAP_VOCAL_MAX_WINDOWS
+        # x 10 s). Without the cap a 2-hour file decodes fully into RAM
+        # (~1.3 GB of float32 at 48 kHz) just to embed its first 10 minutes.
+        y, _ = load_mono(audio_path, CLAP_SR, duration=CLAP_VOCAL_MAX_WINDOWS * 10)
         if y.size == 0:
             raise ValueError("empty audio")
 
@@ -381,23 +397,42 @@ class _ClapTagger:
                     break  # negligible tail — ignore it
                 chunk = np.pad(chunk, (0, CLAP_WIN - chunk.size))
             windows.append(chunk)
-            if len(windows) >= CLAP_MAX_WINDOWS:
+            if len(windows) >= CLAP_VOCAL_MAX_WINDOWS:
                 break
 
-        batch = torch.from_numpy(np.stack(windows)).float()
-        with torch.no_grad():
-            embs = self._model.get_audio_embedding_from_data(x=batch, use_tensor=True)
-        # Mean-pool across windows, then L2-normalize once.
-        emb = embs.mean(dim=0, keepdim=True)
-        return emb / emb.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        embs = []
+        for start in range(0, len(windows), CLAP_MAX_WINDOWS):
+            batch = torch.from_numpy(np.stack(windows[start:start + CLAP_MAX_WINDOWS])).float()
+            with torch.no_grad():
+                embs.append(self._model.get_audio_embedding_from_data(x=batch, use_tensor=True))
+        return torch.cat(embs)
+
+    def _vocal_type(self, window_embeds) -> Optional[str]:
+        """"Instrumental" when CLAP is confident there are no vocals, else None."""
+        import torch
+
+        norm = window_embeds / window_embeds.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        sides = []
+        for side in ("vocal", "instrumental"):
+            text = self._embed_labels(f"vocal_type_{side}", CLAP_VOCAL_PROMPTS[side]).mean(dim=0, keepdim=True)
+            sides.append(norm @ (text / text.norm(dim=-1, keepdim=True).clamp_min(1e-8)).T)
+        p90 = float(torch.quantile((sides[0] - sides[1]).squeeze(1).float(), 0.9))
+        logger.debug("CLAP vocal score p90=%.4f", p90)
+        return "Instrumental" if p90 <= CLAP_INSTRUMENTAL_MAX_P90 else None
 
     def tag(self, audio_path: Path, label_sets: Dict[str, List[str]], top_k_instruments: int = 2) -> Dict[str, Any]:
         self.ensure_loaded()
         import torch
 
-        audio_embed = self._embed_audio(audio_path)
+        window_embeds = self._embed_windows(audio_path)
+        # Mean-pool the first CLAP_MAX_WINDOWS, then L2-normalize once.
+        audio_embed = window_embeds[:CLAP_MAX_WINDOWS].mean(dim=0, keepdim=True)
+        audio_embed = audio_embed / audio_embed.norm(dim=-1, keepdim=True).clamp_min(1e-8)
 
         out: Dict[str, Any] = {}
+        vocal_type = self._vocal_type(window_embeds)
+        if vocal_type:
+            out["vocal_type"] = vocal_type
         for group in ("genre", "mood"):
             labels = label_sets.get(group) or []
             if not labels:
@@ -584,9 +619,9 @@ def annotate_file(
 
     parts: Dict[str, Any] = {}
     try:
-        y, loaded_sr = librosa.load(str(audio_path), sr=sr, mono=True, duration=max_seconds)
+        y, loaded_sr = load_mono(audio_path, sr, duration=max_seconds)
     except Exception as exc:
-        logger.warning("librosa failed to load %s: %s", audio_path.name, exc)
+        logger.warning("Couldn't decode %s: %s", audio_path.name, exc)
         return {
             "file_name": audio_path.name,
             "prompt": "",

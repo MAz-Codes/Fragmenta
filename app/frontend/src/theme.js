@@ -25,6 +25,8 @@ const FONT_MONO  = '"JetBrains Mono", "IBM Plex Mono", ui-monospace, Menlo, mono
 // gives the cards a strong, distinctive header voice that doesn't compete
 // with body Inter.
 const FONT_DISPLAY = '"Bricolage Grotesque", "Inter Tight", system-ui, sans-serif';
+// The Fragmenta wordmark (header, Welcome, About): never the UI fonts.
+const FONT_LOGO = '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace';
 
 // --- Arcade (dark) palette --------------------------------------------------
 // Neutral charcoal base — the amber accent does the warmth.
@@ -62,41 +64,192 @@ const DARK = {
     warning:   '#E3A34B',
 };
 
-// --- Paper (light) palette --------------------------------------------------
-const LIGHT = {
-    bg:        '#F2EDE3',      // lighter cream — less amber, closer to warm white
-    bgElev:    '#F6F1E8',
-    paper:     '#F8F3EA',
-    paperHi:   '#FBF6EE',
-    divider:   'rgba(43, 31, 18, 0.16)',
-    text:      '#2B1F12',      // warm dark brown
-    textDim:   '#4D3F2A',      // darker for ~7:1 contrast on cream
-    textFaint: '#7A6A50',      // bumped from #9C8B70 for ~4.5:1
-    // "amber" is a legacy token name — the accent is actually a deep
-    // cyan that mirrors dark mode. Cream + gold read as muddy yellow-on-
-    // amber; cyan gives the accents real separation from the warm paper.
-    amber:     '#1F7E94',      // deep cyan accent for legibility on cream
-    amberHi:   '#2DA0BC',
-    amberLo:   '#155F71',
-    // Warm complement on cream — same hue family as dark mode but deeper
-    // for legibility against the warm-paper background.
-    warm:      '#C97A1A',      // deeper golden amber for cream
-    warmHi:    '#E59334',
-    warmLo:    '#9C5C0F',
-    // Bend on cream — deeper so text and borders hold ~4.5:1.
-    bend:      '#56626F',
-    bendHi:    '#6E7B89',
-    bendLo:    '#3E4955',
-    bendInk:   '#FFFBF1',
-    // Deep navy for moon-icon / night cues on light mode — needs strong
-    // contrast against the warm cream paper.
-    night:     '#1F3A5F',
-    blue:      '#3B6E9B',
-    blueDim:   '#5E8FB8',
-    success:   '#2E8A52',
-    error:     '#B84E45',      // deeper red for cream legibility
-    warning:   '#B47318',
+// --- Palette -----------------------------------------------------------------
+// One palette, Linen (no dark mode; redesign/DESIGN_LANGUAGE.md). A cream
+// background, an ink for text and icons, and four pastel accents in roles:
+//   cool    → the main accent (primary: buttons, sliders, links, focus)
+//   warm    → "active / in progress" (generation, training, Link/MIDI on)
+//   fresh   → success and the secondary cue
+//   hot     → errors, Record, the cue point
+// Pastels fill large surfaces with ink text on them (5–6:1). Where an accent
+// must read as text or a thin line on the cream, a deepened shade of the same
+// hue is used instead (`deepen`, below).
+export const PALETTES = {
+    linen: {
+        name: 'Linen', bg: '#F2EDE1', ink: '#35392F',
+        // Saturated mains for fills and marks; each has a faint partner for
+        // waveform layers, tints and soft states.
+        cool: '#A0B2D5', warm: '#FFB123', fresh: '#92BBA3', hot: '#C18992',   // blue, gold, green, red
+        faint: { cool: '#A7AEE3', warm: '#E6BF7E', fresh: '#92BBA3', hot: '#F9BDAF' },
+        exact: {
+            surface: '#F8F7F1', control: '#EEE9E0', controlHover: '#E5E0D6', section: '#F6F2EA',
+            textDim: '#4A4843', textFaint: '#66625B', textMuted: '#908C84',
+            // Selected-nav tone, accent text, focus and status colours are
+            // derived from the mains (paletteTokens), so they follow them.
+        },
+        lanes: {
+            tints: ['#D5D5E4', '#F6DBCF', '#CDDACB', '#EEDCBC'],
+            playing: ['#C7C9E4', '#F7D2C6', '#BBD1BF', '#ECD3A9'],
+            main: ['#A0B2D5', '#C18992', '#92BBA3', '#E0B56F'],  // lane 4: its own gold
+            deep: ['#A0B2D5', '#C18992', '#92BBA3', '#E0B56F'],
+            soft: ['#A7AEE3', '#F9BDAF', '#92BBA3', '#EFE2CC'],
+        },
+    },
 };
+export const DEFAULT_PALETTE = 'linen';
+
+// Waveform colours for lists (dataset clips, generated fragments): the four
+// accents in turn, green → blue → red → gold, so a long list isn't one hue.
+const WAVE_ORDER = ['fresh', 'cool', 'hot', 'warm'];
+export const waveColor = (theme, index = 0) => {
+    const key = WAVE_ORDER[((index % 4) + 4) % 4];
+    const f = theme.palette.fragmenta;
+    return { main: f.accents[key], faint: f.faint[key] };
+};
+
+// Label colour for text/icons on a solid fill: white where it reads (the
+// saturated mains), ink otherwise (gold, faint tones, surfaces).
+export const onFill = (fill, ink = '#35392F') => {
+    if (typeof fill !== 'string' || !/^#[0-9a-f]{6}$/i.test(fill)) return ink;
+    return contrastRatio('#FFFFFF', fill) >= 3.5 ? '#FFFFFF' : ink;
+};
+
+// px strings so they don't multiply by theme.shape.borderRadius.
+// Controls sitting on a lane's tint.
+export const ON_TINT = 'rgba(248, 247, 241, 0.72)';
+export const ON_TINT_HOVER = 'rgba(248, 247, 241, 0.92)';
+// Cards 24 px. Inside them everything one line tall (buttons, fields, selects,
+// segmented controls) is a full pill; taller things (multi-line fields,
+// sections, list rows, tiles) take the card's 24 px.
+export const RADIUS = { card: '24px', section: '24px', panel: '24px', input: '999px', control: '999px', small: '8px', pill: '999px' };
+
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const rgbHex = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('').toUpperCase();
+const mixHex = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return rgbHex(A.map((v, i) => v + (B[i] - v) * t)); };
+const rgbStr = (h) => hexRgb(h).join(', ');
+const luminance = (h) => {
+    const [r, g, b] = hexRgb(h).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+function contrastRatio(a, b) { return contrast(a, b); }
+const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+const hslToHex = (h, s, l) => {
+    const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+    return rgbHex([0, 8, 4].map((n) => 255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))));
+};
+const hexHsl = (hex) => {
+    const [r, g, b] = hexRgb(hex).map((v) => v / 255);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+    if (!d) return [0, 0, l];
+    const s = d / (1 - Math.abs(2 * l - 1));
+    const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(h * 60 + 360) % 360, s, l];
+};
+// Same hue and saturation, darker until it reaches `target` contrast on `bg`.
+const deepen = (hex, bg, target) => {
+    const [h, s, l] = hexHsl(hex);
+    for (let L = l; L > 0; L -= 0.002) {
+        const c = hslToHex(h, s, L);
+        if (contrast(c, bg) >= target) return c;
+    }
+    return '#000000';
+};
+// The ink mixed toward the background, as light as `target` contrast allows.
+const inkAt = (ink, bg, target) => {
+    for (let t = 1; t >= 0; t -= 0.01) {
+        const c = mixHex(ink, bg, t);
+        if (contrast(c, bg) >= target) return c;
+    }
+    return ink;
+};
+
+function paletteTokens(P) {
+    const white = '#FFFFFF';
+    const t = {
+        name: P.name,
+        bg: P.bg,
+        bgElev: mixHex(P.bg, white, 0.3),
+        paper: mixHex(P.bg, white, 0.45),
+        paperHi: mixHex(P.bg, white, 0.6),
+        bgTop: mixHex(P.bg, white, 0.4),
+        bgBottom: mixHex(P.bg, P.ink, 0.06),
+        divider: `rgba(${rgbStr(P.ink)}, 0.16)`,
+        text: P.ink,
+        textDim: inkAt(P.ink, P.bg, 7),
+        textFaint: inkAt(P.ink, P.bg, 4.5),
+        onAccent: mixHex(P.bg, white, 0.8),
+        // Primary: deepened cool accent (text and thin lines stay legible).
+        // Primary: the main blue itself for fills and marks (focus ring,
+        // sliders, checked controls); amberLo is for text, so it's the ink.
+        amber: P.cool,
+        amberHi: P.cool,
+        amberLo: P.ink,
+        warm: deepen(P.warm, P.bg, 3),
+        warmHi: P.warm,
+        warmLo: deepen(P.warm, P.bg, 4.5),
+        night: deepen(P.cool, P.bg, 6),
+        blue: deepen(P.fresh, P.bg, 4.5),
+        blueDim: deepen(P.fresh, P.bg, 3),
+        blueLo: deepen(P.fresh, P.bg, 6),
+        success: deepen(P.fresh, P.bg, 4.5),
+        successHi: deepen(P.fresh, P.bg, 3),
+        successLo: deepen(P.fresh, P.bg, 6),
+        error: deepen(P.hot, P.bg, 4.5),
+        errorHi: deepen(P.hot, P.bg, 3),
+        errorLo: deepen(P.hot, P.bg, 6),
+        warning: deepen(P.warm, P.bg, 4.5),
+        accents: { cool: P.cool, warm: P.warm, fresh: P.fresh, hot: P.hot },
+        faint: P.faint || { cool: P.cool, warm: P.warm, fresh: P.fresh, hot: P.hot },
+        // Layered tones: ivory canvas → lifted surface → interactive control.
+        surface: mixHex(P.bg, white, 0.55),
+        control: mixHex(P.bg, P.ink, 0.06),
+        controlHover: mixHex(P.bg, P.ink, 0.10),
+        section: P.bg,
+        navSelected: mixHex(P.cool, P.bg, 0.5),
+    };
+    Object.assign(t, P.exact || {});
+    Object.assign(t, {
+        inkRgb: rgbStr(P.ink),
+        amberRgb: rgbStr(t.amber),
+        warmRgb: rgbStr(t.warm),
+        errorRgb: rgbStr(t.error),
+        bgRgb: rgbStr(P.bg),
+        glassRgb: rgbStr(mixHex(P.bg, white, 0.35)),
+        glassHiRgb: rgbStr(mixHex(P.bg, white, 0.6)),
+        hiRgb: rgbStr(t.onAccent),
+    });
+    // Diffuse, low-opacity shadows, only where something is elevated.
+    // No vertical offset: the shadow surrounds the card evenly on all sides.
+    t.shadowSoft = `0 0 2px rgba(${t.inkRgb}, 0.06), 0 0 22px rgba(${t.inkRgb}, 0.08)`;
+    t.shadowRaised = `0 0 4px rgba(${t.inkRgb}, 0.08), 0 0 32px rgba(${t.inkRgb}, 0.11)`;
+    // Performance tab: pastel fills with ink labels.
+    const laneMains = P.lanes?.main || [P.cool, P.hot, P.fresh, P.warm];
+    const channels = [...laneMains, ...laneMains];
+    t.perf = {
+        channels,
+        // Lane cards sit on pale tints of their colour; arcs, waveforms and
+        // other fine marks use a deeper shade so they read on that tint.
+        laneTints: P.lanes ? [...P.lanes.tints, ...P.lanes.tints] : channels.map((c) => mixHex(c, P.bg, 0.8)),
+        laneTintsPlaying: P.lanes ? [...P.lanes.playing, ...P.lanes.playing] : channels.map((c) => mixHex(c, P.bg, 0.66)),
+        channelsDeep: P.lanes ? [...P.lanes.deep, ...P.lanes.deep] : channels.map((c) => deepen(c, mixHex(c, P.bg, 0.8), 3.2)),
+        channelsSoft: P.lanes ? [...P.lanes.soft, ...P.lanes.soft] : channels.map((c) => mixHex(c, P.bg, 0.45)),
+        master: P.cool,
+        masterHover: mixHex(P.cool, white, 0.25),
+        play: P.cool,
+        stop: t.control,
+        record: P.hot,
+        cue: t.error,
+        toggleOn: P.warm,
+        toggleOnHover: mixHex(P.warm, white, 0.25),
+        toggleOff: t.control,
+        toggleOffHover: t.controlHover,
+        label: P.ink,
+        midiMappedRgb: rgbStr(P.fresh),
+        midiLearn: P.warm,
+        midiLearnRgb: rgbStr(P.warm),
+    };
+    return t;
+}
 
 // --- Raised-pad depth recipe ------------------------------------------------
 // The "lively" contained buttons get their depth from a directional gradient +
@@ -136,6 +289,8 @@ const BOARD_DARK = {
     // so is mint, which would vanish on the mint DiT zone.
     wires: ['#EEF2F4', '#FFD84D', '#5FB4FF', '#C792FF', '#FF8FD1', '#B5E35A', '#9DAAB7'],
 };
+// Bend on Linen: the Titanium ramp, deep enough to hold ~4.5:1 on the cream.
+const BEND_LIGHT = { main: '#56626F', light: '#6E7B89', dark: '#3E4955', contrastText: '#FFFBF1' };
 const BOARD_LIGHT = {
     surface: '#EDF0E6',
     grid: 'rgba(30,45,38,0.045)',
@@ -180,13 +335,13 @@ let theme = createTheme({
     // animations, so all motion in the app feels like one family.
     transitions: {
         duration: {
-            shortest: 200,
-            shorter: 280,
-            short: 330,
-            standard: 420,
-            complex: 500,
-            enteringScreen: 320,
-            leavingScreen: 280,
+            shortest: 120,
+            shorter: 150,
+            short: 180,
+            standard: 220,
+            complex: 300,
+            enteringScreen: 220,
+            leavingScreen: 180,
         },
         easing: {
             easeInOut: 'cubic-bezier(0.16, 1, 0.3, 1)',
@@ -206,18 +361,18 @@ let theme = createTheme({
         // the wider, more characterful display cut.
         h6: {
             fontFamily: FONT_DISPLAY,
-            fontWeight: 400,
+            fontWeight: 600,
             letterSpacing: '-0.015em',
-            fontSize: '1.2rem',
+            fontSize: '1.5rem',
             fontVariationSettings: '"opsz" 96',
         },
         // Tier-2 section/accordion labels — same family, slightly smaller.
         // "Annotator Labels", "Advanced Settings", "Edit existing audio".
         subtitle1: {
             fontFamily: FONT_DISPLAY,
-            fontWeight: 400,
+            fontWeight: 600,
             letterSpacing: '-0.01em',
-            fontSize: '1.05rem',
+            fontSize: '1rem',
             textTransform: 'none',
             fontVariationSettings: '"opsz" 72',
         },
@@ -237,6 +392,17 @@ let theme = createTheme({
                 '@keyframes fragmenta-fade-up': {
                     from: { opacity: 0, transform: 'translateY(12px)' },
                     to:   { opacity: 1, transform: 'translateY(0)' },
+                },
+                // Generate: a brief expansion as a lane starts generating.
+                '@keyframes fragmenta-generate-pop': {
+                    '0%': { transform: 'scale(1)' },
+                    '40%': { transform: 'scale(1.035)' },
+                    '100%': { transform: 'scale(1)' },
+                },
+                // A soft band sweeping across a lane's waveform while it generates.
+                '@keyframes fragmenta-wave-sweep': {
+                    from: { backgroundPosition: '-60% 0' },
+                    to: { backgroundPosition: '160% 0' },
                 },
                 '@keyframes fragmenta-fade-in': {
                     from: { opacity: 0 },
@@ -623,7 +789,7 @@ let theme = createTheme({
                     // back to theme.shape.borderRadius (10) and produce an
                     // asymmetric squash when the Accordion has a div sibling
                     // on only one side.
-                    borderRadius: 25,
+                    borderRadius: 24,
                     overflow: 'hidden',
                     marginBottom: 16,
                     '&:before': { display: 'none' },
@@ -938,536 +1104,553 @@ theme = responsiveFontSizes(theme, {
     factor: 2.4,
 });
 
-export const lightTheme = createTheme(theme, {
-    palette: {
-        mode: 'light',
-        primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: '#FFFBF1' },
-        secondary: { main: LIGHT.blue, light: LIGHT.blueDim, dark: '#2B547A', contrastText: '#FFFBF1' },
-        background: { default: LIGHT.bg, paper: LIGHT.paper },
-        text: { primary: LIGHT.text, secondary: LIGHT.textDim, disabled: LIGHT.textFaint },
-        action: {
-            active: 'rgba(43, 31, 18, 0.6)',
-            hover: 'rgba(43, 31, 18, 0.04)',
-            selected: 'rgba(43, 31, 18, 0.08)',
-            disabled: 'rgba(43, 31, 18, 0.26)',
-            disabledBackground: 'rgba(43, 31, 18, 0.10)',
-        },
-        divider: LIGHT.divider,
-        error: { main: LIGHT.error },
-        warning: { main: LIGHT.warning },
-        success: { main: LIGHT.success },
-        info: { main: LIGHT.blue },
-        warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo },
-        bend: { main: LIGHT.bend, light: LIGHT.bendHi, dark: LIGHT.bendLo, contrastText: LIGHT.bendInk },
-        board: BOARD_LIGHT,
-        night: { main: LIGHT.night },
-    },
-    components: {
-        MuiCssBaseline: {
-            styleOverrides: {
-                ':root': { colorScheme: 'light' },
-                body: {
-                    margin: 0,
-                    minHeight: '100vh',
-                    // Three-layer backdrop, mirroring dark mode:
-                    // soft cyan radial on the left, warm radial on the
-                    // bottom-right, and a gentle diagonal cream linear.
-                    // Opacities are low so the paper still reads neutral.
-                    backgroundColor: LIGHT.bg,
-                    backgroundImage:
-                        `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.06), transparent 60%), ` +
-                        `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.05), transparent 55%), ` +
-                        `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
-                    backgroundAttachment: 'fixed',
-                    color: LIGHT.text,
-                    fontFeatureSettings: '"cv11", "ss01", "ss03"',
-                },
-                '#root': { minHeight: '100vh' },
-                html: { scrollbarGutter: 'stable' },
-                '*::-webkit-scrollbar-track': {
-                    background: 'transparent',
-                    borderRadius: '999px',
-                },
-                '*::-webkit-scrollbar-thumb': {
-                    background: 'rgba(43, 31, 18, 0.18)',
-                    borderRadius: '999px',
-                    border: '2px solid rgba(0, 0, 0, 0)',
-                    backgroundClip: 'padding-box',
-                    '&:hover': { background: 'rgba(43, 31, 18, 0.32)' },
-                },
-                '*::-webkit-scrollbar-corner': { background: 'transparent' },
-                '*': {
-                    scrollbarWidth: 'thin',
-                    scrollbarColor: 'rgba(43, 31, 18, 0.18) transparent',
-                },
+function makePaletteTheme(LIGHT) {
+    return createTheme(theme, {
+        palette: {
+            mode: 'light',
+            primary: { main: LIGHT.amber, light: LIGHT.amberHi, dark: LIGHT.amberLo, contrastText: onFill(LIGHT.amber, LIGHT.text) },
+            secondary: { main: LIGHT.blue, light: LIGHT.blueDim, dark: LIGHT.blueLo, contrastText: LIGHT.onAccent },
+            background: { default: LIGHT.bg, paper: LIGHT.paper },
+            text: { primary: LIGHT.text, secondary: LIGHT.textDim, disabled: LIGHT.textFaint },
+            action: {
+                active: `rgba(${LIGHT.inkRgb}, 0.6)`,
+                hover: `rgba(${LIGHT.inkRgb}, 0.04)`,
+                selected: `rgba(${LIGHT.inkRgb}, 0.08)`,
+                disabled: `rgba(${LIGHT.inkRgb}, 0.42)`,
+                disabledBackground: `rgba(${LIGHT.inkRgb}, 0.10)`,
             },
+            divider: LIGHT.divider,
+            error: { main: LIGHT.error, contrastText: onFill(LIGHT.error, LIGHT.text) },
+            warning: { main: LIGHT.warning, contrastText: onFill(LIGHT.warning, LIGHT.text) },
+            success: { main: LIGHT.success, contrastText: onFill(LIGHT.success, LIGHT.text) },
+            info: { main: LIGHT.blue },
+            warm: { main: LIGHT.warm, light: LIGHT.warmHi, dark: LIGHT.warmLo, contrastText: onFill(LIGHT.accents.warm, LIGHT.text) },
+            night: { main: LIGHT.night },
+            bend: BEND_LIGHT,
+            board: BOARD_LIGHT,
+            // All palette tokens, and the Performance tab's colours.
+            fragmenta: LIGHT,
+            perf: LIGHT.perf,
         },
-        MuiPaper: {
-            styleOverrides: {
-                root: {
-                    // Liquid Glass on cream: translucent warm paper with
-                    // softer rim highlights so the surface reads as glass
-                    // on paper rather than glass on charcoal.
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    boxShadow:
-                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
-                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
-                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
-                },
-            },
-        },
-        MuiCard: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    boxShadow:
-                        '0 18px 36px rgba(43, 31, 18, 0.10), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08)',
-                    transition: 'box-shadow 220ms ease, background-color 220ms ease',
-                    '&:hover': {
-                        backgroundColor: 'rgba(252, 246, 232, 0.82)',
-                        boxShadow:
-                            '0 24px 48px rgba(43, 31, 18, 0.14), ' +
-                            '0 5px 14px rgba(43, 31, 18, 0.08), ' +
-                            'inset 0 1px 0 rgba(255, 255, 255, 0.85), ' +
-                            'inset 0 -1px 0 rgba(43, 31, 18, 0.10), ' +
-                            '0 0 0 1px rgba(31, 126, 148, 0.25)',
-                    },
-                },
-            },
-        },
-        MuiButton: {
-            variants: [
-                {
-                    props: { color: 'warm', variant: 'contained' },
-                    style: {
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warm} 55%, ${LIGHT.warmLo} 100%)`,
-                        color: '#FFFBF1',
-                        '&:hover': {
-                            backgroundImage: `linear-gradient(135deg, ${LIGHT.warmHi} 0%, ${LIGHT.warmHi} 55%, ${LIGHT.warm} 100%)`,
-                        },
-                    },
-                },
-                {
-                    props: { color: 'bend', variant: 'contained' },
-                    style: {
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.bendHi} 0%, ${LIGHT.bend} 55%, ${LIGHT.bendLo} 100%)`,
-                        color: LIGHT.bendInk,
-                        '&:hover': {
-                            backgroundImage: `linear-gradient(135deg, ${LIGHT.bendHi} 0%, ${LIGHT.bendHi} 55%, ${LIGHT.bend} 100%)`,
-                        },
-                    },
-                },
-            ],
-            styleOverrides: {
-                contained: {
-                    boxShadow: '0 6px 14px rgba(31, 126, 148, 0.18)',
-                    '&:hover': { boxShadow: '0 10px 20px rgba(31, 126, 148, 0.26)' },
-                    '&.Mui-disabled': {
-                        backgroundImage: 'none',
-                        backgroundColor: 'rgba(43, 31, 18, 0.08)',
-                        color: 'rgba(43, 31, 18, 0.30)',
-                        boxShadow: 'none',
-                    },
-                },
-                containedPrimary: {
-                    backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                    color: '#FFFBF1',
-                },
-                containedSecondary: {
-                    backgroundImage: `linear-gradient(135deg, ${LIGHT.blueDim} 0%, ${LIGHT.blue} 100%)`,
-                },
-                containedError: {
-                    backgroundImage: 'linear-gradient(135deg, #C66E6D 0%, #9E4B49 100%)',
-                },
-                outlined: {
-                    // Cyan accent by default, mirroring dark-mode outlined
-                    // buttons. Keeps "Browse / Choose CSV" etc. visually
-                    // active without going to a fully filled (contained)
-                    // treatment.
-                    borderColor: 'rgba(31, 126, 148, 0.50)',
-                    color: LIGHT.amber,
-                    '&:hover': {
-                        borderColor: LIGHT.amberLo,
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
-                        color: LIGHT.amberLo,
-                    },
-                    '&.Mui-disabled': {
-                        borderColor: 'rgba(43, 31, 18, 0.12)',
-                        color: 'rgba(43, 31, 18, 0.30)',
-                    },
-                },
-                outlinedError: {
-                    borderColor: 'rgba(184, 78, 69, 0.55)',
-                    color: LIGHT.error,
-                    '&:hover': {
-                        borderColor: LIGHT.error,
-                        backgroundColor: 'rgba(184, 78, 69, 0.10)',
-                        color: LIGHT.error,
-                    },
-                },
-                text: {
-                    color: LIGHT.text,
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.08)',
-                        color: LIGHT.amberLo,
-                    },
-                },
-            },
-        },
-        MuiTextField: {
-            styleOverrides: {
-                root: {
-                    '& .MuiOutlinedInput-root': {
-                        backgroundColor: 'rgba(255, 251, 241, 0.6)',
-                        borderRadius: 8,
-                        '& fieldset': { borderColor: 'rgba(43, 31, 18, 0.18)' },
-                        '&:hover fieldset': { borderColor: 'rgba(43, 31, 18, 0.36)' },
-                        '&.Mui-focused fieldset': {
-                            borderColor: LIGHT.amber,
-                            boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
-                        },
-                    },
-                },
-            },
-        },
-        MuiSelect: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(255, 251, 241, 0.6)',
-                    borderRadius: 8,
-                    '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.18)' },
-                    '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(43, 31, 18, 0.36)' },
-                    '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                        borderColor: LIGHT.amber,
-                        boxShadow: '0 0 0 3px rgba(31, 126, 148, 0.14)',
-                    },
-                },
-            },
-        },
-        MuiModal: {
-            defaultProps: { disableScrollLock: true },
-        },
-        // See dark theme above — same dropdown/popover paper treatment.
-        MuiPopover: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    border: `1px solid ${LIGHT.divider}`,
-                    borderRadius: 20,
-                    overflow: 'hidden',
-                },
-            },
-        },
-        MuiMenu: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    border: `1px solid ${LIGHT.divider}`,
-                    borderRadius: 20,
-                    overflow: 'hidden',
-                },
-            },
-        },
-        MuiDrawer: {
-            defaultProps: { disableScrollLock: true },
-        },
-        MuiMenuItem: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: LIGHT.paper,
-                    '&:hover': { backgroundColor: LIGHT.paperHi },
-                    '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        color: LIGHT.amberLo,
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
-                    },
-                },
-            },
-        },
-        MuiChip: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.06)',
-                    color: LIGHT.text,
-                    border: `1px solid rgba(43, 31, 18, 0.14)`,
-                    borderRadius: 999,
-                    '&.MuiChip-filled.MuiChip-colorPrimary': {
-                        backgroundColor: LIGHT.amber,
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.amber,
-                        boxShadow: RAISE_LIGHT,
-                    },
-                    '&.MuiChip-filled.MuiChip-colorSuccess': {
-                        backgroundColor: LIGHT.success,
-                        backgroundImage: `linear-gradient(135deg, #3FA86A 0%, ${LIGHT.success} 55%, #1F6038 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.success,
-                        boxShadow: RAISE_LIGHT,
-                    },
-                },
-                outlined: {
-                    borderColor: 'rgba(43, 31, 18, 0.20)',
-                    '&.MuiChip-colorPrimary': { borderColor: LIGHT.amber, color: LIGHT.amberLo },
-                },
-            },
-        },
-        MuiAccordion: {
-            styleOverrides: {
-                root: {
-                    borderRadius: 25,
-                    overflow: 'hidden',
-                    marginBottom: 16,
-                    '&:before': { display: 'none' },
-                    '&:first-of-type': {
-                        borderTopLeftRadius: 25,
-                        borderTopRightRadius: 25,
-                    },
-                    '&:last-of-type': {
-                        borderBottomLeftRadius: 25,
-                        borderBottomRightRadius: 25,
-                    },
-                    '&.Mui-expanded': {
-                        marginTop: 0,
-                        marginBottom: 16,
-                    },
-                    '&.Mui-expanded:last-of-type': { marginBottom: 16 },
-                },
-            },
-        },
-        MuiAccordionSummary: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
-                },
-            },
-        },
-        MuiDialog: {
-            defaultProps: { disableScrollLock: true },
-            styleOverrides: {
-                paper: {
-                    // Liquid Glass on cream — same shape as the global
-                    // MuiPaper override so dialogs match the rest of the
-                    // surfaces (translucent warm + soft rim highlights).
-                    backgroundColor: 'rgba(248, 241, 224, 0.72)',
-                    backgroundImage: 'none',
-                    backdropFilter: 'blur(22px) saturate(160%)',
-                    WebkitBackdropFilter: 'blur(22px) saturate(160%)',
-                    border: 'none',
-                    borderRadius: 14,
-                    boxShadow:
-                        '0 24px 48px rgba(43, 31, 18, 0.18), ' +
-                        '0 3px 10px rgba(43, 31, 18, 0.06), ' +
-                        'inset 0 1px 0 rgba(255, 255, 255, 0.7), ' +
-                        'inset 0 -1px 0 rgba(43, 31, 18, 0.08), ' +
-                        'inset 1px 0 0 rgba(255, 255, 255, 0.3), ' +
-                        'inset -1px 0 0 rgba(43, 31, 18, 0.04)',
-                },
-            },
-        },
-        MuiDialogTitle: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    borderBottom: `1px solid ${LIGHT.divider}`,
-                    color: LIGHT.text,
-                    fontWeight: 600,
-                    fontSize: '1.1rem',
-                    letterSpacing: '-0.01em',
-                },
-            },
-        },
-        MuiDialogContent: { styleOverrides: { root: { backgroundColor: 'transparent', color: LIGHT.text } } },
-        MuiDialogActions: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'transparent',
-                    borderTop: `1px solid ${LIGHT.divider}`,
-                },
-            },
-        },
-        MuiListItem: {
-            styleOverrides: {
-                root: {
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.06)' },
-                    '&.Mui-selected': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.14)',
-                        '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.20)' },
-                    },
-                },
-            },
-        },
-        MuiCheckbox: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    '&.Mui-checked': { color: LIGHT.amber },
-                    '&:hover': { backgroundColor: 'rgba(31, 126, 148, 0.08)' },
-                },
-            },
-        },
-        MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
-        MuiSlider: {
-            styleOverrides: {
-                root: {
-                    color: NORDIC_BLUE,
-                    height: 4,
-                    // Beat MUI's color="primary" root color (which is the
-                    // accent cyan) so the DEFAULT slider is the accent cyan —
-                    // needed in dark mode where the plain root rule lost the
-                    // specificity battle. sx `color` on channel sliders still
-                    // overrides this, so per-channel coloring is unaffected.
-                    '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
-                        color: NORDIC_BLUE,
-                    },
-                },
-                rail: { backgroundColor: 'rgba(43, 31, 18, 0.18)', opacity: 1 },
-                track: { backgroundColor: 'currentColor', border: 0 },
-                thumb: {
-                    backgroundColor: 'currentColor',
-                    width: 16,
-                    height: 16,
-                    border: `2px solid ${LIGHT.paper}`,
-                    boxShadow: '0 2px 6px rgba(43, 31, 18, 0.20)',
-                    '&:hover, &.Mui-focusVisible': {
-                        boxShadow: '0 0 0 8px rgba(39, 159, 187, 0.18)',
-                    },
-                },
-                valueLabel: {
-                    backgroundColor: LIGHT.text,
-                    color: '#FFFBF1',
-                    borderRadius: 6,
-                    fontWeight: 400,
-                },
-                mark: { backgroundColor: 'rgba(43, 31, 18, 0.28)' },
-                markActive: { backgroundColor: 'currentColor' },
-            },
-        },
-        MuiLinearProgress: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.10)',
-                    borderRadius: 999,
-                    overflow: 'hidden',
-                },
-                bar: {
-                    backgroundImage: `linear-gradient(90deg, ${LIGHT.warmLo} 0%, ${LIGHT.warm} 100%)`,
-                },
-            },
-        },
-        MuiCircularProgress: { styleOverrides: { root: { color: LIGHT.amber } } },
-        MuiTabs: {
-            styleOverrides: {
-                root: {
-                    '& .MuiTabs-indicator': {
-                        backgroundColor: LIGHT.amber,
-                        height: 2,
-                        borderRadius: '2px 2px 0 0',
-                    },
-                },
-            },
-        },
-        MuiTab: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    textTransform: 'none',
-                    fontWeight: 400,
-                    '&.Mui-selected': { color: LIGHT.amberLo },
-                    '&:hover': { color: LIGHT.text },
-                },
-            },
-        },
-        MuiBackdrop: {
-            styleOverrides: {
-                root: {
-                    backgroundColor: 'rgba(43, 31, 18, 0.32)',
-                    backdropFilter: 'blur(4px)',
-                },
-            },
-        },
-        MuiDivider: { styleOverrides: { root: { borderColor: LIGHT.divider } } },
-        MuiIconButton: {
-            styleOverrides: {
-                root: {
-                    color: LIGHT.textDim,
-                    transition: 'all 160ms ease',
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.10)',
-                        color: LIGHT.amberLo,
-                    },
-                },
-            },
-        },
-        MuiToggleButton: {
-            styleOverrides: {
-                root: {
-                    textTransform: 'none',
-                    border: `1px solid ${LIGHT.divider}`,
-                    color: LIGHT.textDim,
-                    fontWeight: 400,
-                    '&:hover': {
-                        backgroundColor: 'rgba(31, 126, 148, 0.06)',
+        components: {
+            MuiCssBaseline: {
+                styleOverrides: {
+                    ':root': { colorScheme: 'light' },
+                    body: {
+                        margin: 0,
+                        minHeight: '100vh',
+                        // Three-layer backdrop, mirroring dark mode:
+                        // soft cyan radial on the left, warm radial on the
+                        // bottom-right, and a gentle diagonal cream linear.
+                        // Opacities are low so the paper still reads neutral.
+                        backgroundColor: LIGHT.bg,
+                        // Warm ivory with only a faint top-to-bottom tone shift.
+                        backgroundImage: `linear-gradient(180deg, ${LIGHT.bgTop} 0%, ${LIGHT.bg} 55%)`,
+                        backgroundAttachment: 'fixed',
                         color: LIGHT.text,
+                        fontFeatureSettings: '"cv11", "ss01", "ss03"',
                     },
-                    '&.Mui-selected': {
-                        backgroundColor: LIGHT.amber,
-                        backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amber} 55%, ${LIGHT.amberLo} 100%)`,
-                        color: '#FFFBF1',
-                        borderColor: LIGHT.amber,
-                        boxShadow: RAISE_LIGHT,
+                    '#root': { minHeight: '100vh' },
+                    html: { scrollbarGutter: 'stable' },
+                    '*::-webkit-scrollbar-track': {
+                        background: 'transparent',
+                        borderRadius: '999px',
+                    },
+                    '*::-webkit-scrollbar-thumb': {
+                        background: `rgba(${LIGHT.inkRgb}, 0.18)`,
+                        borderRadius: '999px',
+                        border: '2px solid rgba(0, 0, 0, 0)',
+                        backgroundClip: 'padding-box',
+                        '&:hover': { background: `rgba(${LIGHT.inkRgb}, 0.32)` },
+                    },
+                    '*::-webkit-scrollbar-corner': { background: 'transparent' },
+                    '*': {
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: `rgba(${LIGHT.inkRgb}, 0.18) transparent`,
+                    },
+                },
+            },
+            MuiPaper: {
+                styleOverrides: {
+                    // A lifted, solid surface (menus, dialogs, panels): tone and
+                    // a diffuse shadow do the separating, no glass or rims.
+                    root: {
+                        backgroundColor: LIGHT.surface,
+                        backgroundImage: 'none',
+                        backdropFilter: 'none',
+                        WebkitBackdropFilter: 'none',
+                        border: 'none',
+                        boxShadow: LIGHT.shadowSoft,
+                    },
+                },
+            },
+            MuiCard: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: LIGHT.surface,
+                        backgroundImage: 'none',
+                        backdropFilter: 'none',
+                        WebkitBackdropFilter: 'none',
+                        border: 'none',
+                        borderRadius: RADIUS.card,
+                        boxShadow: LIGHT.shadowSoft,
+                        transition: 'background-color 180ms ease',
+                    },
+                },
+            },
+            MuiButton: {
+                variants: [
+                    {
+                        props: { color: 'warm', variant: 'contained' },
+                        style: {
+                            backgroundImage: 'none',
+                            backgroundColor: LIGHT.accents.warm,
+                            color: onFill(LIGHT.accents.warm),
+                            '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.warm, '#000000', 0.1) },
+                        },
+                    },
+                    {
+                        props: { color: 'bend', variant: 'contained' },
+                        style: {
+                            backgroundImage: 'none',
+                            backgroundColor: BEND_LIGHT.main,
+                            color: BEND_LIGHT.contrastText,
+                            '&:hover': { backgroundImage: 'none', backgroundColor: BEND_LIGHT.dark },
+                        },
+                    },
+                ],
+                styleOverrides: {
+                    root: {
+                        borderRadius: 999,
+                        transition: 'background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
+                    },
+                    sizeLarge: { borderRadius: 999, minHeight: 48 },
+                    contained: {
+                        backgroundImage: 'none',
+                        boxShadow: 'none',
+                        '&:hover': { boxShadow: 'none' },
+                        '&.Mui-disabled': {
+                            backgroundImage: 'none',
+                            backgroundColor: LIGHT.control,
+                            color: `rgba(${LIGHT.inkRgb}, 0.38)`,
+                            boxShadow: 'none',
+                        },
+                    },
+                    // Actions are pastel fills with ink text: primary cool,
+                    // secondary/success sage, error rose (warm is a variant).
+                    containedPrimary: {
+                        backgroundImage: 'none',
+                        backgroundColor: LIGHT.accents.cool,
+                        color: onFill(LIGHT.accents.cool),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.cool, '#000000', 0.1) },
+                    },
+                    containedSecondary: {
+                        backgroundImage: 'none',
+                        backgroundColor: LIGHT.accents.fresh,
+                        color: onFill(LIGHT.accents.fresh),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, '#000000', 0.1) },
+                    },
+                    containedSuccess: {
+                        backgroundImage: 'none',
+                        backgroundColor: LIGHT.accents.fresh,
+                        color: onFill(LIGHT.accents.fresh),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.fresh, '#000000', 0.1) },
+                    },
+                    containedError: {
+                        backgroundImage: 'none',
+                        backgroundColor: LIGHT.accents.hot,
+                        color: onFill(LIGHT.accents.hot),
+                        '&:hover': { backgroundImage: 'none', backgroundColor: mixHex(LIGHT.accents.hot, '#000000', 0.1) },
+                    },
+                    outlined: {
+                        // No outline at rest: a tonal control surface, like the
+                        // rest of the interactive chrome.
+                        border: '1px solid transparent',
+                        backgroundColor: LIGHT.control,
+                        color: LIGHT.text,
                         '&:hover': {
-                            backgroundImage: `linear-gradient(135deg, ${LIGHT.amberHi} 0%, ${LIGHT.amberHi} 55%, ${LIGHT.amber} 100%)`,
-                            backgroundColor: LIGHT.amberHi,
+                            border: '1px solid transparent',
+                            backgroundColor: LIGHT.controlHover,
+                            color: LIGHT.text,
+                        },
+                        '&.Mui-disabled': {
+                            border: '1px solid transparent',
+                            backgroundColor: LIGHT.control,
+                            color: `rgba(${LIGHT.inkRgb}, 0.38)`,
+                        },
+                    },
+                    outlinedError: {
+                        border: '1px solid transparent',
+                        backgroundColor: `rgba(${LIGHT.errorRgb}, 0.10)`,
+                        color: LIGHT.error,
+                        '&:hover': {
+                            border: '1px solid transparent',
+                            backgroundColor: `rgba(${LIGHT.errorRgb}, 0.16)`,
+                            color: LIGHT.errorLo,
+                        },
+                    },
+                    text: {
+                        color: LIGHT.text,
+                        '&:hover': {
+                            backgroundColor: LIGHT.control,
+                            color: LIGHT.text,
                         },
                     },
                 },
             },
-        },
-        MuiSwitch: {
-            styleOverrides: {
-                switchBase: {
-                    '&.Mui-checked': {
-                        color: '#FFFBF1',
-                        '& + .MuiSwitch-track': {
+            // Fields sit on the control tone with no outline at rest; focus
+            // shows a fine accent ring so it stays clearly visible.
+            MuiTextField: {
+                styleOverrides: {
+                    root: {
+                        '& .MuiOutlinedInput-root': {
+                            backgroundColor: LIGHT.control,
+                            borderRadius: RADIUS.input,
+                            '&.MuiInputBase-multiline': { borderRadius: RADIUS.section },
+                            transition: 'background-color 160ms ease',
+                            '& fieldset': { borderColor: 'transparent' },
+                            '&:hover': { backgroundColor: LIGHT.controlHover },
+                            '&:hover fieldset': { borderColor: 'transparent' },
+                            '&.Mui-focused': { backgroundColor: LIGHT.surface },
+                            '&.Mui-focused fieldset': { borderColor: LIGHT.amber, borderWidth: '1.5px' },
+                        },
+                    },
+                },
+            },
+            MuiSelect: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: LIGHT.control,
+                        borderRadius: RADIUS.input,
+                        transition: 'background-color 160ms ease',
+                        '& .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+                        '&:hover': { backgroundColor: LIGHT.controlHover },
+                        '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'transparent' },
+                        '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: LIGHT.amber, borderWidth: '1.5px' },
+                    },
+                    select: { borderRadius: RADIUS.input },
+                },
+            },
+            MuiModal: {
+                defaultProps: { disableScrollLock: true },
+            },
+            // See dark theme above — same dropdown/popover paper treatment.
+            MuiPopover: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised },
+                },
+            },
+            MuiMenu: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: { border: 'none', borderRadius: 24, overflow: 'hidden', boxShadow: LIGHT.shadowRaised, backgroundColor: LIGHT.surface },
+                    // Inset so the rounded items sit inside the 24 px paper.
+                    list: { padding: 6, display: 'flex', flexDirection: 'column', gap: 2 },
+                },
+            },
+            MuiDrawer: {
+                defaultProps: { disableScrollLock: true },
+            },
+            MuiMenuItem: {
+                styleOverrides: {
+                    // 18 px: the menu's 24 minus its 6 px inset, so one- and
+                    // two-line items both follow the paper's corners.
+                    root: {
+                        borderRadius: 18,
+                        backgroundColor: 'transparent',
+                        '&:hover': { backgroundColor: LIGHT.control },
+                        '&.Mui-selected': {
+                            backgroundColor: LIGHT.navSelected,
+                            color: LIGHT.text,
+                            '&:hover': { backgroundColor: LIGHT.navSelected },
+                        },
+                        '&.Mui-selected.Mui-focusVisible': { backgroundColor: LIGHT.navSelected },
+                    },
+                },
+            },
+            // Chips and tags: 999 pills on the control tone; coloured ones are
+            // the pastel (filled) or the pale tint (outlined), with ink text.
+            MuiChip: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: LIGHT.control,
+                        color: LIGHT.text,
+                        border: 'none',
+                        borderRadius: 999,
+                        '&.MuiChip-filled.MuiChip-colorPrimary': { backgroundColor: LIGHT.accents.cool, color: onFill(LIGHT.accents.cool) },
+                        '&.MuiChip-filled.MuiChip-colorSuccess': { backgroundColor: LIGHT.accents.fresh, color: onFill(LIGHT.accents.fresh) },
+                        '&.MuiChip-filled.MuiChip-colorWarning': { backgroundColor: LIGHT.accents.warm, color: onFill(LIGHT.accents.warm) },
+                        '&.MuiChip-filled.MuiChip-colorError': { backgroundColor: LIGHT.accents.hot, color: onFill(LIGHT.accents.hot) },
+                    },
+                    outlined: {
+                        border: 'none',
+                        backgroundColor: LIGHT.control,
+                        '&.MuiChip-colorPrimary': { backgroundColor: LIGHT.perf.laneTints[0], color: LIGHT.text },
+                        '&.MuiChip-colorSuccess': { backgroundColor: LIGHT.perf.laneTints[2], color: LIGHT.text },
+                        '&.MuiChip-colorWarning': { backgroundColor: LIGHT.perf.laneTints[3], color: LIGHT.text },
+                        '&.MuiChip-colorError': { backgroundColor: LIGHT.perf.laneTints[1], color: LIGHT.text },
+                    },
+                    clickable: { '&:hover': { filter: 'brightness(0.97)' } },
+                },
+            },
+            // Sections inside a card: a tonal surface, no shadow (not a card
+            // within a card).
+            // A section inside a card: the control tone (as dark as the fields, so
+            // it reads on the light card); fields inside it go light instead.
+            MuiAccordion: {
+                styleOverrides: {
+                    root: {
+                        borderRadius: 24,
+                        overflow: 'hidden',
+                        marginBottom: 16,
+                        backgroundColor: LIGHT.control,
+                        backgroundImage: 'none',
+                        boxShadow: 'none',
+                        border: 'none',
+                        '&:before': { display: 'none' },
+                        '&:first-of-type': { borderTopLeftRadius: 24, borderTopRightRadius: 24 },
+                        '&:last-of-type': { borderBottomLeftRadius: 24, borderBottomRightRadius: 24 },
+                        '&.Mui-expanded': { marginTop: 0, marginBottom: 16 },
+                        '&.Mui-expanded:last-of-type': { marginBottom: 16 },
+                    },
+                },
+            },
+            // Focused labels stay ink; the field's ring carries the colour.
+            MuiInputLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
+            MuiFormLabel: { styleOverrides: { root: { '&.Mui-focused': { color: LIGHT.textDim } } } },
+            MuiAccordionDetails: {
+                styleOverrides: {
+                    root: {
+                        '&& .MuiOutlinedInput-root, && .MuiOutlinedInput-root.Mui-focused': { backgroundColor: LIGHT.surface },
+                        '&& .MuiOutlinedInput-root:hover': { backgroundColor: LIGHT.bg },
+                    },
+                },
+            },
+            MuiAccordionSummary: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        '&:hover': { backgroundColor: LIGHT.controlHover },
+                    },
+                },
+            },
+            MuiDialog: {
+                defaultProps: { disableScrollLock: true },
+                styleOverrides: {
+                    paper: {
+                        backgroundColor: LIGHT.surface,
+                        backgroundImage: 'none',
+                        backdropFilter: 'none',
+                        WebkitBackdropFilter: 'none',
+                        border: 'none',
+                        borderRadius: 24,
+                        boxShadow: LIGHT.shadowRaised,
+                    },
+                },
+            },
+            MuiDialogTitle: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        borderBottom: 'none',
+                        color: LIGHT.text,
+                        fontFamily: FONT_DISPLAY,
+                        fontWeight: 600,
+                        fontSize: '1.35rem',
+                        letterSpacing: '-0.015em',
+                        paddingTop: 22,
+                    },
+                },
+            },
+            MuiDialogContent: { styleOverrides: { root: { backgroundColor: 'transparent', color: LIGHT.text } } },
+            MuiDialogActions: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: 'transparent',
+                        borderTop: `1px solid ${LIGHT.divider}`,
+                    },
+                },
+            },
+            MuiListItem: {
+                styleOverrides: {
+                    root: {
+                        '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.06)` },
+                        '&.Mui-selected': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.14)`,
+                            '&:hover': { backgroundColor: `rgba(${LIGHT.amberRgb}, 0.20)` },
+                        },
+                    },
+                },
+            },
+            MuiCheckbox: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        '&.Mui-checked': { color: LIGHT.amberHi },
+                        '&:hover': { backgroundColor: LIGHT.control },
+                    },
+                },
+            },
+            MuiFormControlLabel: { styleOverrides: { label: { color: LIGHT.text } } },
+            MuiSlider: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.amberHi,
+                        height: 6,
+                        '&.MuiSlider-colorPrimary, &.MuiSlider-colorSecondary': {
+                            color: LIGHT.amberHi,
+                        },
+                    },
+                    // Shallow inset track.
+                    rail: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.10)`,
+                        boxShadow: `inset 0 1px 1px rgba(${LIGHT.inkRgb}, 0.12)`,
+                        opacity: 1,
+                    },
+                    track: { backgroundColor: 'currentColor', border: 0 },
+                    // Circular handle: ivory with a ring in the slider's colour.
+                    thumb: {
+                        width: 16,
+                        height: 16,
+                        backgroundColor: LIGHT.onAccent,
+                        border: '2px solid currentColor',
+                        boxShadow: `0 1px 3px rgba(${LIGHT.inkRgb}, 0.22)`,
+                        transition: 'box-shadow 150ms ease, width 150ms ease, height 150ms ease',
+                        '&::before': { boxShadow: 'none' },
+                        '&:hover, &.Mui-focusVisible': {
+                            boxShadow: `0 1px 3px rgba(${LIGHT.inkRgb}, 0.22), 0 0 0 6px rgba(${LIGHT.inkRgb}, 0.07)`,
+                        },
+                        '&.Mui-active': {
+                            boxShadow: `0 1px 3px rgba(${LIGHT.inkRgb}, 0.22), 0 0 0 8px rgba(${LIGHT.inkRgb}, 0.09)`,
+                        },
+                    },
+                    valueLabel: {
+                        backgroundColor: LIGHT.text,
+                        color: LIGHT.onAccent,
+                        borderRadius: 6,
+                        fontWeight: 400,
+                    },
+                    mark: { backgroundColor: `rgba(${LIGHT.inkRgb}, 0.28)` },
+                    markActive: { backgroundColor: 'currentColor' },
+                },
+            },
+            MuiLinearProgress: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.10)`,
+                        borderRadius: 999,
+                        overflow: 'hidden',
+                    },
+                    bar: {
+                        backgroundImage: `linear-gradient(90deg, ${LIGHT.warmLo} 0%, ${LIGHT.warm} 100%)`,
+                    },
+                },
+            },
+            MuiCircularProgress: { styleOverrides: { root: { color: LIGHT.amber } } },
+            MuiTabs: {
+                styleOverrides: {
+                    root: {
+                        '& .MuiTabs-indicator': {
                             backgroundColor: LIGHT.amber,
-                            opacity: 1,
+                            height: 2,
+                            borderRadius: '2px 2px 0 0',
                         },
                     },
                 },
-                track: { backgroundColor: 'rgba(43, 31, 18, 0.30)' },
             },
-        },
-        MuiTooltip: {
-            styleOverrides: {
-                tooltip: {
-                    backgroundColor: LIGHT.text,
-                    color: '#FFFBF1',
-                    fontWeight: 400,
-                    fontSize: '0.75rem',
-                    borderRadius: 6,
-                    boxShadow: '0 8px 18px rgba(43, 31, 18, 0.24)',
+            MuiTab: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        textTransform: 'none',
+                        fontWeight: 400,
+                        '&.Mui-selected': { color: LIGHT.amberLo },
+                        '&:hover': { color: LIGHT.text },
+                    },
                 },
-                arrow: { color: LIGHT.text },
+            },
+            MuiBackdrop: {
+                styleOverrides: {
+                    root: {
+                        backgroundColor: `rgba(${LIGHT.inkRgb}, 0.32)`,
+                        backdropFilter: 'blur(4px)',
+                    },
+                },
+            },
+            MuiDivider: { styleOverrides: { root: { borderColor: LIGHT.divider } } },
+            MuiIconButton: {
+                styleOverrides: {
+                    root: {
+                        color: LIGHT.textDim,
+                        transition: 'all 160ms ease',
+                        '&:hover': {
+                            backgroundColor: `rgba(${LIGHT.amberRgb}, 0.10)`,
+                            color: LIGHT.amberLo,
+                        },
+                    },
+                },
+            },
+            // Segmented controls: a fully rounded control-tone track with a pill
+            // for the selected segment.
+            MuiToggleButtonGroup: {
+                styleOverrides: {
+                    root: { backgroundColor: LIGHT.control, borderRadius: 999, padding: 3, gap: 2 },
+                    grouped: { border: 'none !important', borderRadius: '999px !important', margin: '0 !important' },
+                },
+            },
+            MuiToggleButton: {
+                styleOverrides: {
+                    root: {
+                        textTransform: 'none',
+                        border: 'none',
+                        borderRadius: 999,
+                        color: LIGHT.textDim,
+                        fontWeight: 400,
+                        padding: '6px 16px',
+                        transition: 'background-color 160ms ease, color 160ms ease',
+                        '&:hover': { backgroundColor: LIGHT.controlHover, color: LIGHT.text },
+                        '&.Mui-selected': {
+                            backgroundColor: LIGHT.accents.cool,
+                            backgroundImage: 'none',
+                            color: onFill(LIGHT.accents.cool),
+                            fontWeight: 600,
+                            boxShadow: 'none',
+                            '&:hover': { backgroundImage: 'none', backgroundColor: LIGHT.accents.cool },
+                        },
+                    },
+                },
+            },
+            // Switches: the cool pastel track when on, an ivory thumb.
+            MuiSwitch: {
+                styleOverrides: {
+                    switchBase: {
+                        color: LIGHT.onAccent,
+                        '&.Mui-checked': {
+                            color: LIGHT.onAccent,
+                            '& + .MuiSwitch-track': { backgroundColor: LIGHT.accents.cool, opacity: 1 },
+                        },
+                    },
+                    thumb: { boxShadow: `0 1px 2px rgba(${LIGHT.inkRgb}, 0.25)` },
+                    track: { backgroundColor: LIGHT.controlHover, opacity: 1, borderRadius: 999 },
+                },
+            },
+            MuiTooltip: {
+                styleOverrides: {
+                    tooltip: {
+                        backgroundColor: LIGHT.text,
+                        color: LIGHT.onAccent,
+                        fontWeight: 400,
+                        fontSize: '0.75rem',
+                        borderRadius: 6,
+                        boxShadow: `0 8px 18px rgba(${LIGHT.inkRgb}, 0.24)`,
+                    },
+                    arrow: { color: LIGHT.text },
+                },
             },
         },
-    },
-});
+    });
+}
 
 export const appStyles = {
     root: {
@@ -1526,15 +1709,10 @@ export const appStyles = {
         backgroundColor: 'transparent',
         borderBottom: '1px solid transparent',
     },
+    // Scrolled: the canvas colour behind the header, no glass.
     headerRowScrolled: (theme) => ({
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        backgroundColor: theme.palette.mode === 'dark'
-            ? 'rgba(31, 32, 33, 0.55)'
-            : 'rgba(242, 237, 227, 0.65)',
-        borderBottom: theme.palette.mode === 'dark'
-            ? '1px solid rgba(255, 255, 255, 0.04)'
-            : '1px solid rgba(43, 31, 18, 0.08)',
+        backgroundColor: `rgba(${theme.palette.fragmenta.bgRgb}, 0.94)`,
+        boxShadow: `0 1px 0 rgba(${theme.palette.fragmenta.inkRgb}, 0.06)`,
     }),
     headerBrand: {
         position: 'relative',
@@ -1542,23 +1720,26 @@ export const appStyles = {
         alignItems: 'center',
         gap: { xs: 1, sm: 1.5 },
         py: 0,
+        // Bitcount's letters sit high in their line box: nudge the wordmark
+        // down so its body (not the g's descender) centres on the logo.
+        '& h1': { position: 'relative', top: '0.08em' },
     },
     logo: {
-        width: 44,
-        height: 44,
+        width: 40,
+        height: 40,
         backgroundImage: 'url(/fragmenta_icon_1024.png)',
-        backgroundSize: 'cover',
+        backgroundSize: 'contain',
+        backgroundRepeat: 'no-repeat',
         backgroundPosition: 'center',
-        borderRadius: 1.5,
-        filter: 'drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3))',
+        filter: 'drop-shadow(0 2px 6px rgba(55, 58, 48, 0.18))',
     },
+    // The wordmark keeps the logo font (Bitcount Single).
     title: {
         color: 'text.primary',
-        fontFamily: '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace',
+        fontFamily: FONT_LOGO,
         fontWeight: 400,
         fontSize: { xs: '1.5rem', sm: '1.65rem' },
         letterSpacing: '0.02em',
-        textShadow: '0 2px 10px rgba(0, 0, 0, 0.6)',
         lineHeight: 1.1,
     },
     headerActionsContainer: (isCompactLayout) => ({
@@ -1571,21 +1752,9 @@ export const appStyles = {
         width: { xs: '100%', md: 'auto' },
         // Cards inset from the Container only — no extra pr needed.
     }),
-    gpuCard: (isCompactLayout) => ({
-        // Layout-only — Paper component's MuiPaper.root override owns
-        // bg/border/shadow so this card inherits the same Liquid Glass
-        // treatment as every other Tier-1 card.
-        px: 1.75,
-        py: 1.25,
-        borderRadius: 2,
-        minWidth: isCompactLayout ? '100%' : 240,
-        flexShrink: 0,
-        position: 'relative',
-        overflow: 'hidden',
-    }),
     emphasizedPrimaryBody2: {
         fontWeight: 'bold',
-        color: 'primary.main',
+        color: 'primary.dark',
     },
     advancedSettingsDetails: {
         // Pure pass-through. No maxHeight / inner scroll — that was
@@ -1611,8 +1780,11 @@ export const appStyles = {
     }),
     navPaper: (isCompactLayout, isIconOnly) => ({
         width: isCompactLayout ? '100%' : isIconOnly ? 64 : 220,
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         overflow: 'hidden',
+        // Its own card, lifted off the canvas like the page cards.
+        backgroundColor: (t) => t.palette.fragmenta.surface,
+        boxShadow: (t) => t.palette.fragmenta.shadowSoft,
         display: 'flex',
         flexDirection: 'column',
         // Vertical mode: `position: fixed` so the rail is anchored to
@@ -1632,19 +1804,19 @@ export const appStyles = {
     navigationTabs: (isCompactLayout, isIconOnly = false) => ({
         height: isCompactLayout ? 'auto' : '100%',
         p: { xs: 0.5, sm: 1 },
-        gap: { xs: 0.25, sm: 0.5 },
+        '& .MuiTabs-flexContainer': { gap: { xs: 0.25, sm: 0.75 } },
         '& .MuiTabs-indicator': {
             display: 'none',
         },
+        // Locked tabs (while training runs) read clearly as unavailable.
+        '& .MuiTab-root.Mui-disabled': { opacity: 0.35 },
         '& .MuiTab-root': {
             alignItems: 'center',
             justifyContent: (isCompactLayout || isIconOnly) ? 'center' : 'flex-start',
             textAlign: (isCompactLayout || isIconOnly) ? 'center' : 'left',
-            minHeight: { xs: 40, sm: 46 },
-            // Match the dropdown / Select font size so the nav rail labels
-            // read at the same scale as in-page form chrome.
-            fontSize: '0.8rem',
-            fontWeight: 400,
+            minHeight: 44,
+            fontSize: '0.875rem',
+            fontWeight: 600,  // same face and weight as the Link / MIDI Learn buttons
             textTransform: 'none',
             color: 'text.secondary',
             borderRadius: 2,
@@ -1655,15 +1827,22 @@ export const appStyles = {
             '& .MuiTab-iconWrapper': {
                 marginBottom: '0 !important',
             },
+            borderRadius: RADIUS.pill,
+            transition: 'background-color 160ms ease, color 160ms ease',
+            '& svg': { strokeWidth: 1.6 },
+            // Selected: a soft tint of the accent, no outline.
             '&.Mui-selected': {
-                color: 'primary.main',
+                color: 'text.primary',
                 fontWeight: 600,
-                backgroundColor: 'rgba(53, 194, 212, 0.16)',
-                boxShadow: 'inset 0 0 0 1px rgba(115, 215, 227, 0.35)',
+                backgroundColor: (t) => t.palette.fragmenta.navSelected,
+                '& svg': { color: (t) => t.palette.text.primary },
             },
             '&:hover': {
                 color: 'text.primary',
-                backgroundColor: 'rgba(53, 194, 212, 0.08)',
+                backgroundColor: (t) => t.palette.fragmenta.control,
+            },
+            '&.Mui-selected:hover': {
+                backgroundColor: (t) => t.palette.fragmenta.navSelected,
             },
         },
     }),
@@ -1675,11 +1854,13 @@ export const appStyles = {
         flexDirection: 'column',
         minHeight: { xs: 'auto', md: 0 },
         overflow: 'visible',
-        '& .MuiTypography-body1, & .MuiTypography-body2, & .MuiTypography-caption, & .MuiTypography-subtitle2': {
+        // Defaults only: :where() keeps these at zero extra specificity, so a
+        // component's own sx size (big readouts, labels) still wins.
+        '& :where(.MuiTypography-body1, .MuiTypography-body2, .MuiTypography-caption, .MuiTypography-subtitle2)': {
             fontSize: muiTheme.typography.body2.fontSize,
             lineHeight: muiTheme.typography.body2.lineHeight,
         },
-        '& .MuiButton-startIcon svg, & .MuiButton-endIcon svg, & .MuiIconButton-root svg, & .MuiAccordionSummary-expandIconWrapper svg': {
+        '& :where(.MuiButton-startIcon svg, .MuiButton-endIcon svg, .MuiIconButton-root svg, .MuiAccordionSummary-expandIconWrapper svg)': {
             width: 20,
             height: 20,
         },
@@ -1692,7 +1873,7 @@ export const appStyles = {
         // breathe. Aligns with the industry-app feel — cards have room.
         p: { xs: 2.25, sm: 3 },
         mb: 2,
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         transition: 'all 0.3s ease',
     },
     // Sticks the Dataset Status card to the top of the viewport during
@@ -1719,7 +1900,7 @@ export const appStyles = {
     },
     modelMissingLink: {
         fontWeight: 600,
-        color: 'primary.main',
+        color: 'primary.dark',
         textDecoration: 'none',
         '&:hover': {
             textDecoration: 'underline',
@@ -1894,8 +2075,26 @@ export const appStyles = {
     durationRow: {
         display: 'flex',
         alignItems: 'center',
-        gap: { xs: 1, sm: 2 },
-        mb: 2,
+        gap: 2,
+        mb: 2.5,
+    },
+    // Small caps field label (DURATION, PROMPT …).
+    fieldCaps: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: 'text.secondary',
+        minWidth: 64,
+    },
+    // A value readout set in the display face (10 s, 64%).
+    bigValue: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '0.95rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        minWidth: 44,
+        textAlign: 'right',
     },
     generatingWrap: {
         mb: 3,
@@ -1937,10 +2136,9 @@ export const appStyles = {
         gap: 1,
         mb: 1.5,
     },
+    // Card titles stand alone (no icon), as in the design.
     sectionCardIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
+        display: 'none',
     },
     // Layout glue only — typography is owned by the Tier-1 (h6) variant.
     // Leaving fontWeight here would override the canonical 600.
@@ -1952,7 +2150,7 @@ export const appStyles = {
     selectedModelCard: {
         p: { xs: 2.25, sm: 3 },
         mb: 2,
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         transition: 'all 0.3s ease',
     },
     boldBodyText: {
@@ -1990,7 +2188,9 @@ export const appStyles = {
         flexDirection: 'column',
         p: { xs: 0.5, sm: 1 },
         gap: { xs: 0.25, sm: 0.5 },
-        borderRadius: 2.5,
+        borderRadius: RADIUS.panel,
+        backgroundColor: 'transparent',
+        boxShadow: 'none',
         '& .dock-label': {
             opacity: 0,
             transform: 'translate(-8px, -50%)',
@@ -2019,17 +2219,17 @@ export const appStyles = {
         transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
             color: 'text.primary',
-            backgroundColor: 'rgba(53, 194, 212, 0.08)',
+            backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.08)`,
         },
         '&.Mui-disabled': {
             opacity: 0.45,
         },
     },
     dockIconButtonAccent: {
-        color: 'primary.main',
+        color: 'primary.dark',
         '&:hover': {
             color: 'primary.light',
-            backgroundColor: 'rgba(53, 194, 212, 0.10)',
+            backgroundColor: (t) => `rgba(${t.palette.fragmenta.amberRgb}, 0.10)`,
         },
     },
     // Hamburger trigger shown in place of the full dock when the viewport
@@ -2053,7 +2253,7 @@ export const appStyles = {
             background: isDark
                 ? 'linear-gradient(145deg, rgba(18, 25, 38, 0.96) 0%, rgba(12, 19, 30, 0.96) 100%)'
                 : 'linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 255, 0.98) 100%)',
-            color: isDark ? 'primary.light' : 'primary.main',
+            color: isDark ? 'primary.light' : 'primary.dark',
             boxShadow: isDark
                 ? '0 14px 24px rgba(4, 8, 14, 0.5)'
                 : '0 14px 24px rgba(15, 23, 42, 0.14)',
@@ -2112,6 +2312,204 @@ export const appStyles = {
     },
 };
 
+// Top-right app toolbar: GPU memory, then a tonal pill of icon buttons.
+export const appToolbarStyles = {
+    root: (t) => ({
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 1.25,
+        py: '5px',
+        pr: '5px',
+        pl: 2,
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.surface,
+        boxShadow: t.palette.fragmenta.shadowSoft,
+    }),
+    gpu: { display: 'flex', alignItems: 'center', gap: 1.25 },
+    gpuLabel: {
+        fontSize: '0.62rem',
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        color: 'text.secondary',
+    },
+    meter: (t) => ({
+        width: 72,
+        height: 6,
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.controlHover,
+        overflow: 'hidden',
+    }),
+    meterFill: (pct) => (t) => ({
+        width: `${pct}%`,
+        height: '100%',
+        borderRadius: RADIUS.pill,
+        background: pct > 80
+            ? `linear-gradient(90deg, ${t.palette.fragmenta.accents.warm}, ${t.palette.perf.channelsDeep[3]})`
+            : `linear-gradient(90deg, ${t.palette.fragmenta.accents.cool}, ${t.palette.perf.channelsDeep[0]})`,
+        transition: 'width 300ms ease',
+    }),
+    gpuText: {
+        fontSize: '0.7rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+    },
+    actions: (t) => ({
+        display: 'flex',
+        gap: '2px',
+        p: '2px',
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.control,
+    }),
+    button: {
+        width: 34,
+        height: 34,
+        color: 'text.secondary',
+        borderRadius: RADIUS.pill,
+        '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.surface },
+    },
+    toggle: (on) => (t) => ({
+        width: 34,
+        height: 34,
+        borderRadius: RADIUS.pill,
+        color: on ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.secondary,
+        backgroundColor: on ? t.palette.fragmenta.accents.cool : 'transparent',
+        '&:hover': { color: on ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary, backgroundColor: on ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
+    }),
+    update: (t) => ({
+        width: 34,
+        height: 34,
+        borderRadius: RADIUS.pill,
+        color: onFill(t.palette.fragmenta.accents.warm),
+        backgroundColor: t.palette.fragmenta.accents.warm,
+        '&:hover': { backgroundColor: t.palette.fragmenta.accents.warm, filter: 'brightness(0.97)' },
+    }),
+};
+
+// Dataset workbench: project header, clip rows, rail cards.
+export const datasetStyles = {
+    kicker: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.1em',
+        textTransform: 'uppercase',
+        lineHeight: 1.4,
+        color: 'text.secondary',
+    },
+    projectName: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.75rem',
+        fontWeight: 600,
+        letterSpacing: '-0.02em',
+        lineHeight: 1.15,
+        my: 0.25,
+    },
+    // Clip list: rows with soft rounded backgrounds instead of rule lines.
+    clipTable: (t) => ({
+        borderCollapse: 'separate',
+        borderSpacing: '0 4px',
+        '& th': {
+            borderBottom: 'none',
+            fontSize: '0.625rem',
+            fontWeight: 600,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: t.palette.text.secondary,
+            py: 0.75,
+        },
+        '& td': { borderBottom: 'none', py: 1.25, verticalAlign: 'middle' },
+        '& td:first-of-type': { borderRadius: '24px 0 0 24px' },
+        '& td:last-of-type': { borderRadius: '0 24px 24px 0' },
+    }),
+    clipRow: (isPlaying) => (t) => ({
+        '& td': {
+            backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
+            transition: 'background-color 160ms ease',
+        },
+        '&.MuiTableRow-hover:hover td': {
+            backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.8)`,
+        },
+        '&.Mui-selected td, &.Mui-selected:hover td': { backgroundColor: t.palette.fragmenta.control },
+    }),
+    playButton: (isPlaying) => (t) => ({
+        width: 36,
+        height: 36,
+        flexShrink: 0,
+        color: isPlaying ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary,
+        backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
+        boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
+    }),
+    fileName: {
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+        lineHeight: 1.35,
+    },
+    waveCapsule: (t) => ({
+        width: '100%',
+        height: 40,
+        flexShrink: 0,
+        boxSizing: 'border-box',
+        px: '9px',
+        borderRadius: RADIUS.pill,
+        backgroundColor: `rgba(${t.palette.fragmenta.bgRgb}, 0.8)`,
+    }),
+    // A clip's prompt: tonal; rose-tinted while empty.
+    promptField: (empty) => (t) => ({
+        '& .MuiOutlinedInput-root': {
+            fontSize: '0.75rem',
+            lineHeight: 1.45,
+            py: 1,
+            px: 1.5,
+            backgroundColor: empty ? t.palette.perf.laneTints[1] : t.palette.fragmenta.control,
+            '&:hover': { backgroundColor: empty ? t.palette.perf.laneTints[1] : t.palette.fragmenta.controlHover },
+        },
+        '& textarea::placeholder': { color: t.palette.perf.channelsDeep[1], opacity: 1 },
+    }),
+    rowAction: {
+        width: 30,
+        height: 30,
+        color: 'text.secondary',
+        '&:hover': { color: 'text.primary', backgroundColor: (t) => t.palette.fragmenta.control },
+    },
+    // Auto-annotate this clip: golden, like the other auto actions.
+    rowActionWarm: (t) => ({
+        width: 30,
+        height: 30,
+        color: onFill(t.palette.fragmenta.accents.warm),
+        backgroundColor: t.palette.fragmenta.accents.warm,
+        '&:hover': { backgroundColor: t.palette.fragmenta.warmHi, filter: 'brightness(0.96)' },
+        '&.Mui-disabled': { backgroundColor: t.palette.fragmenta.control },
+    }),
+    // Rail: each tool is its own soft card.
+    railCard: (t) => ({
+        borderRadius: RADIUS.card,
+        backgroundColor: t.palette.fragmenta.surface,
+        boxShadow: t.palette.fragmenta.shadowSoft,
+        overflow: 'hidden',
+    }),
+    railHeader: {
+        width: '100%',
+        px: 2.25,
+        py: 1.75,
+        gap: 1,
+        justifyContent: 'flex-start',
+        color: 'text.primary',
+        '&:hover': { backgroundColor: (t) => `rgba(${t.palette.fragmenta.bgRgb}, 0.5)` },
+    },
+    railTitle: {
+        flex: 1,
+        textAlign: 'left',
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.0625rem',
+        fontWeight: 600,
+        letterSpacing: '-0.01em',
+    },
+};
+
 export const tabPanelStyles = {
     root: {
         px: 0,
@@ -2167,17 +2565,14 @@ export const audioUploadRowStyles = {
 };
 
 export const generatedFragmentsWindowStyles = {
-    // Theme-driven coloring — MuiPaper handles bg/border/shadow.
-    // Card grows with content up to a sensible cap, then scrolls.
     rootPaper: {
-        p: 2,
+        p: 3,
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 2.5,
-        // Tall enough to show ~9 rows before scrolling. Min keeps the empty
-        // state from collapsing the layout when no fragments exist yet.
+        borderRadius: RADIUS.card,
+        // Min keeps the empty state from collapsing the layout.
         minHeight: 240,
-        maxHeight: 520,
+        maxHeight: 640,
     },
     headerRow: {
         display: 'flex',
@@ -2191,17 +2586,20 @@ export const generatedFragmentsWindowStyles = {
         gap: 1,
         minWidth: 0,
     },
-    titleIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
-    },
+    titleIcon: { display: 'none' },
     titleText: {},  // typography handled by the h6 variant in theme
-    countText: {
+    countText: (t) => ({
         fontWeight: 600,
         minWidth: 20,
-        textAlign: 'right',
-    },
+        height: 26,
+        px: 1.25,
+        display: 'inline-flex',
+        alignItems: 'center',
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.control,
+        color: 'text.primary',
+        fontVariantNumeric: 'tabular-nums',
+    }),
     emptyState: {
         display: 'flex',
         alignItems: 'center',
@@ -2212,50 +2610,71 @@ export const generatedFragmentsWindowStyles = {
     listRoot: {
         flex: 1,
         overflow: 'auto',
-        // Each row is ~40px (single-line layout); cap so the card height
-        // never exceeds rootPaper.maxHeight regardless of fragment count.
         p: 0,
-        '& .MuiListItem-root': {
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 1.5,
-            mb: 0.75,
-            bgcolor: 'background.default',
-            '&:last-child': { mb: 0 },
-        },
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
     },
-    // One-row, Spotify-style layout:
-    //   [▶]   prompt text (ellipsis)    Xs · ago    (i)   [⬇]
-    listItem: {
+    // [▶]  prompt · 10 s · 4 min ago        [i] [⬇] [📁] [🗑]
+    //      ⟨ capsule waveform ⟩
+    listItem: (isPlaying) => (t) => ({
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.5,
+        p: '10px 12px 10px 10px',
+        borderRadius: RADIUS.section,
+        backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : 'transparent',
+        transition: 'background-color 160ms ease',
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.navSelected : `rgba(${t.palette.fragmenta.bgRgb}, 0.7)` },
+    }),
+    rowBody: {
+        flex: 1,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '6px',
+    },
+    rowTop: {
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 1,
+        minWidth: 0,
+    },
+    rowWave: {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
-        py: 0.5,
-        px: 1,
-        minHeight: 40,
+        minWidth: 0,
     },
     fragmentMeta: {
         flex: 1,
         minWidth: 0,
     },
     fragmentPrompt: {
+        fontSize: '0.8125rem',
         fontWeight: 500,
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
     },
-    batchTag: {
+    metaText: {
+        flexShrink: 0,
+        fontSize: '0.6875rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+    },
+    batchTag: (t) => ({
         display: 'inline-block',
         fontWeight: 700,
         fontSize: '0.7rem',
-        px: 0.5,
-        py: 0,
+        px: 0.75,
         mr: 0.75,
-        borderRadius: 0.75,
-        bgcolor: 'action.selected',
+        borderRadius: RADIUS.pill,
+        bgcolor: t.palette.fragmenta.control,
         color: 'text.secondary',
         fontVariantNumeric: 'tabular-nums',
-    },
+    }),
     fragmentMetaInline: {
         flexShrink: 0,
         whiteSpace: 'nowrap',
@@ -2265,23 +2684,25 @@ export const generatedFragmentsWindowStyles = {
         display: 'inline-flex',
         alignItems: 'center',
         color: 'text.secondary',
-        opacity: 0.5,
+        opacity: 0.6,
         cursor: 'help',
         transition: 'opacity 150ms ease',
-        '&:hover': { opacity: 0.95 },
+        '&:hover': { opacity: 1 },
     },
-    playPauseButton: (isPlaying) => (muiTheme) => ({
+    // Play: a 40 px circle, ivory with a soft shadow; the cool pastel while playing.
+    playPauseButton: (isPlaying) => (t) => ({
         flexShrink: 0,
-        border: '1px solid',
-        borderColor: isPlaying
-            ? 'primary.main'
-            : (muiTheme.palette.mode === 'dark' ? 'rgba(194, 207, 228, 0.22)' : 'rgba(15, 23, 42, 0.2)'),
-        color: isPlaying ? 'primary.main' : 'inherit',
+        width: 40,
+        height: 40,
+        color: isPlaying ? onFill(t.palette.fragmenta.accents.cool) : t.palette.text.primary,
+        backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.onAccent,
+        boxShadow: `0 1px 3px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '&:hover': { backgroundColor: isPlaying ? t.palette.fragmenta.accents.cool : t.palette.fragmenta.surface },
     }),
     downloadButton: {
         flexShrink: 0,
         color: 'text.secondary',
-        '&:hover': { color: 'primary.main' },
+        '&:hover': { color: 'text.primary' },
     },
     hiddenAudio: {
         display: 'none',
@@ -2295,8 +2716,8 @@ export const trainingMonitorStyles = {
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        borderRadius: 2.5,
-        transition: 'all 0.3s ease',
+        gap: 2.25,
+        borderRadius: RADIUS.card,
     },
     headerRow: {
         display: 'flex',
@@ -2304,74 +2725,88 @@ export const trainingMonitorStyles = {
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: 1,
-        mb: 2,
     },
     headerTitleWrap: {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
     },
-    headerIcon: {
-        display: 'inline-flex',
-        color: 'text.primary',
-        lineHeight: 0,
-    },
+    headerIcon: { display: 'none' },
     headerTitle: {},  // typography handled by the h6 variant in theme
-    statusInline: {
+    // Status pill: tinted by state (training green, done blue, error red).
+    statusInline: (status) => (t) => {
+      const bg = status === 'live'
+          ? t.palette.fragmenta.accents.fresh
+          : status === 'complete'
+              ? t.palette.fragmenta.accents.cool
+              : status === 'error'
+                  ? t.palette.fragmenta.accents.hot
+                  : t.palette.fragmenta.control;
+      return {
         display: 'flex',
         alignItems: 'center',
-        gap: 0.75,
-        px: 1,
-        py: 0.35,
-        borderRadius: 999,
-        border: '1px solid',
-        borderColor: 'divider',
-        bgcolor: 'background.default',
+        gap: 1,
+        height: 30,
+        px: 1.5,
+        borderRadius: RADIUS.pill,
+        backgroundColor: bg,
+        color: onFill(bg),
+        '& .MuiTypography-root': { color: 'inherit' },
+      };
     },
     statusDot: (status, animate = false) => ({
         width: 8,
         height: 8,
         borderRadius: '50%',
-        bgcolor: status === 'live'
-            ? 'success.main'
-            : status === 'error'
-                ? 'error.main'
-                : status === 'complete'
-                    ? 'primary.main'
-                    : 'text.secondary',
-        animation: animate ? 'pulse 2s infinite' : 'none',
-        '@keyframes pulse': {
+        bgcolor: 'currentColor',
+        opacity: status === 'idle' ? 0.45 : 1,
+        animation: animate ? 'fragmenta-status-pulse 2s infinite' : 'none',
+        '@keyframes fragmenta-status-pulse': {
             '0%': { opacity: 1 },
-            '50%': { opacity: 0.5 },
+            '50%': { opacity: 0.35 },
             '100%': { opacity: 1 },
         },
     }),
-    statusText: (status) => ({
-        color: status === 'live'
-            ? 'success.main'
-            : status === 'error'
-                ? 'error.main'
-                : status === 'complete'
-                    ? 'primary.main'
-                    : 'text.secondary',
+    statusText: () => ({
+        color: 'text.primary',
         fontWeight: 600,
-        letterSpacing: '0.03em',
-        textTransform: 'uppercase',
-        fontSize: { xs: '0.64rem', sm: '0.7rem' },
+        fontSize: '0.75rem',
         lineHeight: 1,
     }),
     progressSection: {
-        mb: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.25,
     },
     progressHeader: {
         display: 'flex',
-        justifyContent: 'space-between',
-        mb: 1,
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+        gap: 1.5,
     },
-    progressBar: {
-        height: 8,
-        borderRadius: 4,
+    bigPercent: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '3rem',
+        fontWeight: 600,
+        letterSpacing: '-0.03em',
+        lineHeight: 1,
+        fontVariantNumeric: 'tabular-nums',
     },
+    stepText: {
+        fontSize: '0.8125rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
+    },
+    progressBar: (t) => ({
+        height: 10,
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.fragmenta.control,
+        boxShadow: `inset 0 1px 2px rgba(${t.palette.fragmenta.inkRgb}, 0.12)`,
+        '& .MuiLinearProgress-bar': {
+            borderRadius: RADIUS.pill,
+            backgroundImage: `linear-gradient(90deg, ${t.palette.perf.channelsSoft[3]}, ${t.palette.fragmenta.accents.warm} 60%, ${t.palette.perf.channelsDeep[3]})`,
+        },
+    }),
     deviceSection: {
         mb: 2,
     },
@@ -2379,22 +2814,51 @@ export const trainingMonitorStyles = {
         fontSize: { xs: '0.74rem', sm: '0.8rem' },
         mt: 0.5,
     },
+    // Four tonal tiles: Loss, Checkpoints, Phase, Seed.
     metricsGrid: {
-        mb: 2,
+        display: 'grid',
+        gridTemplateColumns: { xs: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
+        gap: 1,
     },
-    lossSection: {
-        mb: 2,
+    metricTile: (t) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 0.5,
+        p: 1.5,
+        borderRadius: RADIUS.section,
+        backgroundColor: t.palette.fragmenta.section,
+    }),
+    metricLabel: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'text.secondary',
     },
+    metricValue: {
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.25rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        lineHeight: 1.2,
+    },
+    lossSection: (t) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1,
+        p: 2,
+        pb: 1.25,
+        borderRadius: RADIUS.section,
+        backgroundColor: t.palette.fragmenta.section,
+    }),
     lossChartBox: {
         height: 200,
         width: '100%',
     },
     lossDisclaimer: {
         display: 'block',
-        mt: 0.75,
-        fontStyle: 'italic',
         lineHeight: 1.4,
-        opacity: 0.75,
+        color: 'text.secondary',
     },
     errorAlert: {
         mb: 2,
@@ -2404,6 +2868,7 @@ export const trainingMonitorStyles = {
 export const welcomePageStyles = {
     backdrop: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
+        const L = muiTheme.palette.fragmenta;
         // Match the main app body's three-layer treatment so the
         // welcome page reads as part of the same surface, not a
         // separate dialog with its own palette.
@@ -2413,9 +2878,9 @@ export const welcomePageStyles = {
                 ? `radial-gradient(900px 700px at -5% 50%, rgba(39, 159, 187, 0.18), transparent 60%), ` +
                   `radial-gradient(1100px 700px at 95% 108%, rgba(253, 162, 43, 0.14), transparent 55%), ` +
                   `linear-gradient(165deg, #181A1B 0%, ${DARK.bg} 42%, #1A1B1C 100%)`
-                : `radial-gradient(900px 700px at -5% 50%, rgba(31, 126, 148, 0.09), transparent 60%), ` +
-                  `radial-gradient(1100px 700px at 95% 108%, rgba(201, 122, 26, 0.08), transparent 55%), ` +
-                  `linear-gradient(165deg, #F7F2E8 0%, ${LIGHT.bg} 42%, #ECE5D5 100%)`,
+                : `radial-gradient(900px 700px at -5% 50%, rgba(${L.amberRgb}, 0.09), transparent 60%), ` +
+                  `radial-gradient(1100px 700px at 95% 108%, rgba(${L.warmRgb}, 0.08), transparent 55%), ` +
+                  `linear-gradient(165deg, ${L.bgTop} 0%, ${L.bg} 42%, ${L.bgBottom} 100%)`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2428,7 +2893,8 @@ export const welcomePageStyles = {
         // only the inner content (logo, title, button) is visible.
         return {
             textAlign: 'center',
-            width: 'min(920px, 100%)',
+            // Wide enough for "Welcome to Fragmenta" on one line.
+            width: 'min(1040px, 100%)',
             border: 'none',
             borderRadius: 4,
             background: 'transparent',
@@ -2458,13 +2924,16 @@ export const welcomePageStyles = {
             mb: { xs: 3.5, sm: 5 },
         };
     },
+    // "Welcome to Fragmenta" in the logo font, as before the redesign.
     title: {
-        fontFamily: '"Bitcount Single", "IBM Plex Mono", "JetBrains Mono", "Space Mono", "Courier New", monospace',
+        fontFamily: FONT_LOGO,
         fontWeight: 400,
         color: 'text.primary',
-        mb: 1,
+        mb: { xs: 3, md: 4 },
         fontSize: { xs: '2.5rem', sm: '3.5rem', md: '4rem' },
         letterSpacing: '0.02em',
+        // One line on the desktop; a phone (HF Space) may still wrap.
+        whiteSpace: { xs: 'normal', md: 'nowrap' },
     },
 };
 
@@ -2482,9 +2951,9 @@ export const demoNoticeStyles = {
     },
     badge: (muiTheme) => {
         const isDark = muiTheme.palette.mode === 'dark';
-        // DARK.warm #FDA22B / LIGHT.warm #C97A1A, as rgba so the badge tints
-        // the glass beneath it instead of sitting on an opaque chip.
-        const warmRgb = isDark ? '253, 162, 43' : '201, 122, 26';
+        // The warm accent as rgba, so the badge tints the glass beneath it
+        // instead of sitting on an opaque chip.
+        const warmRgb = isDark ? '253, 162, 43' : muiTheme.palette.fragmenta.warmRgb;
         return {
             mt: 0.25,
             px: 1.1,
@@ -2492,7 +2961,7 @@ export const demoNoticeStyles = {
             borderRadius: 999,
             border: `1px solid rgba(${warmRgb}, 0.45)`,
             backgroundColor: `rgba(${warmRgb}, 0.12)`,
-            color: isDark ? DARK.warm : LIGHT.warm,
+            color: isDark ? DARK.warm : muiTheme.palette.fragmenta.warm,
             fontFamily: FONT_MONO,
             fontSize: '0.62rem',
             fontWeight: 500,
@@ -2528,15 +2997,6 @@ export const demoNoticeStyles = {
 
 export const lossChartStyles = {
     padding: { top: 10, right: 16, bottom: 28, left: 44 },
-    colors: {
-        grid: '#2B3446',
-        axis: '#9DA9BC',
-        line: '#35C2D4',
-        point: '#73D7E3',
-        tooltipBg: '#111826',
-        tooltipBorder: 'rgba(194, 207, 228, 0.2)',
-        tooltipText: '#E8EDF5',
-    },
     svg: {
         width: '100%',
         height: '100%',
@@ -2591,9 +3051,9 @@ export const perfTokens = {
     height: {
         iconSm: 18,    // smallest tap targets (take-history clear)
         iconMd: 20,    // take-row icon buttons (audition, star, delete, commit)
-        sub: 22,       // small subordinate square toggles (mute, solo, loop)
-        compact: 26,   // primary compact controls (Link, MIDI, Q, BPM, transport)
-        cta: 28,       // primary CTA pill (Generate)
+        sub: 28,       // small square toggles (mute, solo, sidechain)
+        compact: 34,   // bar controls (Link, MIDI, Q, BPM, selects)
+        cta: 40,       // Generate
     },
     // Icon glyph sizes paired with their host control. Inside a 26px button
     // use `md`; inside 18–22px buttons use `sm`; inside the channel transport
@@ -2654,11 +3114,11 @@ export const performancePanelStyles = {
     // toggles (fragmentIconBtn, transportBtn, loopBtn, mute/solo) stay parameterized
     // — they're not just icon buttons.
     compactIconBtn: (size = 'md', variant = 'menu') => {
-        const sz = { xs: 18, sm: 20, md: 22, lg: 26 }[size];
+        const sz = { xs: 18, sm: 20, md: 22, lg: 34 }[size];
         return {
             width: sz,
             height: sz,
-            borderRadius: 1,
+            borderRadius: RADIUS.pill,
             color: variant === 'danger' ? 'text.disabled' : 'text.secondary',
             '&:hover': {
                 color: variant === 'danger' ? 'error.main' : 'text.primary',
@@ -2675,10 +3135,9 @@ export const performancePanelStyles = {
         alignItems: 'center',
         px: 1.5,
         py: 0.75,
-        borderRadius: 2,
-        border: '1px solid',
-        borderColor: 'divider',
-        background: 'linear-gradient(135deg, rgba(53, 194, 212, 0.05) 0%, rgba(159, 138, 230, 0.04) 100%)',
+        borderRadius: RADIUS.panel,
+        backgroundColor: (t) => t.palette.fragmenta.surface,
+        boxShadow: (t) => t.palette.fragmenta.shadowSoft,
         flexWrap: { xs: 'wrap', md: 'nowrap' },
     },
     // Single source of truth for every "pill" control in the master + bottom
@@ -2693,11 +3152,16 @@ export const performancePanelStyles = {
         // font than the surrounding ButtonBase / TextField text on the bar
         // (which inherits FONT_BODY from the body). Inheriting at the slot
         // level wins over the theme override and keeps every pill matched.
+        // Tonal control surface, no outline.
         '& .MuiOutlinedInput-root': {
             fontFamily: 'inherit',
             height: perfTokens.height.compact,
-            borderRadius: 1.5,
+            borderRadius: RADIUS.control,
+            backgroundColor: (t) => t.palette.fragmenta.control,
+            transition: 'background-color 160ms ease',
+            '&:hover': { backgroundColor: (t) => t.palette.fragmenta.controlHover },
         },
+        '& fieldset': { border: 'none' },
         '& .MuiSelect-select': {
             fontFamily: 'inherit',
             // Explicit padding on all four sides — top/bottom 0 keeps the
@@ -2709,11 +3173,16 @@ export const performancePanelStyles = {
             // shorthand correctly across all themes — explicit is safer.
             // Line-height matched to parent height vertical-centers the
             // text without `display: flex` (which would kill
-            // text-overflow: ellipsis).
+            // text-overflow: ellipsis). The global MuiSelect override sets
+            // display: flex, so block is restored here explicitly.
+            display: 'block',
             padding: '0 32px 0 14px !important',
             lineHeight: `${perfTokens.height.compact}px`,
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            // Same face, size and weight as the Link / MIDI Learn buttons.
+            fontFamily: `${FONT_DISPLAY} !important`,
+            fontSize: `${perfTokens.fontSize.sm} !important`,
+            fontWeight: '600 !important',
+            letterSpacing: 'normal',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -2723,9 +3192,10 @@ export const performancePanelStyles = {
         // set `inputProps={{ style: { fontSize: perfTokens.fontSize.sm } }}`
         // to win against MUI's .MuiInputBase-inputSizeSmall 14px default.
         '& .MuiOutlinedInput-input': {
-            fontFamily: 'inherit',
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: perfTokens.weight.bold,
+            fontFamily: `${FONT_DISPLAY} !important`,
+            fontSize: `${perfTokens.fontSize.sm} !important`,
+            fontWeight: '600 !important',
+            letterSpacing: 'normal',
         },
     },
     headerCard: (theme) => ({
@@ -2733,7 +3203,7 @@ export const performancePanelStyles = {
         alignItems: 'center',
         gap: 2,
         p: { xs: 1.25, sm: 1.75 },
-        borderRadius: 2.5,
+        borderRadius: RADIUS.card,
         border: '1px solid',
         borderColor: 'divider',
         bgcolor: 'background.paper',
@@ -2752,7 +3222,7 @@ export const performancePanelStyles = {
         display: 'flex',
         alignItems: 'center',
         gap: 1,
-        color: 'primary.main',
+        color: 'primary.dark',
     },
     title: {
         fontWeight: 400,
@@ -2790,372 +3260,264 @@ export const performancePanelStyles = {
     },
     channelsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, minmax(200px, 300px))',
+        gridTemplateColumns: 'repeat(4, minmax(200px, 1fr))',
         gap: 1.25,
         flex: 1,
         minWidth: 0,
     },
-    masterStrip: (color) => (theme) => {
-        const dark = theme.palette.mode === 'dark';
-        // Matches the channel-strip at-rest treatment so master sits in the
-        // same visual family — same liquid glass (translucent + backdrop blur
-        // + inset rim) rather than a higher-elevation solid surface.
-        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
-        const rim = dark
-            ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
-        return {
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 1.5,
-            p: 1.25,
-            borderRadius: 2.5,
-            border: '1px solid',
-            borderColor: dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)',
-            background: glassBg,
-            backdropFilter: 'blur(28px) saturate(200%)',
-            WebkitBackdropFilter: 'blur(28px) saturate(200%)',
-            boxShadow: `0 2px 10px ${dark ? 'rgba(4, 8, 14, 0.34)' : 'rgba(0,0,0,0.08)'}, ${rim}`,
-            width: { xs: '100%', md: 150 },
-            flex: { xs: '1 1 100%', md: '0 0 150px' },
-            minHeight: 0,
-            overflow: 'hidden',
-            boxSizing: 'border-box',
-        };
-    },
-    masterHeader: (color) => ({
+    // Master: a compact, lightly elevated panel.
+    masterStrip: () => (theme) => ({
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 2,
+        px: 2,
+        py: 2.5,
+        borderRadius: RADIUS.card,
+        backgroundColor: theme.palette.fragmenta.surface,
+        boxShadow: theme.palette.fragmenta.shadowRaised,
+        width: { xs: '100%', md: 176 },
+        flex: { xs: '1 1 100%', md: '0 0 176px' },
+        minHeight: 0,
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+    }),
+    masterHeader: () => ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 0.5,
-        // Match the channel header's content height (driven there by the
-        // badge chip) so the divider lands at the same vertical position —
-        // the plain caps label is shorter and otherwise pulls it higher.
-        minHeight: perfTokens.height.compact,
-        borderBottom: `1px solid ${color}33`,
-        pb: 0.75,
-        color,
+        minHeight: 20,
     }),
     masterBadge: () => ({
-        // Plain caps label — same family as TAKES, MIDI SETTINGS, etc.
-        // Dropped the chip (tinted bg + colored ring) so master reads as a
-        // section label rather than a special UI element.
         ...perfTokens.caps,
+        fontSize: '0.625rem',
+        letterSpacing: '0.1em',
         color: 'text.secondary',
-    }),
-    masterFaderWrap: {
-        // Fixed-height lane for the meter + vertical fader. Was `flex: 1`
-        // (filled all remaining vertical space) — that made the fader feel
-        // disproportionately tall. The JSX now wraps this + the readouts in
-        // a flex-column with justify-content: center, so this fixed height
-        // sits vertically centered between the header and the FX pickers.
-        // 320 px ≈ 80% of the previously-stretched height.
-        height: 320,
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        justifyContent: 'center',
-        gap: 1,
-        py: 1.25,
-        minHeight: 0,
-        flexShrink: 0,
-    },
-    masterMeterTrack: {
-        width: 10,
-        bgcolor: 'background.default',
-        borderRadius: 0.75,
-        border: '1px solid',
-        borderColor: 'divider',
-        position: 'relative',
-        overflow: 'hidden',
-        display: 'flex',
-        alignItems: 'flex-end',
-    },
-    masterMeterFill: (color) => (theme) => ({
-        width: '100%',
-        height: '0%',
-        // Peaks light up in warning (amber) then error (red) — uses theme
-        // tokens instead of hardcoded #E3A34B / #E36C61 so the meter shifts
-        // automatically when the palette changes.
-        background: `linear-gradient(0deg, ${color} 0%, ${color}DD 55%, ${theme.palette.warning.main} 78%, ${theme.palette.error.main} 100%)`,
-        transition: 'height 0.05s linear',
-    }),
-    masterFader: (color) => ({
-        height: '100%',
-        color,
-        '& .MuiSlider-thumb': { width: 16, height: 16 },
-        '& .MuiSlider-rail': { opacity: 0.3, width: 4 },
-        // Filled track from the bottom (min dB) up to the thumb — gives a
-        // quick visual read of how much gain you've dialed in. Width matches
-        // the rail so the fill sits flush inside it.
-        '& .MuiSlider-track': {
-            width: 4,
-            border: 'none',
-            opacity: 0.9,
-        },
-        // Unity (0 dB) tick. NOTE: numeric height <= 1 in MUI sx means a
-        // PERCENTAGE (1 -> 100%), which rendered the tick as a full-height
-        // bar overflowing the lane — use 2 (px) like the knob marks.
-        '& .MuiSlider-mark': {
-            width: 10,
-            height: 2,
-            borderRadius: 1,
-            bgcolor: 'text.disabled',
-            opacity: 1,
-        },
-        '& .MuiSlider-markActive': {
-            bgcolor: 'text.disabled',
-        },
     }),
     masterReadouts: {
         display: 'flex',
         flexDirection: 'column',
-        gap: 0.25,
         alignItems: 'center',
+        gap: '2px',
+        mt: -1,
     },
     masterValue: {
-        ...perfTokens.num,
-        textAlign: 'center',
-        color: 'primary.main',
+        fontFamily: FONT_DISPLAY,
+        fontSize: '1.25rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
+        color: 'text.primary',
+        lineHeight: 1.1,
+    },
+    masterCaption: {
+        ...perfTokens.caps,
+        fontSize: '0.625rem',
+        color: 'text.disabled',
+    },
+    // Tall, slim, rounded L/R meters with a dB scale beside them.
+    // The scale hangs off the left; matching space on the right keeps the
+    // two meters themselves centred under the knob and the dB readout.
+    masterMeters: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        height: 222,
+        pr: '32px',
+    },
+    masterScale: {
+        position: 'relative',
+        width: 22,
+        height: 200,
+    },
+    masterScaleLabel: (bottomPct) => ({
+        position: 'absolute',
+        right: 0,
+        bottom: `calc(${bottomPct}% - 6px)`,
+        fontSize: '0.625rem',
+        lineHeight: '12px',
+        color: 'text.disabled',
+        fontVariantNumeric: 'tabular-nums',
+    }),
+    masterMeterCol: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 1,
+    },
+    masterMeterTrack: (theme) => ({
+        position: 'relative',
+        width: 12,
+        height: 200,
+        borderRadius: RADIUS.pill,
+        backgroundColor: theme.palette.fragmenta.control,
+        boxShadow: `inset 0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.14)`,
+        overflow: 'hidden',
+    }),
+    // Full height; the meter loop reveals it with a clip-path, so the warm
+    // top only shows when the level gets there.
+    masterMeterFill: (color) => (theme) => ({
+        position: 'absolute',
+        inset: 0,
+        clipPath: 'inset(100% 0 0 0)',
+        borderRadius: RADIUS.pill,
+        background: `linear-gradient(0deg, ${theme.palette.primary.main} 0%, ${color} 55%, ${theme.palette.fragmenta.accents.warm} 82%, ${theme.palette.fragmenta.accents.hot} 100%)`,
+    }),
+    // Peak hold: a short ink line that holds the loudest moment briefly.
+    masterPeakMarker: {
+        position: 'absolute',
+        left: 1,
+        right: 1,
+        bottom: '0%',
+        height: 2,
+        borderRadius: RADIUS.pill,
+        backgroundColor: 'text.primary',
+        opacity: 0,
+        pointerEvents: 'none',
+    },
+    masterMeterLabel: {
+        fontSize: '0.625rem',
+        fontWeight: 600,
+        color: 'text.disabled',
     },
     masterPeakValue: {
-        ...perfTokens.num,
-        textAlign: 'center',
-        color: 'text.disabled',
-        // Visually subordinate to the main dB readout — kept xs intentionally
-        // even though `num` sets sm.
-        fontSize: perfTokens.fontSize.xs,
+        fontSize: '0.6875rem',
+        color: 'text.secondary',
+        fontVariantNumeric: 'tabular-nums',
     },
     masterTransport: {
         display: 'flex',
         flexDirection: 'column',
         gap: 0.5,
         pt: 0.75,
-        borderTop: '1px solid',
-        borderTopColor: 'divider',
     },
     masterBtn: (color, variant) => (theme) => {
-        // Gradient fill + drop shadow, NO border (matches the Suggest-
-        // hyperparameters contained button). 'stop' uses the error palette;
-        // 'play' uses the passed color.
-        const fill = variant === 'stop' ? theme.palette.error.main : color;
+        const fill = variant === 'stop' ? theme.palette.fragmenta.accents.hot : color;
         return {
             textTransform: 'none',
-            borderRadius: 1.5,
+            borderRadius: RADIUS.control,
             fontSize: perfTokens.fontSize.sm,
-            // Match the app's buttons (MuiButton root is 400) — not bold.
-            fontWeight: 400,
+            fontWeight: 500,
             height: perfTokens.height.compact,
-            // Override MUI's vertical padding so the button lands at the
-            // shared 26px row height (matches Q select + BPM input).
             py: 0,
             px: 1.25,
             minWidth: 0,
             lineHeight: 1,
             border: 'none',
-            color: 'rgba(0,0,0,0.88)',
-            background: `${PERF_BTN_SHEEN}, ${fill}`,
-            boxShadow: PERF_BTN_SHADOW,
-            transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms',
-            '&:hover': {
-                border: 'none',
-                filter: 'brightness(1.05)',
-                transform: 'translateY(-1px)',
-                boxShadow: PERF_BTN_SHADOW_HOVER,
-            },
-            // Disabled (e.g. Play All with nothing loaded) → neutral gray chip,
-            // matching the contained button's disabled look.
+            color: onFill(fill),
+            backgroundColor: fill,
+            transition: 'background-color 160ms ease, filter 160ms ease',
+            '&:hover': { border: 'none', backgroundColor: fill, filter: 'brightness(0.97)' },
             '&.Mui-disabled': {
                 border: 'none',
-                color: 'rgba(255,255,255,0.26)',
-                background: 'rgba(255,255,255,0.06)',
-                boxShadow: 'none',
+                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.5)`,
+                backgroundColor: theme.palette.fragmenta.control,
             },
         };
     },
-    // Icon-only transport buttons (Play / Stop / Record). Same contained
-    // aesthetic as masterBtn — gradient fill + drop shadow, no border — but a
-    // compact square so the top bar is just three colored icons.
-    masterIconBtn: (color) => ({
-        width: perfTokens.height.compact,
-        height: perfTokens.height.compact,
-        borderRadius: 1.5,
-        color: 'rgba(0,0,0,0.88)',
-        background: `${PERF_BTN_SHEEN}, ${color}`,
-        boxShadow: PERF_BTN_SHADOW,
-        transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms',
-        // Own the hover/focus highlight in the button's own color. Without this,
-        // the global MuiIconButton hover (teal rgba(39,159,187,…) + amber icon)
-        // bleeds through and clashes with the transport colors.
-        '&:hover': {
-            color: 'rgba(0,0,0,0.88)',
-            backgroundColor: color,
-            background: `${PERF_BTN_SHEEN}, ${color}`,
-            filter: 'brightness(1.05)',
-            transform: 'translateY(-1px)',
-            boxShadow: PERF_BTN_SHADOW_HOVER,
-        },
+    // Transport (Play / Stop / Record): circular, filled with their colour.
+    masterIconBtn: (color) => (theme) => ({
+        width: 42,
+        height: 42,
+        borderRadius: RADIUS.pill,
+        color: onFill(color),
+        backgroundColor: color,
+        transition: 'background-color 160ms ease, filter 160ms ease, transform 160ms ease',
+        '&:hover': { color: onFill(color), backgroundColor: color, filter: 'brightness(0.96)' },
+        '&:active': { transform: 'scale(0.95)' },
         '&.Mui-focusVisible': {
-            color: 'rgba(0,0,0,0.88)',
+            color: onFill(color),
             backgroundColor: color,
-            background: `${PERF_BTN_SHEEN}, ${color}`,
             outline: 'none',
-            boxShadow: `${PERF_BTN_SHADOW_HOVER}, 0 0 0 2px rgba(0,0,0,0.20)`,
+            boxShadow: `0 0 0 2px ${onFill(color)}55`,
         },
         '&.Mui-disabled': {
-            color: 'rgba(255,255,255,0.26)',
-            background: 'rgba(255,255,255,0.06)',
-            boxShadow: 'none',
+            color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.35)`,
+            backgroundColor: theme.palette.fragmenta.control,
         },
     }),
 };
 
 export const performanceChannelStyles = {
-    strip: (color, playing) => (theme) => {
-        const dark = theme.palette.mode === 'dark';
-        // Liquid glass: translucent surface + backdrop blur so the panel's
-        // glow bleeds through, matching the app's Paper/Card treatment.
-        // Playing channels add a channel-colored tint + accent rim on top.
-        const glassBg = dark ? 'rgba(38, 41, 44, 0.42)' : 'rgba(248, 243, 234, 0.45)';
-        const rim = dark
-            ? 'inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.32)'
-            : 'inset 0 1px 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(0,0,0,0.10)';
+    // Lane card: a pale tint of the lane colour on the ivory canvas, softly
+    // rounded, no border or glass. Playing deepens the tint (and fills the
+    // lane indicator), so the state reads without relying on motion.
+    strip: (index, playing) => (theme) => {
+        const perf = theme.palette.perf;
+        const tints = playing ? perf.laneTintsPlaying : perf.laneTints;
         return {
             display: 'flex',
             flexDirection: 'column',
-            gap: 1,
-            p: 1.25,
-            borderRadius: 2.5,
-            border: '1px solid',
-            borderColor: playing ? color : (dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)'),
-            background: playing
-                ? `linear-gradient(160deg, ${color}2E 0%, ${glassBg} 60%)`
-                : glassBg,
-            backdropFilter: 'blur(28px) saturate(200%)',
-            WebkitBackdropFilter: 'blur(28px) saturate(200%)',
-            boxShadow: playing
-                ? `0 0 0 1px ${color}66, 0 8px 22px ${dark ? 'rgba(4, 8, 14, 0.5)' : 'rgba(0,0,0,0.15)'}, ${rim}`
-                : `0 2px 10px ${dark ? 'rgba(4, 8, 14, 0.34)' : 'rgba(0,0,0,0.08)'}, ${rim}`,
-            transition: 'box-shadow 0.2s ease, border-color 0.2s ease, background 0.3s ease',
+            gap: '14px',
+            p: 2,
+            borderRadius: RADIUS.card,
+            backgroundColor: tints[index % tints.length],
+            boxShadow: playing ? theme.palette.fragmenta.shadowRaised : theme.palette.fragmenta.shadowSoft,
+            transition: 'background-color 220ms ease, box-shadow 220ms ease',
             height: '100%',
             minWidth: 150,
         };
     },
-    stripHeader: (color) => ({
+    stripHeader: {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        // Pinned to the same height the master header uses, so both dividers
-        // align. ≈ the badge's natural height, so channels don't shift.
         minHeight: perfTokens.height.compact,
-        borderBottom: `1px solid ${color}33`,
-        pb: 0.75,
-    }),
-    channelBadge: (color) => ({
-        fontFamily: 'inherit',
-        fontSize: perfTokens.fontSize.md,
-        fontWeight: 700,
-        // Solid channel color with a sheen overlay + raised shadow so the
-        // badge reads as a filled gradient pad, not a flat tinted box.
-        color: 'rgba(0,0,0,0.85)',
-        letterSpacing: perfTokens.letterSpacing.wide,
-        px: 0.85,
-        py: 0.25,
-        borderRadius: 1,
+    },
+    // Circular lane number in the lane colour; solid ink ring while playing.
+    laneIndicator: (color, playing) => (theme) => ({
+        width: 28,
+        height: 28,
+        flexShrink: 0,
+        borderRadius: RADIUS.pill,
+        display: 'grid',
+        placeItems: 'center',
+        fontSize: '0.75rem',
+        fontWeight: perfTokens.weight.heavy,
+        fontVariantNumeric: 'tabular-nums',
+        color: onFill(color),
         backgroundColor: color,
-        backgroundImage: SHEEN_DARK,
-        border: `1px solid ${color}`,
-        boxShadow: RAISE_DARK,
+        boxShadow: playing ? `0 0 0 2px ${theme.palette.perf.label}` : 'none',
+        transition: 'box-shadow 160ms ease',
+        userSelect: 'none',
     }),
     muteSoloRow: {
         display: 'flex',
-        gap: 0.5,
+        alignItems: 'center',
+        gap: 1,
     },
+    // M / S / SC: compact rounded rectangles on the control tone; their
+    // active fills come from the palette's state colours.
     muteBtn: (active) => (theme) => {
-        const c = theme.palette.error.main;
-        return {
-            width: perfTokens.height.sub,
-            height: perfTokens.height.sub,
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: 700,
-            borderRadius: 1,
-            color: active ? '#fff' : 'text.secondary',
-            backgroundColor: active ? `${c}D9` : 'transparent',   // D9 ≈ 85%
-            backgroundImage: active ? SHEEN_DARK : 'none',
-            border: '1px solid',
-            borderColor: active ? `${c}D9` : 'divider',
-            boxShadow: active ? RAISE_DARK : 'none',
-            '&:hover': {
-                backgroundColor: active ? c : `${c}2E`,            // 2E ≈ 18%
-            },
-        };
+        const c = theme.palette.fragmenta.accents.hot;
+        return smallToggle(theme, active, c);
     },
-    soloBtn: (active) => (theme) => {
-        const c = theme.palette.warning.main;
-        return {
-            width: perfTokens.height.sub,
-            height: perfTokens.height.sub,
-            fontSize: perfTokens.fontSize.sm,
-            fontWeight: 700,
-            borderRadius: 1,
-            color: active ? '#0c1018' : 'text.secondary',
-            backgroundColor: active ? `${c}F2` : 'transparent',   // F2 ≈ 95%
-            backgroundImage: active ? SHEEN_DARK : 'none',
-            border: '1px solid',
-            borderColor: active ? `${c}F2` : 'divider',
-            boxShadow: active ? RAISE_DARK : 'none',
-            '&:hover': {
-                backgroundColor: active ? c : `${c}33`,            // 33 ≈ 20%
-            },
-        };
-    },
-    sidechainBtn: (active) => (theme) => {
-        const c = theme.palette.info.main;
-        return {
-            width: perfTokens.height.sub,
-            height: perfTokens.height.sub,
-            // xs — "SC" is two glyphs in the same square M/S get for one.
-            fontSize: perfTokens.fontSize.xs,
-            fontWeight: 700,
-            borderRadius: 1,
-            color: active ? '#0c1018' : 'text.secondary',
-            backgroundColor: active ? `${c}F2` : 'transparent',
-            backgroundImage: active ? SHEEN_DARK : 'none',
-            border: '1px solid',
-            borderColor: active ? `${c}F2` : 'divider',
-            boxShadow: active ? RAISE_DARK : 'none',
-            '&:hover': {
-                backgroundColor: active ? c : `${c}33`,
-            },
-            '&.Mui-disabled': {
-                color: 'text.disabled',
-                borderColor: 'divider',
-                opacity: 0.4,
-            },
-        };
-    },
+    soloBtn: (active) => (theme) => smallToggle(theme, active, theme.palette.fragmenta.accents.warm),
+    sidechainBtn: (active) => (theme) => ({
+        ...smallToggle(theme, active, theme.palette.fragmenta.accents.fresh),
+        fontSize: perfTokens.fontSize.xs,
+        '&.Mui-disabled': { color: 'text.disabled', backgroundColor: 'transparent', opacity: 0.45 },
+    }),
     promptBox: {
         display: 'flex',
         flexDirection: 'column',
-        gap: 0.5,
+        gap: 0.75,
     },
+    // Prompt sits directly on a slightly darker tone; no outline.
     promptField: (theme) => ({
         '& .MuiOutlinedInput-root': {
-            // xs — smaller than the bar pills so the prompt doesn't visually
-            // dominate the channel strip when the user types a long line.
-            fontSize: perfTokens.fontSize.xs,
-            backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.5)' : 'rgba(0, 0, 0, 0.04)',
-            borderRadius: 1.5,
-            // Capped at 2 visible lines (set via maxRows on the TextField);
-            // !important wins against MUI's textarea inline `overflow: hidden`
-            // so additional lines scroll inside the field instead of getting
-            // clipped silently.
+            fontSize: '0.8125rem',
+            padding: '11px 14px',
+            backgroundColor: ON_TINT,
+            borderRadius: RADIUS.section,
+            transition: 'background-color 160ms ease',
+            '&:hover': { backgroundColor: ON_TINT_HOVER },
+            '&.Mui-focused': { backgroundColor: theme.palette.fragmenta.surface },
             '& textarea': {
                 lineHeight: 1.4,
                 overflowY: 'auto !important',
             },
         },
-        '& fieldset': { borderColor: theme.palette.divider },
+        '& fieldset': { border: 'none' },
     }),
     durationRow: {
         display: 'flex',
@@ -3168,25 +3530,71 @@ export const performanceChannelStyles = {
         color: 'text.secondary',
         minWidth: 22,
     },
+    // `&&` outranks the theme's colorPrimary override, so the lane colour wins.
     durationSlider: (color) => ({
         flex: 1,
-        color,
-        '& .MuiSlider-thumb': { width: 10, height: 10 },
-        '& .MuiSlider-rail': { opacity: 0.3 },
+        '&&': { color },
     }),
-    // Channel CTA-row variant of pillControl — same as the bar pills but
-    // taller (matches `cta` height so it sits flush with the Generate
-    // pill next to it). Use for the Takes select.
-    channelPillControl: {
+    // Sec / Bars: a segmented control on the control tone; the selected
+    // segment is a pill inside a fully rounded track.
+    segmented: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        p: '3px',
+        gap: '2px',
+        height: 34,
+        boxSizing: 'border-box',
+        flexShrink: 0,
+        borderRadius: RADIUS.pill,
+        backgroundColor: ON_TINT,
+    },
+    segment: (color, active) => (theme) => ({
+        fontSize: '0.75rem',
+        px: 1.4,
+        height: 28,
+        borderRadius: RADIUS.pill,
+        bgcolor: active ? color : 'transparent',
+        color: active ? onFill(color) : 'text.secondary',
+        fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
+        transition: 'background-color 160ms ease, color 160ms ease',
+        '&:hover': {
+            bgcolor: active ? color : ON_TINT_HOVER,
+            color: active ? onFill(color) : 'text.primary',
+        },
+    }),
+    // The lane's length select, on the tint.
+    laneSelect: {
+        flex: 1,
+        '& .MuiOutlinedInput-root': {
+            height: 34,
+            borderRadius: RADIUS.control,
+            // On the lane tint, like the prompt and M / S / SC; doubled class
+            // so it wins over pillControl's solid field tone.
+            '&.MuiOutlinedInput-root': { backgroundColor: ON_TINT },
+            '&.MuiOutlinedInput-root:hover': { backgroundColor: ON_TINT_HOVER },
+        },
+        '& .MuiSelect-select': { lineHeight: '34px', fontSize: '0.75rem' },
+    },
+    // A bare Select sitting on the lane tint: the same translucent tone as
+    // the prompt and M / S / SC (its root is the input itself).
+    onTintField: {
+        '&&': { backgroundColor: ON_TINT },
+        '&&:hover': { backgroundColor: ON_TINT_HOVER },
+    },
+    // The ×N batch select next to Generate: tonal, no outline.
+    channelPillControl: (theme) => ({
         '& .MuiOutlinedInput-root': {
             fontFamily: 'inherit',
-            height: perfTokens.height.cta,
-            borderRadius: 1.5,
+            height: 40,
+            borderRadius: RADIUS.control,
+            '&.MuiOutlinedInput-root': { backgroundColor: ON_TINT },
+            '&.MuiOutlinedInput-root:hover': { backgroundColor: ON_TINT_HOVER },
         },
+        '& fieldset': { border: 'none' },
         '& .MuiSelect-select': {
             fontFamily: 'inherit',
-            padding: '0 28px 0 10px !important',
-            lineHeight: `${perfTokens.height.cta}px`,
+            padding: '0 26px 0 10px !important',
+            lineHeight: '40px',
             fontSize: perfTokens.fontSize.sm,
             fontWeight: perfTokens.weight.bold,
             fontVariantNumeric: 'tabular-nums',
@@ -3194,75 +3602,59 @@ export const performanceChannelStyles = {
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
         },
-    },
-    // Wide Generate pill — primary CTA on the channel. While generating,
-    // a sibling Box fills left-to-right based on /api/generation-progress
-    // (rendered by the parent component so this style stays static). The
-    // label (`Generate ➝` / `Generating · 47%`) sits flush against the
-    // right edge of the pill via `justifyContent: 'flex-end'` so the arrow
-    // visually punctuates the action's destination.
-    generatePill: (color, { generating, disabled }) => {
+    }),
+    // Generate: the lane's primary action. A filled rounded rectangle in the
+    // lane colour; it gives a brief expansion when generation starts, and a
+    // progress fill runs inside while it works.
+    generatePill: (color, { generating, disabled }) => (theme) => {
         const base = {
             position: 'relative',
             overflow: 'hidden',
-            // Fills whatever space the wrapping span gives it. Sizing lives
-            // on the parent row (the pill is a flex child via the wrapper
-            // span), so this stays free of magic widths and the right edge
-            // tracks the row's right edge instead of poking past it.
             boxSizing: 'border-box',
             width: '100%',
-            height: perfTokens.height.cta,
+            minWidth: 96,
+            height: 40,
             px: 1.5,
-            borderRadius: 1.5,
+            borderRadius: RADIUS.pill,
             border: 'none',
-            fontSize: perfTokens.fontSize.sm,
-            // Match the app's buttons (MuiButton root is 400) — not bold.
-            fontWeight: 400,
+            fontSize: '0.8125rem',
+            fontWeight: 600,
             textTransform: 'none',
             cursor: disabled ? 'not-allowed' : 'pointer',
-            transition: 'box-shadow 200ms cubic-bezier(0.16,1,0.3,1), transform 200ms cubic-bezier(0.16,1,0.3,1), filter 120ms, background-color 120ms, color 120ms',
+            transition: 'background-color 160ms ease, color 160ms ease, transform 160ms ease',
         };
         if (disabled) {
-            // Neutral gray chip — matches the contained button's disabled look.
             return {
                 ...base,
-                background: 'rgba(255,255,255,0.06)',
-                color: 'rgba(255,255,255,0.26)',
-                boxShadow: 'none',
+                backgroundColor: ON_TINT,
+                color: `rgba(${theme.palette.fragmenta.inkRgb}, 0.45)`,
             };
         }
         if (generating) {
-            // Translucent track so the progress fill inside still reads.
             return {
                 ...base,
-                backgroundColor: `${color}2E`,
-                color,
-                boxShadow: PERF_BTN_SHADOW,
+                backgroundColor: ON_TINT,
+                color: theme.palette.perf.label,
+                animation: 'fragmenta-generate-pop 260ms cubic-bezier(0.16, 1, 0.3, 1)',
             };
         }
-        // Idle + enabled — gradient fill + drop shadow, no border, matching the
-        // "Suggest hyperparameters" contained button.
         return {
             ...base,
-            background: `${PERF_BTN_SHEEN}, ${color}`,
-            color: 'rgba(0,0,0,0.88)',
-            boxShadow: PERF_BTN_SHADOW,
-            '&:hover': {
-                filter: 'brightness(1.05)',
-                transform: 'translateY(-1px)',
-                boxShadow: PERF_BTN_SHADOW_HOVER,
-            },
+            backgroundColor: color,
+            color: onFill(color),
+            boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
+            '&:hover': { filter: 'brightness(0.97)' },
+            '&:active': { transform: 'scale(0.98)' },
         };
     },
-    // The animated fill that lives INSIDE generatePill while generating.
-    // Width is the only dynamic field — parent passes a 0-100 number.
     generatePillFill: (color, progressPct) => ({
         position: 'absolute',
         left: 0,
         top: 0,
         bottom: 0,
         width: `${Math.max(0, Math.min(100, progressPct))}%`,
-        backgroundColor: `${color}33`,
+        backgroundColor: color,
+        borderRadius: RADIUS.pill,
         transition: 'width 250ms ease-out',
         pointerEvents: 'none',
         zIndex: 0,
@@ -3276,37 +3668,105 @@ export const performanceChannelStyles = {
         fontVariantNumeric: 'tabular-nums',
         lineHeight: 1,
     },
-    waveformWrap: (theme) => ({
+    // Waveform: a softly rounded panel (24 px, not a full capsule, whose
+    // round ends cut into the wave). The waveform and its overlays sit in
+    // an inset inner box, so the trim maths stays in one box.
+    waveformWrap: {
         position: 'relative',
-        height: 42,
-        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.6)' : 'rgba(0, 0, 0, 0.06)',
-        // Near-square: overflow:hidden + a visible radius clipped the
-        // DJ in/out handles when parked at the clip edges.
-        borderRadius: '2px',
-        border: '1px solid',
-        borderColor: theme.palette.divider,
-        overflow: 'hidden',
-    }),
-    // Channel fragment history strip — persistent per-channel rolling list
-    // of the last N fragments (default 50). Always visible (empty-state
-    // included) so the user knows it's there. Oldest at top, newest at the
-    // bottom; scrolls vertically when the list grows past ~4 visible rows.
-    fragmentHistoryPanel: {
-        border: '1px solid',
-        borderColor: 'divider',
-        borderRadius: 1.25,
-        overflow: 'hidden',
-        bgcolor: 'background.paper',
+        height: 96,
+        borderRadius: RADIUS.section,
+        backgroundColor: 'rgba(255, 255, 255, 0.42)',
+        px: '12px',
+        boxSizing: 'border-box',
     },
+    waveformInner: {
+        position: 'relative',
+        height: '100%',
+    },
+    // Loop in/out handle: a slim pill inset from the capsule's caps, with a
+    // wider invisible hit area.
+    trimHandle: (pos, deep) => ({
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: `calc(${pos * 100}% - 7px)`,
+        width: 14,
+        cursor: 'ew-resize',
+        touchAction: 'none',
+        zIndex: 2,
+        '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: 20,
+            bottom: 20,
+            left: 5,
+            width: 4,
+            borderRadius: RADIUS.pill,
+            backgroundColor: deep,
+        },
+    }),
+    playhead: (t) => ({
+        position: 'absolute',
+        top: 12,
+        bottom: 12,
+        left: 0,
+        // '2px', not 2: sx reads numbers <= 1 as a percentage.
+        width: '2px',
+        ml: '-1px',
+        borderRadius: RADIUS.pill,
+        backgroundColor: t.palette.perf.label,
+        opacity: 0,
+        pointerEvents: 'none',
+        zIndex: 4,
+        '&::before': {
+            content: '""',
+            position: 'absolute',
+            top: -6,
+            left: -4,
+            width: 10,
+            height: 10,
+            borderRadius: RADIUS.pill,
+            backgroundColor: t.palette.perf.label,
+        },
+    }),
+    // Outside the loop: the canvas tone laid over the waveform, so those
+    // parts fade rather than go dark.
+    trimVeil: {
+        backgroundColor: (t) => `rgba(${t.palette.fragmenta.bgRgb}, 0.72)`,
+        pointerEvents: 'none',
+    },
+    // While a lane generates, a soft band of its colour sweeps across.
+    waveformGenerating: (color) => ({
+        '&::after': {
+            content: '""',
+            position: 'absolute',
+            inset: 0,
+            borderRadius: RADIUS.pill,
+            pointerEvents: 'none',
+            background: `linear-gradient(90deg, transparent 0%, ${color}99 50%, transparent 100%)`,
+            backgroundSize: '50% 100%',
+            backgroundRepeat: 'no-repeat',
+            animation: 'fragmenta-wave-sweep 1.6s ease-in-out infinite',
+        },
+    }),
+    // Fragment history: no box or rule lines, just a small label and rows;
+    // the loaded fragment gets a soft tint.
+    // Four rows tall at most; the rest scroll, so lanes stay one height.
+    // A rule underneath separates the list from the knobs below.
+    fragmentHistoryPanel: (theme) => ({
+        overflow: 'hidden',
+        flex: '0 0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        pb: 1.25,
+        borderBottom: `1px solid rgba(${theme.palette.fragmenta.inkRgb}, 0.14)`,
+    }),
     fragmentHistoryHeader: {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        px: 0.75,
-        py: 0.25,
-        minHeight: 22,
-        borderBottom: '1px solid',
-        borderColor: 'divider',
+        px: 0.5,
+        minHeight: 20,
     },
     fragmentHistoryHeaderText: {
         ...perfTokens.caps,
@@ -3315,57 +3775,46 @@ export const performanceChannelStyles = {
     fragmentHistoryHeaderBtn: {
         width: 18,
         height: 18,
+        borderRadius: RADIUS.small,
         color: 'text.disabled',
         '&:hover': {
             color: 'error.main',
-            bgcolor: 'action.hover',
+            bgcolor: (t) => t.palette.fragmenta.control,
         },
     },
-    // Each fragment row is 28px tall (minHeight 24 + 2+2 padding); 4 rows +
-    // 3 interior 1px borders = ~115px. Fix the panel body to that height
-    // so the channel strip never resizes as fragments accumulate — past 4
-    // fragments the strip scrolls internally instead of growing.
+    // Rows are 36 px + 2 px gap; four show before the list scrolls, so the
+    // lane never resizes as fragments accumulate.
     fragmentHistoryList: {
-        height: 3 * 28 + 2,
+        height: 4 * 38,
         overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px',
     },
     fragmentHistoryEmpty: {
         ...perfTokens.caps,
         textAlign: 'center',
         color: 'text.disabled',
-        // Match the 3-row list height so the panel doesn't resize when
-        // fragments appear / disappear.
-        height: 3 * 28 + 2,
+        height: 4 * 38,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        borderRadius: RADIUS.section,
+        backgroundColor: 'rgba(255, 255, 255, 0.3)',
     },
-    fragmentRow: (color, isCommitted, isAuditioning) => ({
+    fragmentRow: (soft, isCommitted, isAuditioning) => () => ({
         display: 'flex',
         alignItems: 'center',
-        gap: 0.25,
-        px: 0.5,
-        py: 0.25,
-        minHeight: 24,
-        bgcolor: isCommitted ? `${color}14` : 'transparent',
-        borderLeft: isCommitted ? `2px solid ${color}` : '2px solid transparent',
-        '&:not(:last-child)': {
-            borderBottom: '1px solid',
-            borderColor: 'divider',
-        },
-        '&:hover': {
-            bgcolor: isAuditioning
-                ? `${color}26`
-                : isCommitted
-                    ? `${color}1F`
-                    : 'action.hover',
-        },
-        // Reorder chevrons stay invisible until the row is hovered or holds
-        // focus — the column keeps its width either way, so revealing them
-        // never shifts the row's other controls.
+        gap: 0.75,
+        pl: '5px',
+        pr: 1.25,
+        minHeight: 36,
+        borderRadius: RADIUS.section,
+        bgcolor: isCommitted || isAuditioning ? soft : 'transparent',
+        '&:hover': { bgcolor: isCommitted || isAuditioning ? soft : ON_TINT },
         '& .frag-reorder': { opacity: 0, transition: 'opacity 120ms ease' },
         '&:hover .frag-reorder, &:focus-within .frag-reorder': { opacity: 1 },
-        transition: 'background-color 120ms',
+        transition: 'background-color 160ms ease',
     }),
     fragmentReorderCol: {
         display: 'flex',
@@ -3373,12 +3822,6 @@ export const performanceChannelStyles = {
         justifyContent: 'center',
         flexShrink: 0,
         width: 14,
-        // The chevrons sit in <span> wrappers (so hover help still fires on
-        // the disabled first/last button). A span is a block container with
-        // inline content, so it inherits a ~20px line-height strut and would
-        // render 20px tall around a 10px button — doubling the row height and
-        // halving how many fragments fit in the list. Flexing the wrappers
-        // and zeroing the strut keeps the column at the button height.
         lineHeight: 0,
         '& > span': { display: 'flex' },
     },
@@ -3392,32 +3835,39 @@ export const performanceChannelStyles = {
         '&:hover': { color: 'text.primary', bgcolor: 'action.hover' },
         '&.Mui-disabled': { color: 'text.disabled', opacity: 0.25 },
     },
-    // fragmentIconBtn — used by audition, star, and commit buttons in the
-    // fragment history rows. The optional `filled` flag flips the active
-    // state from a ghost (color + transparent bg) to a chip (white glyph on
-    // channel-color bg + 1px ring). The commit button uses `filled` so the
-    // "loaded" fragment reads as a definitively selected pill, not just a
-    // tinted icon.
-    fragmentIconBtn: (color, active, filled = false) => ({
+    // Row buttons: audition is a small circle (the play indicator), commit
+    // and star are compact squares. `filled` = the solid active state.
+    fragmentIconBtn: (color, active, filled = false) => (theme) => ({
         width: 20,
         height: 20,
-        borderRadius: 0.75,
-        color: filled && active ? '#0c1018' : (active ? color : 'text.disabled'),
-        backgroundColor: filled && active ? color : 'transparent',
-        border: filled && active ? `1px solid ${color}` : '1px solid transparent',
-        '&:hover': filled && active
-            ? { backgroundColor: color, color: '#0c1018' }
-            : { color, bgcolor: 'action.hover' },
+        borderRadius: RADIUS.pill,
+        // Active marks (a starred fragment) take the lane colour, not ink.
+        color: active ? color : 'text.secondary',
+        backgroundColor: filled && active ? theme.palette.fragmenta.surface : 'transparent',
+        boxShadow: filled && active ? theme.palette.fragmenta.shadowSoft : 'none',
+        transition: 'background-color 160ms ease, color 160ms ease',
+        '&:hover': { color: active ? color : 'text.primary', bgcolor: theme.palette.fragmenta.surface },
         '&.Mui-disabled': filled && active
-            ? { color: '#0c1018', backgroundColor: color, opacity: 1 }
-            : { color, opacity: 0.85 },
+            ? { color: theme.palette.perf.label, backgroundColor: theme.palette.fragmenta.surface, opacity: 1 }
+            : { color: 'text.secondary', opacity: 0.85 },
+    }),
+    // Audition: the row's small circular play indicator.
+    fragmentPlayBtn: (active, loaded) => (theme) => ({
+        width: 26,
+        height: 26,
+        borderRadius: RADIUS.pill,
+        color: theme.palette.perf.label,
+        backgroundColor: active || loaded ? theme.palette.fragmenta.surface : ON_TINT,
+        boxShadow: active || loaded ? `0 1px 3px rgba(${theme.palette.fragmenta.inkRgb}, 0.14)` : 'none',
+        transition: 'background-color 160ms ease',
+        '&:hover': { bgcolor: theme.palette.fragmenta.surface },
     }),
     fragmentDeleteBtn: {
         width: 20,
         height: 20,
-        borderRadius: 0.75,
+        borderRadius: RADIUS.pill,
         color: 'text.disabled',
-        '&:hover': { color: 'error.main', bgcolor: 'action.hover' },
+        '&:hover': { color: 'error.main', bgcolor: (t) => t.palette.fragmenta.surface },
     },
     fragmentMeta: {
         flex: 1,
@@ -3428,14 +3878,20 @@ export const performanceChannelStyles = {
         overflow: 'hidden',
     },
     fragmentOrdinal: {
-        ...perfTokens.num,
-        fontWeight: perfTokens.weight.bold,
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        fontVariantNumeric: 'tabular-nums',
         color: 'text.primary',
         flexShrink: 0,
     },
-    // Renamed fragments print their label in place of the F# ordinal. Unlike
-    // the ordinal it can be arbitrarily long, so it shrinks and ellipsises
-    // rather than pushing the row's buttons out of the channel strip.
+    fragmentLoadDot: {
+        width: 20,
+        height: 20,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
     fragmentLabelText: {
         ...perfTokens.num,
         fontWeight: perfTokens.weight.bold,
@@ -3459,8 +3915,9 @@ export const performanceChannelStyles = {
         },
     },
     fragmentDuration: {
-        ...perfTokens.num,
-        color: 'text.disabled',
+        fontSize: '0.6875rem',
+        fontVariantNumeric: 'tabular-nums',
+        color: 'text.secondary',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
@@ -3477,101 +3934,92 @@ export const performanceChannelStyles = {
     },
     knobsGrid: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
+        gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
         gap: 0.5,
-        py: 0.5,
     },
-    knobCell: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 0.25,
-        height: 70,
-    },
-    knobSlider: (color, fat = false) => ({
-        height: 50,
-        color,
-        // Gain is visually fattened (wider track + bigger thumb) so it stands
-        // out from LPF/DLY/REV — it's the dBFS-scaled "fader" of the four.
-        '& .MuiSlider-thumb': { width: fat ? 12 : 10, height: fat ? 12 : 10 },
-        '& .MuiSlider-rail': { opacity: 0.3, width: fat ? 4 : 2 },
-        '& .MuiSlider-track': { width: fat ? 4 : 2, border: 'none' },
-    }),
-    knobLabel: {
-        ...perfTokens.caps,
-        display: 'block',
+    // "-12 st" / "+12 st" either side of the pitch knob.
+    pitchRangeLabel: {
+        fontSize: perfTokens.fontSize.xs,
         color: 'text.secondary',
-        mt: 0.75,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
     },
     transportRow: {
         display: 'flex',
         alignItems: 'center',
         gap: 0.5,
         mt: 'auto',
-        pt: 0.75,
-        borderTop: '1px solid',
-        borderTopColor: 'divider',
     },
+    // Play: a circle on the control tone; filled with the lane colour while
+    // playing.
     transportBtn: (color, playing) => (theme) => ({
-        width: perfTokens.height.compact,
-        height: perfTokens.height.compact,
-        borderRadius: 1.5,
-        color: playing ? '#0c1018' : color,
-        backgroundColor: playing ? color : `${color}14`,
-        backgroundImage: playing ? SHEEN_DARK : 'none',
-        border: `1px solid ${color}${playing ? '' : '55'}`,
-        boxShadow: playing ? RAISE_DARK : 'none',
-        '&:hover': { backgroundColor: playing ? color : `${color}28` },
-        '&.Mui-disabled': theme.palette.mode === 'dark' ? { opacity: 0.3 } : {},
+        width: 36,
+        height: 36,
+        borderRadius: RADIUS.pill,
+        color: playing ? onFill(color) : theme.palette.perf.label,
+        backgroundColor: playing ? color : theme.palette.fragmenta.surface,
+        boxShadow: `0 1px 2px rgba(${theme.palette.fragmenta.inkRgb}, 0.08), 0 4px 10px rgba(${theme.palette.fragmenta.inkRgb}, 0.08)`,
+        transition: 'background-color 160ms ease',
+        '&:hover': { backgroundColor: playing ? color : theme.palette.fragmenta.paperHi },
+        '&.Mui-disabled': { color: 'text.disabled', boxShadow: 'none', backgroundColor: ON_TINT },
     }),
-    // Channel Loop toggle — literal "L" glyph at weight heavy. State cue
-    // is two-axis so color-blind users always have a non-chromatic signal:
-    //   Off → 1px divider border, transparent bg, dim "L"
-    //   On  → 1px channel-color border + 1px inset shadow (= 2px ring
-    //         without layout shift), tinted fill, full-color bold "L",
-    //         AND a 4×4px LED dot in the bottom-right corner.
-    // Filled chip when active, gray ghost when off — same pattern as the
-    // committed-take ✓ button in the take history list. The filled bg now
-    // carries the active signal on its own, so the old inset ring + LED dot
-    // are gone (was visually noisy on top of the filled state).
-    loopBtn: (color, active) => ({
-        width: perfTokens.height.sub,
-        height: perfTokens.height.sub,
-        borderRadius: 1,
-        fontSize: perfTokens.fontSize.sm,
-        fontWeight: perfTokens.weight.heavy,
-        lineHeight: 1,
-        color: active ? '#0c1018' : 'text.disabled',
-        backgroundColor: active ? color : 'transparent',
-        backgroundImage: active ? SHEEN_DARK : 'none',
-        border: '1px solid',
-        borderColor: active ? color : 'divider',
-        boxShadow: active ? RAISE_DARK : 'none',
-        transition: 'background-color 120ms, color 120ms, border-color 120ms, box-shadow 120ms',
+    loopBtn: (soft, active) => (theme) => ({
+        width: 30,
+        height: 30,
+        borderRadius: RADIUS.pill,
+        color: active ? theme.palette.perf.label : 'text.secondary',
+        backgroundColor: active ? soft : 'transparent',
+        transition: 'background-color 160ms ease, color 160ms ease',
         '&:hover': {
-            backgroundColor: active ? color : 'action.hover',
-            color: active ? '#0c1018' : 'text.secondary',
+            backgroundColor: active ? soft : ON_TINT,
+            color: 'text.primary',
         },
     }),
+    // Lane level: a slim rounded bar.
     meterTrack: (theme) => ({
         flex: 1,
-        height: 12,
-        mt: 1,
-        backgroundColor: theme.palette.mode === 'dark' ? 'rgba(9, 12, 18, 0.7)' : 'rgba(0, 0, 0, 0.08)',
-        borderRadius: 0.75,
-        border: '1px solid',
-        borderColor: theme.palette.divider,
+        height: 6,
+        mt: 0.75,
+        backgroundColor: ON_TINT,
+        boxShadow: `inset 0 1px 1px rgba(${theme.palette.fragmenta.inkRgb}, 0.10)`,
+        borderRadius: RADIUS.pill,
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
         alignItems: 'center',
     }),
-    meterFill: (color) => ({
-        width: '0%',
+    // Full width; the lane reveals it with a clip-path (see the meter tick).
+    meterFill: (color, deep) => (theme) => ({
+        width: '100%',
         height: '100%',
-        background: `linear-gradient(90deg, ${color} 0%, ${color}AA 70%, #E36C61 100%)`,
-        transition: 'width 0.05s linear',
+        clipPath: 'inset(0 100% 0 0)',
+        borderRadius: RADIUS.pill,
+        background: `linear-gradient(90deg, ${color} 0%, ${deep} 82%, ${theme.palette.error.main} 100%)`,
     }),
 };
+
+// M / S / SC button: compact rounded rectangle, filled with `fill` when on.
+function smallToggle(theme, active, fill) {
+    return {
+        width: 28,
+        height: 28,
+        fontSize: '0.6875rem',
+        fontWeight: 700,
+        borderRadius: RADIUS.small,
+        color: active ? onFill(fill) : 'text.secondary',
+        backgroundColor: active ? fill : ON_TINT,
+        transition: 'background-color 160ms ease, color 160ms ease',
+        '&:hover': {
+            backgroundColor: active ? fill : ON_TINT_HOVER,
+            color: active ? onFill(fill) : 'text.primary',
+        },
+    };
+}
+
+export const paletteThemes = Object.fromEntries(
+    Object.entries(PALETTES).map(([key, P]) => [key, makePaletteTheme(paletteTokens(P))]),
+);
+export const lightTheme = paletteThemes[DEFAULT_PALETTE];
 
 export default theme;

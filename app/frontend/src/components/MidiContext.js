@@ -205,12 +205,14 @@ export function MidiProvider({ children }) {
     }, [dispatchMessage]);
 
     // Tell the backend which port to open. The stream only carries the open
-    // port's events, so device selection happens server-side.
+    // port's events, so device selection happens server-side. Runs again when
+    // the saved device reappears, so plugging it back in reconnects its mappings.
+    const savedDevicePresent = inputs.some((i) => i.id === config.deviceId);
     useEffect(() => {
         if (!supported) return;
         api.post('/api/midi/select', { port_id: config.deviceId || null })
             .catch(() => { /* non-fatal */ });
-    }, [config.deviceId, supported]);
+    }, [config.deviceId, supported, savedDevicePresent]);
 
     function applyContinuous(sub, mapping, midiValue, takeover) {
         const norm = midiValue / 127;
@@ -394,21 +396,21 @@ export function MidiMappable({
             {children}
             {mapping && !showOverlay && (
                 <Box
-                    sx={{
+                    sx={(t) => ({
                         position: 'absolute',
                         top: 1,
                         right: 1,
                         fontSize: '0.5rem',
                         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                        bgcolor: 'rgba(83, 193, 138, 0.85)',
-                        color: '#000',
+                        bgcolor: `rgba(${t.palette.perf.midiMappedRgb}, 0.85)`,
+                        color: '#FFFFFF',
                         px: 0.4,
                         py: 0.05,
                         borderRadius: 0.5,
                         pointerEvents: 'none',
                         letterSpacing: '0.04em',
                         zIndex: 5,
-                    }}
+                    })}
                 >
                     {mapping.midi.type === 'cc' ? 'CC' : 'N'}{mapping.midi.number}
                 </Box>
@@ -433,29 +435,27 @@ export function MidiMappable({
                                 ? `${label}: ${formatMidi(mapping.midi)} (click to re-learn, right-click to clear)`
                                 : `${label}: click then move a hardware control to bind`
                     }
-                    sx={{
+                    sx={(t) => ({
                         position: 'absolute',
                         inset: 0,
                         cursor: 'pointer',
                         zIndex: 20,
                         bgcolor: isLearningThis
-                            ? 'rgba(245, 197, 66, 0.32)'
+                            ? `rgba(${t.palette.perf.midiLearnRgb}, 0.32)`
                             : mapping
-                                ? 'rgba(83, 193, 138, 0.18)'
-                                : 'rgba(245, 197, 66, 0.10)',
+                                ? `rgba(${t.palette.perf.midiMappedRgb}, 0.18)`
+                                : `rgba(${t.palette.perf.midiLearnRgb}, 0.10)`,
                         border: '1px dashed',
-                        borderColor: isLearningThis
-                            ? '#F5C542'
-                            : mapping
-                                ? 'rgba(83, 193, 138, 0.7)'
-                                : 'rgba(245, 197, 66, 0.65)',
+                        borderColor: isLearningThis || !mapping
+                            ? t.palette.warm.main
+                            : t.palette.success.main,
                         borderRadius: 1,
                         animation: isLearningThis ? 'midiPulse 900ms ease-in-out infinite' : 'none',
                         '@keyframes midiPulse': {
                             '0%, 100%': { opacity: 0.5 },
                             '50%': { opacity: 1 },
                         },
-                    }}
+                    })}
                 >
                     {(mapping || isLearningThis) && (
                         <Box
@@ -465,7 +465,7 @@ export function MidiMappable({
                                 left: 2,
                                 fontSize: '0.5rem',
                                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                                color: isLearningThis ? '#F5C542' : 'rgba(83, 193, 138, 0.95)',
+                                color: isLearningThis ? 'warm.main' : 'success.main',
                                 letterSpacing: '0.04em',
                                 pointerEvents: 'none',
                             }}

@@ -201,18 +201,14 @@ def start_pre_encode(
         if existing and existing.get("state") in ("queued", "running"):
             return dict(existing)
 
-        # The denominator is what the encoder will step through: its dataset
-        # scan (fast_scandir) takes every non-hidden file in the formats it
-        # reads, in subfolders too. Counting only .wav made a FLAC dataset
-        # report 0 clips; counting only captioned files undercounts, since an
-        # uncaptioned file still costs a batch (it's swapped for another clip).
-        from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
-        clip_count = sum(
-            1 for _dir, _subdirs, files in os.walk(proj_dir)
-            for name in files
-            if not name.startswith(".")
-            and os.path.splitext(name)[1].lower() in SA3_AUDIO_EXTENSIONS
-        )
+        # The encoder gets a filelist of the clips with prompts (the run
+        # writes it), so that's the denominator too.
+        from app.core.training.sa3_lora_runner import captioned_clips
+        clip_count = len(captioned_clips(proj_dir))
+        if clip_count == 0:
+            raise ValueError(
+                "No clips with prompts in this project yet. Add prompts and "
+                "click Create Dataset, then pre-encode.")
 
         job: Dict[str, Any] = {
             "state": "queued",
@@ -250,6 +246,11 @@ def _update_job(project_name: str, **fields: Any) -> None:
         job.update(fields)
 
 
+def _silence_cache_path(cfg, ae: str, sample_size: int) -> Path:
+    """Where the padding latent for this encoder + window is kept between runs."""
+    return cfg.get_path("models_pretrained") / "sa3" / "silence_latents" / f"{ae}-{int(sample_size)}.npy"
+
+
 def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     """Background-thread target. Spawns the SA3 pre_encode_dataset.py script,
     streams stdout for progress, writes a _meta.json manifest on success."""
@@ -269,6 +270,12 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
         "--batch_size", "1",
         "--sample_size", str(int(sample_size)),
     ]
+    # SAME-L without a CUDA GPU (CPU, Mac): encode in chunks, so memory stays
+    # ~7.4 GB whatever the clip length (a 285 s clip was OOM-killed on a
+    # 30 GB box). SAME-S is quick on CPU and chunking costs it accuracy.
+    import torch
+    if ae == "same-l" and not torch.cuda.is_available():
+        cmd.append("--chunked")
 
     env = os.environ.copy()
     pp = env.get("PYTHONPATH", "")
@@ -296,6 +303,21 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
     # silence.npy — so the new latents would pad with the wrong model's silence.
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Encode only clips with prompts: SA3 swaps a clip without one for a
+    # random other clip, which made duplicate latents. clips.txt also records
+    # what this cache was made from.
+    from app.core.training.sa3_lora_runner import captioned_clips, write_filelist
+    clips = captioned_clips(proj_dir)
+    cmd += ["--filelist", str(write_filelist(proj_dir, clips, out_dir / "clips.txt"))]
+    _update_job(project_name, total=len(clips))
+
+    # The vendor script first encodes a full window of silence (the padding
+    # latent) unless silence.npy exists: ~3 min for SAME-L on CPU, every run.
+    # It depends only on the encoder and the window, so reuse the last one.
+    silence_cache = _silence_cache_path(cfg, ae, sample_size)
+    if silence_cache.exists():
+        shutil.copyfile(silence_cache, out_dir / "silence.npy")
 
     _update_job(project_name, state="running", phase="loading")
     logger.info(
@@ -361,6 +383,13 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
                 rc, project_name, "\n".join(tail),
             )
             return
+
+        if not silence_cache.exists() and (out_dir / "silence.npy").exists():
+            try:
+                silence_cache.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(out_dir / "silence.npy", silence_cache)
+            except OSError as exc:
+                logger.warning("Couldn't cache the silence latent: %s", exc)
 
         manifest = {
             "autoencoder": ae,

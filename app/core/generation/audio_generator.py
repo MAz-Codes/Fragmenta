@@ -15,7 +15,6 @@ checks the event and aborts mid-run. Starting a new generation can never
 clear a stop aimed at the previous one.
 """
 import os
-import platform
 import re
 import sys
 import threading
@@ -265,23 +264,14 @@ class AudioGenerator:
                 _flash_err = err
 
             if not have_flash and not allow_no_flash:
-                if platform.system() == "Windows":
-                    raise RuntimeError(
-                        "sa3-medium requires Flash Attention 2, which doesn't "
-                        "have Windows wheels. Use sa3-small-music / sa3-small-sfx, "
-                        "run Fragmenta via Docker on WSL2, or set "
-                        "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
-                        "higher-memory) PyTorch attention fallback."
-                    ) from _flash_err
                 raise RuntimeError(
                     "sa3-medium needs Flash Attention 2 (flash_attn) but the "
                     f"current install is unusable: {_flash_err}.\n"
-                    "Pick the wheel matching your torch+ABI+Python+CUDA from\n"
-                    "  https://github.com/Dao-AILab/flash-attention/releases\n"
-                    "and install with `pip install --no-deps <wheel-url>`. "
-                    "See the note next to flash-attn in requirements.txt for an example.\n"
-                    "Or set FRAGMENTA_MEDIUM_NO_FLASH=1 to use the PyTorch "
-                    "attention fallback."
+                    "Fragmenta installs it on Linux and Windows with an NVIDIA "
+                    "GPU; run the installer again to repair it.\n"
+                    "Or use sa3-small-music / sa3-small-sfx, or set "
+                    "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
+                    "higher-memory) PyTorch attention fallback."
                 ) from _flash_err
 
             if not have_flash:
@@ -372,7 +362,7 @@ class AudioGenerator:
                         f"Checkpoint Manager."
                     ) from primary_err
                 import json
-                with open(config_path) as fh:
+                with open(config_path, encoding="utf-8") as fh:
                     model_config = json.load(fh)
                 from stable_audio_3.model_configs import localize_conditioners
                 localize_conditioners(model_config, str(config_path))
@@ -698,14 +688,15 @@ class AudioGenerator:
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod
     def _load_audio(path: str):
-        """Load a wav/mp3/flac into the (sample_rate, tensor) tuple SA3 expects.
+        """Load any accepted audio file into the (sample_rate, tensor) tuple SA3
+        expects.
 
         Returns a stereo float32 tensor of shape (channels, samples). Mono
         inputs are duplicated to stereo (SA3 expects 2 channels); ≥3-channel
         inputs are truncated to the first 2.
         """
-        import torchaudio
-        wav, sr = torchaudio.load(str(path))   # (channels, samples), float32
+        from app.core.audio.decode import read_audio
+        wav, sr = read_audio(path)   # (channels, samples), float32
         if wav.shape[0] == 1:
             wav = wav.repeat(2, 1)
         elif wav.shape[0] > 2:

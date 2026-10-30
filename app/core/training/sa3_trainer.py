@@ -51,6 +51,9 @@ from app.backend.data.projects import project_path
 from app.core.config import get_config
 from app.core.training.sa3_lora_runner import (
     SA3_BASE_MODELS,
+    audio_files,
+    captioned_clips,
+    write_filelist,
     build_train_command,
     build_train_env,
     convert_run_checkpoints_to_safetensors,
@@ -317,37 +320,29 @@ class SA3Trainer:
         if not proj_dir.exists():
             raise FileNotFoundError(f"project not found: {project_name}")
 
-        sidecars = list(proj_dir.glob("*.txt"))
-        if not sidecars:
+        # Train only clips with a prompt (captioned_clips; the run gets them
+        # as a filelist). Refuse if there are none: that would waste GPU hours.
+        clips = captioned_clips(proj_dir)
+        total = len(audio_files(proj_dir))
+        if not clips:
             raise RuntimeError(
-                f"project “{project_name}” has no committed prompts yet — "
+                f"project “{project_name}” has no clips with prompts yet — "
                 "annotate the clips and click Create Dataset, then retry."
             )
-        # SA3's caption_metadata_fn rejects clips whose sidecar is empty,
-        # so they silently drop out of the training set. Count them upfront
-        # so the user knows what they're actually training on (and refuse
-        # to start if NONE have prompts — that would just waste GPU hours).
-        non_empty = [p for p in sidecars if p.read_text(encoding="utf-8").strip()]
-        if not non_empty:
-            raise RuntimeError(
-                f"project “{project_name}” has {len(sidecars)} clip(s) but every "
-                "sidecar is empty — SA3 will reject all of them. Annotate at "
-                "least one clip and re-commit before training."
-            )
-        blank = len(sidecars) - len(non_empty)
-        if blank > 0:
+        skipped = total - len(clips)
+        if skipped > 0:
             logger.warning(
-                "%d of %d clip(s) in project '%s' have empty prompts — "
-                "SA3 will silently drop them. Training on %d clip(s).",
-                blank, len(sidecars), project_name, len(non_empty),
+                "%d of %d clip(s) in project '%s' have no prompt and are left "
+                "out. Training on %d clip(s).",
+                skipped, total, project_name, len(clips),
             )
             self.status["log_tail"].append(
-                f"Warning: {blank}/{len(sidecars)} clips have empty prompts and "
-                "will be dropped by SA3's data loader."
+                f"Note: {skipped}/{total} clips have no prompt and are left out."
             )
         self.status["log_tail"].append(
-            f"Dataset: project '{project_name}' · {len(non_empty)} usable clip(s) · {proj_dir}"
+            f"Dataset: project '{project_name}' · {len(clips)} clip(s) with prompts · {proj_dir}"
         )
+        self._clips = clips
         self._data_dir = proj_dir
 
         # Phase 6 — opt into pre-encoded latents if a compatible .latents/
@@ -470,6 +465,7 @@ class SA3Trainer:
             sa3_model_name=sa3_name,
             data_dir=self._data_dir,
             encoded_dir=getattr(self, "_encoded_dir", None),
+            filelist=write_filelist(self._data_dir, self._clips, self.run_dir / "clips.txt"),
             svd_bases_path=svd_bases_path,
             save_dir=self.run_dir / "checkpoints",
             rank=int(self.config.get("loraRank") or DEFAULT_RANK),
@@ -522,7 +518,7 @@ class SA3Trainer:
             "batch_size": int(self.config.get("batchSize") or DEFAULT_BATCH_SIZE),
             # Bent runs are tagged so the LoRA picker can mark them.
             "bend": self.config.get("bend") or None,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
 
         self.status.update({
             "is_training": True,
@@ -762,7 +758,7 @@ class SA3Trainer:
         if not self.metrics_csv or not self.metrics_csv.exists():
             return
         try:
-            with open(self.metrics_csv) as f:
+            with open(self.metrics_csv, encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
         except Exception:
             return
@@ -834,7 +830,7 @@ class SA3Trainer:
         if not self.metrics_csv or not self.metrics_csv.exists():
             return
         try:
-            with open(self.metrics_csv) as f:
+            with open(self.metrics_csv, encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
             for row in reversed(rows):
                 for k in ("train/loss", "loss", "train_loss"):
@@ -874,7 +870,7 @@ def _write_pid_file(run_dir: Path, pid: int, run_name: str) -> None:
             "create_time": create_time,
             "run_name": run_name,
             "started_at": time.time(),
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("Could not write PID file for %s: %s", run_name, exc)
 
@@ -884,7 +880,7 @@ def _read_pid_file(run_dir: Path) -> Optional[Dict[str, Any]]:
     if not pf.is_file():
         return None
     try:
-        meta = json.loads(pf.read_text())
+        meta = json.loads(pf.read_text(encoding="utf-8"))
         meta["pid"] = int(meta.get("pid") or 0)
         return meta
     except Exception:

@@ -9,6 +9,7 @@ import {
     MenuItem,
     ButtonBase,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
@@ -20,7 +21,7 @@ import {
     Shuffle as VariationIcon,
     Repeat as LoopIcon,
 } from 'lucide-react';
-import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, SHEEN_DARK, RAISE_DARK } from '../theme';
+import { performanceChannelStyles as styles, performancePanelStyles as panelStyles, perfTokens, RADIUS } from '../theme';
 import { MidiMappable } from './MidiContext';
 import { playBlob as playCueBlob, stopCue, isCueSupported } from '../utils/cueAudio';
 import { extractError } from '../utils/errors';
@@ -35,22 +36,12 @@ import {
 import api from '../api';
 import { PERFORMANCE_VARIATION } from '../features';
 import ChannelFragmentHistory from './ChannelFragmentHistory';
+import RotaryKnob from './RotaryKnob';
 
-const CHANNEL_COLORS = [
-    // Original introduction palette. Ch1 teal, ch2 violet, ch3 green, ch4 amber.
-    // Light enough that the black label text on active toggles stays legible.
-    // Slots 4–7 are spares (only 4 channels render).
-    '#35C2D4', '#9F8AE6', '#53C18A', '#E3A34B',
-    '#E36C61', '#F08AD2', '#5BA0F0', '#A8D86B',
-];
-
-// Cue-point marker. Deliberately NOT the theme's success green: ch3 is already
-// green (#53C18A), so a green cue disappeared on that strip and read as washed
-// out on the others. Red is unused by the four rendering channels and sits far
-// enough from teal/violet/green in hue to stay unambiguous; these are tuned for
-// legibility both over the dimmed out-of-region overlays and over a bright
-// waveform peak. Paired with a dark drop-shadow for the same reason.
-const CUE_COLOR = { dark: '#FF453A', light: '#D92D20' };
+// Channel and cue-point colours come from the palette (theme.palette.perf):
+// ch1–ch4 are its four pastels, labels on them in ink; the cue marker is the
+// deepened "hot" accent, which no channel uses, so it stays visible on every
+// strip. Paired with a dark drop-shadow for legibility over waveform peaks.
 const CUE_SHADOW = 'drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9))';
 
 // Channel gain runs on the same dBFS scale as the master fader so the two
@@ -66,15 +57,25 @@ const KNOB_DEFS = [
     // scale 'fader' → console-style position↔dB taper (faderLaw), same as
     // the master fader. Without it the gain knob was linear-in-dB and a
     // quarter-turn down already dropped to ~-15 dB.
-    { key: 'gain', label: 'GAIN', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
+    { key: 'gain', label: 'Gain', min: GAIN_DB_MIN, max: GAIN_DB_MAX, step: 0.5, default: GAIN_DB_DEFAULT, scale: 'fader' },
     // Bipolar "DJ-filter" knob. -1..+1 with 0 = bypass. Negative side drives
     // the LPF cutoff down from 20 kHz → 20 Hz (kills highs). Positive side
     // drives the HPF cutoff up from 20 Hz → 20 kHz (kills lows). The two
     // biquads sit in series in the engine; only one side ever cuts at a time.
-    { key: 'filter', label: 'FLT', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
-    { key: 'delay', label: 'DLY', min: 0, max: 1.0, step: 0.01, default: 0.0 },
-    { key: 'reverb', label: 'REV', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    { key: 'filter', label: 'Filter', min: -1, max: 1, step: 0.001, default: 0, scale: 'bipolar' },
+    { key: 'delay', label: 'Delay', min: 0, max: 1.0, step: 0.01, default: 0.0 },
+    { key: 'reverb', label: 'Reverb', min: 0, max: 1.0, step: 0.01, default: 0.0 },
 ];
+
+// Pitch (rotary knob in the Generate row), whole semitones ±1 octave. Output
+// only: the engine plays a same-length shifted copy (utils/pitchShift.js), so
+// loops, cue and Link timing don't move. Stored in `knobs.pitch`.
+const PITCH_RANGE = 12;
+// Settle time before a pitch change is rendered: a drag or MIDI sweep
+// updates the knob at once but renders only where it comes to rest.
+const PITCH_SETTLE_MS = 120;
+const fmtSemitones = (v) => (v > 0 ? `+${v}` : `${v}`);
+const fmtPan = (v) => (Math.abs(v) < 0.005 ? 'C' : `${v < 0 ? 'L' : 'R'} ${Math.round(Math.abs(v) * 100)}`);
 
 // Map a bipolar filter position (-1..+1) to the (LPF, HPF) frequencies that
 // the engine's two biquads need. 20 Hz / 20 kHz are the bypass anchors on
@@ -86,6 +87,19 @@ function bipolarToFilterFreqs(pos) {
 }
 
 const PAN_CENTER_SNAP = 0.06;
+
+// Lane waveform height: the most expressive element on the lane, so it gets
+// room to breathe.
+const WAVE_HEIGHT = 96;
+
+const fmtHz = (hz) => (hz < 1000 ? `${Math.round(hz)}` : `${(hz / 1000).toFixed(hz < 10000 ? 1 : 0)}k`);
+// Knob readouts under each effect knob.
+const fmtFilter = (pos) => {
+    if (Math.abs(pos) < 0.005) return 'Off';
+    const { lpf, hpf } = bipolarToFilterFreqs(pos);
+    return pos < 0 ? `LP ${fmtHz(lpf)}` : `HP ${fmtHz(hpf)}`;
+};
+const fmtPercent = (v) => `${Math.round(v * 100)}%`;
 
 const BARS_OPTIONS = [1, 2, 4, 8, 16];
 const BEATS_PER_BAR = 4;
@@ -116,7 +130,13 @@ export default function PerformanceChannel({
     // rendered at all.
     bendPresets = [],
 }) {
-    const color = CHANNEL_COLORS[index % CHANNEL_COLORS.length];
+    const perfColors = useTheme().palette.perf;
+    const color = perfColors.channels[index % perfColors.channels.length];
+    // Deeper shade of the lane colour for fine marks (waveform, arcs,
+    // brackets) so they read on the lane's pale tint.
+    const deep = perfColors.channelsDeep[index % perfColors.channelsDeep.length];
+    // Soft shade for the loop toggle and the loaded fragment row.
+    const soft = perfColors.channelsSoft[index % perfColors.channelsSoft.length];
     const canvasRef = useRef(null);
     const meterRef = useRef(null);
     const meterRafRef = useRef(null);
@@ -130,6 +150,7 @@ export default function PerformanceChannel({
     const defaultKnobs = (() => {
         const d = Object.fromEntries(KNOB_DEFS.map(k => [k.key, k.default]));
         d.pan = 0;
+        d.pitch = 0;
         return d;
     })();
 
@@ -419,7 +440,8 @@ export default function PerformanceChannel({
             const el = meterRef.current;
             if (el && strip) {
                 const level = strip.getLevel();
-                el.style.width = `${Math.min(100, level * 140)}%`;
+                // The gradient spans the whole track; the clip reveals it.
+                el.style.clipPath = `inset(0 ${100 - Math.min(100, level * 140)}% 0 0 round 999px)`;
             }
             // Playhead rides the same frame as the meter, written straight to
             // style so a 60 Hz cursor never re-renders the strip.
@@ -443,10 +465,10 @@ export default function PerformanceChannel({
 
     const drawWave = useCallback(() => {
         if (strip && canvasRef.current) {
-            // Each channel's waveform is drawn in that channel's own color.
-            strip.drawWaveform(canvasRef.current, color);
+            // Each channel's waveform is drawn in that channel's own colour.
+            strip.drawWaveform(canvasRef.current, deep, soft);
         }
-    }, [strip, color]);
+    }, [strip, deep, soft]);
 
     useEffect(() => { drawWave(); }, [drawWave, loaded]);
 
@@ -502,6 +524,7 @@ export default function PerformanceChannel({
         }
         strip.setDelayMix(knobs.delay);
         strip.setReverbMix(knobs.reverb);
+        if (knobs.pitch) strip.setPitch(knobs.pitch);
         strip.setLoop(looping);
         if (muted || soloed) {
             onMuteSoloChange?.(index, { mute: muted, solo: soloed });
@@ -863,7 +886,29 @@ export default function PerformanceChannel({
         onMuteSoloChange(index, { sidechain: !sidechained });
     };
 
+    // Pitch renders take a moment (a few hundred ms per clip), so the knob
+    // shows the new value at once, renders once it settles, and dims its
+    // label until the shifted copy is what plays.
+    const [pitchBusy, setPitchBusy] = useState(false);
+    const pitchTimerRef = useRef(null);
+    const pitchReqRef = useRef(0);
+    const applyPitch = useCallback((semitones) => {
+        const req = ++pitchReqRef.current;
+        setPitchBusy(true);
+        strip.setPitch(semitones)
+            .catch((err) => console.warn('Pitch change failed:', err))
+            .finally(() => { if (req === pitchReqRef.current) setPitchBusy(false); });
+    }, [strip]);
+    useEffect(() => () => window.clearTimeout(pitchTimerRef.current), []);
+
     const handleKnob = (key, value) => {
+        if (key === 'pitch') {
+            const semitones = Math.round(value);
+            setKnobs(prev => ({ ...prev, pitch: semitones }));
+            window.clearTimeout(pitchTimerRef.current);
+            pitchTimerRef.current = window.setTimeout(() => applyPitch(semitones), PITCH_SETTLE_MS);
+            return;
+        }
         setKnobs(prev => ({ ...prev, [key]: value }));
         if (key === 'gain') strip.setUserGain(gainDbToLinear(value));
         else if (key === 'pan') strip.setPan(value);
@@ -891,12 +936,12 @@ export default function PerformanceChannel({
     const ctrlLabel = (name) => `Ch ${index + 1} · ${name}`;
 
     return (
-        <Box sx={styles.strip(color, playing)}>
-            <Box sx={styles.stripHeader(color)}>
-                {/* Transport (Play / Loop) on the left, Mute / Solo on the
-                    right — replaces the old "01" channel badge so the channel
-                    number isn't using up that slot. */}
+        <Box data-lane={index} sx={styles.strip(index, playing)}>
+            <Box sx={styles.stripHeader}>
+                {/* Lane number in a circle of the lane colour, then Play and
+                    Loop; Mute / Solo / Sidechain on the right. */}
                 <Box sx={styles.muteSoloRow}>
+                    <Box sx={styles.laneIndicator(color, playing)} aria-hidden>{index + 1}</Box>
                     <MidiMappable id={ctrlId('transport')} label={ctrlLabel('Play/Stop')} kind="trigger" onChange={handleTransportToggle}>
                         <IconButton
                             onClick={playing ? handleStop : handlePlay}
@@ -915,7 +960,7 @@ export default function PerformanceChannel({
                         >
                             <IconButton
                                 onClick={handleLoopToggle}
-                                sx={styles.loopBtn(color, looping)}
+                                sx={styles.loopBtn(soft, looping)}
                                 size="small"
                                 aria-label={looping ? 'Loop on' : 'Loop off'}
                             >
@@ -986,7 +1031,7 @@ export default function PerformanceChannel({
                             value={availableBars.includes(bars) ? bars : availableBars[availableBars.length - 1]}
                             onChange={(e) => setBars(Number(e.target.value))}
                             size="small"
-                            sx={{ ...panelStyles.pillControl, flex: 1 }}
+                            sx={[panelStyles.pillControl, styles.laneSelect, styles.onTintField]}
                         >
                             {availableBars.map(b => (
                                 <MenuItem key={b} value={b} sx={{ fontSize: perfTokens.fontSize.sm }}>
@@ -1000,17 +1045,7 @@ export default function PerformanceChannel({
                         it mirrors the Generate row layout (content fills left,
                         modifier sits right). Width matches the ×N selector so
                         the right column reads as a uniform stack. */}
-                    <Box
-                        sx={{
-                            display: 'inline-flex',
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            borderRadius: 0.75,
-                            overflow: 'hidden',
-                            height: '100%',
-                            flexShrink: 0,
-                        }}
-                    >
+                    <Box sx={styles.segmented}>
                         {[
                             { mode: 'sec',  label: 'Sec'  },
                             { mode: 'bars', label: 'Bars' },
@@ -1021,21 +1056,7 @@ export default function PerformanceChannel({
                                 <ButtonBase
                                     key={mode}
                                     onClick={() => setDurationMode(value)}
-                                    sx={{
-                                        fontSize: perfTokens.fontSize.sm,
-                                        px: 0.7,
-                                        minWidth: 36,
-                                        bgcolor: active ? color : 'transparent',
-                                        backgroundImage: active ? SHEEN_DARK : 'none',
-                                        boxShadow: active ? RAISE_DARK : 'none',
-                                        color: active ? 'rgba(0,0,0,0.88)' : 'text.disabled',
-                                        fontWeight: active ? perfTokens.weight.bold : perfTokens.weight.regular,
-                                        transition: 'background-color 120ms, color 120ms, box-shadow 120ms',
-                                        '&:hover': {
-                                            bgcolor: active ? color : 'action.hover',
-                                            color: active ? 'rgba(0,0,0,0.88)' : 'text.secondary',
-                                        },
-                                    }}
+                                    sx={styles.segment(color, active)}
                                 >
                                     {label}
                                 </ButtonBase>
@@ -1095,7 +1116,7 @@ export default function PerformanceChannel({
                             onChange={(e) => setBatchSize(Number(e.target.value))}
                             disabled={generating}
                             size="small"
-                            sx={{ ...styles.channelPillControl, width: 54, flexShrink: 0 }}
+                            sx={[styles.channelPillControl, styles.onTintField, { width: 54, flexShrink: 0 }]}
                             renderValue={(v) => `×${v}`}
                         >
                             {BATCH_OPTIONS.map((n) => (
@@ -1125,12 +1146,11 @@ export default function PerformanceChannel({
                                 <ButtonBase
                                     onClick={handleVariation}
                                     disabled={!loaded || generating}
-                                    sx={{
-                                        ...styles.channelPillControl,
+                                    sx={[styles.channelPillControl, {
                                         width: 40,
                                         justifyContent: 'center',
                                         '&.Mui-disabled': { opacity: 0.4, color: 'text.disabled' },
-                                    }}
+                                    }]}
                                     aria-label="Variation"
                                 >
                                     <VariationIcon size={15} strokeWidth={2.25} />
@@ -1139,6 +1159,7 @@ export default function PerformanceChannel({
                         </Tooltip>
                     </MidiMappable>
                     )}
+
                 </Box>
 
                 {/* Bend row — only when presets exist (saved in the Bend
@@ -1218,7 +1239,6 @@ export default function PerformanceChannel({
 
             <Box
                 onDragEnter={handleWaveDragEnter}
-                ref={waveWrapRef}
                 onDragOver={handleWaveDragOver}
                 onDragLeave={handleWaveDragLeave}
                 onDrop={handleWaveDrop}
@@ -1226,166 +1246,111 @@ export default function PerformanceChannel({
                 sx={[
                     styles.waveformWrap,
                     dropActive && {
-                        borderColor: color,
-                        boxShadow: `inset 0 0 0 2px ${color}`,
-                        backgroundColor: `${color}1F`,
-                        transition: 'border-color 120ms, box-shadow 120ms, background-color 120ms',
+                        boxShadow: `inset 0 0 0 2px ${deep}`,
+                        backgroundColor: `${color}66`,
+                        transition: 'box-shadow 120ms, background-color 120ms',
                     },
+                    generating && styles.waveformGenerating(color),
                 ]}
             >
-                <canvas
-                    ref={canvasRef}
-                    width={140}
-                    height={42}
-                    style={{ width: '100%', height: 42, display: 'block', pointerEvents: 'none' }}
-                />
-                {!loaded && (
-                    <Typography sx={styles.waveformPlaceholder}>
-                        {dropActive ? 'Drop to load' : 'Waveform'}
-                    </Typography>
-                )}
-                {/* DJ-style in/out points: drag the brackets to choose where
-                    the clip loops (bounds retarget live while playing). The
-                    cue triangle on the bottom edge sets where a launch/retrigger
-                    enters — repeats still come back to the in-point. Double-
-                    click the waveform to reset to the full clip. */}
-                {loaded && (
-                    <>
-                        <Box sx={{
-                            position: 'absolute', top: 0, bottom: 0, left: 0,
-                            width: `${trim.start * 100}%`,
-                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
-                            pointerEvents: 'none',
-                        }} />
-                        <Box sx={{
-                            position: 'absolute', top: 0, bottom: 0, right: 0,
-                            width: `${(1 - trim.end) * 100}%`,
-                            backgroundColor: 'rgba(0, 0, 0, 0.55)',
-                            pointerEvents: 'none',
-                        }} />
-                        {/* In-point → cue: inside the loop, so heard on every
-                            repeat, but skipped on the launch pass. Tinted so
-                            that skip is visible rather than baffling. */}
-                        {launchStart !== null && (
+                {/* Inset from the capsule's round ends: the canvas, the
+                    trim maths (waveWrapRef) and every overlay share this box. */}
+                <Box ref={waveWrapRef} sx={styles.waveformInner}>
+                    <canvas
+                        ref={canvasRef}
+                        width={140}
+                        height={WAVE_HEIGHT}
+                        style={{ width: '100%', height: WAVE_HEIGHT, display: 'block', pointerEvents: 'none' }}
+                    />
+                    {!loaded && (
+                        <Typography sx={styles.waveformPlaceholder}>
+                            {dropActive ? 'Drop to load' : 'Waveform'}
+                        </Typography>
+                    )}
+                    {/* DJ-style in/out points: drag the handles to choose where
+                        the clip loops (bounds retarget live while playing). The
+                        cue triangle near the bottom sets where a launch/retrigger
+                        enters; repeats still come back to the in-point. Double-
+                        click the waveform to reset to the full clip. */}
+                    {loaded && (
+                        <>
                             <Box sx={{
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `${trim.start * 100}%`,
-                                width: `${Math.max(0, launchStart - trim.start) * 100}%`,
-                                backgroundColor: 'rgba(0, 0, 0, 0.3)',
-                                pointerEvents: 'none',
-                            }} />
-                        )}
-                        <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('start')}
-                                sx={{
-                                    position: 'absolute', top: 0, bottom: 0,
-                                    left: `calc(${trim.start * 100}% - 5px)`,
-                                    width: 10,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 2,
-                                    display: 'flex', justifyContent: 'center',
-                                    '&::before': {
-                                        content: '""', width: 2,
-                                        height: '100%', backgroundColor: color,
-                                    },
-                                    '&::after': {
-                                        content: '""', position: 'absolute',
-                                        top: 0, left: 4, width: 5, height: 7,
-                                        backgroundColor: color,
-                                        borderRadius: '0 0 2px 0',
-                                    },
-                                }}
-                            />
-                        </Tooltip>
-                        <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('end')}
-                                sx={{
-                                    position: 'absolute', top: 0, bottom: 0,
-                                    left: `calc(${trim.end * 100}% - 5px)`,
-                                    width: 10,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 2,
-                                    display: 'flex', justifyContent: 'center',
-                                    '&::before': {
-                                        content: '""', width: 2,
-                                        height: '100%', backgroundColor: color,
-                                    },
-                                    '&::after': {
-                                        content: '""', position: 'absolute',
-                                        bottom: 0, right: 4, width: 5, height: 7,
-                                        backgroundColor: color,
-                                        borderRadius: '2px 0 0 0',
-                                    },
-                                }}
-                            />
-                        </Tooltip>
-                        {/* Cue guide — only drawn once the cue is off the
-                            in-point, where the loop bracket's own line
-                            already marks the spot. Red like the handle
-                            (CUE_COLOR), so the two read as one marker rather
-                            than a third loop bracket. */}
-                        {launchStart !== null && (
-                            <Box sx={(t) => ({
-                                position: 'absolute', top: 0, bottom: 0,
-                                left: `calc(${launchStart * 100}% - 1px)`,
-                                width: 2,
-                                backgroundColor: CUE_COLOR[t.palette.mode] || CUE_COLOR.dark,
-                                filter: CUE_SHADOW,
-                                pointerEvents: 'none',
-                                zIndex: 2,
-                            })} />
-                        )}
-                        {/* Cue handle. Head on the BOTTOM edge and red, so it
-                            stays legible where it starts life — sitting exactly
-                            on the loop-start bracket, whose own nub is top-left
-                            in the channel colour. Right-pointing, like a play
-                            button: it marks where playback enters and which way
-                            it runs. Hit zone is the bottom 12 px only, so the
-                            full-height loop brackets keep the rest. */}
-                        <Tooltip title="Cue point — drag to set where a launch or retrigger enters the clip. Repeats still return to the loop start. Double-click to pin it back." placement="top" enterDelay={600}>
-                            <Box
-                                onPointerDown={startTrimDrag('cue')}
-                                onDoubleClick={(e) => { e.stopPropagation(); applyLaunch(null); }}
-                                sx={(t) => ({
-                                    position: 'absolute', bottom: 0, height: 12,
-                                    left: `calc(${(launchStart !== null ? launchStart : trim.start) * 100}% - 4px)`,
-                                    width: 11,
-                                    cursor: 'ew-resize',
-                                    touchAction: 'none',
-                                    zIndex: 3,
-                                    filter: CUE_SHADOW,
-                                    '&::before': {
-                                        content: '""', position: 'absolute',
-                                        bottom: 0, left: 3,
-                                        borderTop: '4px solid transparent',
-                                        borderBottom: '4px solid transparent',
-                                        borderLeft: `7px solid ${CUE_COLOR[t.palette.mode] || CUE_COLOR.dark}`,
-                                        opacity: launchStart !== null ? 1 : 0.85,
-                                    },
-                                })}
-                            />
-                        </Tooltip>
-                        {/* Playhead. Positioned by the meter rAF loop writing
-                            style directly; starts hidden and is revealed only
-                            while the strip reports a position. */}
-                        <Box
-                            ref={playheadRef}
-                            sx={{
                                 position: 'absolute', top: 0, bottom: 0, left: 0,
-                                width: 1,
-                                backgroundColor: 'rgba(255, 255, 255, 0.45)',
-                                boxShadow: '0 0 3px rgba(255, 255, 255, 0.18)',
-                                opacity: 0,
-                                pointerEvents: 'none',
-                                zIndex: 4,
-                            }}
-                        />
-                    </>
-                )}
+                                width: `${trim.start * 100}%`,
+                                ...styles.trimVeil,
+                                borderRadius: '999px 0 0 999px',
+                            }} />
+                            <Box sx={{
+                                position: 'absolute', top: 0, bottom: 0, right: 0,
+                                width: `${(1 - trim.end) * 100}%`,
+                                ...styles.trimVeil,
+                                borderRadius: '0 999px 999px 0',
+                            }} />
+                            {/* In-point → cue: inside the loop, so heard on every
+                                repeat, but skipped on the launch pass. Tinted so
+                                that skip is visible rather than baffling. */}
+                            {launchStart !== null && (
+                                <Box sx={{
+                                    position: 'absolute', top: 0, bottom: 0,
+                                    left: `${trim.start * 100}%`,
+                                    width: `${Math.max(0, launchStart - trim.start) * 100}%`,
+                                    ...styles.trimVeil,
+                                    opacity: 0.5,
+                                }} />
+                            )}
+                            <Tooltip title="Loop start — drag to set where each repeat begins. Double-click the waveform to reset." placement="top" enterDelay={600}>
+                                <Box onPointerDown={startTrimDrag('start')} sx={styles.trimHandle(trim.start, deep)} />
+                            </Tooltip>
+                            <Tooltip title="End point — drag to set where the clip stops (loops wrap back to the start point)." placement="top" enterDelay={600}>
+                                <Box onPointerDown={startTrimDrag('end')} sx={styles.trimHandle(trim.end, deep)} />
+                            </Tooltip>
+                            {/* Cue guide — only drawn once the cue is off the
+                                in-point, where the loop handle already marks it. */}
+                            {launchStart !== null && (
+                                <Box sx={(t) => ({
+                                    position: 'absolute', top: 14, bottom: 14,
+                                    left: `calc(${launchStart * 100}% - 1px)`,
+                                    width: '2px',
+                                    borderRadius: RADIUS.pill,
+                                    backgroundColor: t.palette.perf.cue,
+                                    filter: CUE_SHADOW,
+                                    pointerEvents: 'none',
+                                    zIndex: 2,
+                                })} />
+                            )}
+                            {/* Cue handle: a right-pointing triangle near the
+                                bottom, in the cue colour; its hit zone is only
+                                the bottom strip, so the loop handles keep the rest. */}
+                            <Tooltip title="Cue point — drag to set where a launch or retrigger enters the clip. Repeats still return to the loop start. Double-click to pin it back." placement="top" enterDelay={600}>
+                                <Box
+                                    onPointerDown={startTrimDrag('cue')}
+                                    onDoubleClick={(e) => { e.stopPropagation(); applyLaunch(null); }}
+                                    sx={(t) => ({
+                                        position: 'absolute', bottom: 6, height: 14,
+                                        left: `calc(${(launchStart !== null ? launchStart : trim.start) * 100}% - 4px)`,
+                                        width: 12,
+                                        cursor: 'ew-resize',
+                                        touchAction: 'none',
+                                        zIndex: 3,
+                                        filter: CUE_SHADOW,
+                                        '&::before': {
+                                            content: '""', position: 'absolute',
+                                            bottom: 2, left: 3,
+                                            borderTop: '5px solid transparent',
+                                            borderBottom: '5px solid transparent',
+                                            borderLeft: `8px solid ${t.palette.perf.cue}`,
+                                            opacity: launchStart !== null ? 1 : 0.85,
+                                        },
+                                    })}
+                                />
+                            </Tooltip>
+                            {/* Playhead: a line with a dot cap. Positioned by the
+                                meter rAF loop writing style directly; hidden until
+                                the strip reports a position. */}
+                            <Box ref={playheadRef} sx={styles.playhead} />
+                        </>
+                    )}
+                </Box>
             </Box>
 
             {/* Per-channel rolling fragment history. Always rendered (empty
@@ -1395,6 +1360,8 @@ export default function PerformanceChannel({
             <ChannelFragmentHistory
                 fragments={fragments}
                 color={color}
+                soft={soft}
+                deep={deep}
                 channelIndex={index}
                 auditioningId={auditioningFragmentId}
                 committedId={committedFragmentId}
@@ -1408,134 +1375,111 @@ export default function PerformanceChannel({
                 onClearAll={handleClearFragments}
             />
 
-            <Box sx={{ px: 1, py: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                    <Box component="span" sx={{ ...perfTokens.caps, color: 'text.secondary', minWidth: 28 }}>PAN</Box>
-                    <MidiMappable
-                        id={ctrlId('pan')}
-                        label={ctrlLabel('Pan')}
-                        kind="continuous"
+            {/* Pan and Tune: knobs in the same style and grid as the strip
+                below. Both have a centre detent; Tune is whole semitones. */}
+            <Box sx={styles.knobsGrid}>
+                <MidiMappable
+                    id={ctrlId('pan')}
+                    label={ctrlLabel('Pan')}
+                    kind="continuous"
+                    min={-1}
+                    max={1}
+                    value={knobs.pan ?? 0}
+                    onChange={handlePan}
+                    sx={{ gridColumn: 'span 2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 1 }}
+                >
+                    <Box component="span" sx={styles.pitchRangeLabel}>L</Box>
+                    <RotaryKnob
+                        value={knobs.pan ?? 0}
                         min={-1}
                         max={1}
-                        value={knobs.pan ?? 0}
+                        step={0.01}
+                        center={0}
+                        detent={0.06}
+                        size={52}
+                        color={deep}
+                        valueInside={false}
+                        format={fmtPan}
+                        ariaLabel={`Pan · ${ctrlLabel('Pan')}`}
                         onChange={handlePan}
-                        sx={{ flex: 1, flexDirection: 'row' }}
-                    >
-                        <Slider
-                            value={knobs.pan ?? 0}
-                            onChange={(_, v) => handlePan(v)}
-                            min={-1}
-                            max={1}
-                            step={0.01}
-                            size="small"
-                            track={false}
-                            marks={[{ value: 0 }]}
-                            sx={{
-                                flex: 1,
-                                // Match the channel main color (the global
-                                // MuiSlider override is amber; the vertical
-                                // knobs already pass `color` via knobSlider).
-                                color,
-                                '& .MuiSlider-mark': {
-                                    width: 2,
-                                    height: 10,
-                                    borderRadius: 1,
-                                    backgroundColor: 'text.secondary',
-                                    opacity: 0.8,
-                                },
-                                '& .MuiSlider-markActive': {
-                                    backgroundColor: 'text.secondary',
-                                    opacity: 0.8,
-                                },
-                            }}
-                        />
-                    </MidiMappable>
-                </Box>
+                    />
+                    <Box component="span" sx={styles.pitchRangeLabel}>R</Box>
+                </MidiMappable>
+                <MidiMappable
+                    id={ctrlId('pitch')}
+                    label={ctrlLabel('Pitch')}
+                    kind="continuous"
+                    curve="linear"
+                    min={-PITCH_RANGE}
+                    max={PITCH_RANGE}
+                    value={knobs.pitch ?? 0}
+                    onChange={(v) => handleKnob('pitch', v)}
+                    sx={{ gridColumn: 'span 2', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 1 }}
+                >
+                    <Box component="span" sx={styles.pitchRangeLabel}>−{PITCH_RANGE}</Box>
+                    <RotaryKnob
+                        value={knobs.pitch ?? 0}
+                        min={-PITCH_RANGE}
+                        max={PITCH_RANGE}
+                        size={52}
+                        color={deep}
+                        busy={pitchBusy}
+                        valueInside={false}
+                        format={fmtSemitones}
+                        ariaLabel="Tune in semitones"
+                        onChange={(v) => handleKnob('pitch', v)}
+                    />
+                    <Box component="span" sx={styles.pitchRangeLabel}>+{PITCH_RANGE}</Box>
+                </MidiMappable>
             </Box>
 
+            {/* Gain and effects: one strip of compact knobs, each with a fine
+                arc in the lane colour and its value underneath. Gain turns in
+                fader-taper position space (faderLaw), like the master fader,
+                so the stored value stays in dB for persistence and MIDI. */}
             <Box sx={styles.knobsGrid}>
                 {KNOB_DEFS.map((k) => {
-                    const isLog = k.scale === 'log';
-                    const isBipolar = k.scale === 'bipolar';
                     const isFader = k.scale === 'fader';
-                    // log + fader knobs drive a 0..1 slider position and
-                    // convert to/from the underlying value at the boundary;
-                    // the value stored in state stays in the domain unit
-                    // (Hz for log, dB for fader) so persistence + MIDI keep
-                    // working unchanged.
-                    const usesPos = isLog || isFader;
-                    const valueToPos = isLog
-                        ? (v) => Math.log(Math.max(v, k.min) / k.min) / Math.log(k.max / k.min)
-                        : isFader
-                            ? faderDbToPos
-                            : (v) => v;
-                    const posToValue = isLog
-                        ? (p) => k.min * Math.pow(k.max / k.min, p)
-                        : isFader
-                            ? faderPosToDb
-                            : (v) => v;
+                    const isBipolar = k.scale === 'bipolar';
+                    const knobProps = isFader
+                        ? {
+                            value: faderDbToPos(knobs[k.key]),
+                            min: 0, max: 1, step: 0.005, detent: 0,
+                            center: faderDbToPos(k.default), origin: 0,
+                            format: (pos) => {
+                                const db = faderPosToDb(pos);
+                                return db <= GAIN_DB_MIN + 0.05 ? '−∞' : `${db > 0 ? '+' : ''}${db.toFixed(1)} dB`;
+                            },
+                            onChange: (pos) => handleKnob(k.key, faderPosToDb(pos)),
+                        }
+                        : {
+                            value: knobs[k.key],
+                            min: k.min, max: k.max, step: 0.01,
+                            center: k.default, detent: isBipolar ? 0.06 : 0,
+                            format: isBipolar ? fmtFilter : fmtPercent,
+                            onChange: (v) => handleKnob(k.key, v),
+                        };
                     return (
-                        <Box key={k.key} sx={styles.knobCell}>
-                            <MidiMappable
-                                id={ctrlId(k.key)}
-                                label={ctrlLabel(k.label)}
-                                kind="continuous"
-                                curve={isLog ? 'log' : isFader ? 'fader' : 'linear'}
-                                min={k.min}
-                                max={k.max}
-                                value={knobs[k.key]}
-                                onChange={(v) => handleKnob(k.key, v)}
-                                sx={{ alignItems: 'center' }}
-                            >
-                                <Slider
-                                    orientation="vertical"
-                                    value={valueToPos(knobs[k.key])}
-                                    onChange={(_, v) => handleKnob(k.key, posToValue(v))}
-                                    min={usesPos ? 0 : k.min}
-                                    max={usesPos ? 1 : k.max}
-                                    step={usesPos ? 0.001 : k.step}
-                                    size="small"
-                                    track={isBipolar ? false : undefined}
-                                    marks={isBipolar ? [{ value: 0 }]
-                                        : isFader ? [{ value: faderDbToPos(0) }] : undefined}
-                                    sx={{
-                                        ...styles.knobSlider(color, k.key === 'gain'),
-                                        ...(isBipolar && {
-                                            '& .MuiSlider-mark': {
-                                                width: 10,
-                                                height: 2,
-                                                borderRadius: 1,
-                                                backgroundColor: 'text.secondary',
-                                                opacity: 0.7,
-                                            },
-                                            '& .MuiSlider-markActive': {
-                                                backgroundColor: 'text.secondary',
-                                                opacity: 0.7,
-                                            },
-                                        }),
-                                        // Subtle unity (0 dB) tick on the gain knob.
-                                        // height must be > 1: numeric <= 1 in
-                                        // MUI sx means a percentage (1 = 100%),
-                                        // which drew a full-height bar past the
-                                        // top of the knob lane.
-                                        ...(isFader && {
-                                            '& .MuiSlider-mark': {
-                                                width: 10,
-                                                height: 2,
-                                                borderRadius: 1,
-                                                backgroundColor: 'text.disabled',
-                                                opacity: 0.7,
-                                            },
-                                            '& .MuiSlider-markActive': {
-                                                backgroundColor: 'text.disabled',
-                                                opacity: 0.7,
-                                            },
-                                        }),
-                                    }}
-                                />
-                            </MidiMappable>
-                            <Box component="span" sx={styles.knobLabel}>{k.label}</Box>
-                        </Box>
+                        <MidiMappable
+                            key={k.key}
+                            id={ctrlId(k.key)}
+                            label={ctrlLabel(k.label)}
+                            kind="continuous"
+                            curve={isFader ? 'fader' : 'linear'}
+                            min={k.min}
+                            max={k.max}
+                            value={knobs[k.key]}
+                            onChange={(v) => handleKnob(k.key, v)}
+                            sx={{ alignItems: 'center' }}
+                        >
+                            <RotaryKnob
+                                {...knobProps}
+                                size={52}
+                                color={deep}
+                                label={k.label}
+                                ariaLabel={`${k.label} · ${ctrlLabel(k.label)}`}
+                            />
+                        </MidiMappable>
                     );
                 })}
             </Box>
@@ -1545,7 +1489,7 @@ export default function PerformanceChannel({
                 signal flow below". */}
             <Box sx={styles.transportRow}>
                 <Box sx={styles.meterTrack}>
-                    <Box ref={meterRef} sx={styles.meterFill(color)} />
+                    <Box ref={meterRef} sx={styles.meterFill(color, deep)} />
                 </Box>
             </Box>
 

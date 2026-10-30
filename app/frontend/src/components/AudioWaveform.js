@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Typography } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
 /**
  * Canvas waveform with a single draggable region (for SA3 inpaint UX).
@@ -34,9 +35,13 @@ export default function AudioWaveform({
     onRegionChange,
     minRegionSec = 0.1,
     height = 96,
-    color = '#279FBB',
-    regionColor = 'rgba(253, 162, 43, 0.28)',
+    color: colorProp,
+    regionColor: regionColorProp,
 }) {
+    const theme = useTheme();
+    const color = colorProp || theme.palette.primary.main;
+    const regionColor = regionColorProp || `rgba(${theme.palette.fragmenta.warmRgb}, 0.28)`;
+    const handleColor = theme.palette.warm.main;
     const canvasRef = useRef(null);
     const containerRef = useRef(null);
     const [width, setWidth] = useState(0);
@@ -146,11 +151,11 @@ export default function AudioWaveform({
             ctx.fillStyle = regionColor;
             ctx.fillRect(sPx, 0, rectW, height);
             // Handles
-            ctx.fillStyle = '#FDA22B';
+            ctx.fillStyle = handleColor;
             ctx.fillRect(sPx - 1, 0, 2, height);
             ctx.fillRect(ePx - 1, 0, 2, height);
         }
-    }, [width, height, peaks, color, regionColor, start, end, duration]);
+    }, [width, height, peaks, color, regionColor, handleColor, start, end, duration]);
 
     useEffect(() => { draw(); }, [draw]);
 

@@ -24,7 +24,7 @@ The MIT License text is in [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio
 - **Source**: https://github.com/Dao-AILab/flash-attention
 - **Copyright**: Copyright (c) 2022, Tri Dao and contributors
 - **License**: BSD-3-Clause
-- **Form**: Redistributed as **binary wheels** referenced from `requirements.txt` — the pinned upstream Linux wheel, plus a Windows wheel built from the same BSD-licensed source (no official PyPI Windows wheel exists). Required by the `sa3-medium` model.
+- **Form**: Redistributed as **binary wheels** referenced from `requirements.txt`, built by Fragmenta from the unmodified BSD-licensed source (upstream has no Python 3.14 wheels, and never had Windows ones): release `flash-attn-2.8.3.post2-torch2.11-cu128` in [MAz-Codes/Fragmenta-wheels](https://github.com/MAz-Codes/Fragmenta-wheels). Required by the `sa3-medium` model.
 
 BSD-3-Clause permits binary redistribution provided the copyright notice, license text, and disclaimer are reproduced — satisfied by this entry and the license/AUTHORS files inside each wheel. This attribution does not imply endorsement of Fragmenta by the flash-attn authors.
 
@@ -95,10 +95,11 @@ Installed from PyPI and baked into the Docker images. All licenses below are GPL
 | einops, einops-exts | MIT |
 | torchlibrosa | MIT |
 | braceexpand | MIT |
-| python-rtmidi | MIT |
+| python-rtmidi | MIT. Fragmenta's own Python 3.14 builds of its wheels (release `python-rtmidi-1.5.8-cp314` in [MAz-Codes/Fragmenta-wheels](https://github.com/MAz-Codes/Fragmenta-wheels)) bundle, on Linux, libjack from [JACK2 1.9.22](https://github.com/jackaudio/jack2/tree/v1.9.22) (LGPL-2.1-or-later, text in [`licenses/LGPL-2.1.txt`](licenses/LGPL-2.1.txt)) and, on Windows, Microsoft's C++ runtime `msvcp140.dll` (redistributable under the Visual Studio licence terms) |
 | setuptools | MIT |
 | dill | BSD-3-Clause |
-| soundfile | BSD-3-Clause |
+| soundfile | BSD-3-Clause; its wheels bundle libsndfile (LGPL-2.1-or-later, text in [`licenses/LGPL-2.1.txt`](licenses/LGPL-2.1.txt)) |
+| av (PyAV) *(decodes m4a/AAC)* | BSD-3-Clause; its wheels bundle FFmpeg (LGPL-3.0-or-later) linked with libx264/libx265 (GPL-2.0-or-later), so the bundled FFmpeg binaries are GPL-3.0-or-later as shipped, compatible with Fragmenta's AGPL-3.0. Source: [ffmpeg.org](https://ffmpeg.org), build scripts: [PyAV-Org/pyav-ffmpeg](https://github.com/PyAV-Org/pyav-ffmpeg) |
 | scipy | BSD-3-Clause |
 | numpy | BSD-3-Clause |
 | pandas | BSD-3-Clause |
@@ -133,6 +134,7 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 | @mui/material | MIT |
 | @emotion/react, @emotion/styled | MIT |
 | lucide-react | ISC |
+| signalsmith-stretch (Performance pitch knob; shipped unmodified as `build/assets/SignalsmithStretch-*.mjs`) | MIT — Copyright (c) 2022 Geraint Luff / Signalsmith Audio Ltd.; text in [`licenses/SIGNALSMITH_STRETCH_LICENSE.txt`](licenses/SIGNALSMITH_STRETCH_LICENSE.txt) |
 | vite, @vitejs/plugin-react *(build only)* | MIT |
 
 ---
@@ -144,10 +146,11 @@ Bundled into the pre-built React app shipped at `app/frontend/build/`.
 - **Stable Audio 3 weights**: Stability AI Community License — [`licenses/STABILITY_AI_COMMUNITY_LICENSE.md`](licenses/STABILITY_AI_COMMUNITY_LICENSE.md) (official: https://stability.ai/community-license-agreement)
 - **T5Gemma text encoder**: Gemma Terms of Use — [`licenses/GEMMA_TERMS_OF_USE.md`](licenses/GEMMA_TERMS_OF_USE.md)
 - **Use policies**: [`licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md`](licenses/STABILITY_AI_ACCEPTABLE_USE_POLICY.md), [`licenses/GEMMA_PROHIBITED_USE_POLICY.md`](licenses/GEMMA_PROHIBITED_USE_POLICY.md)
+- **Signalsmith Stretch** (pitch shifting): [`licenses/SIGNALSMITH_STRETCH_LICENSE.txt`](licenses/SIGNALSMITH_STRETCH_LICENSE.txt) (MIT)
 - **Python / npm packages**: see each package's metadata or upstream repository.
 
 ---
 
-**Last Updated**: 2026-10-22
+**Last Updated**: 2026-10-27
 
 For licensing questions, open an issue on the project repository or contact the maintainer.

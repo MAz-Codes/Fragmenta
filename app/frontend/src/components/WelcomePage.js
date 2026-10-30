@@ -73,9 +73,11 @@ export default function WelcomePage({ open, onClose, hideDontShowAgain = false }
                         <Box mt={5}>
                             <Button
                                 variant="contained"
+                                size="large"
                                 onClick={() => onClose(dontShowAgain)}
+                                sx={{ px: 4, minHeight: 48, borderRadius: '999px', fontSize: '0.95rem' }}
                             >
-                                Get Started
+                                Get started
                             </Button>
                         </Box>
                         {!hideDontShowAgain && (

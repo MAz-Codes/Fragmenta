@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#F2EDE1" />
     <meta
       name="description"
       content="Fragmenta — Stable Audio Fine-Tuning Application"
@@ -12,17 +12,18 @@
     <link rel="manifest" href="/manifest.json" />
 
     <style>
-      /* Layout floor — channel grid + master strip need 1300px
-         horizontally to sit side-by-side, and the vertical layout (top
-         bar + channels + bottom bar) gets cramped below 830px. Below
-         either floor, scrollbars appear so the layout stays intact
-         instead of collapsing. The launcher (start.py) opens Chromium
-         at 1300×830 so the fresh-launch experience lands exactly at
-         the floor. */
+      /* Layout floor, in CSS px (after the fit-to-window zoom below):
+         below it, scrollbars appear rather than the layout collapsing. */
       html, body {
         min-width: 1300px;
         min-height: 830px;
       }
+      /* Linen's background from the first paint, before the app's theme loads. */
+      html { background: #F2EDE1; }
+      /* Type scale: every font size in the app is in rem, so this one value
+         sets how large all text reads (18px root instead of 16px) while
+         spacing and control heights, in px, stay put. */
+      html { font-size: 112.5%; }
 
       /* Local variable fonts — ship with the app, no network dependency. */
       @font-face {
@@ -48,8 +49,25 @@
       }
     </style>
 
+    <script>
+      // Fit to window: the UI is laid out for a 1650x960 viewport, and on a
+      // smaller window the whole page zooms down (to 0.6x) so it still fits:
+      // text, controls and layout scale together. Never above 1: the layout
+      // already fills a bigger window, and zooming up scaled the full-height
+      // parts past the window (a scrollbar on large screens).
+      (function () {
+        var W = 1650, H = 960;
+        function fit() {
+          var z = Math.min(window.innerWidth / W, window.innerHeight / H);
+          z = Math.max(0.6, Math.min(1, z));
+          document.documentElement.style.zoom = String(Math.round(z * 1000) / 1000);
+        }
+        fit();
+        window.addEventListener('resize', fit);
+      })();
+    </script>
     <title>Fragmenta</title>
-    <script type="module" crossorigin src="/assets/index-Ct2WgJnm.js"></script>
+    <script type="module" crossorigin src="/assets/index-OsrFVUW_.js"></script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

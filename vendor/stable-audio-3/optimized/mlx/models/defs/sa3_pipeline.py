@@ -93,6 +93,15 @@ def build_pingpong_schedule(steps: int, sigma_max: float = 1.0,
 
     Returns mx.array shape (steps+1,) of float32.
     """
+    if use_logsnr_shift and 0.0 < sigma_max < 1.0:
+        # Fragmenta: shifting linspace(sigma_max, 0) and re-anchoring its start
+        # made the second value higher than the first (0.9 -> 0.995), so the
+        # run restarted from near-full noise. Start the linear schedule where
+        # the shift maps to sigma_max instead (same fix as the torch
+        # build_schedule), capped at sigma_max: it only descends.
+        u0 = (math.log(sigma_max / (1.0 - sigma_max)) + 2.0) / (2.0 - (-6.2))
+        t = mx.minimum(logsnr_shift(mx.linspace(u0, 0.0, steps + 1, dtype=mx.float32)), sigma_max)
+        return mx.concatenate([mx.array([sigma_max], dtype=mx.float32), t[1:]], axis=0)
     t = mx.linspace(sigma_max, 0.0, steps + 1, dtype=mx.float32)
     if use_logsnr_shift:
         t = logsnr_shift(t)
@@ -102,7 +111,8 @@ def build_pingpong_schedule(steps: int, sigma_max: float = 1.0,
 
 
 def sample_flow_pingpong(model_fn, x: mx.array, sigmas: mx.array, seed: int = 0,
-                         paste_back: tuple | None = None, on_step=None) -> mx.array:
+                         paste_back: tuple | None = None, on_step=None,
+                         before_step=None) -> mx.array:
     """Ping-pong sampler for rf_denoiser models.
 
     Per step i (i = 0 .. num_steps-1):
@@ -111,6 +121,11 @@ def sample_flow_pingpong(model_fn, x: mx.array, sigmas: mx.array, seed: int = 0,
 
     `model_fn(x, t_array)` should return the model's velocity prediction.
     `sigmas` is the schedule of shape (steps+1,) with sigmas[-1] = 0.
+
+    `before_step(i)`, if provided, is called with the 0-based step index right
+    before each model_fn call — used for per-step model state such as LoRA
+    step gating (lora_merge.LoraStepPlan.sync). `on_step(i+1, total)` fires
+    after each step (progress display).
 
     `paste_back`, if provided, is `(init_latents, inpaint_mask)` and instructs
     the sampler to overwrite non-masked positions with the init at the END
@@ -124,6 +139,8 @@ def sample_flow_pingpong(model_fn, x: mx.array, sigmas: mx.array, seed: int = 0,
         t_curr = sigmas[i]
         t_next = sigmas[i + 1]
         t_tensor = t_curr * mx.ones((x.shape[0],), dtype=x.dtype)
+        if before_step is not None:
+            before_step(i)
         v = model_fn(x, t_tensor)
         denoised = x - t_curr.astype(x.dtype) * v
         if i < num_steps - 1 and float(t_next) > 0.0:

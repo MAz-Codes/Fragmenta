@@ -21,15 +21,12 @@ import {
     FormControl,
     Select,
     MenuItem,
-    Menu,
-    ListItemIcon,
-    ListItemText,
-    Divider,
     Snackbar,
     Accordion,
     AccordionSummary,
     AccordionDetails,
     FormControlLabel,
+    Checkbox,
     Switch,
     CssBaseline,
     ThemeProvider,
@@ -50,22 +47,14 @@ import {
     RefreshCw as RefreshIcon,
     ChevronDown as ExpandMoreIcon,
     CloudDownload as CloudDownloadIcon,
-    FolderOpen as FolderOpenIcon,
-    Info as InfoIcon,
-    HelpCircle as InfoViewIcon,
-    Moon as MoonIcon,
-    Sun as SunIcon,
     Piano as PerformanceIcon,
     CircuitBoard as BendIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
     Trash2 as DeleteIcon,
-    Menu as MenuIcon,
     CheckCircle2 as CheckCircleIcon,
-    ArrowUpCircle as UpdateIcon,
 } from 'lucide-react';
 import api from './api';
-import AboutDialog from './components/AboutDialog';
 import UpdateDialog from './components/UpdateDialog';
 import useUpdateStatus from './components/useUpdateStatus';
 import { InfoViewProvider } from './components/InfoView';
@@ -80,8 +69,12 @@ import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
+import AppToolbar from './components/AppToolbar';
+import SettingsDialog from './components/SettingsDialog';
+import { AudioSettingsProvider } from './components/AudioSettingsContext';
+import { MidiProvider } from './components/MidiContext';
 import { formatDuration } from './utils/format';
-import theme, { appStyles, lightTheme } from './theme';
+import { appStyles, lightTheme } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
@@ -91,7 +84,6 @@ import BetaBadge from './components/bend/BetaBadge';
 // Bend tab — lazy chunk so non-users pay zero JS cost for it.
 const BendPanel = lazy(() => import('./components/bend/BendPanel'));
 
-const COLOR_MODE_STORAGE_KEY = 'fragmenta-color-mode';
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
@@ -128,6 +120,7 @@ const readStoredTab = () => {
 };
 
 function App() {
+    const [showSettings, setShowSettings] = useState(false);
     const [tabValue, setTabValue] = useState(readStoredTab);
     // Lags behind tabValue by ~fadeDuration so content swap happens
     // while the panel is invisible (cross-fade between pages).
@@ -171,7 +164,6 @@ function App() {
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
-    const [showInfoDialog, setShowInfoDialog] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
     // Web/Docker deployments have no host desktop: there's no folder to open
     // and no OS file manager to reveal in. We swap those affordances for an
@@ -218,18 +210,6 @@ function App() {
         probe(0);
         return () => { cancelled = true; };
     }, []);
-    const [colorMode, setColorMode] = useState(() => {
-        if (typeof window === 'undefined') {
-            return 'dark';
-        }
-
-        const savedMode = window.localStorage.getItem(COLOR_MODE_STORAGE_KEY);
-        if (savedMode === 'light' || savedMode === 'dark') {
-            return savedMode;
-        }
-
-        return 'dark';
-    });
 
     // Ableton-style Info View: when on, control help text shows in a fixed
     // bottom bar (fed by the shared <Tooltip>) instead of popping over each
@@ -284,6 +264,24 @@ function App() {
     const [suggestionDialog, setSuggestionDialog] = useState({ open: false, data: null, loading: false });
     const [showRationale, setShowRationale] = useState(false);
     const [isTraining, setIsTraining] = useState(false);
+    // Training notice: shown on Start (unless dismissed for good); while
+    // training runs, the sidebar tabs and the top toolbar are locked.
+    const TRAINING_NOTICE_KEY = 'fragmenta.hideTrainingNotice';
+    const [trainingNoticeOpen, setTrainingNoticeOpen] = useState(false);
+    const [hideTrainingNotice, setHideTrainingNotice] = useState(false);
+    const requestStartTraining = () => {
+        let hidden = false;
+        try { hidden = window.localStorage.getItem(TRAINING_NOTICE_KEY) === 'true'; } catch { /* noop */ }
+        if (hidden) startTraining(false);
+        else setTrainingNoticeOpen(true);
+    };
+    const confirmTrainingNotice = () => {
+        if (hideTrainingNotice) {
+            try { window.localStorage.setItem(TRAINING_NOTICE_KEY, 'true'); } catch { /* noop */ }
+        }
+        setTrainingNoticeOpen(false);
+        startTraining(false);
+    };
     const [trainingProgress, setTrainingProgress] = useState(0);
     const [trainingStatus, setTrainingStatus] = useState(null);
     const [trainingHistory, setTrainingHistory] = useState([]);
@@ -585,8 +583,8 @@ function App() {
         canOpenModels: false,
     });
     const appTheme = useMemo(
-        () => (colorMode === 'light' ? lightTheme : theme),
-        [colorMode]
+        () => lightTheme,
+        []
     );
     const isCompactLayout = useMediaQuery(appTheme.breakpoints.down('md'));
     // Vertical icon-only mode: between the compact (horizontal) threshold
@@ -599,8 +597,6 @@ function App() {
     const isMobileLayout = useMediaQuery(appTheme.breakpoints.down('sm'));
     // Dock collapses to a hamburger at the same threshold where the nav
     // rail flips horizontal — keeps the chrome transition unified.
-    const isDockCollapsed = isCompactLayout;
-    const [dockMenuAnchor, setDockMenuAnchor] = useState(null);
 
     useEffect(() => {
         console.log('Model changed:', selectedModel);
@@ -791,12 +787,10 @@ function App() {
     }, []);
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            fetchGpuMemoryStatus();
-        }, isTraining ? 2000 : 10000);
-
+        // Often enough to catch a model loading for a short generation.
+        const interval = setInterval(fetchGpuMemoryStatus, 3000);
         return () => clearInterval(interval);
-    }, [isTraining]);
+    }, []);
 
     useEffect(() => {
         // Debounced preview of total_steps + resolved checkpoint cadence so the
@@ -1326,16 +1320,6 @@ function App() {
         }
     };
 
-    const toggleColorMode = () => {
-        setColorMode((prevMode) => {
-            const nextMode = prevMode === 'light' ? 'dark' : 'light';
-            if (typeof window !== 'undefined') {
-                window.localStorage.setItem(COLOR_MODE_STORAGE_KEY, nextMode);
-            }
-            return nextMode;
-        });
-    };
-
     const getSelectedModelDisplayName = () => {
         if (!selectedModel) return '';
         const baseModel = baseModels.find(m => m.name === selectedModel);
@@ -1399,6 +1383,8 @@ function App() {
         <ThemeProvider theme={appTheme}>
             <CssBaseline />
             <InfoViewProvider enabled={infoViewEnabled}>
+            <MidiProvider>
+            <AudioSettingsProvider>
             <Box sx={appStyles.root}>
                 <WelcomePage
                     open={showWelcomePage}
@@ -1445,39 +1431,20 @@ function App() {
                         </Box>
 
                         <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
-                            <Paper sx={appStyles.gpuCard(isCompactLayout)}>
-                                {gpuMemoryStatus && gpuMemoryStatus.cuda ? (
-                                    <>
-                                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 0.75 }}>
-                                            <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
-                                                GPU
-                                            </Typography>
-                                            <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600, fontSize: '0.72rem' }}>
-                                                {gpuMemoryStatus.cuda.free.toFixed(1)} / {Math.ceil(gpuMemoryStatus.cuda.total)} GB free
-                                            </Typography>
-                                        </Box>
-                                        <Box sx={{ height: 4, borderRadius: 999, bgcolor: 'rgba(255, 255, 255, 0.08)', overflow: 'hidden' }}>
-                                            <Box
-                                                sx={{
-                                                    height: '100%',
-                                                    width: `${Math.min(Math.max(((gpuMemoryStatus.cuda.total - gpuMemoryStatus.cuda.free) / gpuMemoryStatus.cuda.total) * 100, 0), 100)}%`,
-                                                    bgcolor: 'primary.main',
-                                                    transition: 'width 0.3s ease',
-                                                }}
-                                            />
-                                        </Box>
-                                    </>
-                                ) : (
-                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                        <Typography variant="overline" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
-                                            GPU
-                                        </Typography>
-                                        <Typography variant="caption" color="warning.main" sx={{ fontSize: '0.72rem' }}>
-                                            Not detected · CPU mode
-                                        </Typography>
-                                    </Box>
-                                )}
-                            </Paper>
+                            <AppToolbar
+                                locked={isTraining}
+                                gpu={gpuMemoryStatus}
+                                isDocker={isDocker}
+                                isFreeingGPU={isFreeingGPU}
+                                onGetModels={() => setCheckpointMgrOpen(true)}
+                                onOpenOutputs={handleOpenOutputFolder}
+                                onFreeGPU={() => setShowFreeGPUDialog(true)}
+                                infoViewEnabled={infoViewEnabled}
+                                onToggleInfoView={toggleInfoView}
+                                updateVisible={updates.visible}
+                                onShowUpdate={() => setShowUpdateDialog(true)}
+                                onSettings={() => setShowSettings(true)}
+                            />
                         </Box>
                     </Box>
 
@@ -1492,10 +1459,11 @@ function App() {
                                 aria-label="main navigation tabs"
                                 sx={appStyles.navigationTabs(isCompactLayout, isIconOnlySidebar)}
                             >
-                                <Tab icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
-                                <Tab icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
-                                <Tab icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
+                                <Tab disabled={isTraining && tabValue !== 0} icon={<UploadIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Dataset'} />
+                                <Tab disabled={isTraining && tabValue !== 1} icon={<ActivityIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Training'} />
+                                <Tab disabled={isTraining && tabValue !== 2} icon={<SparklesIcon size={20} />} iconPosition={isIconOnlySidebar ? 'top' : 'start'} label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Generation'} />
                                 <Tab
+                                    disabled={isTraining && tabValue !== 3}
                                     icon={<PerformanceIcon size={20} />}
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
                                     label={(isIconOnlySidebar || isMobileLayout) ? undefined : 'Performance'}
@@ -1546,12 +1514,15 @@ function App() {
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <SlidersIcon size={20} />
                                                     </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Training Configuration</Typography>
+                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Train a LoRA</Typography>
                                                 </Box>
 
+                                                <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
+                                                    Name
+                                                </Typography>
                                                 <TextField
                                                     fullWidth
-                                                    label="Fine-tuned Model Name"
+                                                    inputProps={{ 'aria-label': 'LoRA name' }}
                                                     value={trainingConfig.modelName}
                                                     onChange={(e) => setTrainingConfig({
                                                         ...trainingConfig,
@@ -1561,7 +1532,7 @@ function App() {
                                                 />
 
                                                 <Box sx={appStyles.fieldMarginBottom}>
-                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                                    <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
                                                         Dataset
                                                     </Typography>
                                                     {trainingProjects.length === 0 ? (
@@ -1668,8 +1639,8 @@ function App() {
                                                 </Box>
 
                                                 <Box sx={appStyles.fieldMarginBottom}>
-                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                                                        Base model to fine-tune
+                                                    <Typography component="div" sx={[appStyles.fieldCaps, { mb: 0.75 }]}>
+                                                        Base model
                                                     </Typography>
                                                     <Select
                                                         fullWidth
@@ -1728,7 +1699,7 @@ function App() {
                                                                                     setTrainingBaseModelSelectOpen(false);
                                                                                     setCheckpointMgrOpen(true);
                                                                                 }}
-                                                                                sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                sx={{ opacity: 1, color: 'primary.dark' }}
                                                                             >
                                                                                 <CloudDownloadIcon size={16} />
                                                                             </IconButton>
@@ -1741,7 +1712,7 @@ function App() {
 
                                                 <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -2179,7 +2150,7 @@ function App() {
                                                 <Box sx={appStyles.trainingActionRow}>
                                                     <Button
                                                         variant="contained"
-                                                        onClick={() => startTraining(false)}
+                                                        onClick={requestStartTraining}
                                                         disabled={isTraining || !trainingProject || !trainingConfig.baseModel || (() => {
                                                             // Check if the selected base model is downloaded
                                                             const baseModel = baseModels.find(m => m.name === trainingConfig.baseModel);
@@ -2231,7 +2202,7 @@ function App() {
                                                     <Box component="span" sx={appStyles.sectionCardIcon}>
                                                         <SparklesIcon size={20} />
                                                     </Box>
-                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio Generation</Typography>
+                                                    <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio generation</Typography>
                                                 </Box>
 
                                                 <Box sx={appStyles.generationModelRow}>
@@ -2299,7 +2270,7 @@ function App() {
                                                                                             setGenerationModelSelectOpen(false);
                                                                                             setCheckpointMgrOpen(true);
                                                                                         }}
-                                                                                        sx={{ opacity: 1, color: 'primary.main' }}
+                                                                                        sx={{ opacity: 1, color: 'primary.dark' }}
                                                                                     >
                                                                                         <CloudDownloadIcon size={16} />
                                                                                     </IconButton>
@@ -2406,9 +2377,9 @@ function App() {
                                                 <TextField
                                                     fullWidth
                                                     multiline
-                                                    minRows={1}
-                                                    maxRows={4}
-                                                    label="Generation Prompt"
+                                                    minRows={3}
+                                                    maxRows={6}
+                                                    label="Prompt"
                                                     placeholder="Describe the audio you want to generate..."
                                                     value={generationPrompt}
                                                     onChange={(e) => setGenerationPrompt(e.target.value)}
@@ -2419,8 +2390,8 @@ function App() {
 
                                                 <Tooltip title={TIPS.generate.duration}>
                                                 <Box sx={appStyles.durationRow}>
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        Desired Duration (seconds):
+                                                    <Typography component="span" sx={appStyles.fieldCaps}>
+                                                        Duration
                                                     </Typography>
                                                     <Slider
                                                         value={generationDuration}
@@ -2428,18 +2399,18 @@ function App() {
                                                         min={1}
                                                         max={getMaxDuration()}
                                                         step={1}
-                                                        marks
                                                         valueLabelDisplay="auto"
+                                                        aria-label="Duration in seconds"
                                                     />
-                                                    <Typography variant="body2" color="textSecondary">
-                                                        {generationDuration}s
+                                                    <Typography component="span" sx={appStyles.bigValue}>
+                                                        {generationDuration} s
                                                     </Typography>
                                                 </Box>
                                                 </Tooltip>
 
                                                 <Accordion>
                                                     <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                                                        <Typography variant="subtitle1">Advanced Settings</Typography>
+                                                        <Typography variant="subtitle1">Advanced settings</Typography>
                                                     </AccordionSummary>
                                                     <AccordionDetails sx={appStyles.advancedSettingsDetails}>
                                                         <Grid container spacing={{ xs: 2, sm: 2.5, md: 3 }}>
@@ -2632,7 +2603,7 @@ function App() {
                                                         })()}
                                                         sx={appStyles.generateButton}
                                                     >
-                                                        Generate Audio
+                                                        Generate audio
                                                     </Button>
                                                 )}
 
@@ -2845,213 +2816,36 @@ function App() {
 
             <UpdateDialog open={showUpdateDialog} onClose={() => setShowUpdateDialog(false)} update={updates} />
 
-            {isDockCollapsed ? (
-                <>
-                    <IconButton
-                        aria-label="Open actions menu"
-                        onClick={(e) => setDockMenuAnchor(e.currentTarget)}
-                        sx={appStyles.dockHamburger}
-                    >
-                        <MenuIcon size={18} />
-                    </IconButton>
-                    <Menu
-                        anchorEl={dockMenuAnchor}
-                        open={Boolean(dockMenuAnchor)}
-                        onClose={() => setDockMenuAnchor(null)}
-                        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
-                        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-                    >
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setCheckpointMgrOpen(true); }}
-                        >
-                            <ListItemIcon><CloudDownloadIcon size={18} /></ListItemIcon>
-                            <ListItemText>Get Models</ListItemText>
-                        </MenuItem>
-                        {!isDocker && (
-                            <MenuItem
-                                onClick={() => { setDockMenuAnchor(null); handleOpenOutputFolder(); }}
-                            >
-                                <ListItemIcon><FolderOpenIcon size={18} /></ListItemIcon>
-                                <ListItemText>Outputs</ListItemText>
-                            </MenuItem>
-                        )}
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setShowFreeGPUDialog(true); }}
-                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                        >
-                            <ListItemIcon>
-                                {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
-                            </ListItemIcon>
-                            <ListItemText>{isFreeingGPU ? 'Freeing…' : 'Free GPU'}</ListItemText>
-                        </MenuItem>
-                        <Divider />
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); toggleColorMode(); }}
-                        >
-                            <ListItemIcon>
-                                {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
-                            </ListItemIcon>
-                            <ListItemText>{colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}</ListItemText>
-                        </MenuItem>
-                        {updates.visible && (
-                            <MenuItem
-                                onClick={() => { setDockMenuAnchor(null); setShowUpdateDialog(true); }}
-                            >
-                                <ListItemIcon><UpdateIcon size={18} /></ListItemIcon>
-                                <ListItemText>Update available</ListItemText>
-                            </MenuItem>
-                        )}
-                        <MenuItem
-                            onClick={() => { setDockMenuAnchor(null); setShowInfoDialog(true); }}
-                        >
-                            <ListItemIcon><InfoIcon size={18} /></ListItemIcon>
-                            <ListItemText>About</ListItemText>
-                        </MenuItem>
-                    </Menu>
-                </>
-            ) : (
-                <Box
-                    sx={(theme) => ({
-                        position: 'fixed',
-                        left: { xs: theme.spacing(1.5), sm: theme.spacing(2), md: theme.spacing(3) },
-                        bottom: { xs: theme.spacing(7), sm: theme.spacing(9), md: theme.spacing(12) },
-                        zIndex: 1350,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 0.75,
-                    })}
-                >
-                    {/* Small Info View toggle, sitting above the dock card. */}
-                    <Box
-                        component="button"
-                        type="button"
-                        onClick={toggleInfoView}
-                        aria-label={infoViewEnabled ? 'Turn off Info View' : 'Turn on Info View'}
-                        aria-pressed={infoViewEnabled}
-                        sx={(theme) => ({
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 0.4,
-                            px: 0.5,
-                            py: 0.25,
-                            m: 0,
-                            border: 'none',
-                            background: 'transparent',
-                            cursor: 'pointer',
-                            borderRadius: 999,
-                            fontFamily: 'inherit',
-                            fontSize: '0.6rem',
-                            lineHeight: 1,
-                            letterSpacing: '0.02em',
-                            color: infoViewEnabled ? theme.palette.primary.main : theme.palette.text.disabled,
-                            opacity: infoViewEnabled ? 0.9 : 0.55,
-                            transition: 'color 160ms ease, opacity 160ms ease',
-                            '&:hover': {
-                                opacity: 1,
-                                color: infoViewEnabled ? theme.palette.primary.light : theme.palette.text.secondary,
-                            },
-                        })}
-                    >
-                        <InfoViewIcon size={11} />
-                        <Box component="span">Info</Box>
-                    </Box>
+            <Dialog open={trainingNoticeOpen} onClose={() => setTrainingNoticeOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle>Training takes the whole machine</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary">
+                        Training uses most of your GPU and memory. To keep the app from crashing,
+                        the other tabs and the top toolbar are locked until training finishes or
+                        you stop it.
+                    </Typography>
+                    <FormControlLabel
+                        sx={{ mt: 2 }}
+                        control={<Checkbox size="small" checked={hideTrainingNotice}
+                            onChange={(e) => setHideTrainingNotice(e.target.checked)} />}
+                        label={<Typography variant="body2">Don't show this again</Typography>}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button variant="outlined" onClick={() => setTrainingNoticeOpen(false)}>Cancel</Button>
+                    <Button variant="contained" onClick={confirmTrainingNotice}>Start training</Button>
+                </DialogActions>
+            </Dialog>
 
-                    <Paper sx={[appStyles.bottomDock, { position: 'static', left: 'auto', right: 'auto', bottom: 'auto', zIndex: 'auto' }]}>
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Get models"
-                            onClick={() => setCheckpointMgrOpen(true)}
-                            sx={appStyles.dockIconButton}
-                        >
-                            <CloudDownloadIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            Get Models
-                        </Typography>
-                    </Box>
-
-                    {!isDocker && (
-                        <Box sx={appStyles.dockItem}>
-                            <IconButton
-                                aria-label="Open outputs folder"
-                                onClick={handleOpenOutputFolder}
-                                sx={appStyles.dockIconButton}
-                            >
-                                <FolderOpenIcon size={18} />
-                            </IconButton>
-                            <Typography className="dock-label" sx={appStyles.dockLabel}>
-                                Outputs
-                            </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Free GPU memory"
-                            onClick={() => setShowFreeGPUDialog(true)}
-                            disabled={isFreeingGPU || !(gpuMemoryStatus && gpuMemoryStatus.cuda)}
-                            sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
-                        >
-                            {isFreeingGPU ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon size={18} />}
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {isFreeingGPU ? 'Freeing…' : 'Free GPU'}
-                        </Typography>
-                    </Box>
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label={colorMode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-                            onClick={toggleColorMode}
-                            sx={[appStyles.dockIconButton, { color: colorMode === 'light' ? 'night.main' : 'warm.main', '&:hover': { color: colorMode === 'light' ? 'night.main' : 'warm.main' } }]}
-                        >
-                            {colorMode === 'light' ? <MoonIcon size={18} /> : <SunIcon size={18} />}
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            {colorMode === 'light' ? 'Dark Mode' : 'Light Mode'}
-                        </Typography>
-                    </Box>
-
-                    {updates.visible && (
-                        <Box sx={appStyles.dockItem}>
-                            <IconButton
-                                aria-label="Update available"
-                                onClick={() => setShowUpdateDialog(true)}
-                                sx={[appStyles.dockIconButton, appStyles.dockIconButtonAccent]}
-                            >
-                                <UpdateIcon size={18} />
-                            </IconButton>
-                            <Typography className="dock-label" sx={appStyles.dockLabel}>
-                                Update
-                            </Typography>
-                        </Box>
-                    )}
-
-                    <Box sx={appStyles.dockItem}>
-                        <IconButton
-                            aria-label="Open about and documentation"
-                            onClick={() => setShowInfoDialog(true)}
-                            sx={appStyles.dockIconButton}
-                        >
-                            <InfoIcon size={18} />
-                        </IconButton>
-                        <Typography className="dock-label" sx={appStyles.dockLabel}>
-                            About
-                        </Typography>
-                    </Box>
-                    </Paper>
-                </Box>
-            )}
-
-            <AboutDialog
-                open={showInfoDialog}
-                onClose={() => setShowInfoDialog(false)}
-                onOpenDocumentation={handleOpenDocumentation}
-                isOpeningDocumentation={isOpeningDocumentation}
-                update={updates}
-                onShowUpdate={() => { setShowInfoDialog(false); setShowUpdateDialog(true); }}
+            <SettingsDialog
+                open={showSettings}
+                onClose={() => setShowSettings(false)}
+                aboutProps={{
+                    onOpenDocumentation: handleOpenDocumentation,
+                    isOpeningDocumentation,
+                    update: updates,
+                    onShowUpdate: () => { setShowSettings(false); setShowUpdateDialog(true); },
+                }}
             />
 
             <Dialog
@@ -3205,6 +2999,8 @@ function App() {
                     refreshAllModels();
                 }}
             />
+            </AudioSettingsProvider>
+            </MidiProvider>
             </InfoViewProvider>
         </ThemeProvider>
     );

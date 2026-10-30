@@ -88,6 +88,14 @@ export function setCueOutputPair(pairIdx) {
     wireCuePair(currentCuePair);
 }
 
+// The output device changed underneath the context (macOS: the backend
+// switched the Mac's default output). Re-claim its channels if their number
+// changed; same rebuild as after setSinkId.
+export function refreshCueGraph() {
+    if (!ctx || !cueMerger) return;
+    if (cueMerger.numberOfInputs !== Math.max(2, ctx.destination.maxChannelCount || 2)) buildCueGraph();
+}
+
 // Re-route the cue context to a different output device. Pass '' (or 'default')
 // to revert to the system default output. Resolves to the actually-applied
 // sinkId so callers can confirm.
@@ -122,20 +130,12 @@ export function getCueDevice() {
     return currentSinkId;
 }
 
-// Enumerate output devices. Requires a one-time getUserMedia call to unlock
-// device labels (otherwise the label is an empty string); we request a
-// short-lived mic stream and immediately stop it. Returns an array of
-// MediaDeviceInfo for kind === 'audiooutput'.
+// Enumerate output devices (MediaDeviceInfo, kind audiooutput). Never asks
+// for the microphone: Fragmenta doesn't need one. The catch is that browsers
+// only reveal output device *names* to pages with mic access, so without it
+// devices list unnamed (the Settings dialog numbers them).
 export async function listOutputDevices() {
     if (!navigator?.mediaDevices?.enumerateDevices) return [];
-    // First call without permission gets devices with blank labels — try to
-    // get permission so subsequent calls return meaningful labels.
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(t => t.stop());
-    } catch {
-        // Mic denied is fine; we'll still get devices, just with empty labels.
-    }
     const all = await navigator.mediaDevices.enumerateDevices();
     return all.filter(d => d.kind === 'audiooutput');
 }

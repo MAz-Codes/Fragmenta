@@ -37,7 +37,7 @@ export const TIPS = {
                     : enabled
                         ? `Link on — ${peers} peer${peers === 1 ? '' : 's'} (click to disable)`
                         : 'Click to sync BPM with Ableton Link',
-        linkSync: 'Latency compensation for Link — click to fine-tune or calibrate by ear',
+        linkSync: "Link sync. Use Offset only for delay Fragmenta can't measure, e.g. Bluetooth headphones.",
         midiMode: ({ supported, permissionError, learnMode }) =>
             !supported
                 ? (permissionError || 'Web MIDI is not available')
@@ -111,6 +111,7 @@ export const TIPS = {
         injectScope: 'Which clips get the text — every clip in the project, or only the ones ticked in the table. Switches to Selected automatically as soon as you tick something.',
         injectUndo: 'Roll back the last injection, one pass at a time. Clips you\'ve edited by hand since are left as they are, so undo never eats newer work.',
         selectClips: 'Click to select these clips — then Auto-annotate them.',
+        emptyPrompts: 'Clips without a prompt are left out of pre-encoding and training. Click to select them, then Auto-annotate or write prompts.',
         autoAnnotateClip: 'Auto-annotate this clip (overwrites any current prompt)',
         sliceClip: 'Slice this clip into shorter children (immediate)',
         removeClip: 'Remove this clip from the project (immediate)',

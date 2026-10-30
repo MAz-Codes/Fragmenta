@@ -31,15 +31,7 @@ class ColoredFormatter(logging.Formatter):
             color = self.COLORS.get(record.levelname, Colors.RESET)
             record.levelname = f"{color}{record.levelname}{Colors.RESET}"
 
-        formatted = super().format(record)
-        
-        if sys.platform == 'win32':
-            try:
-                formatted.encode('charmap')
-            except UnicodeEncodeError:
-                formatted = formatted.encode('ascii', 'replace').decode('ascii')
-        
-        return formatted
+        return super().format(record)
 
 
 class FragmentaLogger:
@@ -93,7 +85,7 @@ class FragmentaLogger:
 
         if log_file:
             log_filename = f"fragmenta_{datetime.now().strftime('%Y%m%d')}.log"
-            file_handler = logging.FileHandler(log_dir / log_filename)
+            file_handler = logging.FileHandler(log_dir / log_filename, encoding='utf-8')
             file_handler.setLevel(logging.DEBUG)
 
             file_format = "%(asctime)s | %(levelname)s | %(name)s | %(funcName)s:%(lineno)d | %(message)s"

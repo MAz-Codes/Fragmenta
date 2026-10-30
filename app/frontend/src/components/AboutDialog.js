@@ -1,11 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Box,
     Button,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogTitle,
     Checkbox,
     FormControlLabel,
     Typography,
@@ -15,28 +11,34 @@ import {
     BookOpen as BookOpenIcon,
     PlayCircle as PlayIcon,
 } from 'lucide-react';
+import api from '../api';
 import { appStyles } from '../theme';
 import Tooltip from './Tooltip';
 import { APP_VERSION } from '../version';
 
 const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/tree/main/licenses';
 const NOTICE_SX = { display: 'block', fontSize: '0.65rem', lineHeight: 1.5, mt: 0.5 };
-const LINK_SX = { color: 'primary.main', textDecoration: 'underline', fontSize: '0.65rem' };
+const LINK_SX = { color: 'primary.dark', textDecoration: 'underline', fontSize: '0.65rem' };
 
 /**
- * "About Fragmenta" dialog — logo + title, short intro, three doc buttons
- * (About / Documentation / Tutorials), and the model-license attribution
- * footer (Stability AI + Gemma notices).
+ * "About Fragmenta" — logo + title, short intro, three doc buttons
+ * (About / Documentation / Tutorials), updates, and the model-license
+ * attribution footer (Stability AI + Gemma notices).
  *
  * Props:
- *   open:                       bool
- *   onClose:                    () => void
  *   onOpenDocumentation:        ('about' | 'documentation' | 'tutorials') => void
  *   isOpeningDocumentation:     bool — disables the doc buttons while a
  *                               native open-file call is in flight
  *   update:                     useUpdateStatus() result (optional)
  *   onShowUpdate:               () => void — open the update dialog
  */
+function runtimeLine(env) {
+    if (!env || !env.python_version) return null;
+    const gpu = env.cuda_version ? `CUDA ${env.cuda_version}` : env.mps_available ? 'MPS' : 'CPU';
+    return [`Python ${env.python_version}`, env.torch_version && `PyTorch ${env.torch_version}`, gpu]
+        .filter(Boolean).join(' · ');
+}
+
 function updateLine(s) {
     if (s.disabled_reason === 'env') return 'Update checks are turned off (FRAGMENTA_NO_UPDATE_CHECK).';
     if (s.available) return `Update available: ${s.latest}`;
@@ -45,9 +47,9 @@ function updateLine(s) {
     return 'Not checked for updates yet';
 }
 
-export default function AboutDialog({
-    open,
-    onClose,
+// The About page: the first page of the Settings dialog (gear in the top
+// toolbar), shown exactly as the old About dialog.
+export function AboutPanel({
     onOpenDocumentation,
     isOpeningDocumentation,
     update,
@@ -55,15 +57,18 @@ export default function AboutDialog({
 }) {
     const us = update && update.status;
     const showUpdates = Boolean(us && us.disabled_reason !== 'hf_space');
+    const [env, setEnv] = useState(null);
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/api/environment')
+            .then(({ data }) => { if (!cancelled) setEnv(data); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+    const runtime = runtimeLine(env);
     return (
-        <Dialog
-            open={open}
-            onClose={onClose}
-            aria-labelledby="about-documentation-dialog-title"
-            maxWidth="sm"
-            fullWidth
-        >
-            <DialogTitle id="about-documentation-dialog-title">
+        <Box>
+            <Box sx={{ pb: 1 }}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
                     <Box sx={{
                         ...appStyles.logo,
@@ -76,16 +81,15 @@ export default function AboutDialog({
                         Fragmenta
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
-                        v{APP_VERSION}
+                        v{APP_VERSION}{runtime ? ` · ${runtime}` : ''}
                     </Typography>
                 </Box>
-            </DialogTitle>
-            <DialogContent>
+            </Box>
                 <Typography sx={appStyles.infoDialogIntro}>
                     Fragmenta is an open source, local-first suit to prepare datasets, train, generate and perform with text-to-audio diffusion models.
                     Made by the composer and researcher{' '}
                     <Typography component="a" href="https://www.misaghazimi.com" target="_blank" rel="noopener noreferrer"
-                        sx={{ font: 'inherit', color: 'primary.main', textDecoration: 'underline' }}>
+                        sx={{ font: 'inherit', color: 'primary.dark', textDecoration: 'underline' }}>
                         Misagh Azimi
                     </Typography>.
                 </Typography>
@@ -197,10 +201,6 @@ export default function AboutDialog({
                         </Typography>
                     </Typography>
                 </Box>
-            </DialogContent>
-            <DialogActions>
-                <Button onClick={onClose}>Close</Button>
-            </DialogActions>
-        </Dialog>
+        </Box>
     );
 }

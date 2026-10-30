@@ -29,7 +29,7 @@ SOURCE_COMPOSITE = "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWith
 # Read once at import, like app.py's _APP_VERSION: the tags describe the code
 # this process is running.
 try:
-    _APP_VERSION = (Path(__file__).resolve().parents[3] / "VERSION").read_text().strip() or "unknown"
+    _APP_VERSION = (Path(__file__).resolve().parents[3] / "VERSION").read_text(encoding="utf-8").strip() or "unknown"
 except Exception:
     _APP_VERSION = "unknown"
 

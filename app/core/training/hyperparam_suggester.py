@@ -1,7 +1,7 @@
 """SA3 LoRA hyperparameter suggester for the Training tab's "Suggest" button.
 
-Reads a Dataset Workbench project directly — counts SA3-compatible audio
-files, measures their durations via the same `soundfile.info()` header-only
+Reads a Dataset Workbench project directly — counts the clips training will
+use (those with prompts), measures their durations via the same `soundfile.info()` header-only
 probe used elsewhere in the app, factors in the user's picked base model
 and detected GPU VRAM, and returns a config that:
 
@@ -27,20 +27,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.backend.data.projects import _clip_duration_sec
-from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS, SA3_BASE_MODELS
+from app.core.training.sa3_lora_runner import SA3_BASE_MODELS, captioned_clips
 
 
 # --- Discovery -------------------------------------------------------------
 
 
 def _list_audio_files(data_dir: Path) -> List[Path]:
-    """Files SA3's loader would actually train on. Mirrors the loader's filter."""
+    """The clips training will use: those with a prompt (captioned_clips)."""
     if not data_dir.exists():
         return []
-    return [
-        p for p in data_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in SA3_AUDIO_EXTENSIONS
-    ]
+    return captioned_clips(data_dir)
 
 
 def _duration_stats(audio_files: List[Path]) -> Dict[str, Optional[float]]:
@@ -416,8 +413,8 @@ def suggest(data_dir: Path, base_model: Optional[str] = None) -> Dict[str, Any]:
         return {
             "ok": False,
             "error": (
-                f"No SA3-compatible audio in {data_dir}. SA3's loader accepts "
-                + ", ".join(SA3_AUDIO_EXTENSIONS) + "."
+                "No clips with prompts in this project yet. Add prompts and "
+                "click Create Dataset, then try Suggest again."
             ),
         }
 

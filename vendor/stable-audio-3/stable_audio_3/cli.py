@@ -10,7 +10,7 @@ Basic usage::
 import argparse
 import os
 import torch
-import torchaudio
+from stable_audio_3.data.audio_io import read_audio, write_audio  # Fragmenta: no torchaudio I/O
 
 from stable_audio_3 import StableAudioModel
 
@@ -22,7 +22,7 @@ def _save_output(audio: torch.Tensor, sample_rate: int, output: str, batch_size:
         ext = ".wav"
     for i in range(batch_size):
         path = f"{base}_{i}{ext}" if batch_size > 1 else f"{base}{ext}"
-        torchaudio.save(path, audio[i].cpu(), sample_rate)
+        write_audio(path, audio[i], sample_rate)
         print(f"Saved: {path}")
 
 
@@ -244,15 +244,15 @@ def main():
         model.set_lora_strength(args.lora_strength, lora_index=args.lora_index)
 
     # --- Load audio inputs ---
-    # torchaudio.load returns (waveform, sample_rate); model.generate expects (sample_rate, waveform)
+    # read_audio returns (waveform, sample_rate); model.generate expects (sample_rate, waveform)
     init_audio = None
     if args.init_audio:
-        waveform, sr = torchaudio.load(args.init_audio)
+        waveform, sr = read_audio(args.init_audio)
         init_audio = (sr, waveform)
 
     inpaint_audio = None
     if args.inpaint_audio:
-        waveform, sr = torchaudio.load(args.inpaint_audio)
+        waveform, sr = read_audio(args.inpaint_audio)
         inpaint_audio = (sr, waveform)
 
     inpaint_start = None
@@ -267,6 +267,7 @@ def main():
             args.inpaint_ends[0] if len(args.inpaint_ends) == 1 else args.inpaint_ends
         )
 
+    sample_size = model.model_config["sample_size"]
     # --- Generate ---
     print("Generating…")
     audio = model.generate(
@@ -277,6 +278,7 @@ def main():
         cfg_scale=args.cfg_scale,
         seed=args.seed,
         batch_size=batch_size,
+        sample_size=sample_size,
         init_audio=init_audio,
         init_noise_level=args.init_noise_level,
         inpaint_audio=inpaint_audio,

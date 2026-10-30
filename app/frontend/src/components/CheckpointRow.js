@@ -187,9 +187,8 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
             sx={{
                 py: 1.25,
                 px: 1.5,
-                borderBottom: '1px solid',
-                borderColor: 'divider',
-                '&:last-child': { borderBottom: 'none' },
+                borderRadius: '24px',
+                '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.55)' },
             }}
         >
             <Stack direction="row" alignItems="center" spacing={2}>
@@ -235,12 +234,11 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
                             <Chip
                                 size="small"
                                 label="installed"
+                                color="success"
                                 sx={{
-                                    height: 18,
+                                    height: 20,
                                     fontSize: 10,
                                     fontWeight: 600,
-                                    bgcolor: 'success.main',
-                                    color: 'common.white',
                                 }}
                             />
                         )}

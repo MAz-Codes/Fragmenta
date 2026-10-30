@@ -162,6 +162,91 @@ function getImpulse(ctx, duration = 2.8, decaySeconds = 1.6, damping = 0.55) {
     return buf;
 }
 
+// Link drift correction (PerformanceEngine._driftTick). A loop launched on
+// Link's beat then runs on the sound card's clock, which drifts from Link's by
+// a few ppm, and its length is never exactly a whole number of Link beats.
+// Every tick compares where each loop is with where Link's grid says it
+// should be and nudges its playback rate — at most ±0.25% (~4 cents, not
+// audible) — so the gap closes over a few seconds.
+const DRIFT_TICK_MS = 250;
+const DRIFT_GAIN = 0.25;          // rate change per second of error
+const DRIFT_MAX_CORR = 0.0025;    // ±0.25% on top of following Link's tempo
+const DRIFT_DEADBAND = 0.001;     // s — below this, leave it (timing jitter)
+const DRIFT_RESYNC = 0.03;        // s — beyond this, jump back with a crossfade
+// Following Link's tempo exactly needs rate = (loop length / beats) · bpm/60.
+// Beyond ±0.3% that's a different tempo, not drift: leave the clip alone.
+const DRIFT_MAX_FOLLOW = 0.003;
+
+/** The organic waveform shared by the lanes and the dataset bench: a soft
+ *  envelope (pastel → deep → pastel), an RMS body fading to the edges, and
+ *  exact thin peak bars on top. `peak`/`rms` hold one value per CSS pixel
+ *  column (0..1); `g` is already scaled to CSS pixels. */
+export function paintWave(g, n, cssW, cssH, peak, rms, color, pastel) {
+    const mid = cssH / 2;
+    const scale = (cssH - 8) / 2;
+    // Box-smoothing for the soft layers; the bars stay exact.
+    const smooth = (src, radius) => {
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            let sum = 0, cnt = 0;
+            for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) { sum += src[k]; cnt++; }
+            out[i] = sum / cnt;
+        }
+        return out;
+    };
+    const widen = (src, radius) => {
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            let m = 0;
+            for (let k = Math.max(0, i - radius); k <= Math.min(n - 1, i + radius); k++) if (src[k] > m) m = src[k];
+            out[i] = m;
+        }
+        return out;
+    };
+    const env = smooth(widen(peak, 4), 3);
+    const body = smooth(rms, 2);
+    const shape = (amp) => {
+        g.beginPath();
+        g.moveTo(0, mid - amp(0));
+        for (let i = 1; i < n; i++) g.lineTo(i, mid - amp(i));
+        for (let i = n - 1; i >= 0; i--) g.lineTo(i + 1, mid + amp(i));
+        g.closePath();
+        g.fill();
+    };
+    const rgba = (hex, a) => {
+        const h = (hex || '#0A77B1').replace('#', '');
+        return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`;
+    };
+    const deep = color || '#0A77B1';
+    const light = pastel || deep;
+    // 1. Soft outer envelope: pastel → deep → pastel across the clip.
+    const across = g.createLinearGradient(0, 0, cssW, 0);
+    across.addColorStop(0, light);
+    across.addColorStop(0.5, deep);
+    across.addColorStop(1, light);
+    g.globalAlpha = 0.3;
+    g.fillStyle = across;
+    shape((i) => Math.max(1, env[i] * scale));
+    // 2. Body: the RMS, fading toward the edges.
+    const down = g.createLinearGradient(0, 0, 0, cssH);
+    down.addColorStop(0, rgba(deep, 0.12));
+    down.addColorStop(0.5, rgba(deep, 0.55));
+    down.addColorStop(1, rgba(deep, 0.12));
+    g.globalAlpha = 1;
+    g.fillStyle = down;
+    shape((i) => Math.max(0.5, Math.min(env[i], body[i] * 1.4) * scale));
+    // 3. Exact detail: a thin bar per 3 px at that window's true peak.
+    g.globalAlpha = 0.85;
+    g.fillStyle = deep;
+    for (let x = 0; x < n; x += 3) {
+        let p = 0;
+        for (let k = x; k < Math.min(n, x + 3); k++) if (peak[k] > p) p = peak[k];
+        const a = Math.max(0.5, p * scale);
+        g.fillRect(x + 0.8, mid - a, 1.4, 2 * a);
+    }
+    g.globalAlpha = 1;
+}
+
 export class ChannelStrip {
     constructor(masterBus, masterDelayInput, masterReverbInput) {
         const ctx = getAudioContext();
@@ -190,6 +275,23 @@ export class ChannelStrip {
         // whenever the loop bounds move under a playing source.
         this._startedAt = null;
         this._startOffset = 0;
+        // Pitch (PIT knob), whole semitones -12..+12. Output only: `buffer`
+        // stays the original (waveform, regions, cue all read it) and sources
+        // play `_pitched`, a same-length shifted copy rendered offline, when
+        // the knob is off zero. Copies are cached per semitone for the current
+        // buffer; `_pitchToken` drops renders that a newer request or a new
+        // clip has overtaken.
+        // Playback rate, nudged by the engine's Link drift correction; the
+        // playhead projection integrates it. `linkAnchor` is the Link beat a
+        // launch entered on and where in the buffer: {beat, offset, rs, re}.
+        this.playbackRate = 1;
+        this.linkAnchor = null;
+        this._driftErr = null;
+        this._bigErr = null;
+        this.pitchSemitones = 0;
+        this._pitched = null;
+        this._pitchCache = new Map();
+        this._pitchToken = 0;
         this.isMuted = false;
         this.isSoloed = false;
 
@@ -277,6 +379,174 @@ export class ChannelStrip {
         this.regionStart = 0;
         this.regionEnd = 1;
         this.launchStart = null;
+        // A new clip keeps the channel's pitch: render its copy before the
+        // caller launches it, so it never starts at the wrong pitch.
+        this._pitched = null;
+        this._pitchCache = new Map();
+        const token = ++this._pitchToken;
+        if (this.pitchSemitones !== 0) {
+            try {
+                const copy = await this._pitchedFor(this.pitchSemitones);
+                if (token === this._pitchToken) this._pitched = copy;
+            } catch (err) {
+                console.warn('Pitch render failed; playing unpitched:', err);
+            }
+        }
+    }
+
+    /** Set the channel's pitch in whole semitones (-12..+12). Resolves true
+     *  once the new pitch is what plays (a live source is swapped at its
+     *  playhead), false if a newer request or a new clip overtook it. */
+    async setPitch(semitones) {
+        const n = Math.max(-12, Math.min(12, Math.round(Number(semitones) || 0)));
+        this.pitchSemitones = n;
+        const token = ++this._pitchToken;
+        if (!this.buffer) return true;
+        const next = n === 0 ? null : await this._pitchedFor(n);
+        if (token !== this._pitchToken) return false;
+        if (next !== this._pitched) {
+            this._pitched = next;
+            this._swapLiveSource();
+        }
+        return true;
+    }
+
+    async _pitchedFor(n) {
+        const buffer = this.buffer;
+        let copy = this._pitchCache.get(n);
+        if (!copy) {
+            copy = await this._renderPitch(buffer, n);
+            if (buffer !== this.buffer) return null;   // clip changed meanwhile
+            this._pitchCache.set(n, copy);
+            // Keep the last few pitches around for knob back-and-forth.
+            while (this._pitchCache.size > 4) {
+                this._pitchCache.delete(this._pitchCache.keys().next().value);
+            }
+        }
+        return copy;
+    }
+
+    // Loaded on first use: keeps the WASM stretcher out of the startup bundle
+    // (and out of the Node engine tests, which stub this).
+    async _renderPitch(buffer, n) {
+        const { renderPitchedBuffer } = await import('./pitchShift.js');
+        return renderPitchedBuffer(buffer, n);
+    }
+
+    /** Set the playback rate (Link drift correction). The playhead projection
+     *  is rebased first so the change only bends the trajectory from now on. */
+    setPlaybackRate(rate) {
+        if (!(rate > 0) || Math.abs(rate - this.playbackRate) < 1e-7) return;
+        this._rebasePlayhead();
+        this.playbackRate = rate;
+        if (this.source) this.source.playbackRate.setValueAtTime(rate, this.ctx.currentTime);
+    }
+
+    /** Jump a playing loop to `offset` seconds with the usual crossfade. */
+    resyncTo(offset) {
+        this._swapLiveSource(offset);
+    }
+
+    _resetDrift() {
+        this.playbackRate = 1;
+        this.linkAnchor = null;
+        this._driftErr = null;
+        this._bigErr = null;
+    }
+
+    /** What sources play: the pitched copy when the knob is off zero. */
+    _playBuffer() {
+        return this._pitched || this.buffer;
+    }
+
+    /** Re-point a live or scheduled source at `_playBuffer()` without moving
+     *  the playhead: a scheduled source is simply rebuilt for the same entry,
+     *  a sounding one hands over to a new source at its current position with
+     *  a short crossfade. Both buffers have the same length, so loops, cue
+     *  and Link/quantize timing are untouched. */
+    _swapLiveSource(targetOffset = null) {
+        if (!this.source || !this.isPlaying || !this.buffer) return;
+        const now = this.ctx.currentTime;
+        const [regionStart, regionEnd] = this._regionSeconds();
+        const loop = this.isLooping;
+        const FADE = 0.015;
+        let when, offset;
+        if (this._startedAt !== null && this._startedAt > now) {
+            when = this._startedAt;
+            offset = this._startOffset;
+            this._retireSource(this.source, this.sourceFade, now, now);
+        } else {
+            const pos = this.getPlayPosition();
+            if (pos === null) return;
+            when = now + 0.005;
+            // Where the old source will be at `when` (or the caller's target,
+            // for a Link resync), wrapped into the loop.
+            offset = targetOffset ?? pos * this.buffer.duration + (when - now) * this.playbackRate;
+            if (loop && offset >= regionEnd) offset = regionStart + (offset - regionEnd);
+            if (!loop && offset >= regionEnd) return;
+            this._retireSource(this.source, this.sourceFade, when, when + FADE);
+        }
+        const { src, fadeGain } = this._newSource(loop);
+        if (when > now + 0.004) {
+            fadeGain.gain.setValueAtTime(0, now);
+            fadeGain.gain.setValueAtTime(0, when);
+            fadeGain.gain.linearRampToValueAtTime(1, when + FADE);
+        }
+        if (loop) src.start(when, offset);
+        else src.start(when, offset, Math.max(0.01, regionEnd - offset));
+        this._startedAt = when;
+        this._startOffset = offset;
+        this.source = src;
+        this.sourceFade = fadeGain;
+    }
+
+    /** A source for `_playBuffer()` with its own fade gain, wired into the
+     *  filter chain, looping over the current region when `loop`. */
+    _newSource(loop) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this._playBuffer();
+        src.loop = loop;
+        src.playbackRate.value = this.playbackRate;
+        // Per-source gain so we can fade-out without touching the user's
+        // channelGain. Cancels the click that would otherwise happen when
+        // stop() truncates a non-zero sample.
+        const fadeGain = this.ctx.createGain();
+        fadeGain.gain.value = 1;
+        src.connect(fadeGain);
+        // Source enters at the head of the filter chain (hpf → lpf → …).
+        fadeGain.connect(this.hpf);
+        src.onended = () => {
+            if (this.source === src) {
+                this.source = null;
+                this.sourceFade = null;
+                this.isPlaying = false;
+                this._startedAt = null;
+            }
+        };
+        if (loop) {
+            const [regionStart, regionEnd] = this._regionSeconds();
+            src.loopStart = regionStart;
+            src.loopEnd = regionEnd;
+        }
+        return { src, fadeGain };
+    }
+
+    /** Fade `src` out over [fadeStart, stopAt], stop it just after, and
+     *  detach both nodes once the tail has played. */
+    _retireSource(src, fade, fadeStart, stopAt) {
+        const now = this.ctx.currentTime;
+        try {
+            if (fade) {
+                fade.gain.cancelScheduledValues(now);
+                fade.gain.setValueAtTime(fade.gain.value, fadeStart);
+                fade.gain.linearRampToValueAtTime(0, stopAt);
+            }
+            src.stop(stopAt + 0.005);
+        } catch (_) { /* already stopped */ }
+        window.setTimeout(() => {
+            try { src.disconnect(); } catch (_) { /* ok */ }
+            try { fade && fade.disconnect(); } catch (_) { /* ok */ }
+        }, Math.ceil((stopAt - now + 0.03) * 1000));
     }
 
     /** Set the playable region (normalized 0..1). Applies to the next launch
@@ -348,7 +618,7 @@ export class ChannelStrip {
         const now = this.ctx.currentTime;
         if (now < this._startedAt) return this._startOffset / dur;
         const [rs, re] = this._regionSeconds();
-        let pos = this._startOffset + (now - this._startedAt);
+        let pos = this._startOffset + (now - this._startedAt) * this.playbackRate;
         if (this.isLooping) {
             const len = re - rs;
             if (len > 0 && pos >= re) pos = rs + ((pos - re) % len);
@@ -385,35 +655,16 @@ export class ChannelStrip {
         if (!this.buffer) return;
         this.stop();
         this.isLooping = loop;
-        const src = this.ctx.createBufferSource();
-        src.buffer = this.buffer;
-        src.loop = loop;
-        // Per-source gain so we can fade-out without touching the user's
-        // channelGain. Cancels the click that would otherwise happen when
-        // stop() truncates a non-zero sample.
-        const fadeGain = this.ctx.createGain();
-        fadeGain.gain.value = 1;
-        src.connect(fadeGain);
-        // Source enters at the head of the filter chain (hpf → lpf → …).
-        fadeGain.connect(this.hpf);
-        src.onended = () => {
-            if (this.source === src) {
-                this.source = null;
-                this.sourceFade = null;
-                this.isPlaying = false;
-                this._startedAt = null;
-            }
-        };
+        this._resetDrift();
+        const { src, fadeGain } = this._newSource(loop);
 
         // Enter at the cue point at the scheduled (quantized) time, but loop
         // the region: the first pass runs cue → out-point, then every repeat
         // cycles in-point → out-point. Cue == in-point unless the user moved
         // it. One-shots just play cue → out-point and stop.
-        const [regionStart, regionEnd] = this._regionSeconds();
+        const [, regionEnd] = this._regionSeconds();
         const launch = this._launchSeconds();
         if (loop) {
-            src.loopStart = regionStart;
-            src.loopEnd = regionEnd;
             src.start(Math.max(0, startTime), launch);
         } else {
             src.start(Math.max(0, startTime), launch,
@@ -443,46 +694,17 @@ export class ChannelStrip {
         // Hand off any current source: hold its level until just before the
         // boundary, fade over 12 ms, and stop it right at `when`. No gap.
         if (this.source) {
-            const oldSrc = this.source;
-            const oldFade = this.sourceFade;
             const stopAt = Math.max(when, now + FADE);
-            const fadeStart = Math.max(now, stopAt - FADE);
-            try {
-                if (oldFade) {
-                    oldFade.gain.cancelScheduledValues(now);
-                    oldFade.gain.setValueAtTime(oldFade.gain.value, fadeStart);
-                    oldFade.gain.linearRampToValueAtTime(0, stopAt);
-                }
-                oldSrc.stop(stopAt + 0.005);
-            } catch (_) { /* already stopped */ }
-            window.setTimeout(() => {
-                try { oldSrc.disconnect(); } catch (_) { /* ok */ }
-                try { oldFade && oldFade.disconnect(); } catch (_) { /* ok */ }
-            }, Math.ceil((stopAt - now + 0.03) * 1000));
+            this._retireSource(this.source, this.sourceFade, Math.max(now, stopAt - FADE), stopAt);
         }
 
         // Schedule the new source from the clip head at the boundary.
         this.isLooping = loop;
-        const src = this.ctx.createBufferSource();
-        src.buffer = this.buffer;
-        src.loop = loop;
-        const fadeGain = this.ctx.createGain();
-        fadeGain.gain.value = 1;
-        src.connect(fadeGain);
-        fadeGain.connect(this.hpf);
-        src.onended = () => {
-            if (this.source === src) {
-                this.source = null;
-                this.sourceFade = null;
-                this.isPlaying = false;
-                this._startedAt = null;
-            }
-        };
-        const [regionStart, regionEnd] = this._regionSeconds();
+        this._resetDrift();
+        const { src, fadeGain } = this._newSource(loop);
+        const [, regionEnd] = this._regionSeconds();
         const launch = this._launchSeconds();
         if (loop) {
-            src.loopStart = regionStart;
-            src.loopEnd = regionEnd;
             src.start(when, launch);
         } else {
             src.start(when, launch, Math.max(0.01, regionEnd - launch));
@@ -496,28 +718,13 @@ export class ChannelStrip {
 
     stop() {
         if (this.source) {
-            const src = this.source;
-            const fade = this.sourceFade;
-            const now = this.ctx.currentTime;
             // 12ms gain ramp masks the click from cutting a buffer
             // mid-cycle. The source is scheduled to actually stop just
             // after the ramp finishes; disconnect happens on the next
             // tick after that so we don't truncate the tail ourselves.
+            const now = this.ctx.currentTime;
             const FADE = 0.012;
-            try {
-                if (fade) {
-                    fade.gain.cancelScheduledValues(now);
-                    fade.gain.setValueAtTime(fade.gain.value, now);
-                    fade.gain.linearRampToValueAtTime(0, now + FADE);
-                }
-                src.stop(now + FADE + 0.005);
-            } catch (_) { /* already stopped */ }
-            // Detach the nodes after the tail finishes — otherwise we'd
-            // cut the fade short and reintroduce the click.
-            window.setTimeout(() => {
-                try { src.disconnect(); } catch (_) { /* ok */ }
-                try { fade && fade.disconnect(); } catch (_) { /* ok */ }
-            }, Math.ceil((FADE + 0.02) * 1000));
+            this._retireSource(this.source, this.sourceFade, now, now + FADE);
             this.source = null;
             this.sourceFade = null;
         }
@@ -576,7 +783,7 @@ export class ChannelStrip {
      *  strip's real width, which is what made these read as blurry blocks.
      *  Sizing is derived from the element's layout box, so the caller must
      *  redraw on resize (PerformanceChannel does, via ResizeObserver). */
-    drawWaveform(canvas, color) {
+    drawWaveform(canvas, color, pastel) {
         if (!canvas || !this.buffer) return;
         const cssW = canvas.clientWidth || canvas.width;
         const cssH = canvas.clientHeight || canvas.height;
@@ -595,33 +802,30 @@ export class ChannelStrip {
         g.setTransform(dpr, 0, 0, dpr, 0, 0);
         g.clearRect(0, 0, cssW, cssH);
 
-        // Faint centre line, so near-silent audio still shows its axis.
-        g.fillStyle = 'rgba(255, 255, 255, 0.06)';
-        g.fillRect(0, cssH / 2 - 0.5, cssW, 1);
-
-        // Mono-summed min/max per column. Stereo is averaged rather than
-        // taking channel 0 alone, so hard-panned material doesn't vanish.
+        // Per-column peak and RMS of the mono sum (stereo averaged, so
+        // hard-panned material doesn't vanish).
         const ch0 = this.buffer.getChannelData(0);
         const ch1 = this.buffer.numberOfChannels > 1 ? this.buffer.getChannelData(1) : null;
         const cols = Math.max(1, Math.floor(cssW));
         const bucket = Math.max(1, Math.floor(ch0.length / cols));
-        const mid = cssH / 2;
-        const scale = (cssH - 2) / 2;
-        g.fillStyle = color || '#279FBB';
-        for (let i = 0; i < cols; i++) {
+        const peak = new Float32Array(cols), rms = new Float32Array(cols);
+        let n = 0;
+        for (let i = 0; i < cols; i++, n++) {
             const s = i * bucket;
             const e = Math.min(ch0.length, s + bucket);
             if (s >= e) break;
-            let mn = 0, mx = 0;
+            let p = 0, sq = 0;
             for (let j = s; j < e; j++) {
                 const v = ch1 ? (ch0[j] + ch1[j]) * 0.5 : ch0[j];
-                if (v < mn) mn = v;
-                if (v > mx) mx = v;
+                const a = v < 0 ? -v : v;
+                if (a > p) p = a;
+                sq += v * v;
             }
-            const y0 = mid - mx * scale;
-            const y1 = mid - mn * scale;
-            g.fillRect(i, y0, 1, Math.max(1, y1 - y0));
+            peak[i] = Math.min(1, p);
+            rms[i] = Math.min(1, Math.sqrt(sq / (e - s)));
         }
+        if (!n) return;
+        paintWave(g, n, cssW, cssH, peak, rms, color, pastel);
     }
 
     dispose() {
@@ -797,6 +1001,19 @@ export class PerformanceEngine {
         this.masterReverb.connect(this.masterLimiter);
 
         this.masterLimiter.connect(this.masterAnalyser);
+
+        // Left/right meters: a splitter off the limiter into two analysers.
+        // Analysers are processed without a downstream connection, so this
+        // taps the signal without adding to the audio path.
+        this.meterSplitter = ctx.createChannelSplitter(2);
+        this.meterL = ctx.createAnalyser();
+        this.meterR = ctx.createAnalyser();
+        this.meterL.fftSize = 1024;
+        this.meterR.fftSize = 1024;
+        this.meterData = new Uint8Array(this.meterL.frequencyBinCount);
+        this.masterLimiter.connect(this.meterSplitter);
+        this.meterSplitter.connect(this.meterL, 0);
+        this.meterSplitter.connect(this.meterR, 1);
 
         // Stage 2 multichannel routing. The stereo master bus is split into
         // two mono lines and merged into a destination sized to the device's
@@ -1038,6 +1255,93 @@ export class PerformanceEngine {
 
     setLinkSnapshot(snapshot) {
         this.linkSnapshot = snapshot;
+        if (snapshot && !this._driftTimer) {
+            this._driftTimer = window.setInterval(() => this._driftTick(), DRIFT_TICK_MS);
+        } else if (!snapshot && this._driftTimer) {
+            window.clearInterval(this._driftTimer);
+            this._driftTimer = null;
+            this.channels.forEach((ch) => { ch.setPlaybackRate(1); ch.linkAnchor = null; });
+        }
+    }
+
+    /** Link beat heard when audio rendered at context time `t` plays — the
+     *  inverse of _linkBeatAudioTime. */
+    _linkBeatAtAudioTime(t) {
+        const s = this.linkSnapshot;
+        const nowPerf = performance.now();
+        const heardNow = this._audioTimeHeardAt(nowPerf);
+        const perf = nowPerf + (t + this.linkOffsetMs / 1000 - heardNow) * 1000;
+        return s.beat + ((perf - s.capturedAt) * s.bpm) / 60000;
+    }
+
+    /** Record where on Link's grid a launch entered, for drift correction. */
+    _anchorToLink(ch, beat = null) {
+        const s = this.linkSnapshot;
+        if (!s || !s.bpm || ch._startedAt === null || !ch.buffer) {
+            ch.linkAnchor = null;
+            return;
+        }
+        const [rs, re] = ch._regionSeconds();
+        ch.linkAnchor = {
+            beat: beat ?? this._linkBeatAtAudioTime(ch._startedAt),
+            offset: ch._startOffset,
+            rs,
+            re,
+        };
+    }
+
+    /** Keep every Link-launched loop on Link's grid (see DRIFT_* above). */
+    _driftTick() {
+        const s = this.linkSnapshot;
+        if (!s || !s.bpm) return;
+        const now = this.ctx.currentTime;
+        for (const ch of this.channels) {
+            if (!ch.isPlaying || !ch.isLooping || !ch.buffer || !ch.linkAnchor) continue;
+            if (ch._startedAt === null || now < ch._startedAt + 0.05) continue;   // not sounding yet
+            const [rs, re] = ch._regionSeconds();
+            const len = re - rs;
+            const a = ch.linkAnchor;
+            if (a.rs !== rs || a.re !== re) {
+                // Loop brackets moved: take the new loop as it plays now.
+                const pos = ch.getPlayPosition();
+                if (pos !== null) ch.linkAnchor = { beat: this._linkBeatAtAudioTime(now), offset: pos * ch.buffer.duration, rs, re };
+                ch._driftErr = null;
+                continue;
+            }
+            const beats = Math.round((len * s.bpm) / 60);
+            if (beats < 1) continue;
+            const spb = len / beats;                 // buffer seconds per Link beat
+            const follow = (spb * s.bpm) / 60;       // rate that tracks Link exactly
+            if (Math.abs(follow - 1) > DRIFT_MAX_FOLLOW) {
+                ch.setPlaybackRate(1);
+                continue;
+            }
+            let expected = a.offset + (this._linkBeatAtAudioTime(now) - a.beat) * spb;
+            if (expected >= re) expected = rs + ((expected - re) % len);
+            if (expected < rs) continue;
+            const pos = ch.getPlayPosition();
+            if (pos === null) continue;
+            let err = expected - pos * ch.buffer.duration;
+            err = ((((err + len / 2) % len) + len) % len) - len / 2;   // shortest way round the loop
+            if (Math.abs(err) > DRIFT_RESYNC) {
+                // Jump only when two ticks in a row agree, so one bad
+                // reading can't cause an audible jump.
+                if (ch._bigErr !== undefined && ch._bigErr !== null && Math.sign(ch._bigErr) === Math.sign(err)) {
+                    ch.setPlaybackRate(follow);
+                    ch.resyncTo(expected + 0.005 * follow);   // the handover lands 5 ms from now
+                    ch._driftErr = null;
+                    ch._bigErr = null;
+                } else {
+                    ch._bigErr = err;
+                }
+                continue;
+            }
+            ch._bigErr = null;
+            ch._driftErr = ch._driftErr === null ? err : ch._driftErr + 0.3 * (err - ch._driftErr);
+            const e = Math.abs(ch._driftErr) < DRIFT_DEADBAND ? 0 : ch._driftErr;
+            const corr = Math.max(-DRIFT_MAX_CORR, Math.min(DRIFT_MAX_CORR, e * DRIFT_GAIN));
+            ch.setPlaybackRate(follow * (1 + corr));
+        }
     }
 
     setLinkOffsetMs(ms) {
@@ -1053,7 +1357,13 @@ export class PerformanceEngine {
     _audioTimeHeardAt(perfMs) {
         const ts = typeof this.ctx.getOutputTimestamp === 'function' ? this.ctx.getOutputTimestamp() : null;
         if (ts && ts.contextTime > 0 && ts.performanceTime > 0) {
-            return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+            // Each timestamp jitters by a few ms; the two clocks only drift by
+            // ppm. Smooth their offset, but follow a real step (a device
+            // change, a glitch) at once.
+            const raw = ts.contextTime - ts.performanceTime / 1000;
+            if (this._heardOffset == null || Math.abs(raw - this._heardOffset) > 0.02) this._heardOffset = raw;
+            else this._heardOffset += 0.1 * (raw - this._heardOffset);
+            return this._heardOffset + perfMs / 1000;
         }
         const reported = (this.ctx.baseLatency || 0) + (this.ctx.outputLatency || 0);
         return this.ctx.currentTime + (perfMs - performance.now()) / 1000 - reported;
@@ -1197,8 +1507,9 @@ export class PerformanceEngine {
         // in-point unless the user moved the cue). Phase coherence comes from
         // the clips being downbeat-anchored + exact-bar-length (Stage A) and
         // launched on bar boundaries — moving the cue deliberately shifts it.
-        const { when } = this.getNextQuantizedAudioTime();
+        const { when, beat } = this.getNextQuantizedAudioTime();
         ch.play(loop, when);
+        this._anchorToLink(ch, when > 0 ? beat : null);
     }
 
     // Switch a channel to its (freshly loaded) buffer and launch it from the
@@ -1209,8 +1520,9 @@ export class PerformanceEngine {
     relaunchChannel(index, loop, immediate = false) {
         const ch = this.channels[index];
         if (!ch || !ch.buffer) return;
-        const when = immediate ? 0 : this.getNextQuantizedAudioTime().when;
-        ch.playAt(loop, when);
+        const next = immediate ? { when: 0, beat: null } : this.getNextQuantizedAudioTime();
+        ch.playAt(loop, next.when);
+        this._anchorToLink(ch, next.when > 0 ? next.beat : null);
     }
 
     setMasterGain(value) {
@@ -1225,6 +1537,20 @@ export class PerformanceEngine {
             if (v > peak) peak = v;
         }
         return peak;
+    }
+
+    /** Peak of the master's left and right channels, 0..1 each. */
+    getMasterPeaks() {
+        const peak = (analyser) => {
+            analyser.getByteTimeDomainData(this.meterData);
+            let p = 0;
+            for (let i = 0; i < this.meterData.length; i++) {
+                const v = Math.abs(this.meterData[i] - 128) / 128;
+                if (v > p) p = v;
+            }
+            return p;
+        };
+        return [peak(this.meterL), peak(this.meterR)];
     }
 
     isRecording() {
@@ -1387,9 +1713,11 @@ export class PerformanceEngine {
         // All channels launch from their head on the same quantized boundary,
         // so equal-length downbeat-anchored clips line up (INV#9) without
         // entering mid-buffer.
-        const { when } = this.getNextQuantizedAudioTime();
+        const { when, beat } = this.getNextQuantizedAudioTime();
         this.channels.forEach(ch => {
-            if (ch.buffer) ch.play(loop, when);
+            if (!ch.buffer) return;
+            ch.play(loop, when);
+            this._anchorToLink(ch, when > 0 ? beat : null);
         });
     }
 
@@ -1398,6 +1726,10 @@ export class PerformanceEngine {
     }
 
     dispose() {
+        if (this._driftTimer) {
+            window.clearInterval(this._driftTimer);
+            this._driftTimer = null;
+        }
         if (this._duckTimer) {
             clearInterval(this._duckTimer);
             this._duckTimer = null;
@@ -1417,5 +1749,6 @@ export class PerformanceEngine {
         tryDisconnect(this.masterReverb);
         tryDisconnect(this.masterLimiter);
         tryDisconnect(this.masterAnalyser);
+        tryDisconnect(this.meterSplitter);
     }
 }

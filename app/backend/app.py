@@ -10,6 +10,7 @@ from app.core.training.sa3_trainer import start_training as start_training_func,
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
+import mimetypes
 import os
 import re
 import random
@@ -44,6 +45,10 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
 
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='')
+# The frontend loads one library (the pitch shifter) as a native .mjs module,
+# and browsers refuse modules served with a non-JavaScript type. Python's map
+# for .mjs varies by platform (Windows reads it from the registry), so pin it.
+mimetypes.add_type('text/javascript', '.mjs')
 
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 # /api/upload-folder sends two multipart parts per file (files + rel_paths);
@@ -103,7 +108,7 @@ DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 # file per-request would make a stale process report the new version and
 # defeat that check.
 try:
-    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
+    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text(encoding="utf-8").strip() or None
 except Exception:
     _APP_VERSION = None
 # Same idea for an update that keeps the version (a `git pull` between
@@ -143,7 +148,7 @@ def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[s
     metadata_path = model_dir / "training_metadata.json"
     if metadata_path.exists():
         try:
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
             base_model = metadata.get("base_model")
             if config_path is None:
@@ -831,7 +836,7 @@ def generate_audio():
                 "bend_patch": bend_patch,
                 "bend_warnings": bend_report,
             }
-            with open(sidecar_path, "w") as f:
+            with open(sidecar_path, "w", encoding="utf-8") as f:
                 json.dump(sidecar, f, indent=2)
         except Exception as exc:
             logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
@@ -953,7 +958,7 @@ def list_loras():
                     model_name = run_dir.name
                     if meta_path.exists():
                         try:
-                            rm = json.loads(meta_path.read_text())
+                            rm = json.loads(meta_path.read_text(encoding="utf-8"))
                             base_model = rm.get("base_model")
                             model_name = rm.get("model_name") or model_name
                         except Exception:
@@ -1008,7 +1013,7 @@ def list_loras():
                         run_meta_path = run_dir / "training_metadata.json"
                         if run_meta_path.exists():
                             try:
-                                rm = json.loads(run_meta_path.read_text())
+                                rm = json.loads(run_meta_path.read_text(encoding="utf-8"))
                                 base_model = rm.get("base_model")
                             except Exception:
                                 pass
@@ -1127,9 +1132,11 @@ def upload_source_audio():
     name = Path(fileobj.filename).name
     # Strip path components + restrict to known extensions.
     ext = Path(name).suffix.lower()
-    if ext not in {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".opus"}:
+    from app.core.audio.decode import AUDIO_EXTENSIONS
+    if ext not in AUDIO_EXTENSIONS:
         return jsonify(APIResponse.error(
-            f"Unsupported audio format '{ext}'. Use wav/mp3/flac/m4a/ogg/opus.",
+            f"Unsupported audio format '{ext}'. Use "
+            + "/".join(e.lstrip('.') for e in AUDIO_EXTENSIONS) + ".",
             status_code=400)), 400
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(name).stem)[:60] or "upload"
 
@@ -1220,7 +1227,7 @@ def save_performance_recording():
         "source": "performance",
     }
     try:
-        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2))
+        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning(f"Failed to write recording sidecar for {dest.name}: {exc}")
 
@@ -1259,7 +1266,7 @@ def list_fragments():
     # Sidecared generations
     for sidecar_path in output_dir.glob("*.wav.json"):
         try:
-            with open(sidecar_path) as f:
+            with open(sidecar_path, encoding="utf-8") as f:
                 meta = json.load(f)
             wav_name = meta.get("filename") or sidecar_path.name[:-len(".json")]
             wav_path = output_dir / wav_name
@@ -1390,7 +1397,7 @@ def clear_fragments():
         source = None
         if sidecar.is_file():
             try:
-                source = (json.loads(sidecar.read_text()) or {}).get("source")
+                source = (json.loads(sidecar.read_text(encoding="utf-8")) or {}).get("source")
             except Exception:
                 source = None
         if source == "performance":
@@ -1561,7 +1568,7 @@ def get_models():
                 meta_path = model_dir / "training_metadata.json"
                 if meta_path.exists():
                     try:
-                        if json.loads(meta_path.read_text()).get("mode") == "lora":
+                        if json.loads(meta_path.read_text(encoding="utf-8")).get("mode") == "lora":
                             continue
                     except Exception:
                         pass
@@ -1822,8 +1829,9 @@ def link_install():
     """Install LinkPython-extern via pip, on-demand and with user consent.
 
     Restricted to localhost — running pip as a side effect of an HTTP call is
-    only reasonable when the caller is the local user. In frozen PyInstaller
-    builds there's no pip, so we report that clearly instead of failing weirdly.
+    only reasonable when the caller is the local user. Packaged builds carry it
+    in their lock (an exact sync would remove anything pip added), so there it
+    never installs; source installs get the same pinned version.
     """
     # Localhost-only: prevents a remote attacker on the same Flask host (e.g. a
     # Docker image bound to 0.0.0.0) from installing arbitrary packages.
@@ -1831,7 +1839,13 @@ def link_install():
     if remote not in ('127.0.0.1', '::1', 'localhost'):
         return jsonify({'error': 'install endpoint is only accessible from localhost'}), 403
 
-    if getattr(sys, 'frozen', False):
+    from app.core.audio.link_sync import get_link_bridge
+    if get_link_bridge().available:
+        return jsonify({'success': True, 'available': True})
+
+    # The bootstrapper runs the venv's normal Python (not frozen), so the
+    # packaged flag is the check that matters there.
+    if getattr(sys, 'frozen', False) or os.environ.get('FRAGMENTA_PACKAGED') == '1':
         return jsonify({
             'success': False,
             'error': 'Automatic install is not available in the packaged desktop build. '
@@ -1846,7 +1860,7 @@ def link_install():
         proc = subprocess.run(
             [sys.executable, '-m', 'pip', 'install',
              '--disable-pip-version-check', '--quiet',
-             'LinkPython-extern'],
+             'LinkPython-extern==1.3.0'],  # same pin as locks/ (packaging/lock.py)
             capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
@@ -2177,6 +2191,7 @@ def get_debug_stats():
 _gpu_memory_cache = {}
 _gpu_memory_cache_time = 0
 _gpu_memory_cache_duration = 2.0
+_nvidia_smi_failure_logged = False
 
 _last_memory_warning_time = 0
 _memory_warning_interval = 30
@@ -2474,6 +2489,45 @@ def get_license_info():
             "error": str(e)
         }), 500
 
+_apple_chip = None
+
+
+def _apple_chip_name():
+    global _apple_chip
+    if _apple_chip is None:
+        import subprocess
+        try:
+            _apple_chip = subprocess.run(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                capture_output=True, text=True, timeout=3).stdout.strip() or 'Apple Silicon'
+        except Exception:
+            _apple_chip = 'Apple Silicon'
+    return _apple_chip
+
+
+def _nvidia_smi_memory_gb():
+    """(used, total) GiB of GPU 0 across every process, or None if unavailable."""
+    import subprocess
+    global _nvidia_smi_failure_logged
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '-i', '0', '--query-gpu=memory.used,memory.total',
+             '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5,
+            # No console window flashing up on each poll from a windowed app.
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        used_mib, total_mib = (float(v) for v in result.stdout.strip().split(','))
+        if total_mib <= 0:
+            raise ValueError(f"total {total_mib}")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # The fallback can stay fixed on Windows, so say why it's in use.
+        if not _nvidia_smi_failure_logged:
+            logger.warning("nvidia-smi memory reading failed (%s); using the CUDA driver's figure", exc)
+            _nvidia_smi_failure_logged = True
+        return None
+    return used_mib / 1024, total_mib / 1024
+
+
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
     _log_api_call('gpu_memory_status')
@@ -2498,14 +2552,20 @@ def get_gpu_memory_status():
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
 
-            # Device-wide usage across ALL processes via the CUDA driver.
-            # torch.cuda.memory_*() only sees THIS process, so it misses a
-            # training/generation subprocess running elsewhere — which is why the
-            # indicator read near-empty during training. mem_get_info() reports
-            # the driver's true device free/total, covering every process.
-            device_free_gb, device_total_gb = (
-                b / (1024**3) for b in torch.cuda.mem_get_info(0))
-            device_used_gb = device_total_gb - device_free_gb
+            # Device-wide usage across ALL processes. torch.cuda.memory_*() only
+            # sees THIS process, so it misses a training/generation subprocess
+            # running elsewhere. On Windows (WDDM) mem_get_info() didn't follow
+            # one either, staying put while nvidia-smi moved, so ask nvidia-smi
+            # and keep mem_get_info() for when it can't be run.
+            smi = _nvidia_smi_memory_gb()
+            memory_source = "nvidia-smi" if smi else "cuda-driver"
+            if smi:
+                device_used_gb, device_total_gb = smi
+                device_free_gb = device_total_gb - device_used_gb
+            else:
+                device_free_gb, device_total_gb = (
+                    b / (1024**3) for b in torch.cuda.mem_get_info(0))
+                device_used_gb = device_total_gb - device_free_gb
 
             nvidia_used_gb = device_used_gb
             nvidia_total_gb = device_total_gb
@@ -2518,7 +2578,6 @@ def get_gpu_memory_status():
             final_allocated = device_used_gb
             final_cached = cached_memory
             final_free = device_free_gb
-            memory_source = "cuda-driver"
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
@@ -2543,6 +2602,19 @@ def get_gpu_memory_status():
                     print(
                         f"  Low GPU Memory: {final_free:.2f}GB free, {final_allocated:.2f}GB allocated")
                     _last_memory_warning_time = current_time
+        elif getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available():
+            # Apple Silicon: the GPU runs models out of unified memory, so the
+            # memory still available system-wide is what decides whether a
+            # model fits (MPS now, MLX later), like free VRAM on CUDA. It
+            # also counts a training run in another process.
+            vm = psutil.virtual_memory()
+            memory_info['unified'] = {
+                'total': vm.total / (1024**3),
+                'free': vm.available / (1024**3),
+                'device': _apple_chip_name(),
+                'engine': 'mps',
+                'fragmenta': torch.mps.driver_allocated_memory() / (1024**3),
+            }
         else:
             memory_info['cpu'] = {
                 'total': psutil.virtual_memory().total / (1024**3),
@@ -2642,14 +2714,17 @@ def _clap_ckpt_path():
 @app.route('/api/environment', methods=['GET'])
 def environment():
     # Host capability flags so the Checkpoint Manager can grey out models this
-    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2; no Windows
-    # wheels). Mirrors the gate in audio_generator._ensure_model.
+    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2). Mirrors the
+    # gate in audio_generator._ensure_model. Versions are for the About page.
     import platform as _platform
     cuda = mps = flash = False
+    torch_version = cuda_version = None
     try:
         import torch
         cuda = bool(torch.cuda.is_available())
         mps = bool(getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available())
+        torch_version = torch.__version__.split('+')[0]
+        cuda_version = torch.version.cuda if cuda else None
     except Exception:
         pass
     try:
@@ -2681,6 +2756,9 @@ def environment():
         'mps_available': mps,
         'flash_attn_available': flash,
         'beatsync_v2': beatsync_v2,
+        'python_version': _platform.python_version(),
+        'torch_version': torch_version,
+        'cuda_version': cuda_version,
     })
 
 
@@ -2688,7 +2766,7 @@ def environment():
 def upload_folder():
     # Browser-native folder upload path for containerised deployments
     # (e.g. HF Space) where no display server is available for a native dialog.
-    audio_exts = {'.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'}
+    from app.core.audio.decode import AUDIO_EXTENSIONS as audio_exts
 
     files = request.files.getlist('files')
     rel_paths = request.form.getlist('rel_paths')
@@ -3168,6 +3246,14 @@ def clip_audio_route(name, file_name):
         audio_path = Path(clip.path)
     if not audio_path.exists():
         return jsonify({'error': 'Audio file missing on disk'}), 404
+    # Web engines can't play every format we accept; the player falls back to this.
+    if request.args.get('format') == 'wav':
+        from app.core.audio.decode import playable_wav
+        try:
+            return send_file(str(playable_wav(audio_path)), mimetype='audio/wav', conditional=True)
+        except Exception as exc:
+            logger.warning("Couldn't convert %s for playback: %s", audio_path.name, exc)
+            return jsonify({'error': 'Could not decode this audio file'}), 415
     return send_file(str(audio_path), conditional=True)
 
 
@@ -3559,9 +3645,38 @@ def midi_select():
     port_id = data.get('port_id')
     ok = midi_input.open_input(port_id)
     if not ok and port_id:
+        # A saved device that isn't plugged in is normal, not an error: the
+        # mapping stays and it reopens when the device comes back.
+        if not any(i["id"] == port_id for i in midi_input.list_inputs()):
+            return jsonify({"current": None, "missing": True})
         return jsonify(APIResponse.error(
             "Could not open that MIDI input port.", status_code=400)), 400
     return jsonify({"current": midi_input.current_port()})
+
+
+# --- Output device on macOS -------------------------------------------------
+# WKWebView can't pick an output device itself, so on macOS the backend makes
+# the chosen device the Mac's default output (Core Audio). Elsewhere the
+# engine picks it in the page (setSinkId) and this reports unavailable.
+@app.route('/api/audio/outputs', methods=['GET'])
+def audio_outputs():
+    from app.core.audio import macos_output
+    return jsonify({
+        "available": macos_output.is_available(),
+        "outputs": macos_output.list_outputs(),
+        "current": macos_output.current_output(),
+    })
+
+
+@app.route('/api/audio/outputs/select', methods=['POST'])
+def audio_outputs_select():
+    from app.core.audio import macos_output
+    data = request.get_json(silent=True) or {}
+    uid = data.get('uid')
+    if not isinstance(uid, str) or not macos_output.select_output(uid):
+        return jsonify(APIResponse.error(
+            "Could not switch to that output device.", status_code=400)), 400
+    return jsonify({"current": macos_output.current_output()})
 
 
 @app.route('/api/midi/stream', methods=['GET'])
@@ -3645,4 +3760,6 @@ if __name__ == '__main__':
     flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
     # Only the real server checks for updates (not imports or test clients).
     update_check.start_background_checker()
+    from app.core.audio import macos_output
+    macos_output.start()
     app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)

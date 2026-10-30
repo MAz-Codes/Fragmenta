@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Paper, Box, Typography, LinearProgress, Grid, Alert } from '@mui/material';
+import { Paper, Box, Typography, LinearProgress, Alert } from '@mui/material';
 import { Activity as ActivityIcon } from 'lucide-react';
 import LossChart from './LossChart';
 import Tooltip from './Tooltip';
@@ -67,6 +67,14 @@ export default function TrainingMonitor({
         ?? trainingStatus?.checkpoints?.length
         ?? 0;
     const currentLoss = trainingStatus?.loss;
+    // Checkpoint steps, read from file names like "epoch=4-step=500.ckpt",
+    // for the markers on the loss chart.
+    const checkpointSteps = useMemo(() => (trainingStatus?.checkpoints || [])
+        .map((c) => {
+            const m = String(c?.name ?? c?.path ?? c).match(/step=(\d+)/);
+            return m ? Number(m[1]) : null;
+        })
+        .filter((v) => Number.isFinite(v)), [trainingStatus?.checkpoints]);
 
     return (
         <Paper sx={trainingMonitorStyles.rootPaper}>
@@ -76,10 +84,10 @@ export default function TrainingMonitor({
                         <ActivityIcon size={20} />
                     </Box>
                     <Typography variant="h6" sx={trainingMonitorStyles.headerTitle}>
-                        Training Monitor
+                        Monitor
                     </Typography>
                 </Box>
-                <Box sx={trainingMonitorStyles.statusInline}>
+                <Box sx={trainingMonitorStyles.statusInline(status)}>
                     <Box sx={trainingMonitorStyles.statusDot(status, animate)} />
                     <Typography variant="caption" sx={trainingMonitorStyles.statusText(status)}>
                         {label}
@@ -89,63 +97,57 @@ export default function TrainingMonitor({
 
             <Box sx={trainingMonitorStyles.progressSection}>
                 <Box sx={trainingMonitorStyles.progressHeader}>
-                    <Typography variant="body2">Progress</Typography>
-                    <Typography variant="body2">{trainingProgress}%</Typography>
+                    <Typography component="span" sx={trainingMonitorStyles.bigPercent}>{trainingProgress}%</Typography>
+                    <Tooltip title={TIPS.monitor.steps}>
+                        <Typography component="span" sx={trainingMonitorStyles.stepText}>
+                            {totalSteps > 0 ? `Step ${step.toLocaleString()} of ${totalSteps.toLocaleString()}` : `Step ${step}`}
+                        </Typography>
+                    </Tooltip>
                 </Box>
                 <LinearProgress
                     variant="determinate"
                     value={trainingProgress}
-                    color={getProgressColor()}
+                    aria-label="Training progress"
                     sx={trainingMonitorStyles.progressBar}
                 />
             </Box>
 
-            <Grid container spacing={2} sx={trainingMonitorStyles.metricsGrid}>
-                <Grid item xs={12} sm={6}>
-                    <Tooltip title={TIPS.monitor.steps}>
-                        <Typography variant="body2" color="textSecondary" sx={{ width: 'fit-content' }}>Step</Typography>
-                    </Tooltip>
-                    <Typography variant="body1" color="primary">
-                        {totalSteps > 0 ? `${step} / ${totalSteps}` : `${step}`}
+            <Box sx={trainingMonitorStyles.metricsGrid}>
+                <Box sx={trainingMonitorStyles.metricTile}>
+                    <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Loss</Typography>
+                    <Typography component="span" sx={trainingMonitorStyles.metricValue}>
+                        {Number.isFinite(currentLoss) ? parseFloat(currentLoss).toFixed(3) : '—'}
                     </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Current Loss</Typography>
-                    <Typography variant="body1">
-                        {Number.isFinite(currentLoss) ? parseFloat(currentLoss).toFixed(4) : 'N/A'}
-                    </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Tooltip title={TIPS.monitor.checkpoints}>
-                        <Typography variant="body2" color="textSecondary" sx={{ width: 'fit-content' }}>Checkpoints Saved</Typography>
-                    </Tooltip>
-                    <Typography variant="body1">{checkpointsSaved}</Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="textSecondary">Phase</Typography>
-                    <Typography variant="body1" sx={{ textTransform: 'capitalize' }}>
+                </Box>
+                <Tooltip title={TIPS.monitor.checkpoints}>
+                    <Box sx={trainingMonitorStyles.metricTile}>
+                        <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Checkpoints</Typography>
+                        <Typography component="span" sx={trainingMonitorStyles.metricValue}>{checkpointsSaved}</Typography>
+                    </Box>
+                </Tooltip>
+                <Box sx={trainingMonitorStyles.metricTile}>
+                    <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Phase</Typography>
+                    <Typography component="span" sx={[trainingMonitorStyles.metricValue, { textTransform: 'capitalize' }]}>
                         {trainingStatus?.status || 'idle'}
                     </Typography>
-                </Grid>
-                {Number.isFinite(trainingStatus?.seed) && (
-                    <Grid item xs={12} sm={6}>
-                        <Typography variant="body2" color="textSecondary">Seed</Typography>
-                        <Typography variant="body1" sx={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {trainingStatus.seed}
-                        </Typography>
-                    </Grid>
-                )}
-            </Grid>
+                </Box>
+                <Box sx={trainingMonitorStyles.metricTile}>
+                    <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Seed</Typography>
+                    <Typography component="span" sx={trainingMonitorStyles.metricValue}>
+                        {Number.isFinite(trainingStatus?.seed) ? trainingStatus.seed : '—'}
+                    </Typography>
+                </Box>
+            </Box>
 
             {lossPoints.length > 0 && (
                 <Box sx={trainingMonitorStyles.lossSection}>
                     <Tooltip title={TIPS.monitor.lossChart}>
-                        <Typography variant="body2" color="textSecondary" gutterBottom sx={{ width: 'fit-content' }}>
-                            <strong>Loss History</strong>
+                        <Typography component="span" sx={[trainingMonitorStyles.metricLabel, { width: 'fit-content' }]}>
+                            Loss
                         </Typography>
                     </Tooltip>
                     <Box sx={trainingMonitorStyles.lossChartBox}>
-                        <LossChart data={lossPoints} />
+                        <LossChart data={lossPoints} checkpoints={checkpointSteps} />
                     </Box>
                     <Typography
                         variant="caption"
@@ -161,8 +163,8 @@ export default function TrainingMonitor({
             {lossPoints.length === 0 && (trainingStatus?.is_training || status === 'training') && (
                 <Box sx={trainingMonitorStyles.lossSection}>
                     <Tooltip title={TIPS.monitor.lossChart}>
-                        <Typography variant="body2" color="textSecondary" gutterBottom sx={{ width: 'fit-content' }}>
-                            <strong>Loss History</strong>
+                        <Typography component="span" sx={[trainingMonitorStyles.metricLabel, { width: 'fit-content' }]}>
+                            Loss
                         </Typography>
                     </Tooltip>
                     <Typography variant="caption" color="textSecondary">

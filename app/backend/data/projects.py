@@ -54,9 +54,9 @@ INGEST_MODES = ("copy", "symlink")
 PROMPT_TEMPLATE_PRESETS: Dict[str, Dict[str, str]] = {
     "music": {
         "label": "Music",
-        "description": "Full instrumental tracks (SA3's `TrackType: Music` convention).",
+        "description": "Full tracks (SA3's `TrackType: Music` convention).",
         "template": (
-            "TrackType: Music, VocalType: Instrumental, "
+            "TrackType: Music, VocalType: {vocal_type}, "
             "Genre: {genre}, Mood: {mood}, Instruments: {instruments}, "
             "BPM: {bpm}, Key: {key}"
         ),
@@ -923,8 +923,8 @@ def _compute_peaks(audio_path: Path, n: int) -> Tuple[List[float], float]:
     30s clip; bounded I/O regardless of file length (a 5-minute clip costs
     the same as a 30s one).
 
-    Falls back to a librosa-based decode for formats soundfile can't open
-    on this build (typically m4a/aac without ffmpeg-libsndfile).
+    Falls back to the shared decoder (app/core/audio/decode.py) for formats
+    soundfile can't open (m4a/AAC, via PyAV).
     """
     import numpy as np
     try:
@@ -953,12 +953,12 @@ def _compute_peaks(audio_path: Path, n: int) -> Tuple[List[float], float]:
                 peaks = peaks / max_peak
             return (peaks.tolist(), duration)
     except Exception as exc:
-        logger.debug("soundfile peak path failed for %s (%s); falling back to librosa", audio_path.name, exc)
+        logger.debug("soundfile peak path failed for %s (%s); falling back to the full decoder", audio_path.name, exc)
 
-    # Fallback: librosa.load handles every codec we register, at the cost of
-    # a full-file decode + resample. Slower but bulletproof.
-    import librosa
-    y, sr = librosa.load(str(audio_path), sr=8000, mono=True)
+    # Fallback: the shared decoder handles every format we accept (m4a/AAC via
+    # PyAV), at the cost of a full-file decode + resample. Slower but bulletproof.
+    from app.core.audio.decode import load_mono
+    y, sr = load_mono(audio_path, 8000)
     if len(y) == 0:
         return ([0.0] * n, 0.0)
     duration = float(len(y) / sr)
@@ -990,15 +990,9 @@ def get_or_compute_peaks(
 
 
 def _clip_duration_sec(audio_path: Path) -> Optional[float]:
-    """Cheap duration probe via soundfile.info() — header read, no decode."""
-    try:
-        import soundfile as sf
-        info = sf.info(str(audio_path))
-        if info.samplerate <= 0:
-            return None
-        return float(info.frames / info.samplerate)
-    except Exception:
-        return None
+    """Cheap duration probe — header read, no decode (any accepted format)."""
+    from app.core.audio.decode import audio_duration
+    return audio_duration(audio_path)
 
 
 def compute_health(
@@ -1022,9 +1016,9 @@ def compute_health(
     """
     from collections import defaultdict
 
-    # Single source of truth for what SA3's loader actually accepts. Fragmenta
-    # ingest accepts a wider set (.m4a, .aac) — those files would be silently
-    # skipped at train time, so we surface them here.
+    # What training reads (the app-wide list, the same one ingest uses). A clip
+    # outside it — only possible for projects made by older versions — would
+    # be skipped at train time, so surface it here.
     from app.core.training.sa3_lora_runner import SA3_AUDIO_EXTENSIONS
 
     session = _get_or_load_session(name)

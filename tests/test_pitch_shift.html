@@ -1,0 +1,110 @@
+<!doctype html>
+<!--
+  Pitch-shift render checks (utils/pitchShift.js) in a real browser.
+  Serve the repo root over HTTP and open this page; it sets document.title to
+  "DONE" and leaves the results on window.__results. Driven by
+  tests/test_pitch_shift.mjs (headless Chromium).
+-->
+<meta charset="utf-8">
+<script type="importmap">
+{ "imports": { "signalsmith-stretch?url": "data:text/javascript,export default '/app/frontend/node_modules/signalsmith-stretch/SignalsmithStretch.mjs'" } }
+</script>
+<script type="module">
+import { renderPitchedBuffer } from '/app/frontend/src/utils/pitchShift.js';
+
+const SR = 44100;
+const results = [];
+const check = (name, ok, detail = '') => results.push({ name, ok: !!ok, detail });
+
+function makeBuffer(seconds, fill, nch = 2) {
+    const b = new AudioBuffer({ length: Math.round(seconds * SR), numberOfChannels: nch, sampleRate: SR });
+    for (let c = 0; c < nch; c++) {
+        const d = b.getChannelData(c);
+        for (let i = 0; i < d.length; i++) d[i] = fill(i / SR, i);
+    }
+    return b;
+}
+
+// Dominant frequency in the middle of channel 0, from zero crossings.
+function frequency(buf) {
+    const d = buf.getChannelData(0);
+    const a = Math.floor(d.length * 0.25), b = Math.floor(d.length * 0.75);
+    let crossings = 0;
+    for (let i = a + 1; i < b; i++) if (d[i - 1] < 0 && d[i] >= 0) crossings++;
+    return crossings / ((b - a) / SR);
+}
+
+// Onset times: where the 2 ms RMS envelope first rises past 30% of its peak.
+function onsets(buf) {
+    const d = buf.getChannelData(0);
+    const win = Math.round(0.002 * SR);
+    const env = [];
+    for (let i = 0; i + win <= d.length; i += win) {
+        let s = 0;
+        for (let j = i; j < i + win; j++) s += d[j] * d[j];
+        env.push(Math.sqrt(s / win));
+    }
+    const peak = Math.max(...env);
+    const out = [];
+    let armed = true;
+    env.forEach((v, k) => {
+        if (armed && v > 0.3 * peak) { out.push(k * win / SR); armed = false; }
+        if (v < 0.05 * peak) armed = true;
+    });
+    return out;
+}
+
+try {
+    // 1. Shape is preserved.
+    const sine = makeBuffer(2, (t) => 0.5 * Math.sin(2 * Math.PI * 440 * t));
+    const up = await renderPitchedBuffer(sine, 12);
+    check('same length and channels', up.length === sine.length && up.numberOfChannels === 2,
+        `${up.length} vs ${sine.length}`);
+
+    // 2. Pitch moves by the right amount.
+    for (const [st, want] of [[12, 880], [-12, 220], [7, 440 * Math.pow(2, 7 / 12)]]) {
+        const f = frequency(await renderPitchedBuffer(sine, st));
+        check(`${st > 0 ? '+' : ''}${st} semitones → ${want.toFixed(0)} Hz`, Math.abs(f / want - 1) < 0.02, `${f.toFixed(1)} Hz`);
+    }
+
+    // 3. Timing: hits stay where they were (decaying 1 kHz pings every 0.5 s).
+    const pings = makeBuffer(4, (t) => {
+        const k = t % 0.5;
+        return k < 0.08 ? Math.exp(-k * 60) * Math.sin(2 * Math.PI * 1000 * k) : 0;
+    });
+    const ref = onsets(pings);
+    for (const st of [12, -12, 5]) {
+        const got = onsets(await renderPitchedBuffer(pings, st));
+        const n = Math.min(ref.length, got.length);
+        let worst = 0;
+        for (let i = 0; i < n; i++) worst = Math.max(worst, Math.abs(got[i] - ref[i]));
+        check(`${st > 0 ? '+' : ''}${st} st: hits on time (±10 ms)`, n === ref.length && worst <= 0.010,
+            `${n}/${ref.length} hits, worst ${(worst * 1000).toFixed(1)} ms`);
+    }
+
+    // 4. Loop seam: a clip holding a whole number of cycles stays seamless.
+    const loop = makeBuffer(1, (t) => 0.5 * Math.sin(2 * Math.PI * 441 * t));
+    const lp = (await renderPitchedBuffer(loop, 12)).getChannelData(0);
+    let maxStep = 0;
+    for (let i = lp.length * 0.25 | 0; i < lp.length * 0.75; i++) maxStep = Math.max(maxStep, Math.abs(lp[i] - lp[i - 1]));
+    const seam = Math.abs(lp[0] - lp[lp.length - 1]);
+    check('loop seam no bigger than a normal step', seam <= maxStep * 1.5,
+        `seam ${seam.toFixed(4)} vs max step ${maxStep.toFixed(4)}`);
+    const head = lp.slice(0, Math.round(0.05 * SR));
+    const rms = (a) => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
+    const mid = lp.slice(lp.length / 2 | 0, (lp.length / 2 | 0) + head.length);
+    check('first 50 ms at full level (no soft attack)', rms(head) > 0.8 * rms(mid),
+        `rms ${rms(head).toFixed(3)} vs ${rms(mid).toFixed(3)}`);
+
+    // 5. Speed on a 30 s stereo clip.
+    const long = makeBuffer(30, (t) => 0.3 * Math.sin(2 * Math.PI * 220 * t) + 0.1 * Math.sin(2 * Math.PI * 3300 * t));
+    const t0 = performance.now();
+    await renderPitchedBuffer(long, -5);
+    const secs = (performance.now() - t0) / 1000;
+    check('30 s clip renders in under 6 s', secs < 6, `${secs.toFixed(2)} s`);
+} catch (e) {
+    check('no exception', false, String(e && e.stack || e));
+}
+window.__results = results;
+document.title = 'DONE';
+</script>
