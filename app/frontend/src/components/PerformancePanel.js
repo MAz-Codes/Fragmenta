@@ -54,6 +54,7 @@ import { useAudioSettings } from './AudioSettingsContext';
 // setCueOutputPair is aliased: the component has a useState setter of the same
 // name which would otherwise shadow the import and leave cue routing dead.
 import { isCueSupported, listOutputDevices, refreshCueGraph, setCueDevice, setCueOutputPair as applyCueOutputPair } from '../utils/cueAudio';
+import { setMediaOutputDevice } from '../utils/mediaOutput';
 import { filterLorasForModel } from '../utils/loraMatch';
 import {
     usePerformanceSession,
@@ -226,6 +227,10 @@ function PerformancePanelInner({
     const [cueOutputPair, setCueOutputPair] = useState(session.cueOutputPair ?? 0);
 
     useEffect(() => { updateGlobal('outputDeviceId', outputDeviceId); }, [outputDeviceId, updateGlobal]);
+    // The other pages' players follow the same device. This panel stays mounted.
+    useEffect(() => {
+        if (cueSupported) setMediaOutputDevice(outputDeviceId);
+    }, [cueSupported, outputDeviceId]);
     useEffect(() => {
         updateGlobal('mainOutputPair', mainOutputPair);
         engineRef.current?.setMainOutputPair?.(mainOutputPair);
