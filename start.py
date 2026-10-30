@@ -856,8 +856,29 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+def _warn_if_environment_stale() -> None:
+    """Starting this file directly skips the installer, so after an update it
+    can run on an old Python or old packages with nothing saying so."""
+    if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+        return
+    try:
+        import install
+        wrong_python = sys.version_info[:2] != install.REQUIRED_PY
+        stale = wrong_python or not install.deps_up_to_date(install.platform_lock())
+    except Exception:
+        return  # a broken check shouldn't stop the app from starting
+    if not stale:
+        return
+    launcher = {"win32": "fragmenta.bat", "darwin": "fragmenta.command"}.get(sys.platform, "fragmenta.sh")
+    found = "Python %d.%d" % sys.version_info[:2]
+    problem = (f"Fragmenta needs Python {install.REQUIRED_PY_STR}, but this is {found}."
+               if wrong_python else "The installed packages don't match this version of Fragmenta.")
+    print(f"WARNING: {problem} Start it with {launcher} to update them.", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_args()
+    _warn_if_environment_stale()
     _install_sigterm_handler()
     configure_backend_endpoint()
     if args.browser:
