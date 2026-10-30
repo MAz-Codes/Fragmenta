@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from huggingface_hub import get_token, snapshot_download, whoami
+from huggingface_hub import constants as hf_constants, get_token, snapshot_download, whoami
 from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
 from utils.hf_transfer import purge_incomplete, xet_disabled, xet_enabled
@@ -160,12 +160,15 @@ class _DownloadJob:
     """In-memory record of one download attempt."""
     job_id: str
     model_id: str
-    status: str = "queued"             # queued | running | complete | failed | cancelled
+    status: str = "queued"             # queued | running | complete | failed | cancelled | paused
     downloaded_bytes: int = 0
     total_bytes: int = 0
     error: Optional[str] = None
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
+    # Count files already on disk in the progress, and keep them if stopped.
+    keep_partial: bool = False
+    _pausing: bool = False
     _cancel_flag: threading.Event = field(default_factory=threading.Event)
     _thread: Optional[threading.Thread] = None
 
@@ -259,6 +262,11 @@ class ModelManager:
         # ~/.cache/huggingface/xet, i.e. outside the app folder. HF_HOME is
         # deliberately untouched: it also resolves the stored login token.
         os.environ["HF_XET_CACHE"] = str(self.models_dir / "sa3" / "xet")
+        # hf-hub 2.x would move finished files into a cache-wide hub/blobs/, where
+        # deleting a model's folder no longer frees its disk space. One folder per
+        # model, as it was. The constant is read at import, so set it directly too.
+        os.environ["HF_HUB_DISABLE_SHARED_BLOBS"] = "1"
+        hf_constants.HF_HUB_DISABLE_SHARED_BLOBS = True
 
         # available_models is exposed for backwards compat with the existing
         # /api/models/available endpoint. New code should use get_catalog().
@@ -449,6 +457,7 @@ class ModelManager:
         self,
         model_id: str,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        keep_partial: bool = False,
     ) -> Dict[str, Any]:
         """Spawn a background download job. Returns the job descriptor.
 
@@ -481,6 +490,7 @@ class ModelManager:
                 job_id=str(uuid.uuid4()),
                 model_id=model_id,
                 total_bytes=_SA3_CATALOG[model_id]["size_bytes"],
+                keep_partial=keep_partial,
             )
             self._jobs[job.job_id] = job
 
@@ -525,6 +535,17 @@ class ModelManager:
             return False
         if job.status not in ("queued", "running"):
             return False
+        job._cancel_flag.set()
+        return True
+
+    def pause_job(self, job_id: str) -> bool:
+        """Stop a download without deleting what it fetched. Finished files stay;
+        the file in flight starts over on resume, because Xet can't continue one."""
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if not job or job.status not in ("queued", "running"):
+                return False
+            job._pausing = True
         job._cancel_flag.set()
         return True
 
@@ -584,6 +605,8 @@ class ModelManager:
         cache_dir = self._hub_cache_dir_for(job.model_id).parent  # = self.hub_dir
         cache_dir.mkdir(exist_ok=True, parents=True)
         target = self._hub_cache_dir_for(job.model_id)
+        if job.keep_partial:
+            purge_incomplete(target)  # Xet would rewrite them from the start anyway
 
         # Ungated repos download without credentials, so a stale or invalid
         # stored token can't turn into a 401.
@@ -652,7 +675,13 @@ class ModelManager:
 
         try:
             try:
-                _fetch()
+                if job.keep_partial:
+                    # Xet's worker threads swallow the exception the tqdm hook
+                    # raises to stop a job, so only this transfer can be paused.
+                    with xet_disabled():
+                        _fetch()
+                else:
+                    _fetch()
             except OSError as err:
                 # EIO on the *destination* write is the signature of a volume
                 # that can't take Xet's chunked, out-of-order writes: exFAT and
@@ -680,6 +709,9 @@ class ModelManager:
             if progress_callback:
                 progress_callback(100, f"Downloaded {info['name']}")
         except _DownloadCancelled:
+            if job._pausing:
+                job.status = "paused"
+                return
             job.status = "cancelled"
             job.error = "Cancelled by user"
             if not main_snapshot_complete:
@@ -837,8 +869,9 @@ def _disk_progress_poller(
             return 0
 
     # Count only bytes written during this run, so a partial leftover from a
-    # failed attempt doesn't make the bar start mid-way (or over 100%).
-    baseline = _size()
+    # failed attempt doesn't make the bar start mid-way (or over 100%). A resumed
+    # download does want the bar to start where it left off.
+    baseline = 0 if job.keep_partial else _size()
 
     def _loop() -> None:
         while not stop.wait(interval):

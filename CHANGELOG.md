@@ -15,6 +15,10 @@ All notable changes to Fragmenta are listed here. The format follows
   makes it the Mac's sound output while it runs, so Main and Cue can go to
   different channel pairs of an audio interface; the previous output comes
   back when Fragmenta closes.
+- First run: with no model installed, Fragmenta offers Small - Music (Base), no
+  account needed. Read the licenses in the app, tick to agree, then download
+  with pause and resume. It carries on after a restart, and the offer comes back
+  at each launch until you have a model.
 
 ### Changed
 - Ableton Link: loops stay on Live's beat over long sessions. Fragmenta

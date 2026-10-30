@@ -5,7 +5,7 @@ from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.generation.provenance import recording_tags, tag_existing_wav
-from app.backend import update_check
+from app.backend import starter_model, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -1632,6 +1632,51 @@ def delete_checkpoint_download(model_id):
         return jsonify({'error': 'Nothing to delete'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- First-run starter model (app/backend/starter_model.py) -------------------
+
+@app.route('/api/starter', methods=['GET'])
+def starter_status():
+    try:
+        return jsonify(starter_model.status(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/download', methods=['POST'])
+def starter_download():
+    # No force=True, and outside the try: a cross-site form post gets its 415.
+    data = request.get_json() or {}
+    try:
+        body, code = starter_model.start(model_manager, data.get('accept_terms_version'))
+        return jsonify(body), code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/pause', methods=['POST'])
+def starter_pause():
+    try:
+        return jsonify(starter_model.pause(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/cancel', methods=['POST'])
+def starter_cancel():
+    try:
+        return jsonify(starter_model.cancel(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/licenses/<license_id>', methods=['GET'])
+def starter_license(license_id):
+    text = starter_model.license_text(license_id)
+    if not text:
+        return jsonify({'error': 'Unknown license'}), 404
+    return jsonify(text)
 
 
 @app.route('/api/checkpoints/jobs/<job_id>', methods=['GET'])

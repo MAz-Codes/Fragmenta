@@ -67,6 +67,7 @@ import PreEncodeProgress from './components/PreEncodeProgress';
 import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
+import StarterCard, { useStarterModel } from './components/StarterCard';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
 import SettingsDialog from './components/SettingsDialog';
@@ -134,6 +135,9 @@ function App() {
         () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
     );
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
+    // Closing the starter card only lasts until the next launch: this isn't
+    // saved anywhere, so it comes back while there's still no model.
+    const [starterClosed, setStarterClosed] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
@@ -736,6 +740,22 @@ function App() {
             fetchAvailableLoras()
         ]);
     };
+
+    const starter = useStarterModel({
+        onReady: (modelId) => {
+            refreshAllModels();
+            setSelectedModel((current) => current || modelId);
+            setProcessingStatus('Your first model is ready — try a prompt');
+        },
+    });
+    const refreshStarter = starter.refresh;
+    useEffect(() => {
+        if (!checkpointMgrOpen) refreshStarter();
+    }, [checkpointMgrOpen, refreshStarter]);
+    const starterDownloading = Boolean(starter.status?.show) && starter.status.phase === 'downloading';
+    const starterPct = starter.status?.size_bytes
+        ? Math.min(100, Math.floor((starter.status.downloaded_bytes / starter.status.size_bytes) * 100))
+        : 0;
 
     const fetchGpuMemoryStatus = async () => {
         try {
@@ -1378,6 +1398,13 @@ function App() {
                                 console.error('Failed to signal welcome page closure:', error);
                             });
                     }}
+                />
+
+                <StarterCard
+                    open={Boolean(starter.status?.show) && !starterClosed && !showWelcomePage && !checkpointMgrOpen}
+                    onClose={() => setStarterClosed(true)}
+                    starter={starter}
+                    onOpenManager={() => setCheckpointMgrOpen(true)}
                 />
 
                 {isHfSpace && (
@@ -2162,6 +2189,15 @@ function App() {
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio generation</Typography>
                                                 </Box>
 
+                                                {starter.status?.show && (
+                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                                                        {starterDownloading ? 'Your first model is downloading. ' : 'No model yet. '}
+                                                        <Typography component="a" variant="inherit" role="button" onClick={() => setStarterClosed(false)}
+                                                            sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
+                                                            {starterDownloading ? 'See progress' : 'Set up your first model'}
+                                                        </Typography>
+                                                    </Typography>
+                                                )}
                                                 <Box sx={appStyles.generationModelRow}>
                                                     <Tooltip title={TIPS.generate.modelSelect}>
                                                     <FormControl fullWidth variant="outlined">
@@ -2560,7 +2596,7 @@ function App() {
                                                         })()}
                                                         sx={appStyles.generateButton}
                                                     >
-                                                        Generate audio
+                                                        {starterDownloading ? `Model downloading… ${starterPct}%` : 'Generate audio'}
                                                     </Button>
                                                 )}
 
