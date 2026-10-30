@@ -326,7 +326,8 @@ def verify(py: Path) -> None:
     )
     log("verifying key packages…")
     for name, snippet in checks:
-        r = subprocess.run([str(py), "-c", snippet], capture_output=True, text=True)
+        r = subprocess.run([str(py), "-c", snippet], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         if r.returncode == 0:
             lines = r.stdout.strip().splitlines()
             line = "  ✓ " + (lines[-1] if lines else name)
