@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Box,
     Button,
@@ -11,6 +11,7 @@ import {
     BookOpen as BookOpenIcon,
     PlayCircle as PlayIcon,
 } from 'lucide-react';
+import api from '../api';
 import { appStyles } from '../theme';
 import Tooltip from './Tooltip';
 import { APP_VERSION } from '../version';
@@ -31,6 +32,13 @@ const LINK_SX = { color: 'primary.dark', textDecoration: 'underline', fontSize: 
  *   update:                     useUpdateStatus() result (optional)
  *   onShowUpdate:               () => void — open the update dialog
  */
+function runtimeLine(env) {
+    if (!env || !env.python_version) return null;
+    const gpu = env.cuda_version ? `CUDA ${env.cuda_version}` : env.mps_available ? 'MPS' : 'CPU';
+    return [`Python ${env.python_version}`, env.torch_version && `PyTorch ${env.torch_version}`, gpu]
+        .filter(Boolean).join(' · ');
+}
+
 function updateLine(s) {
     if (s.disabled_reason === 'env') return 'Update checks are turned off (FRAGMENTA_NO_UPDATE_CHECK).';
     if (s.available) return `Update available: ${s.latest}`;
@@ -49,6 +57,15 @@ export function AboutPanel({
 }) {
     const us = update && update.status;
     const showUpdates = Boolean(us && us.disabled_reason !== 'hf_space');
+    const [env, setEnv] = useState(null);
+    useEffect(() => {
+        let cancelled = false;
+        api.get('/api/environment')
+            .then(({ data }) => { if (!cancelled) setEnv(data); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+    const runtime = runtimeLine(env);
     return (
         <Box>
             <Box sx={{ pb: 1 }}>
@@ -66,6 +83,11 @@ export function AboutPanel({
                     <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
                         v{APP_VERSION}
                     </Typography>
+                    {runtime && (
+                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
+                            {runtime}
+                        </Typography>
+                    )}
                 </Box>
             </Box>
                 <Typography sx={appStyles.infoDialogIntro}>

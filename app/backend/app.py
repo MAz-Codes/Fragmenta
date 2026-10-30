@@ -2638,6 +2638,9 @@ def environment():
         'mps_available': mps,
         'flash_attn_available': flash,
         'beatsync_v2': beatsync_v2,
+        'python_version': _platform.python_version(),
+        'torch_version': torch_version,
+        'cuda_version': cuda_version,
     })
 
 
