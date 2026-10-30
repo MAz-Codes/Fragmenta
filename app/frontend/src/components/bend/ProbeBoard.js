@@ -137,9 +137,18 @@ export default function ProbeBoard({
     const [dragLine, setDragLine] = useState(null);
     const [hover, setHover] = useState(null);
 
+    // The page's fit-to-window zoom scales on-screen measurements but not the
+    // board's drawing space, so screen distances are divided back by it.
+    const screenScale = (box, rect) => (box.offsetWidth ? rect.width / box.offsetWidth : 1) || 1;
     const relPoint = (clientX, clientY) => {
-        const r = innerRef.current?.getBoundingClientRect();
-        return r ? { x: clientX - r.left, y: clientY - r.top } : { x: 0, y: 0 };
+        const box = innerRef.current;
+        if (!box) return { x: 0, y: 0 };
+        const r = box.getBoundingClientRect();
+        const scale = screenScale(box, r);
+        return {
+            x: (clientX - r.left) / scale - box.clientLeft,
+            y: (clientY - r.top) / scale - box.clientTop,
+        };
     };
     // An element's centre in the board's drawing space. The overlays are
     // positioned inside the board's border, so measure from there too —
@@ -149,9 +158,10 @@ export default function ProbeBoard({
         if (!el || !box) return null;
         const a = el.getBoundingClientRect();
         const b = box.getBoundingClientRect();
+        const scale = screenScale(box, b);
         return {
-            x: a.left - b.left - box.clientLeft + a.width / 2,
-            y: a.top - b.top - box.clientTop + a.height / 2,
+            x: (a.left - b.left + a.width / 2) / scale - box.clientLeft,
+            y: (a.top - b.top + a.height / 2) / scale - box.clientTop,
         };
     }, []);
     const padCenter = useCallback((id) => centerIn(padEls.current[id]), [centerIn]);
