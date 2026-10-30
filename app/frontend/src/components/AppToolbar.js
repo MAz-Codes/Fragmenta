@@ -16,6 +16,7 @@ import { appToolbarStyles as styles } from '../theme';
  * actions (get models, outputs folder, free GPU, Info View, update, settings).
  */
 export default function AppToolbar({
+    locked,
     gpu,
     isDocker,
     isFreeingGPU,
@@ -60,7 +61,12 @@ export default function AppToolbar({
                     )}
                 </Box>
             </Tooltip>
-            <Box sx={styles.actions}>
+            {/* Training locks the actions; the memory readout above stays live. */}
+            <Box
+                sx={[styles.actions, locked && { pointerEvents: 'none', opacity: 0.45 }]}
+                aria-disabled={locked || undefined}
+                title={locked ? 'Locked while training runs' : undefined}
+            >
                 <Tooltip title="Get models">
                     <IconButton aria-label="Get models" onClick={onGetModels} sx={styles.button}>
                         <DownloadIcon size={16} strokeWidth={1.8} />

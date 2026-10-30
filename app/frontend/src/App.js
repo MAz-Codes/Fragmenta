@@ -1404,13 +1404,9 @@ function App() {
                             </Box>
                         </Box>
 
-                        <Box
-                            sx={[appStyles.headerActionsContainer(isCompactLayout),
-                                isTraining && { pointerEvents: 'none', opacity: 0.45 }]}
-                            aria-disabled={isTraining || undefined}
-                            title={isTraining ? 'Locked while training runs' : undefined}
-                        >
+                        <Box sx={appStyles.headerActionsContainer(isCompactLayout)}>
                             <AppToolbar
+                                locked={isTraining}
                                 gpu={gpuMemoryStatus}
                                 isDocker={isDocker}
                                 isFreeingGPU={isFreeingGPU}
