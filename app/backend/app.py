@@ -3527,6 +3527,10 @@ def midi_select():
     port_id = data.get('port_id')
     ok = midi_input.open_input(port_id)
     if not ok and port_id:
+        # A saved device that isn't plugged in is normal, not an error: the
+        # mapping stays and it reopens when the device comes back.
+        if not any(i["id"] == port_id for i in midi_input.list_inputs()):
+            return jsonify({"current": None, "missing": True})
         return jsonify(APIResponse.error(
             "Could not open that MIDI input port.", status_code=400)), 400
     return jsonify({"current": midi_input.current_port()})
