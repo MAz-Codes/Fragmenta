@@ -186,9 +186,14 @@ export default function GenerationWaveform({
             ctx.fillStyle = color;
             shape(body);
             ctx.restore();
+            // The playhead, as on the dataset page: some main/faint pairs are
+            // too close in colour to show progress on their own.
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = theme.palette.text.primary;
+            ctx.fillRect(Math.min(width - 1, progressFrac * width) - 0.75, 2, 1.5, height - 4);
         }
         ctx.globalAlpha = 1;
-    }, [width, height, peaks, color, pastel, currentTime, duration]);
+    }, [width, height, peaks, color, pastel, currentTime, duration, theme]);
 
     useEffect(() => { draw(); }, [draw]);
 

@@ -461,7 +461,7 @@ export default function GeneratedFragmentsWindow({ fragments, onDelete, onClearA
                             fragment.steps != null ? `Steps: ${fragment.steps}` : null,
                             fragment.modelId ? `Model: ${fragment.modelId}` : null,
                             fragment.editMode ? `Mode: ${fragment.editMode}` : null,
-                            `Duration: ${fragment.duration}s`,
+                            fragment.duration ? `Duration: ${fragment.duration}s` : null,
                             ago ? `Generated: ${ago}` : null,
                             fragment.timestamp ? fragment.timestamp : null,
                         ].filter(Boolean).join('\n');
