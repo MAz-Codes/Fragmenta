@@ -24,7 +24,7 @@ The MIT License text is in [`vendor/stable-audio-3/LICENSE`](vendor/stable-audio
 - **Source**: https://github.com/Dao-AILab/flash-attention
 - **Copyright**: Copyright (c) 2022, Tri Dao and contributors
 - **License**: BSD-3-Clause
-- **Form**: Redistributed as **binary wheels** referenced from `requirements.txt` — the pinned upstream Linux wheel, plus a Windows wheel built from the same BSD-licensed source (no official PyPI Windows wheel exists). Required by the `sa3-medium` model.
+- **Form**: Redistributed as **binary wheels** referenced from `requirements.txt`, built by Fragmenta from the unmodified BSD-licensed source (upstream has no Python 3.14 wheels, and never had Windows ones): GitHub release `deps-flash-attn-2.8.3.post2-torch2.11-cu128`. Required by the `sa3-medium` model.
 
 BSD-3-Clause permits binary redistribution provided the copyright notice, license text, and disclaimer are reproduced — satisfied by this entry and the license/AUTHORS files inside each wheel. This attribution does not imply endorsement of Fragmenta by the flash-attn authors.
 
