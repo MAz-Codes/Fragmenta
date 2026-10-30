@@ -54,9 +54,9 @@ INGEST_MODES = ("copy", "symlink")
 PROMPT_TEMPLATE_PRESETS: Dict[str, Dict[str, str]] = {
     "music": {
         "label": "Music",
-        "description": "Full instrumental tracks (SA3's `TrackType: Music` convention).",
+        "description": "Full tracks (SA3's `TrackType: Music` convention).",
         "template": (
-            "TrackType: Music, VocalType: Instrumental, "
+            "TrackType: Music, VocalType: {vocal_type}, "
             "Genre: {genre}, Mood: {mood}, Instruments: {instruments}, "
             "BPM: {bpm}, Key: {key}"
         ),
