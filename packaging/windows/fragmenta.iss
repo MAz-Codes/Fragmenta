@@ -1,7 +1,7 @@
 ; Inno Setup script for Fragmenta (Windows).
 ;
 ; Bundles the frozen launcher (packaging/build/win/fragmenta/) + the assembled
-; payload (packaging/build/payload/, incl. python-3.14) into a per-user
+; bundle (packaging/build/bundle/: runtime\ + payload\) into a per-user
 ; installer that needs no admin rights.
 ;
 ; Build (from repo root, after assemble.py + pyinstaller):
@@ -42,9 +42,9 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [Files]
 ; Frozen launcher (fragmenta.exe + _internal).
 Source: "..\build\win\fragmenta\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-; Assembled payload: app code + standalone python-3.14. Sits beside the exe so
-; launcher._payload_dir() resolves to {app}.
-Source: "..\build\payload\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Assembled bundle: runtime\ (Python + uv) and payload\ (app code). Sits
+; beside the exe, so launcher._bundle_root() resolves to {app}.
+Source: "..\build\bundle\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\Fragmenta"; Filename: "{app}\fragmenta.exe"

@@ -2,7 +2,7 @@
 Build Fragmenta-<ver>-Setup.exe (Windows x64).
 
 Mirrors macos/build_dmg.sh. Steps:
-  1. Assemble the payload (app code via git archive + standalone Python).
+  1. Assemble the bundle (runtime\python + runtime\uv.exe + payload\).
   2. Generate the .ico PyInstaller needs at build time.
   3. Freeze packaging/launcher.py -> fragmenta.exe.
   4. Wrap the frozen launcher + payload into a per-user installer with Inno Setup.
@@ -25,20 +25,20 @@ $ErrorActionPreference = "Stop"
 $REPO    = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $VERSION = (Get-Content (Join-Path $REPO "VERSION") -Raw).Trim()
 $DIST    = Join-Path $REPO "packaging\build"
-$PAYLOAD = Join-Path $DIST "payload"
+$BUNDLE  = Join-Path $DIST "bundle"
 $WIN     = Join-Path $DIST "win"
 
 Write-Host "==> Fragmenta $VERSION - Windows x64 build"
 Set-Location $REPO
 
-# 1. Assemble the payload (app code + standalone Python).
-python packaging\assemble.py --target windows-x64 --out $PAYLOAD
+# 1. Assemble the bundle (runtime\python + runtime\uv.exe + payload\).
+python packaging\assemble.py --target windows-x64 --out $BUNDLE
 
 # 2. Build tooling in a throwaway venv built from the SAME standalone CPython we
 # ship (it bundles Tkinter, so PyInstaller captures the splash). Keeping the
 # tools here means the build box needs no preinstalled PyInstaller/Pillow and the
 # shipped payload Python stays pristine.
-$PbsPy     = Join-Path $PAYLOAD "python-3.14\python.exe"
+$PbsPy     = Join-Path $BUNDLE "runtime\python\python.exe"
 $BuildVenv = Join-Path $DIST "_buildvenv"
 & $PbsPy -c "import tkinter" 2>$null
 if ($LASTEXITCODE -ne 0) {

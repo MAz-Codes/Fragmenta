@@ -26,22 +26,22 @@ so warm launches never flash it and the handoff is seamless.
 Everything heavy (torch, SA3, flash-attn) is pip-installed by install.py at
 first run, so this launcher and its frozen binary stay small (stdlib + Tk only).
 
-Layout it expects (see packaging/assemble.py):
+Layout it expects (see packaging/assemble.py), with no version in any name:
 
-    <payload>/
-    ├── python-3.14/        standalone CPython (bin/python3.14 | python.exe)
-    ├── install.py  start.py  requirements.txt
-    ├── app/  vendor/  utils/  config/
-    └── LICENSE  NOTICE.md
+    <bundle>/
+    ├── runtime/python/     standalone CPython (bin/python3 | python.exe)
+    ├── runtime/uv[.exe]    install.py's installer
+    └── payload/            install.py  start.py  locks/  app/  vendor/ …
 
 On macOS the launcher exe lives in ``Fragmenta.app/Contents/MacOS/`` and the
-payload in ``Fragmenta.app/Contents/Resources/``; on Windows they sit in the
-same install directory.
+bundle is ``Fragmenta.app/Contents/Resources/``; on Windows the bundle is the
+install directory, beside the exe.
 """
 from __future__ import annotations
 
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -63,9 +63,9 @@ _SUBFG = "#8B949E"
 _ACCENT = "#2F81F7"
 
 
-def _payload_dir() -> Path:
-    """Directory holding the bundled Python + app code."""
-    override = os.environ.get("FRAGMENTA_PAYLOAD")
+def _bundle_root() -> Path:
+    """Directory holding runtime/ and payload/."""
+    override = os.environ.get("FRAGMENTA_BUNDLE")
     if override:
         return Path(override).resolve()
 
@@ -74,18 +74,18 @@ def _payload_dir() -> Path:
         # macOS .app: …/Contents/MacOS/fragmenta  ->  …/Contents/Resources
         if sys.platform == "darwin" and exe.parent.name == "MacOS":
             return exe.parent.parent / "Resources"
-        # Windows / Linux one-dir: payload sits beside the launcher exe.
+        # Windows / Linux one-dir: the bundle sits beside the launcher exe.
         return exe.parent
 
     # Not frozen (running this script directly, e.g. local testing): assume the
-    # payload is the directory this file lives in. Override with FRAGMENTA_PAYLOAD.
+    # bundle is the directory this file lives in. Override with FRAGMENTA_BUNDLE.
     return Path(__file__).resolve().parent
 
 
-def _bundled_python(payload: Path) -> Path:
+def _bundled_python(bundle: Path) -> Path:
     if os.name == "nt":
-        return payload / "python-3.14" / "python.exe"
-    return payload / "python-3.14" / "bin" / "python3.14"
+        return bundle / "runtime" / "python" / "python.exe"
+    return bundle / "runtime" / "python" / "bin" / "python3"
 
 
 def _status_from_line(line: str) -> "str | None":
@@ -93,14 +93,17 @@ def _status_from_line(line: str) -> "str | None":
     the current one. Recognises install.py's curated ``[install]`` messages plus
     a couple of pip milestones; anything else leaves the status unchanged."""
     low = line.lower()
-    if "creating virtual environment" in low:
+    if "creating virtual environment" in low or "refreshing the venv" in low:
         return "Creating Python environment…"
     if "ensurepip" in low or "upgrade pip" in low:
         return "Preparing package installer…"
-    if "installing dependencies" in low:
+    if "installing dependencies" in low or "syncing to locks" in low:
         return "Downloading components — this can take a few minutes…"
-    if "collecting torch" in low or "torch-2." in low:
-        return "Installing PyTorch…"
+    # uv prints "Downloading torch (…)"; pip "Collecting torch==…"
+    if re.search(r"(downloading|collecting) torch\b", low):
+        return "Downloading PyTorch…"
+    if re.match(r"\s*(prepared|installed) \d+ packages", low):
+        return "Installing components…"
     if "laion-clap" in low:
         return "Installing audio model tools…"
     if "verifying key packages" in low:
@@ -317,8 +320,9 @@ def _run_splash(q: "queue.Queue", initial_status: str) -> "tuple[str, int] | Non
 
 
 def main() -> int:
-    payload = _payload_dir()
-    python = _bundled_python(payload)
+    bundle = _bundle_root()
+    payload = bundle / "payload"
+    python = _bundled_python(bundle)
     install_py = payload / "install.py"
 
     missing = [str(p) for p in (python, install_py) if not p.exists()]

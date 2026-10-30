@@ -8,29 +8,34 @@ Linux is not packaged — it builds from source (`./fragmenta.sh`).
 ## The model
 
 A **thin native launcher** is frozen with PyInstaller. It carries no torch — it
-just locates the bundled **standalone Python 3.14** and the **app code** next to
-itself, sets `FRAGMENTA_PACKAGED=1`, and runs `install.py --launch`. On first
-run `install.py` builds a venv in the user-data dir and pip-installs the deps
-(torch/SA3/flash-attn resolved for the real machine); later launches are the
-fast idempotent path.
+just locates the bundle next to itself (`runtime/python`, `runtime/uv`,
+`payload/`), sets `FRAGMENTA_PACKAGED=1`, and runs `payload/install.py --launch`.
+On first run `install.py` builds a venv in the user-data dir and syncs it with
+the bundled uv to the platform's hashed lock (`payload/locks/`); later launches
+are the fast idempotent path.
 
 ```
 launcher.py ──frozen──▶ Fragmenta.app / fragmenta.exe
-                        └─ runs ─▶ python-3.14/  install.py --launch
+                        └─ runs ─▶ runtime/python  payload/install.py --launch
+                                   └─ runtime/uv pip sync locks/<platform>.txt
                                                  └─ venv in user-data dir ─▶ start.py
 ```
 
+No directory name carries a version, so an update replaces files in place.
 Read-only bundle code + writable user-data dir (`~/Library/Application Support/FragmentaDesktop`,
-`%APPDATA%\FragmentaDesktop`) is handled by `install.py` / `app/core/config.py`
-keying off `FRAGMENTA_PACKAGED`.
+`%LOCALAPPDATA%\FragmentaDesktop`, `$XDG_DATA_HOME/FragmentaDesktop`) is handled by
+`install.py` / `app/core/config.py` keying off `FRAGMENTA_PACKAGED`.
 
 ## Pieces
 
 | File | Role |
 |---|---|
 | `launcher.py` | Stdlib-only launcher; PyInstaller target. |
-| `python_standalone.py` | Resolve/download `python-build-standalone` CPython 3.14. Pins at the top — bump there. |
-| `assemble.py` | Build the staged **payload** (app code via `git archive` + standalone Python). |
+| `python_standalone.py` | Download `python-build-standalone` CPython 3.14 into `runtime/python`. Version + per-target SHA-256 pinned at the top; a mismatch is refused. |
+| `uv_standalone.py` | Download the pinned uv into `runtime/uv`, same pinning. |
+| `fetch.py` | Checksum-verified download with retries; safe extraction (`filter="data"`). |
+| `lock.py` | Regenerate the hashed dependency locks in `../locks/` from `requirements.txt`. |
+| `assemble.py` | Build the staged **bundle**: `runtime/` (Python + uv) and `payload/` (app code via `git archive`, locks, `manifest.json`). |
 | `macos/build_dmg.sh` | `.app` + sign + notarize + `.dmg`. |
 | `macos/Info.plist.in`, `macos/entitlements.plist` | App metadata; hardened-runtime entitlements (needed for unsigned pip dylibs). |
 | `windows/build_exe.ps1` | Assemble → freeze → Inno Setup, end to end. |
@@ -57,15 +62,15 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build_exe.ps1
 # -> packaging\build\Fragmenta-<ver>-Setup.exe
 ```
 
-The script assembles the payload, generates the `.ico`, freezes the launcher,
+The script assembles the bundle, generates the `.ico`, freezes the launcher,
 and runs Inno Setup. Like the macOS build it freezes with the **bundled
 standalone Python** (which ships Tkinter) via a throwaway venv, so the first-run
 splash is captured without the build box needing Tk — and PyInstaller never rides
 along in the shipped payload Python.
 
 ```bash
-# Inspect the payload only (any OS, no Python download):
-python packaging/assemble.py --skip-python --out /tmp/payload
+# Inspect the bundle only (any OS, no Python/uv download):
+python packaging/assemble.py --skip-runtime --out /tmp/bundle
 ```
 
 ### Signing (optional)

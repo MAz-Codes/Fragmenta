@@ -3,7 +3,7 @@
 #
 # Runs on macOS (Apple Silicon). Steps:
 #   1. PyInstaller freezes packaging/launcher.py -> Fragmenta.app skeleton.
-#   2. Drop the assembled payload (app code + standalone Python) into Resources.
+#   2. Drop the assembled bundle (runtime/ + payload/) into Resources.
 #   3. Install our Info.plist + .icns.
 #   4. codesign (hardened runtime + entitlements) and notarize — if creds exist.
 #   5. Wrap in a .dmg with create-dmg.
@@ -24,13 +24,13 @@ cd "$REPO"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 DIST="packaging/build"
 APP="$DIST/Fragmenta.app"
-PAYLOAD="$DIST/payload"
+BUNDLE="$DIST/bundle"
 DMG="$DIST/Fragmenta-${VERSION}-macOS-arm64.dmg"
 
 echo "==> Fragmenta $VERSION — macOS arm64 build"
 
-# 1. Assemble the payload (app code + standalone Python).
-python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$PAYLOAD"
+# 1. Assemble the bundle (runtime/python + runtime/uv + payload/).
+python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$BUNDLE"
 
 # 2. Freeze the launcher into an .app skeleton.
 # The launcher's first-run progress splash uses Tkinter. Rather than depend on
@@ -40,7 +40,7 @@ python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$PAYLOAD"
 # PyInstaller picks up the splash for free and the build needs nothing
 # preinstalled. PyInstaller lives in a throwaway venv built from that interpreter
 # so the shipped payload Python stays pristine (no PyInstaller riding along).
-PBS_PY="$PAYLOAD/python-3.14/bin/python3.14"
+PBS_PY="$BUNDLE/runtime/python/bin/python3"
 BUILD_VENV="$DIST/_buildvenv"
 "$PBS_PY" -c "import tkinter" 2>/dev/null || {
     echo "ERROR: the bundled standalone Python lacks Tkinter — the first-run splash" >&2
@@ -57,8 +57,8 @@ rm -rf "$APP" "$DIST/fragmenta.app" build/launcher *.spec
     packaging/launcher.py
 mv "$DIST/fragmenta.app" "$APP"
 
-# 3. Payload -> Contents/Resources; Info.plist + icon.
-cp -R "$PAYLOAD/." "$APP/Contents/Resources/"
+# 3. Bundle -> Contents/Resources; Info.plist + icon.
+cp -R "$BUNDLE/." "$APP/Contents/Resources/"
 sed "s/@@VERSION@@/$VERSION/g" packaging/macos/Info.plist.in > "$APP/Contents/Info.plist"
 ICON_PNG="app/frontend/public/fragmenta_icon_1024.png"
 ICONSET="$DIST/fragmenta.iconset"
@@ -72,8 +72,8 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/fragmenta.icns"
 # 4. Sign + notarize (only if an identity is provided).
 if [[ -n "${MAC_SIGN_IDENTITY:-}" ]]; then
     echo "==> codesign (hardened runtime)"
-    # Sign nested Mach-O (bundled Python + any dylibs) first, then the app.
-    find "$APP/Contents/Resources/python-3.14" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
+    # Sign nested Mach-O (bundled Python, uv, any dylibs) first, then the app.
+    find "$APP/Contents/Resources/runtime" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
         -exec codesign --force --options runtime --timestamp \
         --entitlements packaging/macos/entitlements.plist --sign "$MAC_SIGN_IDENTITY" {} + || true
     codesign --force --options runtime --timestamp \

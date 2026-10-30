@@ -272,13 +272,14 @@ def install_from_lock(py: Path, lock: Path) -> None:
         # The PyTorch index mirrors some PyPI packages at older versions;
         # every file is hash-pinned, so the best match across indexes is safe.
         rc = run([uv, "pip", "sync", "--python", str(py), "--require-hashes",
-                  "--index-strategy", "unsafe-best-match", str(lock)], env=env)
+                  "--index-strategy", "unsafe-best-match",
+                  "--find-links", str(WHEELS_DIR), str(lock)], env=env)
         if rc != 0:
             fail(f"uv pip sync failed (exit {rc}).")
         installer = [uv, "pip", "install", "--python", str(py)]
     else:
         log(f"uv not found — installing {lock.relative_to(PROJECT_ROOT)} with pip…")
-        pip(py, "install", "--require-hashes", "--no-deps", "-r", str(lock))
+        pip(py, "install", "--require-hashes", "--no-deps", "--find-links", str(WHEELS_DIR), "-r", str(lock))
         installer = [str(py), "-m", "pip", "install"]
     if sys.platform.startswith("linux") and not PACKAGED:
         extras = _requirement_lines(LINUX_GTK)

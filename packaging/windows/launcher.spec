@@ -4,11 +4,11 @@
 # with the bundled standalone Python (it ships Tkinter, so the launcher's
 # first-run splash is captured) rather than the build box's Python. Equivalent
 # manual call, run under that interpreter's venv:
-#   <payload>/python-3.14/python.exe -m PyInstaller packaging/windows/launcher.spec --distpath packaging/build/win
+#   <bundle>/runtime/python/python.exe -m PyInstaller packaging/windows/launcher.spec --distpath packaging/build/win
 #
 # Produces packaging/build/win/fragmenta/fragmenta.exe (+ _internal/). The Inno
-# Setup script then bundles that folder together with the assembled payload
-# (app code + python-3.14) so the launcher finds the payload beside the exe.
+# Setup script then puts that folder together with the assembled bundle
+# (runtime\ + payload\) so the launcher finds them beside the exe.
 #
 # Icon: app/frontend/public/fragmenta.ico — generate it from fragmenta_icon_1024.png
 # before building (see packaging/README.md). If absent, the exe builds without an icon.
