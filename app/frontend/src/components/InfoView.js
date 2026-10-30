@@ -64,7 +64,9 @@ function InfoViewBar({ hint }) {
                     maxWidth: 'min(680px, 90vw)',
                     px: 1.75,
                     py: 0.9,
-                    borderRadius: 999,
+                    // Multi-line details (a fragment's metadata) sit in a small
+                    // card; one-line hints stay a pill.
+                    borderRadius: typeof hint === 'string' ? 999 : '16px',
                     // Blurred translucent pill — just enough backing for the
                     // text to stay readable over any content behind it.
                     backgroundColor: theme.palette.mode === 'dark'
