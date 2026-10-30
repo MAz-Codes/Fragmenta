@@ -11,8 +11,8 @@ REM  PREREQUISITES (read before running):
 REM    1. Visual Studio 2022 Build Tools with "Desktop development with C++"
 REM       (MSVC v143). RUN THIS SCRIPT FROM the "x64 Native Tools Command Prompt
 REM       for VS 2022" so cl.exe is on PATH.
-REM    2. CUDA Toolkit matching your torch build (Fragmenta pins cu128 -> CUDA
-REM       12.8). `nvcc --version` must report that version.
+REM    2. CUDA Toolkit 12.8 or 12.9 (Fragmenta pins cu128; 12.8+ is what can
+REM       target sm_120). Set FA_CUDA_HOME to force a specific toolkit folder.
 REM    3. The Fragmenta venv ACTIVATED with the pinned torch already installed
 REM       (Python 3.14, torch==2.11.0+cu128): run fragmenta.bat once on
 REM       dev/1.3 so it rebuilds venv\, then venv\Scripts\activate.
@@ -56,6 +56,21 @@ if errorlevel 1 (
   echo         Prompt for VS 2022" so MSVC is on PATH.
   exit /b 1
 )
+
+REM torch refuses to build inside an activated VC env without this.
+set DISTUTILS_USE_SDK=1
+
+REM The default CUDA_PATH is often an older toolkit (e.g. 12.1), which cannot
+REM target sm_120. Prefer a 12.8 or 12.9 install when one is present; set
+REM FA_CUDA_HOME beforehand to force a specific toolkit.
+if "%FA_CUDA_HOME%"=="" if defined CUDA_PATH_V12_8 set "FA_CUDA_HOME=%CUDA_PATH_V12_8%"
+if "%FA_CUDA_HOME%"=="" if defined CUDA_PATH_V12_9 set "FA_CUDA_HOME=%CUDA_PATH_V12_9%"
+if not "%FA_CUDA_HOME%"=="" (
+  set "CUDA_HOME=%FA_CUDA_HOME%"
+  set "CUDA_PATH=%FA_CUDA_HOME%"
+  set "PATH=%FA_CUDA_HOME%\bin;%PATH%"
+)
+
 where nvcc >nul 2>&1
 if errorlevel 1 (
   echo [ERROR] nvcc not found. Install the CUDA Toolkit matching your torch
@@ -64,6 +79,16 @@ if errorlevel 1 (
 )
 echo --- nvcc version ---
 nvcc --version | findstr /C:"release"
+
+REM sm_120 (RTX 50xx) needs CUDA 12.8+; an older nvcc fails hours into the build.
+set FA_NVCC_REL=
+for /f "tokens=5 delims=, " %%v in ('nvcc --version ^| findstr /C:"release"') do set FA_NVCC_REL=%%v
+for /f "tokens=1,2 delims=." %%a in ("%FA_NVCC_REL%") do set /a FA_NVCC_NUM=%%a*100+%%b
+if %FA_NVCC_NUM% LSS 1208 (
+  echo [ERROR] nvcc is CUDA %FA_NVCC_REL%; this build needs CUDA 12.8 or newer.
+  echo         Install CUDA 12.8, or set FA_CUDA_HOME to a 12.8+ toolkit folder.
+  exit /b 1
+)
 echo(
 echo --- torch / CUDA visible to Python ---
 python -c "import torch; print('torch', torch.__version__, '| cuda', torch.version.cuda, '| is_available', torch.cuda.is_available())"
@@ -103,7 +128,7 @@ if errorlevel 1 (
   echo [ERROR] Build failed. Common fixes:
   echo   * OOM during compile  -^> rerun with a lower MAX_JOBS, e.g. ... 2
   echo   * arch rejected       -^> confirm CUDA 12.8 is the nvcc on PATH
-  echo   * 2.8.x incompatible  -^> try 2.7.4.post1 (proven on Blackwell)
+  echo   * 2.8.x incompatible  -^> try 2.7.4.post1 ^(proven on Blackwell^)
   exit /b 1
 )
 
@@ -113,7 +138,7 @@ echo Wheel(s) written to dist_wheels\ :
 for %%w in (dist_wheels\flash_attn-*.whl) do certutil -hashfile "%%w" SHA256
 echo(
 echo Install it with:
-echo   pip install --no-deps dist_wheels\<the-wheel>.whl
+echo   pip install --no-deps dist_wheels\^<the-wheel^>.whl
 echo Then verify:
 echo   python -c "import flash_attn; print(flash_attn.__version__)"
 endlocal
