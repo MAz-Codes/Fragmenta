@@ -52,6 +52,10 @@ docker run --rm \
     -e FLASH_ATTN_CUDA_ARCHS="${ARCHS}" -e MAX_JOBS="${MAX_JOBS}" \
     -e NVCC_THREADS="${NVCC_THREADS}" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
     "${IMAGE}" bash -euo pipefail -c '
+        # pip ignores a cache folder root does not own, and the mount belongs to
+        # the host user. Take it for the build; hand /out back even on failure.
+        chown -R 0:0 /root/.cache/pip
+        trap "chown -R ${HOST_UID}:${HOST_GID} /out" EXIT
         echo keepcache=1 >> /etc/dnf/dnf.conf
         dnf -y -q install dnf-plugins-core
         dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
@@ -72,6 +76,5 @@ docker run --rm \
             --no-build-isolation --no-deps -w /out
         echo "peak container memory: $(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 )) MB"
         cd /out && sha256sum flash_attn-*.whl | tee SHA256SUMS
-        chown -R "${HOST_UID}:${HOST_GID}" /out
     '
 echo "done: $(ls "${OUT}"/flash_attn-*.whl)"
