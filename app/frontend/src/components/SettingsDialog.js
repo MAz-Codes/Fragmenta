@@ -38,8 +38,10 @@ function AudioSettingsPanel({ open }) {
         );
     }
     // Without a media permission the browser lists the system device with an
-    // empty id; that's the "System device (default)" entry already.
-    const devices = api.devices.filter((d) => d.deviceId);
+    // empty id; that's the "System device (default)" entry already. Chromium's
+    // 'default' and 'communications' are aliases of devices listed anyway.
+    const devices = api.devices.filter((d) => d.deviceId
+        && d.deviceId !== 'default' && d.deviceId !== 'communications');
     const known = api.deviceId === '' || devices.some((d) => d.deviceId === api.deviceId);
     return (
         <Box>
