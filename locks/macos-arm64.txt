@@ -2223,7 +2223,7 @@ python-dateutil==3.0.0 \
 python-dotenv==1.2.4 \
     --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc \
     --hash=sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0
-python-rtmidi @ https://github.com/MAz-Codes/Fragmenta/releases/download/deps-python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-macosx_11_0_arm64.whl \
+python-rtmidi @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-macosx_11_0_arm64.whl \
     --hash=sha256:9200bbb8bdb7715ad55579633fe3a1ad054f98ac6fc1ee9faa1dab648cb2ead7
 pytorch-lightning==2.5.5 \
     --hash=sha256:0b533991df2353c0c6ea9ca10a7d0728b73631fd61f5a15511b19bee2aef8af0 \

@@ -208,23 +208,14 @@ class AudioGenerator:
                 _flash_err = err
 
             if not have_flash and not allow_no_flash:
-                if platform.system() == "Windows":
-                    raise RuntimeError(
-                        "sa3-medium requires Flash Attention 2, which doesn't "
-                        "have Windows wheels. Use sa3-small-music / sa3-small-sfx, "
-                        "run Fragmenta via Docker on WSL2, or set "
-                        "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
-                        "higher-memory) PyTorch attention fallback."
-                    ) from _flash_err
                 raise RuntimeError(
                     "sa3-medium needs Flash Attention 2 (flash_attn) but the "
                     f"current install is unusable: {_flash_err}.\n"
-                    "Pick the wheel matching your torch+ABI+Python+CUDA from\n"
-                    "  https://github.com/Dao-AILab/flash-attention/releases\n"
-                    "and install with `pip install --no-deps <wheel-url>`. "
-                    "See the note next to flash-attn in requirements.txt for an example.\n"
-                    "Or set FRAGMENTA_MEDIUM_NO_FLASH=1 to use the PyTorch "
-                    "attention fallback."
+                    "Fragmenta installs it on Linux and Windows with an NVIDIA "
+                    "GPU; run the installer again to repair it.\n"
+                    "Or use sa3-small-music / sa3-small-sfx, or set "
+                    "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
+                    "higher-memory) PyTorch attention fallback."
                 ) from _flash_err
 
             if not have_flash:

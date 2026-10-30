@@ -671,6 +671,8 @@ einops-exts==0.0.4 \
 filelock==4.2.4 \
     --hash=sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e \
     --hash=sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d
+flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-linux_x86_64.whl \
+    --hash=sha256:e002a0b3df0cbbb8c95b55762be4ee7e4a00a2bd71d2f7e5fdb9a40d8eb5c433
 flask==3.1.3 \
     --hash=sha256:0ef0e52b8a9cd932855379197dd8f94047b359ca0a78695144304cb45f87c9eb \
     --hash=sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c
@@ -2251,7 +2253,7 @@ python-dateutil==3.0.0 \
 python-dotenv==1.2.4 \
     --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc \
     --hash=sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0
-python-rtmidi @ https://github.com/MAz-Codes/Fragmenta/releases/download/deps-python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl \
+python-rtmidi @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl \
     --hash=sha256:d419e1a57a93e571228e80e73a0a83fc456d14232e0aaabbd5d6a7d361b551fb
 pytorch-lightning==2.5.5 \
     --hash=sha256:0b533991df2353c0c6ea9ca10a7d0728b73631fd61f5a15511b19bee2aef8af0 \

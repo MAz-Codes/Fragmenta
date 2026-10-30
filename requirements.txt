@@ -24,10 +24,10 @@ soundfile>=0.13.1
 # m4a/AAC decoding (FFmpeg).
 av>=18.1,<20
 # python-rtmidi has no Python 3.14 wheels upstream; these are our builds of
-# 1.5.8 (release deps-python-rtmidi-1.5.8-cp314). Elsewhere MIDI is just off.
-python-rtmidi @ https://github.com/MAz-Codes/Fragmenta/releases/download/deps-python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'
-python-rtmidi @ https://github.com/MAz-Codes/Fragmenta/releases/download/deps-python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-win_amd64.whl ; sys_platform == 'win32'
-python-rtmidi @ https://github.com/MAz-Codes/Fragmenta/releases/download/deps-python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'
+# 1.5.8 (MAz-Codes/Fragmenta-wheels). Elsewhere MIDI is just off.
+python-rtmidi @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'
+python-rtmidi @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-win_amd64.whl ; sys_platform == 'win32'
+python-rtmidi @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/python-rtmidi-1.5.8-cp314/python_rtmidi-1.5.8-cp314-cp314-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'
 scipy>=1.13,<2
 numba>=0.60,<1
 numpy>=2.2.6,<3
@@ -52,6 +52,7 @@ python-dotenv>=1.0.0,<2.0
 pywebview>=4.4.1,<7.0
 Pycairo ; sys_platform == 'linux'
 PyGObject<3.49 ; sys_platform == 'linux'
-# flash-attn (sa3-medium): no cp314 wheel exists yet; our own builds for
-# torch 2.11 / cu128 / cp314 (Linux + Windows) return here in M1.4. Until
-# then medium runs on the slower SDPA path.
+# flash-attn (sa3-medium) has no Python 3.14 wheels upstream; these are our
+# builds for torch 2.11 / cu128 (MAz-Codes/Fragmenta-wheels).
+flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'
+flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-win_amd64.whl ; sys_platform == 'win32'
