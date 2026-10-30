@@ -81,13 +81,8 @@ export function AboutPanel({
                         Fragmenta
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
-                        v{APP_VERSION}
+                        v{APP_VERSION}{runtime ? ` · ${runtime}` : ''}
                     </Typography>
-                    {runtime && (
-                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem', letterSpacing: '0.04em' }}>
-                            {runtime}
-                        </Typography>
-                    )}
                 </Box>
             </Box>
                 <Typography sx={appStyles.infoDialogIntro}>
