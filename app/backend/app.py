@@ -2599,14 +2599,17 @@ def _clap_ckpt_path():
 @app.route('/api/environment', methods=['GET'])
 def environment():
     # Host capability flags so the Checkpoint Manager can grey out models this
-    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2; no Windows
-    # wheels). Mirrors the gate in audio_generator._ensure_model.
+    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2). Mirrors the
+    # gate in audio_generator._ensure_model. Versions are for the About page.
     import platform as _platform
     cuda = mps = flash = False
+    torch_version = cuda_version = None
     try:
         import torch
         cuda = bool(torch.cuda.is_available())
         mps = bool(getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available())
+        torch_version = torch.__version__.split('+')[0]
+        cuda_version = torch.version.cuda if cuda else None
     except Exception:
         pass
     try:
