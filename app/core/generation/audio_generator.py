@@ -15,7 +15,6 @@ checks the event and aborts mid-run. Starting a new generation can never
 clear a stop aimed at the previous one.
 """
 import os
-import platform
 import re
 import sys
 import threading
