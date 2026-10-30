@@ -3,13 +3,19 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
 import shutil
+import ssl
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+import urllib.error
+import urllib.request
 import venv
 from pathlib import Path
 
@@ -39,6 +45,18 @@ LAION_CLAP_SPEC = "laion-clap>=1.1.6"
 # install still wants them for the native-window fallback.
 LINUX_GTK = {"pycairo", "pygobject"}
 KEEP_LOGS = 10
+
+# A first install is the ~8 GB CUDA venv and uv cache plus room to unpack them
+# (the Mac has no CUDA stack). An update reuses most of the cache.
+DISK_FIRST_INSTALL_GB = 4 if sys.platform == "darwin" else 12
+DISK_UPDATE_GB = 2 if sys.platform == "darwin" else 5
+DISK_MODEL_GB = 4  # the smallest base model is ~3.5 GB
+DOWNLOAD_HOSTS = ("pypi.org", "files.pythonhosted.org", "download.pytorch.org", "github.com")
+HOST_TIMEOUT = 5
+MIN_NVIDIA_DRIVER = 570  # the cu128 torch builds need R570
+MIN_MACOS = (14, 0)
+MIN_WINDOWS_BUILD = 17763  # Windows 10 1809
+MIN_GLIBC = (2, 28)
 
 
 def _required_python() -> tuple[int, int]:
@@ -338,6 +356,181 @@ def verify(py: Path) -> None:
         _write_log(line + "\n")
 
 
+def _version_tuple(text: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", text))
+
+
+def _os_problem() -> str | None:
+    if sys.platform == "darwin":
+        found = platform.mac_ver()[0]
+        if found and _version_tuple(found) < MIN_MACOS:
+            return f"Fragmenta needs macOS {MIN_MACOS[0]} or newer (this is {found})."
+    elif sys.platform == "win32":
+        build = sys.getwindowsversion().build
+        if build < MIN_WINDOWS_BUILD:
+            return f"Fragmenta needs Windows 10 version 1809 or newer (this is build {build})."
+    else:
+        libc, found = platform.libc_ver()
+        if libc == "glibc" and found and _version_tuple(found) < MIN_GLIBC:
+            return f"Fragmenta needs glibc {'.'.join(map(str, MIN_GLIBC))} or newer (this is {found})."
+    return None
+
+
+def _data_dir_problem() -> str | None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=DATA_DIR):
+            pass
+    except OSError as exc:
+        return f"Fragmenta can't write to {DATA_DIR}: {exc}"
+    return None
+
+
+def _free_gb() -> float:
+    path = DATA_DIR
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return shutil.disk_usage(path).free / 1e9
+
+
+def _reaches(host: str) -> bool:
+    """Does anything answer at this host? Any HTTP status counts, and the
+    certificate isn't checked: uv does that on the real download."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    request = urllib.request.Request(f"https://{host}/", method="HEAD")
+    try:
+        urllib.request.urlopen(request, timeout=HOST_TIMEOUT, context=context).close()
+    except urllib.error.HTTPError:
+        pass
+    except Exception:
+        return False
+    return True
+
+
+def _reachable_hosts() -> dict[str, bool]:
+    results = dict.fromkeys(DOWNLOAD_HOSTS, False)
+
+    def probe(host: str) -> None:
+        results[host] = _reaches(host)
+
+    # Daemon threads: a stuck DNS lookup ignores the socket timeout.
+    threads = [threading.Thread(target=probe, args=(h,), daemon=True) for h in DOWNLOAD_HOSTS]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + HOST_TIMEOUT + 1
+    for t in threads:
+        t.join(max(0, deadline - time.monotonic()))
+    return dict(results)
+
+
+def _nvidia_gpu() -> tuple[str, str] | None:
+    """(name, driver version) of the first NVIDIA GPU, if there is one."""
+    if sys.platform == "darwin":
+        return None
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+        )
+        name, driver = out.stdout.splitlines()[0].rsplit(",", 1)
+        return name.strip(), driver.strip()
+    except Exception:
+        return None
+
+
+def preflight(full: bool = False) -> dict:
+    """What would stop the app from installing or starting, before anything
+    changes. The network and GPU checks only run when an install is due (or
+    with ``full``), so an ordinary launch doesn't wait for them."""
+    failures: list[dict] = []
+    warnings: list[str] = []
+    notes: list[str] = []
+
+    def failed(code: str, message: str) -> None:
+        failures.append({"code": code, "message": message})
+
+    lock = platform_lock()
+    py = venv_python()
+    install_needed = not (py.exists() and is_required_py(py) and deps_up_to_date(lock))
+
+    version = PROJECT_ROOT / "VERSION"
+    system: dict = {
+        "version": version.read_text(encoding="utf-8").strip() if version.exists() else None,
+        "os": platform.platform(),
+        "arch": platform.machine(),
+        "python": platform.python_version(),
+        "lock": lock.name if lock else None,
+        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest() if lock else None,
+    }
+
+    problem = _os_problem()
+    if problem:
+        failed("os", problem)
+    if not lock:
+        message = f"There is no Fragmenta build for {sys.platform} on {platform.machine()}."
+        if PACKAGED:
+            failed("os", message)
+        else:
+            warnings.append(message + " Resolving requirements.txt instead.")
+
+    problem = _data_dir_problem()
+    if problem:
+        failed("permission", problem)
+
+    free = _free_gb()
+    system["disk_free_gb"] = round(free, 1)
+    if install_needed:
+        need = DISK_UPDATE_GB if VENV_PATH.exists() else DISK_FIRST_INSTALL_GB
+        if free < need:
+            failed("disk", f"Fragmenta needs about {need} GB of free space to install, and the drive "
+                           f"holding {DATA_DIR} has {free:.1f} GB free. Free up some space and try again.")
+        elif free < need + DISK_MODEL_GB:
+            warnings.append(f"Only {free:.1f} GB is free. Fragmenta will install, but models need "
+                            f"at least {DISK_MODEL_GB} GB more.")
+
+    proxies = sorted(k for k in os.environ if k.upper() in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"))
+    if proxies:
+        notes.append("Proxy settings found: " + ", ".join(proxies))
+
+    if install_needed or full:
+        hosts = _reachable_hosts()
+        system["hosts"] = hosts
+        down = [h for h, up in hosts.items() if not up]
+        if install_needed and len(down) == len(hosts):
+            failed("network", "Fragmenta needs the internet to finish installing, and couldn't reach "
+                              "any download server. Check your connection, firewall or proxy, and try again.")
+        elif install_needed and down:
+            warnings.append(f"Couldn't reach {', '.join(down)}. The install may not finish.")
+
+        gpu = _nvidia_gpu()
+        if gpu:
+            system["gpu"], system["driver"] = gpu
+            major = _version_tuple(gpu[1])[:1]
+            if major and major[0] < MIN_NVIDIA_DRIVER:
+                warnings.append(f"Your NVIDIA driver ({gpu[1]}) is older than version {MIN_NVIDIA_DRIVER}. "
+                                "Fragmenta won't use the GPU until it's updated.")
+
+    report = {
+        "ok": not failures,
+        "install_needed": install_needed,
+        "full": install_needed or full,
+        "failures": failures,
+        "warnings": warnings,
+        "notes": notes,
+        "system": system,
+        "log_dir": str(LOG_DIR),
+    }
+    if report["full"]:
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            (LOG_DIR / "preflight.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return report
+
+
 def launch(py: Path) -> "None":
     log("starting Fragmenta…")
     if _log_file:
@@ -351,7 +544,14 @@ def main() -> None:
     ap.add_argument("--launch", action="store_true", help="start the app after ensuring the environment")
     ap.add_argument("--reinstall", action="store_true", help="force a dependency reinstall")
     ap.add_argument("--check", action="store_true", help="report status only; change nothing")
+    ap.add_argument("--preflight", action="store_true", help="print what would stop an install or launch, as JSON")
+    ap.add_argument("--full", action="store_true", help="with --preflight: run the network and GPU checks anyway")
     args = ap.parse_args()
+
+    if args.preflight:
+        report = preflight(full=args.full)
+        print(json.dumps(report, indent=2))
+        sys.exit(0 if report["ok"] else 1)
 
     if not REQUIREMENTS.exists():
         fail(f"requirements.txt not found at {REQUIREMENTS} — run from the Fragmenta folder.")
