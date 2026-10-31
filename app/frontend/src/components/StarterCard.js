@@ -86,7 +86,7 @@ export function useStarterModel({ onReady }) {
     return { status, refresh, resuming, setResuming };
 }
 
-function LicenseViewer({ open, onClose, licenses }) {
+export function LicenseViewer({ open, onClose, licenses }) {
     const [current, setCurrent] = useState(0);
     const [texts, setTexts] = useState({});
     const [error, setError] = useState(null);
@@ -137,6 +137,75 @@ function LicenseViewer({ open, onClose, licenses }) {
                 <Button onClick={onClose} variant="contained">Close</Button>
             </DialogActions>
         </Dialog>
+    );
+}
+
+function AgreementTick({ checked, onChange }) {
+    return (
+        <FormControlLabel
+            sx={{ alignItems: 'flex-start', m: 0 }}
+            control={(
+                <Checkbox
+                    checked={checked}
+                    onChange={(e) => onChange(e.target.checked)}
+                    size="small"
+                    sx={{ p: 0, pr: 1, pt: '2px' }}
+                />
+            )}
+            label={(
+                <Typography variant="body2">
+                    I have read and agree to the Stability AI Community License, the Gemma
+                    Terms of Use and the Acceptable Use Policy.
+                </Typography>
+            )}
+        />
+    );
+}
+
+/**
+ * Asked once, before the first no-account model comes from the Checkpoint
+ * Manager, unless the starter card already asked.
+ *
+ * Props:
+ *   checkpoint:  the model about to download, or null when closed
+ *   terms:       GET /api/starter (licenses, terms_version)
+ *   onAgree:     (termsVersion) => void
+ *   onClose:     () => void
+ */
+export function LicenseAgreementDialog({ checkpoint, terms, onAgree, onClose }) {
+    const [agreed, setAgreed] = useState(false);
+    const [licensesOpen, setLicensesOpen] = useState(false);
+
+    useEffect(() => {
+        if (!checkpoint) setAgreed(false);
+    }, [checkpoint]);
+
+    return (
+        <>
+            <Dialog open={Boolean(checkpoint)} onClose={onClose} maxWidth="sm" fullWidth>
+                <DialogTitle>Agree to the licenses</DialogTitle>
+                <DialogContent>
+                    <Stack spacing={2}>
+                        <Typography variant="body2" color="text.secondary">
+                            This will download <strong>{checkpoint?.name}</strong>.
+                        </Typography>
+                        <Typography variant="body2">
+                            <Typography component="a" variant="inherit" onClick={() => setLicensesOpen(true)} role="button" sx={LINK_SX}>
+                                Read the licenses
+                            </Typography>
+                        </Typography>
+                        <AgreementTick checked={agreed} onChange={setAgreed} />
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={onClose}>Cancel</Button>
+                    <Button onClick={() => onAgree(terms.terms_version)} disabled={!agreed} variant="contained">
+                        Download ({fmtGb(checkpoint?.size_bytes)} GB)
+                    </Button>
+                </DialogActions>
+            </Dialog>
+            <LicenseViewer open={licensesOpen} onClose={() => setLicensesOpen(false)} licenses={terms?.licenses || []} />
+        </>
     );
 }
 
@@ -232,23 +301,7 @@ export default function StarterCard({ open, onClose, starter, onOpenManager }) {
                         <Typography variant="body2">{readLicenses}</Typography>
 
                         {!started && !status.terms_accepted && (
-                            <FormControlLabel
-                                sx={{ alignItems: 'flex-start', m: 0 }}
-                                control={(
-                                    <Checkbox
-                                        checked={agreed}
-                                        onChange={(e) => setAgreed(e.target.checked)}
-                                        size="small"
-                                        sx={{ p: 0, pr: 1, pt: '2px' }}
-                                    />
-                                )}
-                                label={(
-                                    <Typography variant="body2">
-                                        I have read and agree to the Stability AI Community License, the Gemma
-                                        Terms of Use and the Acceptable Use Policy.
-                                    </Typography>
-                                )}
-                            />
+                            <AgreementTick checked={agreed} onChange={setAgreed} />
                         )}
 
                         {started && (

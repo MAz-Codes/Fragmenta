@@ -23,7 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 from huggingface_hub import constants as hf_constants, get_token, snapshot_download, whoami
 from huggingface_hub.errors import GatedRepoError, RepositoryNotFoundError
 
-from utils.hf_transfer import purge_incomplete, xet_disabled, xet_enabled
+from utils.hf_transfer import purge_incomplete, xet_disabled
 
 
 # --- Catalog ------------------------------------------------------------------
@@ -581,7 +581,7 @@ class ModelManager:
                                if job.total_bytes else 0)
                         progress_callback(pct, current_phase["label"])
 
-                with _cumulative_tqdm_hook(job, progress_callback, current_phase):
+                with xet_disabled(), _cumulative_tqdm_hook(job, progress_callback, current_phase):
                     download_clap_checkpoint(self.models_dir, phase_cb=phase_cb)
                 job.downloaded_bytes = job.total_bytes
                 job.status = "complete"
@@ -606,7 +606,7 @@ class ModelManager:
         cache_dir.mkdir(exist_ok=True, parents=True)
         target = self._hub_cache_dir_for(job.model_id)
         if job.keep_partial:
-            purge_incomplete(target)  # Xet would rewrite them from the start anyway
+            purge_incomplete(target)  # hf-hub starts a new partial file every time
 
         # Ungated repos download without credentials, so a stale or invalid
         # stored token can't turn into a 401.
@@ -674,36 +674,10 @@ class ModelManager:
                     )
 
         try:
-            try:
-                if job.keep_partial:
-                    # Xet's worker threads swallow the exception the tqdm hook
-                    # raises to stop a job, so only this transfer can be paused.
-                    with xet_disabled():
-                        _fetch()
-                else:
-                    _fetch()
-            except OSError as err:
-                # EIO on the *destination* write is the signature of a volume
-                # that can't take Xet's chunked, out-of-order writes: exFAT and
-                # NTFS-via-FUSE external drives and SMB shares on macOS all
-                # report it, and a plain sequential download of the same file
-                # succeeds. Give it exactly one more shot over the classic
-                # HTTP transfer before blaming the user's hardware.
-                import errno as _errno
-                if err.errno != _errno.EIO or not xet_enabled():
-                    raise
-                if progress_callback:
-                    progress_callback(
-                        min(99, int(job.downloaded_bytes / max(1, job.total_bytes) * 100)),
-                        "Drive rejected the fast transfer — retrying in compatibility mode…",
-                    )
-                # A half-written Xet blob is not a valid prefix for the
-                # sequential downloader, which resumes by appending to
-                # `<blob>.incomplete`. Drop the partials or the retry
-                # silently assembles a corrupt checkpoint.
-                purge_incomplete(cache_dir)
-                with xet_disabled():
-                    _fetch()
+            # Xet's worker threads swallow the exception the tqdm hook raises to
+            # stop a job, so Cancel and Pause only work on the plain transfer.
+            with xet_disabled():
+                _fetch()
             job.status = "complete"
             job.downloaded_bytes = self._dir_size(target)
             if progress_callback:

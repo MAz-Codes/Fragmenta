@@ -38,6 +38,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
     const [catalog, setCatalog] = useState([]);
     const [storage, setStorage] = useState(null);
     const [env, setEnv] = useState(null);
+    const [terms, setTerms] = useState(null);
     const [hfAuth, setHfAuth] = useState({ signed_in: false, username: null });
     const [tokenDraft, setTokenDraft] = useState('');
     const [showTokenInput, setShowTokenInput] = useState(false);
@@ -50,16 +51,18 @@ export default function CheckpointManagerWindow({ open, onClose }) {
         setLoading(true);
         setError(null);
         try {
-            const [cat, store, auth, environment] = await Promise.all([
+            const [cat, store, auth, environment, starter] = await Promise.all([
                 api.get('/api/checkpoints'),
                 api.get('/api/checkpoints/storage'),
                 api.get('/api/hf-auth/status'),
                 api.get('/api/environment'),
+                api.get('/api/starter'),
             ]);
             setCatalog(cat.data.checkpoints);
             setStorage(store.data);
             setHfAuth(auth.data);
             setEnv(environment.data);
+            setTerms(starter.data);
         } catch (e) {
             setError(e.response?.data?.error || e.message);
         } finally {
@@ -240,6 +243,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
                                             key={c.id}
                                             checkpoint={c}
                                             env={env}
+                                            terms={terms}
                                             onAuthRequired={() => setShowTokenInput(true)}
                                             onChanged={refresh}
                                         />

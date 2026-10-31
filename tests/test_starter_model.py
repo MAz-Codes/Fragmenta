@@ -159,6 +159,57 @@ def test_new_terms_ask_again():
             assert starter.start(e.manager)[1] == 403
 
 
+def test_agreement_error_is_shared_with_the_manager():
+    with Env():
+        assert starter.agreement_error()["code"] == "terms"
+        assert starter.agreement_error("1999-01-01")["code"] == "terms"
+        assert starter.agreement_error(starter.TERMS_VERSION) is None
+        assert starter.agreement_error() is None  # remembered
+
+
+# --- the Checkpoint Manager's download route -----------------------------------
+
+def manager_post(e, model_id, **kwargs):
+    import app.backend.app as backend
+    with mock.patch.object(backend, "model_manager", e.manager), \
+            mock.patch.object(backend, "_ensure_components"), \
+            mock.patch.object(e.manager, "start_download", return_value=job()) as start:
+        response = backend.app.test_client().post(f"/api/checkpoints/{model_id}/download", **kwargs)
+    return response.status_code, start.called
+
+
+def test_manager_base_model_needs_the_agreement():
+    for model_id in ("sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base"):
+        with Env() as e:
+            assert manager_post(e, model_id) == (403, False), model_id
+
+
+def test_manager_tick_records_the_agreement_and_downloads():
+    with Env() as e:
+        code, started = manager_post(e, "sa3-medium-base", json={"accept_terms_version": starter.TERMS_VERSION})
+        assert code == 200 and started and e.status()["terms_accepted"]
+
+
+def test_manager_asks_only_once_across_all_base_models():
+    with Env() as e:
+        e.accept()
+        assert manager_post(e, "sa3-small-sfx-base") == (200, True)
+
+
+def test_manager_gated_models_and_clap_have_no_tick():
+    for model_id in ("sa3-small-music", "sa3-medium", "clap-music"):
+        with Env() as e:
+            assert manager_post(e, model_id) == (200, True), model_id
+
+
+def test_a_cross_site_form_post_cant_agree():
+    with Env() as e:
+        code, started = manager_post(e, "sa3-small-music-base",
+                                     data=f"accept_terms_version={starter.TERMS_VERSION}",
+                                     content_type="text/plain")
+        assert (code, started) == (403, False) and not e.status()["terms_accepted"]
+
+
 # --- disk ---------------------------------------------------------------------
 
 def disk_free(free):
@@ -291,13 +342,34 @@ def test_resume_clears_half_written_files_first():
         assert not leftover.exists()
 
 
-def test_only_starter_downloads_skip_xet():
-    """Xet swallows the exception that stops a job, so these can't use it."""
-    for keep_partial, expected in ((True, True), (False, hf_constants.HF_HUB_DISABLE_XET)):
+def test_no_download_uses_xet():
+    """Xet swallows the exception that stops a job, so Cancel couldn't work."""
+    before = hf_constants.HF_HUB_DISABLE_XET
+    for keep_partial in (True, False):
         with Env() as e:
             seen = {}
             the_job, _target = run_job(e, keep_partial, None, seen)
-            assert the_job.status == "complete" and seen["xet_off"] == expected, keep_partial
+            assert the_job.status == "complete" and seen["xet_off"] is True, keep_partial
+    assert hf_constants.HF_HUB_DISABLE_XET == before
+
+
+def test_clap_download_doesnt_use_xet_either():
+    with Env() as e:
+        seen = {}
+
+        def fake_clap(_models_dir, phase_cb=None):
+            seen["xet_off"] = hf_constants.HF_HUB_DISABLE_XET
+
+        with mock.patch("app.backend.data.auto_annotator.download_clap_checkpoint", fake_clap):
+            d = e.manager.start_download("clap-music")
+            e.manager._jobs[d["job_id"]]._thread.join(20)
+        assert seen["xet_off"] is True and e.manager.get_job(d["job_id"])["status"] == "complete"
+
+
+def test_manager_download_without_keep_partial_is_removed_by_cancel():
+    with Env() as e:
+        the_job, target = run_job(e, False, lambda j: e.manager.cancel_job(j.job_id))
+        assert the_job.status == "cancelled" and not target.exists()
 
 
 def test_files_stay_in_the_models_own_folder():

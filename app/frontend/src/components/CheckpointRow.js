@@ -16,6 +16,7 @@ import {
     X as CancelIcon,
 } from 'lucide-react';
 import api from '../api';
+import { LicenseAgreementDialog } from './StarterCard';
 
 const fmtBytes = (n) => {
     if (!n && n !== 0) return '—';
@@ -55,11 +56,12 @@ const hostIncompatReason = (hw, env) => {
     return null;
 };
 
-export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChanged }) {
+export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, onChanged }) {
     const [jobId, setJobId] = useState(checkpoint.active_job?.job_id || null);
     const [job, setJob] = useState(checkpoint.active_job || null);
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [asking, setAsking] = useState(false);
     const pollTimer = useRef(null);
 
     // If the parent's refresh tells us about an in-flight job and we don't
@@ -81,7 +83,7 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
             try {
                 const r = await api.get(`/api/checkpoints/jobs/${jobId}`);
                 setJob(r.data);
-                if (['complete', 'failed', 'cancelled'].includes(r.data.status)) {
+                if (['complete', 'failed', 'cancelled', 'paused'].includes(r.data.status)) {
                     if (r.data.status === 'failed' && (r.data.error || '').startsWith('hf_auth_required')) {
                         onAuthRequired?.();
                     } else if (r.data.status === 'failed') {
@@ -100,12 +102,15 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
         return () => clearInterval(pollTimer.current);
     }, [jobId, onAuthRequired, onChanged]);
 
-    const startDownload = async () => {
+    const startDownload = async (acceptTermsVersion) => {
+        setAsking(false);
         setBusy(true);
         setError(null);
         try {
-            const r = await api.post(`/api/checkpoints/${checkpoint.id}/download`);
+            const r = await api.post(`/api/checkpoints/${checkpoint.id}/download`,
+                acceptTermsVersion ? { accept_terms_version: acceptTermsVersion } : undefined);
             setJobId(r.data.job_id);
+            if (acceptTermsVersion) onChanged?.();
         } catch (e) {
             setError(e.response?.data?.error || e.message);
         } finally {
@@ -174,7 +179,11 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
                 size="small"
                 variant="contained"
                 startIcon={<DownloadIcon size={14} />}
-                onClick={startDownload}
+                onClick={() => {
+                    // Gated models get their terms accepted on Hugging Face.
+                    if (checkpoint.token_free && terms && !terms.terms_accepted) setAsking(true);
+                    else startDownload();
+                }}
                 disabled={busy}
             >
                 Get
@@ -274,6 +283,13 @@ export default function CheckpointRow({ checkpoint, env, onAuthRequired, onChang
                     {error}
                 </Typography>
             )}
+
+            <LicenseAgreementDialog
+                checkpoint={asking ? checkpoint : null}
+                terms={terms}
+                onAgree={startDownload}
+                onClose={() => setAsking(false)}
+            />
         </Box>
     );
 }

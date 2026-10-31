@@ -1582,7 +1582,16 @@ def get_checkpoint(model_id):
 
 @app.route('/api/checkpoints/<model_id>/download', methods=['POST'])
 def start_checkpoint_download(model_id):
+    # silent=True: the button posts no body once the terms are agreed.
+    data = request.get_json(silent=True) or {}
     try:
+        # Gated models get their terms accepted on Hugging Face; the no-account
+        # ones have only this agreement.
+        info = model_manager.get_model_info(model_id)
+        if info and info.get('token_free'):
+            refused = starter_model.agreement_error(data.get('accept_terms_version'))
+            if refused:
+                return jsonify(refused), 403
         result = model_manager.start_download(model_id)
         # _DownloadJob.to_dict() always includes the "error" key (None when
         # ok); use a truthy check so a successful job doesn't 400.

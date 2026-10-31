@@ -163,14 +163,24 @@ def status(manager: Any) -> Dict[str, Any]:
     }
 
 
-def start(manager: Any, accept_terms_version: Optional[str] = None) -> Tuple[Dict[str, Any], int]:
-    """Start or resume the download. The agreement is recorded here, when someone
-    who ticked the box presses Download. Returns (body, HTTP status)."""
+def agreement_error(accept_terms_version: Optional[str] = None) -> Optional[Dict[str, str]]:
+    """Why a no-account model can't download yet, or None. The agreement is
+    recorded here, when someone who ticked the box presses Download. There's only
+    one: every no-account model comes with these same license texts."""
     state = _load_state()
     if accept_terms_version == TERMS_VERSION:
         state = _save_state(accepted_terms_version=TERMS_VERSION, accepted_at=datetime.now().isoformat())
     if state.get("accepted_terms_version") != TERMS_VERSION:
-        return {"error": "Please agree to the license terms first.", "code": "terms"}, 403
+        return {"error": "Please agree to the license terms first.", "code": "terms"}
+    return None
+
+
+def start(manager: Any, accept_terms_version: Optional[str] = None) -> Tuple[Dict[str, Any], int]:
+    """Start or resume the download. Returns (body, HTTP status)."""
+    refused = agreement_error(accept_terms_version)
+    if refused:
+        return refused, 403
+    state = _load_state()
 
     size = manager.get_model_info(STARTER_MODEL)["size_bytes"]
     needed = max(0, size - _downloaded_so_far(manager)) + DISK_MARGIN_BYTES
