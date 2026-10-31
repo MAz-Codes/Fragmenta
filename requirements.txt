@@ -56,3 +56,7 @@ PyGObject<3.49 ; sys_platform == 'linux'
 # builds for torch 2.11 / cu128 (MAz-Codes/Fragmenta-wheels).
 flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'
 flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-win_amd64.whl ; sys_platform == 'win32'
+
+# MLX engine on Apple Silicon (app/core/generation/mlx_engine.py)
+mlx>=0.30 ; sys_platform == "darwin" and platform_machine == "arm64"
+sentencepiece>=0.2 ; sys_platform == "darwin" and platform_machine == "arm64"
