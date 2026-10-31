@@ -554,8 +554,8 @@ function PerformancePanelInner({
     // helper is also hoisted to component scope so its MenuItems land as
     // direct children of <Select>, not nested inside a Fragment.
     const mlxModels = baseModels.filter(m => m.kind === 'mlx');
-    const distilledBaseModels = baseModels.filter(m => m.kind === 'post-trained');
-    const trueBaseModels = baseModels.filter(m => m.kind === 'base');
+    const distilledBaseModels = baseModels.filter(m => m.kind === 'post-trained' && (!m.hidden || m.name === selectedModel));
+    const trueBaseModels = baseModels.filter(m => m.kind === 'base' && (!m.hidden || m.name === selectedModel));
     const renderBaseModelRow = (model) => (
         <MenuItem
             key={model.name}

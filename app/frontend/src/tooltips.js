@@ -150,7 +150,6 @@ export const TIPS = {
     checkpoints: {
         gatedAccess: "Open on HuggingFace to accept the model's gated-access terms",
         openOnHf: 'Open the model page on HuggingFace',
-        noAccount: 'Not gated on HuggingFace — downloads without an account or token.',
     },
 
     // App.js — main Audio Generation tab (the primary "create" surface).
@@ -196,7 +195,6 @@ export const TIPS = {
         hfLoginDemo: 'Disabled in this demonstration Space. Install Fragmenta locally from misaghazimi.com/fragmenta to sign in with your own HuggingFace account.',
         hfLogout: 'Forget the saved HuggingFace token on this machine.',
         hfToken: 'Paste a HuggingFace access token (starts with "hf_"). Create one at huggingface.co/settings/tokens — read scope is enough for downloads.',
-        refresh: 'Re-scan the catalog and disk for which models are downloaded, in case something changed outside the app.',
     },
 
     // TrainingMonitor.js — training status card.

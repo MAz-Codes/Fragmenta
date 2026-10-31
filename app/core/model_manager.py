@@ -378,6 +378,8 @@ class ModelManager:
             "user_visible": info.get("user_visible", False) or (info.get("kind") == "mlx" and mlx_models_visible()),
             "downloaded": downloaded,
             "downloaded_bytes": bytes_total,
+            # MLX models share files, so one not yet here may be partly on disk.
+            "on_disk_bytes": self._model_bytes(model_id) if info.get("kind") == "mlx" else bytes_total,
             "active_job": active_job,
         }
 

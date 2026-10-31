@@ -31,8 +31,11 @@ All notable changes to Fragmenta are listed here. The format follows
   overwrites anything.
 
 ### Changed
-- Checkpoint Manager: Cancel stops a download right away, and Base models ask
-  you to agree to their licenses once before the first download.
+- Checkpoint Manager: a wider window with a compact card for every model, in
+  rows by what they're for. Hover over an installed model to delete it, and
+  click Storage to see what's using your disk. Cancel stops a download right
+  away, and Base models ask you to agree to their licenses once before the first
+  download.
 - Ableton Link: loops stay on Live's beat over long sessions. Fragmenta
   corrects the slow drift between the sound card and Link with tiny speed
   adjustments you can't hear, and reads Link's timing from Link's own clock,

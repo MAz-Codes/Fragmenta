@@ -61,6 +61,7 @@ import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
+import { hiddenOnMac } from './utils/macModels';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
 import PreEncodeProgress from './components/PreEncodeProgress';
@@ -715,6 +716,7 @@ function App() {
                 ...prevModels.filter(model => model.kind !== 'mlx').map(model => ({
                     ...model,
                     downloaded: byId[model.name]?.downloaded || false,
+                    hidden: mlxModels.length > 0 && Boolean(byId[model.name]) && hiddenOnMac(byId[model.name]),
                 })),
             ]);
         } catch (error) {
@@ -1676,7 +1678,7 @@ function App() {
                                                             post-trained models have CFG distilled out and
                                                             can't be trained against. */}
                                                         {baseModels
-                                                            .filter(m => m.name.endsWith('-base'))
+                                                            .filter(m => m.name.endsWith('-base') && (!m.hidden || m.name === trainingConfig.baseModel))
                                                             .map(m => (
                                                                 <MenuItem
                                                                     key={m.name}
@@ -2254,7 +2256,7 @@ function App() {
                                                                 { kind: 'post-trained', label: '── Distilled · fixed cfg + steps (fast) ──' },
                                                                 { kind: 'base',         label: '── Base · cfg + steps live ──' },
                                                             ].flatMap(group => {
-                                                                const rows = baseModels.filter(m => m.kind === group.kind);
+                                                                const rows = baseModels.filter(m => m.kind === group.kind && (!m.hidden || m.name === selectedModel));
                                                                 if (!rows.length) return [];
                                                                 return [
                                                                     <MenuItem key={`hdr-${group.kind}`} disabled>

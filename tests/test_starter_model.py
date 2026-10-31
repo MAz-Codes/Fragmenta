@@ -419,6 +419,18 @@ def test_an_mlx_model_needs_all_its_files():
         assert not e.manager.is_model_downloaded("sa3-mlx-small-sfx")
 
 
+def test_an_mlx_model_reports_what_its_siblings_already_brought():
+    with Env() as e:
+        music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
+        mlx_snapshot(e, *music)
+        shared = set(music) & set(sfx)
+        size = lambda name: e.manager._bundle_file("sa3-mlx-small-sfx", name).stat().st_size
+        info = e.manager.get_model_info("sa3-mlx-small-sfx")
+        assert not info["downloaded"]
+        assert info["on_disk_bytes"] == sum(size(n) for n in shared)
+        assert e.manager.get_model_info("sa3-medium")["on_disk_bytes"] == 0
+
+
 def test_deleting_an_mlx_model_keeps_what_another_still_uses():
     with Env() as e:
         music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
