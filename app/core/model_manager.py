@@ -561,9 +561,8 @@ class ModelManager:
         # Tagger kind (e.g. CLAP) is a .pt file plus auxiliary HF snapshots
         # living outside the sa3/hub layout. Multi-phase: 1 hf_hub_download
         # for the audio .pt, then N sequential snapshot_downloads for the
-        # text encoders. Each spawns its own tqdm bars, so we use the
-        # cumulative hook to accumulate bytes across phases, and a phase_cb
-        # to prefix the message with which step the user is on.
+        # text encoders, all under one folder, whose size on disk is the
+        # progress. A phase_cb prefixes the message with the current step.
         if info.get("kind") == "tagger":
             try:
                 from app.backend.data.auto_annotator import download_clap_checkpoint
@@ -572,16 +571,17 @@ class ModelManager:
                 # Pin total to the catalog estimate so the % stays anchored
                 # even before tqdm reports any file's size.
                 job.total_bytes = info["size_bytes"]
-                current_phase = {"label": ""}
 
                 def phase_cb(idx: int, total: int, label: str) -> None:
-                    current_phase["label"] = f"[{idx}/{total}] {label}"
                     if progress_callback:
                         pct = (int(job.downloaded_bytes / job.total_bytes * 100)
                                if job.total_bytes else 0)
-                        progress_callback(pct, current_phase["label"])
+                        progress_callback(pct, f"[{idx}/{total}] {label}")
 
-                with xet_disabled(), _cumulative_tqdm_hook(job, progress_callback, current_phase):
+                clap_dir = self.models_dir / "clap"
+                clap_dir.mkdir(exist_ok=True, parents=True)
+                with xet_disabled(), _tqdm_progress_hook(job, progress_callback), \
+                        _disk_progress_poller(job, progress_callback, clap_dir):
                     download_clap_checkpoint(self.models_dir, phase_cb=phase_cb)
                 job.downloaded_bytes = job.total_bytes
                 job.status = "complete"
@@ -865,57 +865,3 @@ def _disk_progress_poller(
     finally:
         stop.set()
         t.join(timeout=2)
-
-
-@contextlib.contextmanager
-def _cumulative_tqdm_hook(
-    job: _DownloadJob,
-    progress_callback: Optional[Callable[[int, str], None]],
-    current_phase: Dict[str, str],
-):
-    """Like _tqdm_progress_hook, but sums bytes across sequential bars.
-
-    Each tqdm bar reports `self.n` cumulative within ITS file. The single-bar
-    hook uses max() which freezes the UI when a fresh bar starts smaller than
-    the previous bar's total. Here we track the previous `self.n` per bar id
-    and add only the delta to job.downloaded_bytes — so progress climbs
-    monotonically across all phases.
-
-    Patches huggingface_hub's own tqdm subclass for the same isolation
-    reasons as _tqdm_progress_hook.
-    """
-    from huggingface_hub.utils import tqdm
-    original_init = tqdm.__init__
-    prev_n: Dict[int, int] = {}
-
-    def patched_init(self, *args: Any, **kwargs: Any) -> None:
-        original_init(self, *args, **kwargs)
-        original_update = self.update
-        prev_n[id(self)] = 0
-
-        def new_update(n: int = 1) -> Any:
-            if job._cancel_flag.is_set():
-                raise _DownloadCancelled()
-            result = original_update(n)
-            prev = prev_n.get(id(self), 0)
-            delta = self.n - prev
-            prev_n[id(self)] = self.n
-            if delta > 0:
-                job.downloaded_bytes += delta
-                if progress_callback and job.total_bytes:
-                    pct = min(int(job.downloaded_bytes / job.total_bytes * 100), 99)
-                    mb_done = job.downloaded_bytes / (1024 * 1024)
-                    mb_total = job.total_bytes / (1024 * 1024)
-                    label = current_phase.get("label", "")
-                    msg = (f"{label} · {mb_done:.0f} MB / {mb_total:.0f} MB"
-                           if label else f"{mb_done:.0f} MB / {mb_total:.0f} MB")
-                    progress_callback(pct, msg)
-            return result
-
-        self.update = new_update  # type: ignore[method-assign]
-
-    tqdm.__init__ = patched_init  # type: ignore[method-assign]
-    try:
-        yield
-    finally:
-        tqdm.__init__ = original_init  # type: ignore[method-assign]

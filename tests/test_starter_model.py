@@ -366,6 +366,24 @@ def test_clap_download_doesnt_use_xet_either():
         assert seen["xet_off"] is True and e.manager.get_job(d["job_id"])["status"] == "complete"
 
 
+def test_clap_progress_comes_from_the_disk():
+    """hf-hub's bar is off when there's no terminal, so it can't drive the bar."""
+    import time
+
+    with Env() as e:
+        seen = {}
+
+        def fake_clap(models_dir, phase_cb=None):
+            (models_dir / "clap" / "a.pt.incomplete").write_bytes(b"x" * 1_000_000)
+            time.sleep(1.5)
+            seen["during"] = e.manager.get_job(job_id)["downloaded_bytes"]
+
+        with mock.patch("app.backend.data.auto_annotator.download_clap_checkpoint", fake_clap):
+            job_id = e.manager.start_download("clap-music")["job_id"]
+            e.manager._jobs[job_id]._thread.join(20)
+        assert seen["during"] == 1_000_000, seen
+
+
 def test_manager_download_without_keep_partial_is_removed_by_cancel():
     with Env() as e:
         the_job, target = run_job(e, False, lambda j: e.manager.cancel_job(j.job_id))
