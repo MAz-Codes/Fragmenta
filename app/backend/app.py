@@ -481,10 +481,7 @@ def start_training():
         return jsonify({'error': error_msg}), 500
 
 
-_SA3_MODEL_IDS = {
-    "sa3-small-music", "sa3-small-sfx", "sa3-medium",
-    "sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base",
-}
+_SA3_MODEL_IDS = set(_SA3_MODEL_INFO)
 
 
 @app.route('/api/generate', methods=['POST'])
@@ -847,19 +844,11 @@ def list_loras():
             (e.g. ?base_model=sa3-small-music or ?base_model=sa3-small-music-base).
             A small-music LoRA is compatible with both small-music and
             small-music-base (same backbone, different CFG distillation
-            state); the matcher strips a trailing `-base` from both sides
-            before comparing.
+            state), and so is that one's MLX build (see models.lora_family).
     """
     requested_base = (request.args.get('base_model') or '').strip()
 
-    def _base_root(model_id: str) -> str:
-        """Strip the `-base` suffix so LoRAs trained against `*-base` filter
-        as compatible with their post-trained sibling (same architecture)."""
-        if not model_id:
-            return ''
-        return model_id[:-5] if model_id.endswith('-base') else model_id
-
-    requested_root = _base_root(requested_base)
+    requested_root = lora_family(requested_base)
 
     try:
         config = get_config()
@@ -959,7 +948,7 @@ def list_loras():
                     # Filter by requested base if the caller specified one.
                     # Treat `sa3-small-music` and `sa3-small-music-base` as
                     # compatible: same backbone, only differ in CFG state.
-                    if requested_root and _base_root(base_model) != requested_root:
+                    if requested_root and lora_family(base_model) != requested_root:
                         continue
 
                     rel_path = _api_path(ckpt, config)

@@ -19,6 +19,12 @@ All notable changes to Fragmenta are listed here. The format follows
   account needed. Read the licenses in the app, tick to agree, then download
   with pause and resume. It carries on after a restart, and the offer comes back
   at each launch until you have a model.
+- Apple Silicon: Small - Music, Small - SFX and Medium now run on MLX, with no
+  account needed and far less memory than PyTorch, so Medium works on a Mac.
+  They're listed first in the model pickers and the Checkpoint Manager, and
+  Small - Music is the first-run offer there. LoRAs trained on a Base model work
+  on them. Training still uses a PyTorch Base model, which the Training tab
+  offers to download when it's missing.
 - Settings → Import: bring models, LoRAs, projects, generated audio and your
   CLAP vocabulary over from an older Fragmenta folder, so nothing needs
   downloading again. It moves them on the same drive or copies them, and never

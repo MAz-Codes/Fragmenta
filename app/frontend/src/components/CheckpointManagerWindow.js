@@ -96,6 +96,7 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
     };
 
     const anyInstalled = catalog.some(c => c.downloaded);
+    const appleSilicon = catalog.some(c => c.kind === 'mlx');
     // Public HF Spaces demo: checkpoints are pre-provisioned and visitors
     // must not hand a personal HF token to a shared Space, so sign-in is
     // greyed out there. Every other platform is unaffected.
@@ -188,8 +189,10 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                         </Alert>
                     ) : !hfAuth.signed_in ? (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            The Base models download without an account. The faster distilled
-                            models are gated on HuggingFace: for those you need a{' '}
+                            {appleSilicon
+                                ? 'The Apple Silicon and Base models download without an account. The PyTorch distilled'
+                                : 'The Base models download without an account. The faster distilled'}
+                            {' '}models are gated on HuggingFace: for those you need a{' '}
                             <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">
                                 HuggingFace account
                             </a>
@@ -201,9 +204,9 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                         </Alert>
                     ) : (
                         <Alert severity="info" sx={{ mb: 2 }}>
-                            You're signed in. The distilled models are gated — click a model's name to
-                            open its HuggingFace page and accept its terms before downloading. Base
-                            models need no account.
+                            You're signed in. The {appleSilicon ? 'PyTorch ' : ''}distilled models are gated — click a model's name to
+                            open its HuggingFace page and accept its terms before downloading.{' '}
+                            {appleSilicon ? 'Apple Silicon and Base' : 'Base'} models need no account.
                         </Alert>
                     )}
 
@@ -218,13 +221,15 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                                 Pick a model to get started.
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
-                                Small - Music (Base) downloads without an account (3.5 GB). Small - Music
-                                is faster but needs a free HuggingFace account.
+                                {appleSilicon
+                                    ? 'Small - Music under Apple Silicon downloads without an account (1.9 GB).'
+                                    : 'Small - Music (Base) downloads without an account (3.5 GB). Small - Music is faster but needs a free HuggingFace account.'}
                             </Typography>
                         </Box>
                     )}
 
                     {[
+                        { kind: 'mlx', label: 'Apple Silicon (fast)', hint: 'Made for this Mac. Training needs a Base model.' },
                         { kind: 'post-trained', label: 'Distilled (fast)', hint: 'Faster generation.' },
                         { kind: 'base', label: 'Base (full control)', hint: 'Needed for training. Slower generation, better quality.' },
                         { kind: 'tagger', label: 'Auto-annotation tools', hint: 'Optional helpers for dataset prep. CLAP scores audio against your vocabulary.' },

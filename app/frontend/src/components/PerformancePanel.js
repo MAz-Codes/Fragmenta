@@ -531,7 +531,7 @@ function PerformancePanelInner({
         return model?.base_model || null;
     })();
 
-    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-small-');
+    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-') && !resolvedBaseModel.includes('medium');
     // Distilled (post-trained) SA3 variants — names that DON'T end in `-base`.
     // The Steps dropdown only locks at 8 for these; the *-base checkpoints let
     // the user pick a real step count.
@@ -553,7 +553,8 @@ function PerformancePanelInner({
     // Split baseModels by `kind` for the model-picker grouping. The render
     // helper is also hoisted to component scope so its MenuItems land as
     // direct children of <Select>, not nested inside a Fragment.
-    const distilledBaseModels = baseModels.filter(m => m.kind !== 'base');
+    const mlxModels = baseModels.filter(m => m.kind === 'mlx');
+    const distilledBaseModels = baseModels.filter(m => m.kind === 'post-trained');
     const trueBaseModels = baseModels.filter(m => m.kind === 'base');
     const renderBaseModelRow = (model) => (
         <MenuItem
@@ -1689,6 +1690,12 @@ function PerformancePanelInner({
                                 generated MenuItems as direct flat children — wrapping
                                 them in an IIFE-returned Fragment broke selection
                                 (Select couldn't find the option matching `value`). */}
+                            {mlxModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Fast on Apple Silicon ──
+                                </MenuItem>
+                            )}
+                            {mlxModels.map(renderBaseModelRow)}
                             {distilledBaseModels.length > 0 && (
                                 <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
                                     ── Distilled ──

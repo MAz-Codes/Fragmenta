@@ -527,6 +527,68 @@ def test_cancel_cant_delete_a_finished_model():
         assert e.manager.is_model_downloaded(STARTER)
 
 
+# --- the Apple Silicon starter ---------------------------------------------------
+
+MAC_STARTER = starter.APPLE_SILICON_STARTER_MODEL
+
+
+def on_apple_silicon(mlx_installed=True):
+    return mock.patch.multiple(starter, mlx_models_visible=lambda: True,
+                               engine_available=lambda name: mlx_installed)
+
+
+def test_apple_silicon_starts_with_the_mlx_model():
+    with Env() as e, on_apple_silicon(), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "1"}):
+        s = e.status()
+        assert s["show"] and s["model_id"] == MAC_STARTER and s["size_bytes"] == 1_920_000_000
+
+
+def test_other_machines_keep_the_base_model():
+    with Env() as e, mock.patch.object(starter, "mlx_models_visible", return_value=False):
+        assert e.status()["model_id"] == STARTER
+
+
+def test_apple_silicon_without_mlx_installed_falls_back_to_the_base_model():
+    with Env() as e, on_apple_silicon(mlx_installed=False):
+        assert e.status()["model_id"] == STARTER
+
+
+def test_an_installed_mlx_model_counts_as_having_a_model():
+    with Env() as e, on_apple_silicon(), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "1"}):
+        mlx_snapshot(e, *mlx_files("sa3-mlx-small-sfx"))
+        s = e.status()
+        assert s["installed"] and not s["show"]
+
+
+def test_a_torch_model_on_apple_silicon_also_counts():
+    with Env() as e, on_apple_silicon():
+        e.install("sa3-small-music-base")
+        assert not e.status()["show"]
+
+
+def test_the_mac_card_counts_only_its_own_files():
+    with Env() as e, on_apple_silicon(), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "1"}):
+        mlx_snapshot(e, "t5gemma_f16.npz", "dit_medium_f16.npz")  # the second is Medium's
+        assert starter._downloaded_so_far(e.manager, MAC_STARTER) == 100
+
+
+def test_cancelling_a_paused_mac_download_keeps_what_a_sibling_uses():
+    with Env() as e, on_apple_silicon(), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "1"}):
+        repo = mlx_snapshot(e, *mlx_files("sa3-mlx-small-sfx"), "dit_sm-music_f16.npz")
+        starter._save_state(status="paused")
+        starter.cancel(e.manager)
+        assert e.manager.is_model_downloaded("sa3-mlx-small-sfx"), "the sibling must survive"
+        assert not list(repo.rglob("dit_sm-music_f16.npz"))
+
+
+def test_a_lora_matches_its_mlx_build_only():
+    from app.core.generation.models import lora_family
+    assert lora_family("sa3-small-music-base") == lora_family("sa3-mlx-small-music")
+    assert lora_family("sa3-medium-base") == lora_family("sa3-mlx-medium")
+    assert lora_family("sa3-small-music-base") != lora_family("sa3-mlx-small-sfx")
+    assert lora_family("sa3-small-music-base") != lora_family("sa3-mlx-medium")
+
+
 # --- license texts --------------------------------------------------------------
 
 def test_every_license_text_is_there():

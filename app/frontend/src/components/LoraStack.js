@@ -119,12 +119,9 @@ export default function LoraStack({ selectedModel, value, onChange }) {
 
     const hint = (() => {
         if (!selectedModel) return 'Pick a model first.';
-        if (!selectedModel.endsWith('-base')) {
-            return 'LoRAs need a Base model. Switch to a *-base checkpoint to use LoRAs.';
-        }
         if (loading) return 'Loading LoRAs…';
         if (!compatible.length) {
-            return `No LoRAs trained against ${selectedModel} yet. Train one in the Training tab.`;
+            return 'No LoRAs for this model yet. Train one in the Training tab.';
         }
         return null;
     })();

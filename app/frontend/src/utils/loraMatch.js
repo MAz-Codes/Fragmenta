@@ -6,14 +6,17 @@
 // same backbone — only the CFG state differs. Strict `===` would treat
 // them as different and hide trained LoRAs from the generation picker.
 //
-// Strips a trailing `-base` from both IDs before comparing, so:
+// The MLX build of a model has that backbone too. Mirrors lora_family in
+// app/core/generation/models.py:
 //   sa3-small-music        ↔ sa3-small-music-base       → compatible
 //   sa3-medium             ↔ sa3-medium-base            → compatible
+//   sa3-mlx-small-music    ↔ sa3-small-music-base       → compatible
 //   sa3-small-music        ↔ sa3-medium                 → not compatible
 //   sa3-small-music        ↔ sa3-small-sfx              → not compatible
 function baseRoot(modelId) {
     if (!modelId) return '';
-    return modelId.endsWith('-base') ? modelId.slice(0, -5) : modelId;
+    const name = modelId.replace('sa3-mlx-', 'sa3-');
+    return name.endsWith('-base') ? name.slice(0, -5) : name;
 }
 
 export function isLoraCompatible(loraBase, generationModel) {

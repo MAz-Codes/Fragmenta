@@ -31,15 +31,21 @@ const hardwareLabel = (hw) => ({
     'cpu': 'CPU / GPU',
     'cuda': 'CUDA',
     'cuda+flash-attn': 'CUDA + Flash-Attn',
+    'apple-silicon': 'Apple Silicon',
 }[hw] || hw);
 
 // Why this host can't run a given model, or null if it can. Mirrors the gate
 // in audio_generator._ensure_model. `env` comes from GET /api/environment.
 const hostIncompatReason = (hw, env) => {
     if (!env) return null;  // capabilities unknown — don't block
+    if (hw === 'apple-silicon' && !env.mlx_available) {
+        return 'Needs MLX, which isn\'t installed. Run python install.py again.';
+    }
     if (hw === 'cuda+flash-attn') {
         if (!env.cuda_available) {
-            return 'Requires an NVIDIA CUDA GPU. Use a Small model — those run on CPU, Apple Silicon, or any GPU.';
+            return env.mlx_available
+                ? 'Requires an NVIDIA CUDA GPU. On this Mac, use the Medium under Apple Silicon.'
+                : 'Requires an NVIDIA CUDA GPU. Use a Small model — those run on CPU, Apple Silicon, or any GPU.';
         }
         // Gate on the real capability, not the platform: Windows works once a
         // matching flash-attn wheel is installed (Blackwell/Ampere + cu12x).

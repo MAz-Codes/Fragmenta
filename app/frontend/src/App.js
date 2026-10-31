@@ -68,6 +68,7 @@ import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
 import StarterCard, { PAGE_FADE, useStarterModel } from './components/StarterCard';
+import TrainingModelOffer from './components/TrainingModelOffer';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
 import SettingsDialog from './components/SettingsDialog';
@@ -607,7 +608,7 @@ function App() {
 
     const getMaxDuration = () => {
         if (!selectedModel) return 30;
-        if (resolvedBaseModel === 'sa3-medium' || resolvedBaseModel === 'sa3-medium-base') return 380;
+        if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-') && resolvedBaseModel.includes('medium')) return 380;
         if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-')) return 120;
         return 30;
     };
@@ -699,15 +700,23 @@ function App() {
     const fetchBaseModelsStatus = async () => {
         try {
             const response = await api.get('/api/checkpoints');
-            const byId = Object.fromEntries(
-                (response.data.checkpoints || []).map(c => [c.id, c])
-            );
-            setBaseModels(prevModels =>
-                prevModels.map(model => ({
+            const checkpoints = response.data.checkpoints || [];
+            const byId = Object.fromEntries(checkpoints.map(c => [c.id, c]));
+            // The catalog only lists MLX models on the machines that run them.
+            const mlxModels = checkpoints.filter(c => c.kind === 'mlx').map(c => ({
+                name: c.id,
+                displayName: `${c.name} (MLX)`,
+                description: `Apple Silicon · ≤ ${c.max_duration_sec}s`,
+                kind: 'mlx',
+                downloaded: c.downloaded,
+            }));
+            setBaseModels(prevModels => [
+                ...mlxModels,
+                ...prevModels.filter(model => model.kind !== 'mlx').map(model => ({
                     ...model,
                     downloaded: byId[model.name]?.downloaded || false,
-                }))
-            );
+                })),
+            ]);
         } catch (error) {
             console.error('Error fetching checkpoint status:', error);
         }
@@ -752,7 +761,9 @@ function App() {
     const starter = useStarterModel({
         onReady: (modelId) => {
             refreshAllModels();
-            setSelectedModel((current) => current || modelId);
+            // The card only shows with no model on disk, so a catalog model still
+            // selected (a saved Performance session can restore one) isn't installed.
+            setSelectedModel((current) => (current && !baseModels.some(m => m.name === current) ? current : modelId));
             setProcessingStatus('Your first model is ready — try a prompt');
         },
     });
@@ -1706,6 +1717,12 @@ function App() {
                                                                 </MenuItem>
                                                             ))}
                                                     </Select>
+                                                    {!baseModels.find(m => m.name === trainingConfig.baseModel)?.downloaded && (
+                                                        <TrainingModelOffer
+                                                            modelId={trainingConfig.baseModel}
+                                                            onInstalled={refreshAllModels}
+                                                        />
+                                                    )}
                                                 </Box>
 
                                                 <Accordion>
@@ -2233,6 +2250,7 @@ function App() {
                                                                 <em>Select a model</em>
                                                             </MenuItem>
                                                             {[
+                                                                { kind: 'mlx',          label: '── Fast on Apple Silicon ──' },
                                                                 { kind: 'post-trained', label: '── Distilled · fixed cfg + steps (fast) ──' },
                                                                 { kind: 'base',         label: '── Base · cfg + steps live ──' },
                                                             ].flatMap(group => {

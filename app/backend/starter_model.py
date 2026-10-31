@@ -14,13 +14,16 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.config import get_config
+from app.core.generation.audio_generator import engine_available
+from app.core.model_manager import mlx_models_visible
 
 STARTER_MODEL = "sa3-small-music-base"
+APPLE_SILICON_STARTER_MODEL = "sa3-mlx-small-music"
 # Date the texts in licenses/ were taken. Change it when they change, and
 # everyone is asked to agree again.
 TERMS_VERSION = "2026-10-22"
 DISK_MARGIN_BYTES = 1_000_000_000
-GENERATION_KINDS = ("post-trained", "base")
+GENERATION_KINDS = ("post-trained", "base", "mlx")
 
 LICENSE_TEXTS: Dict[str, Dict[str, str]] = {
     "community": {
@@ -54,6 +57,12 @@ _OFFLINE_SIGNS = (
     "offline", "proxy", "check your internet", "localentrynotfound",
 )
 _SERVER_SIGNS = (" 500", " 502", " 503", " 504", "server error", "service unavailable", "bad gateway")
+
+
+def starter_model_id() -> str:
+    if mlx_models_visible() and engine_available("mlx"):
+        return APPLE_SILICON_STARTER_MODEL
+    return STARTER_MODEL
 
 
 def _state_path() -> Path:
@@ -94,16 +103,22 @@ def _plain_error(raw: Optional[str]) -> str:
     return f"The download stopped: {raw}" if raw else "The download stopped."
 
 
-def _downloaded_so_far(manager: Any) -> int:
-    target = manager._local_dir_for(STARTER_MODEL)
+def _shares_its_folder(manager: Any, model_id: str) -> bool:
+    return manager.get_model_info(model_id)["kind"] == "mlx"
+
+
+def _downloaded_so_far(manager: Any, model_id: str) -> int:
+    if _shares_its_folder(manager, model_id):
+        return manager._model_bytes(model_id)
+    target = manager._local_dir_for(model_id)
     if not target.exists():
         return 0
     return sum(p.stat().st_size for p in target.rglob("*")
                if p.is_file() and not p.is_symlink() and p.suffix != ".incomplete")
 
 
-def _latest_job(manager: Any) -> Optional[Dict[str, Any]]:
-    jobs = [j for j in manager.list_jobs() if j["model_id"] == STARTER_MODEL]
+def _latest_job(manager: Any, model_id: str) -> Optional[Dict[str, Any]]:
+    jobs = [j for j in manager.list_jobs() if j["model_id"] == model_id]
     return max(jobs, key=lambda j: j.get("started_at") or "") if jobs else None
 
 
@@ -111,11 +126,12 @@ def status(manager: Any) -> Dict[str, Any]:
     """Everything the card needs. ``phase`` is one of: idle, downloading, paused,
     failed, interrupted (the app quit mid-download, so the card resumes it)."""
     state = _load_state()
+    model_id = starter_model_id()
     catalog = [c for c in manager.get_catalog() if c.get("kind") in GENERATION_KINDS]
     installed = any(c["downloaded"] for c in catalog)
-    other_downloading = any(c["active_job"] for c in catalog if c["id"] != STARTER_MODEL)
-    entry = manager.get_model_info(STARTER_MODEL)
-    job = _latest_job(manager)
+    other_downloading = any(c["active_job"] for c in catalog if c["id"] != model_id)
+    entry = manager.get_model_info(model_id)
+    job = _latest_job(manager, model_id)
     in_flight = bool(job and job["status"] in ("queued", "running"))
 
     if installed and not state.get("completed_at"):
@@ -140,7 +156,7 @@ def status(manager: Any) -> Dict[str, Any]:
                 or os.environ.get("FRAGMENTA_HF_SPACE", "0") == "1"
                 or bool(os.environ.get("SPACE_ID")))
     size = entry["size_bytes"]
-    so_far = job["downloaded_bytes"] if in_flight else _downloaded_so_far(manager)
+    so_far = job["downloaded_bytes"] if in_flight else _downloaded_so_far(manager, model_id)
     so_far = size if installed else min(so_far, size)
     free = shutil.disk_usage(manager.models_dir).free
     return {
@@ -150,7 +166,7 @@ def status(manager: Any) -> Dict[str, Any]:
         "returning": bool(state.get("completed_at")) and not installed,
         "phase": phase,
         "error": error,
-        "model_id": STARTER_MODEL,
+        "model_id": model_id,
         "model_name": entry["name"],
         "size_bytes": size,
         "downloaded_bytes": so_far,
@@ -181,15 +197,16 @@ def start(manager: Any, accept_terms_version: Optional[str] = None) -> Tuple[Dic
     if refused:
         return refused, 403
     state = _load_state()
+    model_id = starter_model_id()
 
-    size = manager.get_model_info(STARTER_MODEL)["size_bytes"]
-    needed = max(0, size - _downloaded_so_far(manager)) + DISK_MARGIN_BYTES
+    size = manager.get_model_info(model_id)["size_bytes"]
+    needed = max(0, size - _downloaded_so_far(manager, model_id)) + DISK_MARGIN_BYTES
     free = shutil.disk_usage(manager.models_dir).free
     if free < needed:
         return {"error": f"Not enough space (need {needed / 1e9:.1f} GB, have {free / 1e9:.1f} GB).",
                 "code": "disk"}, 409
 
-    job = manager.start_download(STARTER_MODEL, keep_partial=True)
+    job = manager.start_download(model_id, keep_partial=True)
     if job.get("error"):
         return {"error": job["error"], "code": "busy"}, 409
     updates: Dict[str, Any] = {"status": "downloading"}
@@ -200,8 +217,9 @@ def start(manager: Any, accept_terms_version: Optional[str] = None) -> Tuple[Dic
 
 
 def pause(manager: Any) -> Dict[str, Any]:
+    model_id = starter_model_id()
     paused = [j["job_id"] for j in manager.list_jobs()
-              if j["model_id"] == STARTER_MODEL and j["status"] in ("queued", "running")
+              if j["model_id"] == model_id and j["status"] in ("queued", "running")
               and manager.pause_job(j["job_id"])]
     if paused:
         _save_state(status="paused")
@@ -210,12 +228,16 @@ def pause(manager: Any) -> Dict[str, Any]:
 
 def cancel(manager: Any) -> Dict[str, Any]:
     state = _load_state()
+    model_id = starter_model_id()
     cancelled = [j["job_id"] for j in manager.list_jobs()
-                 if j["model_id"] == STARTER_MODEL and j["status"] in ("queued", "running")
+                 if j["model_id"] == model_id and j["status"] in ("queued", "running")
                  and manager.cancel_job(j["job_id"])]
     # A paused download has no job left to stop, so its files go here.
     if not cancelled and state.get("status") == "paused":
-        shutil.rmtree(manager._local_dir_for(STARTER_MODEL), ignore_errors=True)
+        if _shares_its_folder(manager, model_id):
+            manager.delete_model(model_id)
+        else:
+            shutil.rmtree(manager._local_dir_for(model_id), ignore_errors=True)
     _save_state(status="idle")
     return {"cancelled": cancelled}
 
