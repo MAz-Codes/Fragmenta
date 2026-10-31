@@ -433,6 +433,18 @@ def test_full_fine_tunes_list_when_the_data_folder_is_outside_the_code():
     assert response.get_json()["models"][0]["ckpt_path"] == str(ckpt)
 
 
+def test_training_lists_checkpoints_when_the_data_folder_is_outside_the_code():
+    """As in every installed app; this used to raise once a checkpoint was saved."""
+    from app.core.training import sa3_trainer as T
+    with tempfile.TemporaryDirectory() as tmp:
+        ckpt = write(Path(tmp) / "data/run/checkpoints/epoch=1-step=10.ckpt")
+        trainer = SimpleNamespace(run_dir=Path(tmp) / "data/run", status={})
+        config = SimpleNamespace(project_root=Path(tmp) / "code")
+        with mock.patch.object(T, "get_config", return_value=config):
+            T.SA3Trainer._scan_checkpoints(trainer)
+        assert trainer.status["checkpoints"] == [str(ckpt)]
+
+
 def test_vocabulary_edits_go_to_the_data_folder():
     """In an installed app the code folder is read-only."""
     backend, _c = client()

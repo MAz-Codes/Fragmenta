@@ -796,9 +796,15 @@ class SA3Trainer:
         # Lightning writes nested lightning_logs/version_X/* — those aren't
         # the user-facing artifacts; skip recursion.
         project_root = get_config().project_root
-        self.status["checkpoints"] = sorted(
-            str(p.relative_to(project_root)) for p in found
-        )
+
+        def shown_path(path: Path) -> str:
+            # An installed app's data folder is outside the code folder.
+            try:
+                return str(path.relative_to(project_root))
+            except ValueError:
+                return str(path)
+
+        self.status["checkpoints"] = sorted(shown_path(p) for p in found)
 
     def _scrape_csv_loss(self) -> None:
         if not self.metrics_csv or not self.metrics_csv.exists():
