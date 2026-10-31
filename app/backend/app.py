@@ -121,6 +121,16 @@ _init_error = None
 _LEGACY_FINETUNED_CONFIG_PATH = "models/config/model_config_small.json"
 
 
+def _api_path(path: Path, config) -> str:
+    """A path for the frontend to send back. Relative to the code folder when it's
+    inside it; absolute otherwise, as for everything in an installed app's data
+    folder. The routes taking these paths accept both."""
+    try:
+        return str(path.relative_to(config.project_root))
+    except ValueError:
+        return str(path)
+
+
 def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[str]]:
     """Pick the architecture config + base-model identity for a fine-tuned model.
 
@@ -132,10 +142,7 @@ def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[s
     config_path: Optional[str] = None
     per_run_config = model_dir / "model_config.json"
     if per_run_config.exists():
-        try:
-            config_path = str(per_run_config.relative_to(config.project_root))
-        except ValueError:
-            config_path = str(per_run_config)
+        config_path = _api_path(per_run_config, config)
 
     base_model: Optional[str] = None
     metadata_path = model_dir / "training_metadata.json"
@@ -955,11 +962,7 @@ def list_loras():
                     if requested_root and _base_root(base_model) != requested_root:
                         continue
 
-                    # An installed app's data folder is outside the code folder.
-                    try:
-                        rel_path = str(ckpt.relative_to(config.project_root))
-                    except ValueError:
-                        rel_path = str(ckpt)
+                    rel_path = _api_path(ckpt, config)
                     rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
                     alpha = _safe_int(
                         lora_config.get("alpha")
@@ -1065,8 +1068,7 @@ def upload_source_audio():
     dest = uploads_dir / f"{ts}_{safe}{ext}"
     fileobj.save(str(dest))
 
-    rel = dest.relative_to(cfg.project_root)
-    return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
+    return jsonify({"path": _api_path(dest, cfg), "name": dest.name, "size_bytes": dest.stat().st_size})
 
 
 @app.route('/api/performance/recording', methods=['POST'])
@@ -1506,7 +1508,7 @@ def get_models():
 
                     checkpoint_info = {
                         'name': name,
-                        'path': str(ckpt_file.relative_to(config.project_root)),
+                        'path': _api_path(ckpt_file, config),
                         'size_mb': round(ckpt_file.stat().st_size / (1024 * 1024), 1),
                         'created': ckpt_file.stat().st_mtime
                     }
@@ -1533,10 +1535,10 @@ def get_models():
 
                 models.append({
                     'name': model_dir.name,
-                    'path': str(model_dir.relative_to(config.project_root)),
+                    'path': _api_path(model_dir, config),
                     'has_checkpoint': has_checkpoint,
                     'has_config': has_config,
-                    'ckpt_path': str(latest_checkpoint.relative_to(config.project_root)) if latest_checkpoint else None,
+                    'ckpt_path': _api_path(latest_checkpoint, config) if latest_checkpoint else None,
                     'config_path': resolved['config_path'],
                     'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,

@@ -398,6 +398,41 @@ def test_imported_loras_list_when_the_data_folder_is_outside_the_code():
     assert [l["path"] for l in response.get_json()["loras"]] == [str(ckpt)]
 
 
+def test_edit_upload_works_when_the_data_folder_is_outside_the_code():
+    """As in every installed app; this used to fail with a 500."""
+    import io
+    backend, c = client()
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "data"
+        config = SimpleNamespace(get_path=lambda name: data / "output", project_root=Path(tmp) / "code")
+        with mock.patch.object(backend, "get_config", return_value=config), \
+                mock.patch.object(backend, "_ensure_components"):
+            response = c.post("/api/audio/upload", content_type="multipart/form-data",
+                              data={"file": (io.BytesIO(b"RIFF"), "a.wav")})
+            assert response.status_code == 200, response.data
+            assert Path(response.get_json()["path"]).read_bytes() == b"RIFF"
+
+
+def test_api_paths_are_relative_inside_the_code_folder_and_absolute_outside():
+    backend, _c = client()
+    config = SimpleNamespace(project_root=Path("/code"))
+    assert backend._api_path(Path("/code/models/a"), config) == "models/a"
+    assert backend._api_path(Path("/data/models/a"), config) == "/data/models/a"
+
+
+def test_full_fine_tunes_list_when_the_data_folder_is_outside_the_code():
+    backend, c = client()
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "data"
+        ckpt = write(data / "models/fine_tuned/old_run/epoch=1-step=5.ckpt")
+        config = SimpleNamespace(get_path=lambda name: data / "models/fine_tuned", project_root=Path(tmp) / "code")
+        with mock.patch.object(backend, "get_config", return_value=config), \
+                mock.patch.object(backend, "_ensure_components"):
+            response = c.get("/api/models")
+    assert response.status_code == 200, response.data
+    assert response.get_json()["models"][0]["ckpt_path"] == str(ckpt)
+
+
 def test_vocabulary_edits_go_to_the_data_folder():
     """In an installed app the code folder is read-only."""
     backend, _c = client()
