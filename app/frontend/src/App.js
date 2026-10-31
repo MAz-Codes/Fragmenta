@@ -98,6 +98,7 @@ const readStoredTab = () => {
 
 function App() {
     const [showSettings, setShowSettings] = useState(false);
+    const [settingsTab, setSettingsTab] = useState(0);
     const [tabValue, setTabValue] = useState(readStoredTab);
     // Lags behind tabValue by ~fadeDuration so content swap happens
     // while the panel is invisible (cross-fade between pages).
@@ -1404,10 +1405,11 @@ function App() {
                 />
 
                 <StarterCard
-                    open={Boolean(starter.status?.show) && !starterClosed && !showWelcomePage && !checkpointMgrOpen}
+                    open={Boolean(starter.status?.show) && !starterClosed && !showWelcomePage && !checkpointMgrOpen && !showSettings}
                     onClose={() => setStarterClosed(true)}
                     starter={starter}
                     onOpenManager={() => setCheckpointMgrOpen(true)}
+                    onImport={() => { setSettingsTab(3); setShowSettings(true); }}
                 />
 
                 {isHfSpace && (
@@ -1445,7 +1447,7 @@ function App() {
                                 onToggleInfoView={toggleInfoView}
                                 updateVisible={updates.visible}
                                 onShowUpdate={() => setShowUpdateDialog(true)}
-                                onSettings={() => setShowSettings(true)}
+                                onSettings={() => { setSettingsTab(0); setShowSettings(true); }}
                             />
                         </Box>
                     </Box>
@@ -2822,6 +2824,7 @@ function App() {
             <SettingsDialog
                 open={showSettings}
                 showImport={!isDocker && !isHfSpace}
+                initialTab={settingsTab}
                 onClose={() => setShowSettings(false)}
                 aboutProps={{
                     onOpenDocumentation: handleOpenDocumentation,

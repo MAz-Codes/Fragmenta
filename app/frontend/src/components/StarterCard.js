@@ -218,8 +218,9 @@ export function LicenseAgreementDialog({ checkpoint, terms, onAgree, onClose }) 
  *   open, onClose:   the dialog
  *   starter:         what useStarterModel returns
  *   onOpenManager:   () => void, opens the Checkpoint Manager
+ *   onImport:        () => void, opens Settings → Import
  */
-export default function StarterCard({ open, onClose, starter, onOpenManager }) {
+export default function StarterCard({ open, onClose, starter, onOpenManager, onImport }) {
     const { status, refresh, resuming, setResuming } = starter;
     const [agreed, setAgreed] = useState(false);
     const [pausing, setPausing] = useState(false);
@@ -344,6 +345,15 @@ export default function StarterCard({ open, onClose, starter, onOpenManager }) {
                                     Checkpoint Manager
                                 </Typography>{' '}
                                 with a free Hugging Face account.
+                            </Typography>
+                        )}
+
+                        {!started && (
+                            <Typography variant="caption" color="text.secondary">
+                                Have an older Fragmenta?{' '}
+                                <Typography component="a" variant="inherit" onClick={onImport} role="button" sx={LINK_SX}>
+                                    Import it
+                                </Typography>
                             </Typography>
                         )}
                     </Stack>

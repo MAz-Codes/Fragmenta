@@ -96,9 +96,9 @@ function AudioSettingsPanel({ open }) {
  * Settings (the gear in the top toolbar): About first, exactly as the old
  * About dialog, then Audio and MIDI, as tabs down the left side.
  */
-export default function SettingsDialog({ open, onClose, aboutProps, showImport = false }) {
+export default function SettingsDialog({ open, onClose, aboutProps, showImport = false, initialTab = 0 }) {
     const [tab, setTab] = useState(0);
-    useEffect(() => { if (open) setTab(0); }, [open]);
+    useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
     return (
         // Fixed at the About page's size: every tab gets the same window, and
         // longer pages (the MIDI mappings) scroll inside it.
