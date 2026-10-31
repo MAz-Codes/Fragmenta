@@ -2208,7 +2208,7 @@ function App() {
                                                         {starterDownloading ? 'Your first model is downloading. ' : 'No model yet. '}
                                                         <Typography component="a" variant="inherit" role="button" onClick={() => { setStarterDue(true); setStarterClosed(false); }}
                                                             sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
-                                                            {starterDownloading ? 'See progress' : 'Set up your first model'}
+                                                            {starterDownloading ? 'See progress' : 'Get your first model'}
                                                         </Typography>
                                                     </Typography>
                                                 )}

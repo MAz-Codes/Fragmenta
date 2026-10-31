@@ -36,7 +36,26 @@ export const PAGE_FADE = {
     TransitionProps: { easing: { enter: 'ease-in-out' } },
 };
 
-const LINK_SX = { color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' };
+const TextButton = ({ onClick, children, sx }) => (
+    <Typography
+        component="button"
+        type="button"
+        variant="inherit"
+        onClick={onClick}
+        sx={{
+            p: 0,
+            border: 0,
+            background: 'none',
+            color: 'inherit',
+            fontWeight: 600,
+            textDecoration: 'underline',
+            cursor: 'pointer',
+            ...sx,
+        }}
+    >
+        {children}
+    </Typography>
+);
 
 /**
  * State of the first-run starter model (GET /api/starter). Polls while a
@@ -146,22 +165,30 @@ export function LicenseViewer({ open, onClose, licenses, fade }) {
     );
 }
 
-function AgreementTick({ checked, onChange }) {
+function AgreementTick({ checked, onChange, onRead }) {
     return (
         <FormControlLabel
-            sx={{ alignItems: 'flex-start', m: 0 }}
+            sx={{ m: 0 }}
             control={(
                 <Checkbox
                     checked={checked}
                     onChange={(e) => onChange(e.target.checked)}
                     size="small"
-                    sx={{ p: 0, pr: 1, pt: '2px' }}
+                    sx={{ p: 0, pr: 1 }}
                 />
             )}
             label={(
                 <Typography variant="body2">
-                    I have read and agree to the Stability AI Community License, the Gemma
-                    Terms of Use and the Acceptable Use Policy.
+                    I have read and agree to the{' '}
+                    <TextButton
+                        onClick={(e) => {
+                            // Inside the label: opening them mustn't also tick the box.
+                            e.preventDefault();
+                            onRead();
+                        }}
+                    >
+                        licenses
+                    </TextButton>
                 </Typography>
             )}
         />
@@ -195,12 +222,7 @@ export function LicenseAgreementDialog({ checkpoint, terms, onAgree, onClose }) 
                         <Typography variant="body2" color="text.secondary">
                             This will download <strong>{checkpoint?.name}</strong>.
                         </Typography>
-                        <Typography variant="body2">
-                            <Typography component="a" variant="inherit" onClick={() => setLicensesOpen(true)} role="button" sx={LINK_SX}>
-                                Read the licenses
-                            </Typography>
-                        </Typography>
-                        <AgreementTick checked={agreed} onChange={setAgreed} />
+                        <AgreementTick checked={agreed} onChange={setAgreed} onRead={() => setLicensesOpen(true)} />
                     </Stack>
                 </DialogContent>
                 <DialogActions>
@@ -216,7 +238,7 @@ export function LicenseAgreementDialog({ checkpoint, terms, onAgree, onClose }) 
 }
 
 /**
- * "Set up your first model". Closing it stops nothing and decides nothing: a
+ * "Get your first model". Closing it stops nothing and decides nothing: a
  * running download carries on, and App opens the card again at the next launch
  * for as long as no model is on disk or downloading.
  *
@@ -284,115 +306,99 @@ export default function StarterCard({ open, onClose, starter, onOpenManager, onI
         if (seconds > 5 && rate > 0) left = fmtLeft((size - downloaded) / rate);
     }
     const started = phase === 'downloading' || phase === 'paused' || phase === 'interrupted';
-    const progressLine = [`${pct}%`, `${fmtGb(downloaded)} / ${fmtGb(size)} GB`, left].filter(Boolean).join(' · ');
-    const readLicenses = (
-        <Typography component="a" variant="inherit" onClick={() => setLicensesOpen(true)} role="button" sx={LINK_SX}>
-            Read the licenses
-        </Typography>
-    );
 
     return (
         <>
             <Dialog
                 open={open}
                 onClose={onClose}
-                maxWidth="sm"
-                fullWidth
                 aria-labelledby="starter-title"
                 transitionDuration={{ enter: 900, exit: 200 }}
+                PaperProps={{ sx: { position: 'relative', width: 440, maxWidth: 'calc(100% - 32px)', p: 4 } }}
             >
-                <DialogTitle id="starter-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Box sx={{ flex: 1 }}>{status.returning ? 'No models installed' : 'Set up your first model'}</Box>
-                    <IconButton size="small" onClick={onClose} aria-label="Close"><CloseIcon size={18} /></IconButton>
-                </DialogTitle>
+                <IconButton
+                    size="small"
+                    onClick={onClose}
+                    aria-label="Close"
+                    sx={{ position: 'absolute', top: 16, right: 16 }}
+                >
+                    <CloseIcon size={18} />
+                </IconButton>
 
-                <DialogContent>
-                    <Stack spacing={2}>
-                        <Typography variant="body2" color="text.secondary">
-                            This will download <strong>{status.model_name}</strong>.
+                <Stack spacing={2.75}>
+                    <Box>
+                        <Typography id="starter-title" variant="h5" component="h1" sx={{ pr: 3, mb: 1.75 }}>
+                            {status.returning ? 'No models installed' : 'Get your first model'}
                         </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                            {status.model_name} · {fmtGb(size)} GB
+                        </Typography>
+                    </Box>
 
-                        <Typography variant="body2">{readLicenses}</Typography>
+                    {!started && !status.terms_accepted && (
+                        <AgreementTick checked={agreed} onChange={setAgreed} onRead={() => setLicensesOpen(true)} />
+                    )}
 
-                        {!started && !status.terms_accepted && (
-                            <AgreementTick checked={agreed} onChange={setAgreed} />
-                        )}
-
-                        {started && (
-                            <Box>
-                                <LinearProgress
-                                    variant={phase === 'interrupted' ? 'indeterminate' : 'determinate'}
-                                    value={pct}
-                                    sx={{ height: 8, borderRadius: 999 }}
-                                />
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                                    {progressLine}
+                    {started && (
+                        <Box>
+                            <LinearProgress
+                                variant={phase === 'interrupted' ? 'indeterminate' : 'determinate'}
+                                value={pct}
+                                sx={{ height: 8, borderRadius: 999 }}
+                            />
+                            <Stack direction="row" justifyContent="space-between" sx={{ mt: 1 }}>
+                                <Typography variant="caption" color="text.secondary">
+                                    {pct}% · {fmtGb(downloaded)} / {fmtGb(size)} GB
                                 </Typography>
+                                <Typography variant="caption" color="text.secondary">{left}</Typography>
+                            </Stack>
+                            {(phase === 'paused' || resuming) && (
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                    {phase === 'paused' && 'Paused. Finished files are kept; the current file restarts when you resume.'}
-                                    {phase !== 'paused' && resuming && 'Resuming — the current file restarts.'}
-                                    {phase !== 'paused' && !resuming && 'You can close this and keep exploring while it downloads.'}
+                                    {phase === 'paused'
+                                        ? 'Paused. The current file restarts when you resume.'
+                                        : 'Resuming. The current file restarts.'}
                                 </Typography>
-                            </Box>
-                        )}
-
-                        {phase === 'failed' && status.error && (
-                            <Alert severity="error">
-                                {status.error}{' '}
-                                <Typography component="a" variant="inherit" onClick={onOpenManager} role="button" sx={LINK_SX}>
-                                    Download later from Checkpoint Manager
-                                </Typography>
-                            </Alert>
-                        )}
-                        {requestError && <Alert severity="error">{requestError}</Alert>}
-                        {!started && noSpace && (
-                            <Alert severity="warning">
-                                Not enough space (need {fmtGb(status.needed_bytes)} GB, have {fmtGb(status.free_bytes)} GB).
-                            </Alert>
-                        )}
-
-                        {!status.returning && (
-                            <Typography variant="caption" color="text.secondary">
-                                Tip: faster distilled models are available in the{' '}
-                                <Typography component="a" variant="inherit" onClick={onOpenManager} role="button" sx={LINK_SX}>
-                                    Checkpoint Manager
-                                </Typography>{' '}
-                                with a free Hugging Face account.
-                            </Typography>
-                        )}
-
-                        {!started && (
-                            <Typography variant="caption" color="text.secondary">
-                                Have an older Fragmenta?{' '}
-                                <Typography component="a" variant="inherit" onClick={onImport} role="button" sx={LINK_SX}>
-                                    Import it
-                                </Typography>
-                            </Typography>
-                        )}
-                    </Stack>
-                </DialogContent>
-
-                <DialogActions>
-                    {phase === 'downloading' && (
-                        <>
-                            <Button onClick={cancel}>Cancel</Button>
-                            <Button onClick={pause} disabled={pausing} variant="contained">
-                                {pausing ? 'Pausing…' : 'Pause'}
-                            </Button>
-                        </>
+                            )}
+                        </Box>
                     )}
-                    {phase === 'paused' && (
-                        <>
-                            <Button onClick={cancel}>Cancel</Button>
-                            <Button onClick={download} disabled={noSpace} variant="contained">Resume</Button>
-                        </>
+
+                    {phase === 'failed' && status.error && <Alert severity="error">{status.error}</Alert>}
+                    {requestError && <Alert severity="error">{requestError}</Alert>}
+                    {!started && noSpace && (
+                        <Alert severity="warning">
+                            Not enough space (need {fmtGb(status.needed_bytes)} GB, have {fmtGb(status.free_bytes)} GB).
+                        </Alert>
                     )}
+
                     {(phase === 'idle' || phase === 'failed') && (
-                        <Button onClick={download} disabled={!canDownload} variant="contained">
-                            {phase === 'failed' ? 'Retry' : `Download (${fmtGb(size)} GB)`}
+                        <Button onClick={download} disabled={!canDownload} variant="contained" fullWidth sx={{ minHeight: 46 }}>
+                            {phase === 'failed' ? 'Retry' : 'Download'}
                         </Button>
                     )}
-                </DialogActions>
+                    {(phase === 'downloading' || phase === 'paused') && (
+                        <Stack direction="row" spacing={1} justifyContent="center">
+                            {phase === 'downloading' ? (
+                                <Button onClick={pause} disabled={pausing} variant="contained">
+                                    {pausing ? 'Pausing…' : 'Pause'}
+                                </Button>
+                            ) : (
+                                <Button onClick={download} disabled={noSpace} variant="contained">Resume</Button>
+                            )}
+                            <Button onClick={cancel}>Cancel</Button>
+                        </Stack>
+                    )}
+
+                    {!started && (
+                        <Stack direction="row" justifyContent="center" spacing={2.25}>
+                            <Typography variant="caption" color="text.secondary">
+                                <TextButton onClick={onImport} sx={{ fontWeight: 400 }}>Import from an older Fragmenta</TextButton>
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                                <TextButton onClick={onOpenManager} sx={{ fontWeight: 400 }}>More models</TextButton>
+                            </Typography>
+                        </Stack>
+                    )}
+                </Stack>
             </Dialog>
 
             <LicenseViewer
