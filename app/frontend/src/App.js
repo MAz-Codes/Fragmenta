@@ -80,7 +80,7 @@ import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
-const STARTER_CARD_DELAY_MS = 7000;
+const STARTER_CARD_DELAY_MS = 5000;
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
