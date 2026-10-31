@@ -4,7 +4,12 @@
 Skips an engine that can't run here or whose models aren't downloaded. Loads
 real models, so on a small box run it in its own memory-capped group. Run:
     venv/bin/python tests/smoke_test_engine_contract.py
+
+FRAGMENTA_TEST_PRETRAINED points at another models folder, and
+FRAGMENTA_TEST_ENGINES=mlx picks engines (MLX has a Linux CPU build, so it can run
+here, slowly, with FRAGMENTA_SHOW_MLX=1).
 """
+import os
 import sys
 import tempfile
 import threading
@@ -19,7 +24,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app.core.generation import audio_generator as G  # noqa: E402
-from app.core.generation.engine import Capabilities  # noqa: E402
+from app.core.generation.engine import Capabilities, GenerationRequest  # noqa: E402
+from app.core.generation.models import lora_family  # noqa: E402
 from app.core.model_manager import ModelManager  # noqa: E402
 
 DURATION = 4.0
@@ -102,12 +108,15 @@ def check_inpaint(run, capabilities, source_path, src):
         check("both regions change", max(first, second) < between - 0.1, f"{first:.3f}, {second:.3f}")
 
 
-def base_checks(run, capabilities, lora):
+def base_checks(run):
     audio, _ = run()
     check("negative prompt changes the audio", not np.array_equal(audio, run(negative_prompt="vocals")[0]))
     check("cfg changes the audio", not np.array_equal(audio, run(cfg_scale=2.0)[0]))
     check("steps change the audio", not np.array_equal(audio, run(steps=6)[0]))
 
+
+def lora_checks(run, capabilities, lora):
+    audio, _ = run()
     if capabilities.loras and lora:
         spec = {"path": str(lora), "strength": 1.0}
         full, _ = run(loras=[spec])
@@ -117,6 +126,36 @@ def base_checks(run, capabilities, lora):
         zero, _ = run(loras=[{**spec, "strength": 0.0}])
         check("strength 0 sounds like no LoRA", correlation(zero, audio) > 0.999, f"{correlation(zero, audio):.5f}")
         check("removing the LoRA gives the plain model back", np.array_equal(run()[0], audio))
+
+
+def direct_engine_checks(generator, run):
+    """Through the engine itself: distilled models never get these from the generator."""
+    audio, _ = run()
+    run_request = dict(prompt="warm analog synth arpeggio", model_id=run.model_id, duration=DURATION, steps=8, seed=7)
+
+    def direct(**kw):
+        return generator._active.generate(GenerationRequest(**{"cfg_scale": 1.0, **run_request, **kw}), lambda _info: None)
+
+    plain = direct()
+    guided = direct(cfg_scale=3.0)
+    negative = direct(cfg_scale=3.0, negative_prompt="vocals")
+    check("the engine applies cfg", finite(guided) and not np.array_equal(plain, guided))
+    check("the engine applies a negative prompt", finite(negative) and not np.array_equal(guided, negative))
+    check("steps change the audio", not np.array_equal(plain, direct(steps=4)))
+
+    result = {}
+
+    def elsewhere():
+        result["audio"] = run()[0]
+
+    thread = threading.Thread(target=elsewhere)
+    thread.start()
+    thread.join()
+    check("works from another thread, as Flask calls it", np.array_equal(result.get("audio"), audio))
+
+
+def finite(audio):
+    return bool(np.isfinite(audio).all())
 
 
 def stop_checks(generator, run, out_dir):
@@ -142,11 +181,12 @@ def stop_checks(generator, run, out_dir):
 def lora_for(model_id):
     import json
     runs = ROOT / "models" / "fine_tuned"
+    family = lora_family(model_id)
     for run_dir in sorted(runs.glob("*")) if runs.is_dir() else []:
         meta = run_dir / "training_metadata.json"
         checkpoints = sorted((run_dir / "checkpoints").glob("*.safetensors")) if run_dir.is_dir() else []
         if meta.exists() and checkpoints:
-            if json.loads(meta.read_text(encoding="utf-8")).get("base_model") == model_id:
+            if lora_family(json.loads(meta.read_text(encoding="utf-8")).get("base_model") or "") == family:
                 return checkpoints[-1]
     return None
 
@@ -154,7 +194,8 @@ def lora_for(model_id):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         out_dir = Path(tmp)
-        paths = {"models_pretrained": ROOT / "models/pretrained", "output": out_dir}
+        pretrained = Path(os.environ.get("FRAGMENTA_TEST_PRETRAINED") or ROOT / "models/pretrained")
+        paths = {"models_pretrained": pretrained, "output": out_dir}
         config = SimpleNamespace(get_path=paths.__getitem__)
         manager = ModelManager(config)
         generator = G.AudioGenerator(config)
@@ -162,7 +203,10 @@ def main():
         source_path.parent.mkdir()
         src = make_source(source_path)
 
+        wanted = os.environ.get("FRAGMENTA_TEST_ENGINES")
         for engine_name, distilled, base in G.ENGINE_TEST_MODELS:
+            if wanted and engine_name not in wanted.split(","):
+                continue
             if not G.engine_available(engine_name):
                 print(f"SKIP {engine_name}: can't run on this machine")
                 continue
@@ -172,13 +216,18 @@ def main():
                 print(f" {distilled}")
                 run = Runner(generator, distilled)
                 distilled_checks(run, capabilities, source_path, src)
+                lora_checks(run, capabilities, lora_for(distilled))
+                if not base:
+                    direct_engine_checks(generator, run)
                 stop_checks(generator, Runner(generator, distilled), out_dir)
             else:
                 print(f"SKIP {distilled}: not downloaded")
             if base and manager.is_model_downloaded(base):
                 print(f" {base}")
-                base_checks(Runner(generator, base, steps=10, cfg_scale=4.0), capabilities, lora_for(base))
-            else:
+                run = Runner(generator, base, steps=10, cfg_scale=4.0)
+                base_checks(run)
+                lora_checks(run, capabilities, lora_for(base))
+            elif base:
                 print(f"SKIP {base}: not downloaded")
 
     print(f"\n{'FAILED: ' + ', '.join(failures) if failures else 'All passed'}")

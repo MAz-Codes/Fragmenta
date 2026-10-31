@@ -390,6 +390,105 @@ def test_manager_download_without_keep_partial_is_removed_by_cancel():
         assert the_job.status == "cancelled" and not target.exists()
 
 
+# --- MLX models: one repo, shared files ---------------------------------------
+
+def mlx_snapshot(e, *names):
+    """Finished files in the HF cache layout: snapshot links pointing at blobs."""
+    repo = e.manager._local_dir_for("sa3-mlx-small-music")
+    (repo / "blobs").mkdir(parents=True, exist_ok=True)
+    (repo / "snapshots/rev/MLX").mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (repo / "blobs" / f"blob-{name}").write_bytes(b"x" * 100)
+        link = repo / "snapshots/rev/MLX" / name
+        if not link.is_symlink():
+            link.symlink_to(f"../../../blobs/blob-{name}")
+    return repo
+
+
+def mlx_files(model_id):
+    return mm._SA3_CATALOG[model_id]["files"]
+
+
+def test_an_mlx_model_needs_all_its_files():
+    with Env() as e:
+        names = mlx_files("sa3-mlx-small-music")
+        mlx_snapshot(e, *names[:-1])
+        assert not e.manager.is_model_downloaded("sa3-mlx-small-music")
+        mlx_snapshot(e, names[-1])
+        assert e.manager.is_model_downloaded("sa3-mlx-small-music")
+        assert not e.manager.is_model_downloaded("sa3-mlx-small-sfx")
+
+
+def test_deleting_an_mlx_model_keeps_what_another_still_uses():
+    with Env() as e:
+        music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
+        repo = mlx_snapshot(e, *music, *sfx)
+        assert e.manager.delete_model("sa3-mlx-small-music")
+        assert e.manager.is_model_downloaded("sa3-mlx-small-sfx")
+        assert not e.manager.is_model_downloaded("sa3-mlx-small-music")
+        assert not (repo / "blobs/blob-dit_sm-music_f16.npz").exists()
+        assert (repo / "blobs/blob-t5gemma_f16.npz").exists()
+
+
+def test_deleting_the_last_mlx_model_frees_everything_it_used():
+    with Env() as e:
+        repo = mlx_snapshot(e, *mlx_files("sa3-mlx-small-music"))
+        assert e.manager.delete_model("sa3-mlx-small-music")
+        assert not [p for p in (repo / "blobs").iterdir()]
+
+
+def test_cancelling_an_mlx_download_never_touches_an_installed_sibling():
+    with Env() as e:
+        music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
+        repo = mlx_snapshot(e, *music)
+
+        def fake_snapshot(**_kwargs):
+            (repo / "blobs/half.incomplete").write_bytes(b"x")
+            mlx_snapshot(e, "dit_sm-sfx_f16.npz")
+            e.manager.cancel_job(job_id)
+            raise mm._DownloadCancelled()
+
+        with mock.patch.object(mm, "snapshot_download", fake_snapshot):
+            job_id = e.manager.start_download("sa3-mlx-small-sfx")["job_id"]
+            e.manager._jobs[job_id]._thread.join(20)
+        assert e.manager.get_job(job_id)["status"] == "cancelled"
+        assert e.manager.is_model_downloaded("sa3-mlx-small-music"), "the sibling must survive"
+        assert not (repo / "blobs/blob-dit_sm-sfx_f16.npz").exists() and not (repo / "blobs/half.incomplete").exists()
+
+
+def test_mlx_downloads_ask_only_for_their_own_files_without_a_token():
+    with Env() as e:
+        seen = {}
+
+        def fake_snapshot(**kwargs):
+            seen.update(kwargs)
+            mlx_snapshot(e, *mlx_files("sa3-mlx-medium"))
+            return "x"
+
+        with mock.patch.object(mm, "snapshot_download", fake_snapshot):
+            job_id = e.manager.start_download("sa3-mlx-medium")["job_id"]
+            e.manager._jobs[job_id]._thread.join(20)
+        assert e.manager.get_job(job_id)["status"] == "complete"
+        assert seen["token"] is False and seen["repo_id"] == "stabilityai/stable-audio-3-optimized"
+        assert sorted(seen["allow_patterns"]) == sorted(f"MLX/{n}" for n in mlx_files("sa3-mlx-medium"))
+
+
+def test_shared_files_count_once_in_the_storage_total():
+    with Env() as e:
+        mlx_snapshot(e, *mlx_files("sa3-mlx-small-music"), *mlx_files("sa3-mlx-small-sfx"))
+        assert e.manager.get_storage_info()["total_used_bytes"] == 500  # five files, 100 bytes each
+
+
+def test_mlx_models_show_only_on_apple_silicon():
+    with Env() as e:
+        ids = lambda: {c["id"] for c in e.manager.get_catalog()}
+        with mock.patch.object(mm, "sys", SimpleNamespace(platform="linux")), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "0"}):
+            assert not [i for i in ids() if "mlx" in i]
+        with mock.patch.object(mm, "sys", SimpleNamespace(platform="darwin")), mock.patch.dict(os.environ, {"FRAGMENTA_SHOW_MLX": "0"}), \
+                mock.patch.object(mm.platform, "machine", return_value="arm64"):
+            assert {"sa3-mlx-small-music", "sa3-mlx-small-sfx", "sa3-mlx-medium"} <= ids()
+
+
 def test_files_stay_in_the_models_own_folder():
     """hf-hub 2.x's cache-wide blobs would survive deleting a model's folder."""
     with Env():

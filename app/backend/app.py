@@ -2,8 +2,9 @@ from utils.validators import Validator
 from utils.exceptions import ModelNotFoundError, ValidationError, GenerationError
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
-from app.core.generation.audio_generator import AudioGenerator
+from app.core.generation.audio_generator import AudioGenerator, engine_available
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
+from app.core.generation.models import lora_family
 from app.core.generation.provenance import recording_tags, tag_existing_wav
 from app.backend import data_import, starter_model, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
@@ -699,8 +700,7 @@ def generate_audio():
                 _lora_meta = {}
             _lora_base = _lora_meta.get('base_model') or _lora_meta.get('base_model_id')
             if _lora_base and str(_lora_base).startswith('sa3-'):
-                _strip = lambda m: m[:-5] if m.endswith('-base') else m
-                if _strip(str(_lora_base)) != _strip(model_id):
+                if lora_family(str(_lora_base)) != lora_family(model_id):
                     return jsonify(APIResponse.error(
                         f"LoRA base mismatch: '{Path(lora_path).name}' was trained "
                         f"against {_lora_base}, which is incompatible with {model_id}.",
@@ -2762,6 +2762,7 @@ def environment():
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,
+        'mlx_available': engine_available('mlx'),
         'flash_attn_available': flash,
         'beatsync_v2': beatsync_v2,
         'python_version': _platform.python_version(),

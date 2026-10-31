@@ -102,11 +102,30 @@ def request_fields():
 
 
 def test_every_engine_handles_every_request_field():
+    from app.core.generation.mlx_engine import MlxEngine
     from app.core.generation.torch_engine import TorchEngine
-    for engine in (TorchEngine,):
+    for engine in (TorchEngine, MlxEngine):
         missing = request_fields() - set(engine.handled_fields)
         unknown = set(engine.handled_fields) - request_fields()
         assert not missing and not unknown, (engine.__name__, missing, unknown)
+
+
+def test_loras_cross_between_a_base_model_and_its_builds():
+    from app.core.generation.models import engine_for, lora_family
+    assert lora_family("sa3-small-music-base") == lora_family("sa3-small-music") == lora_family("sa3-mlx-small-music")
+    assert lora_family("sa3-medium-base") == lora_family("sa3-mlx-medium")
+    assert lora_family("sa3-small-music-base") != lora_family("sa3-small-sfx-base")
+    assert engine_for("sa3-mlx-medium") == "mlx" and engine_for("sa3-medium") == "torch"
+
+
+def test_mlx_bundles_match_what_the_engine_loads():
+    from app.core.generation.mlx_engine import weight_files
+    from app.core.generation.models import MODEL_INFO
+    from app.core.model_manager import _SA3_CATALOG
+    for model_id in MODEL_INFO:
+        if "mlx" in model_id:
+            assert sorted(weight_files(model_id)) == sorted(_SA3_CATALOG[model_id]["files"]), model_id
+            assert MODEL_INFO[model_id][2] == _SA3_CATALOG[model_id]["max_duration_sec"], model_id
 
 
 # --- what the request carries --------------------------------------------------------

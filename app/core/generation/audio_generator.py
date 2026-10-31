@@ -87,11 +87,17 @@ def _slugify(text: str, max_len: int = 40) -> str:
 
 
 # (engine, its distilled model, its base model) for the real-model contract test.
-ENGINE_TEST_MODELS = (("torch", "sa3-small-music", "sa3-small-music-base"),)
+ENGINE_TEST_MODELS = (
+    ("torch", "sa3-small-music", "sa3-small-music-base"),
+    ("mlx", "sa3-mlx-small-music", None),
+)
 
 
 def _engine_class(name: str) -> Any:
     # Imported here: an engine's framework only loads on the machines that use it.
+    if name == "mlx":
+        from app.core.generation.mlx_engine import MlxEngine
+        return MlxEngine
     from app.core.generation.torch_engine import TorchEngine
     return TorchEngine
 

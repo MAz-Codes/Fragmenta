@@ -11,7 +11,9 @@ returned by the `/api/checkpoints/*` endpoints in `app/backend/app.py`.
 import contextlib
 import json
 import os
+import platform
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -131,6 +133,45 @@ _SA3_CATALOG: Dict[str, Dict[str, Any]] = {
         "hardware": "cuda",
         "description": "Standalone autoencoder (1.7B). Already bundled with medium.",
     },
+    # --- Apple Silicon (MLX) ------------------------------------------------
+    # Ungated, and all from one repo, where they share files: `files` lists what
+    # each needs, so delete and cancel must never touch what another still uses.
+    "sa3-mlx-small-music": {
+        "kind": "mlx",
+        "token_free": True,
+        "name": "Small - Music",
+        "sa3_name": "mlx-small-music",
+        "repo": "stabilityai/stable-audio-3-optimized",
+        "files": ("t5gemma_f16.npz", "dit_sm-music_f16.npz", "same_s_decoder_f32.npz", "same_s_encoder_f32.npz"),
+        "size_bytes": 1_920_000_000,
+        "hardware": "apple-silicon",
+        "max_duration_sec": 120,
+        "description": "Fast music generation on Apple Silicon. No account needed.",
+    },
+    "sa3-mlx-small-sfx": {
+        "kind": "mlx",
+        "token_free": True,
+        "name": "Small - SFX",
+        "sa3_name": "mlx-small-sfx",
+        "repo": "stabilityai/stable-audio-3-optimized",
+        "files": ("t5gemma_f16.npz", "dit_sm-sfx_f16.npz", "same_s_decoder_f32.npz", "same_s_encoder_f32.npz"),
+        "size_bytes": 1_920_000_000,
+        "hardware": "apple-silicon",
+        "max_duration_sec": 120,
+        "description": "Fast SFX generation on Apple Silicon. No account needed.",
+    },
+    "sa3-mlx-medium": {
+        "kind": "mlx",
+        "token_free": True,
+        "name": "Medium",
+        "sa3_name": "mlx-medium",
+        "repo": "stabilityai/stable-audio-3-optimized",
+        "files": ("t5gemma_f16.npz", "dit_medium_f16.npz", "same_l_decoder_f32.npz", "same_l_encoder_f32.npz"),
+        "size_bytes": 6_880_000_000,
+        "hardware": "apple-silicon",
+        "max_duration_sec": 380,
+        "description": "Hi-fi generation on Apple Silicon, up to 380s. No account needed.",
+    },
     # --- Auto-annotation tools ---------------------------------------------
     # Single-file HF download, lives under <models_pretrained>/clap/.
     # `is_model_downloaded` and `_run_download` special-case kind=="tagger".
@@ -168,6 +209,8 @@ class _DownloadJob:
     finished_at: Optional[str] = None
     # Count files already on disk in the progress, and keep them if stopped.
     keep_partial: bool = False
+    # The target folder also holds other models' files (MLX), so its size isn't ours.
+    shared_folder: bool = False
     _pausing: bool = False
     _cancel_flag: threading.Event = field(default_factory=threading.Event)
     _thread: Optional[threading.Thread] = None
@@ -183,6 +226,14 @@ class _DownloadJob:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
         }
+
+
+def mlx_models_visible() -> bool:
+    """MLX models are for Apple Silicon. FRAGMENTA_SHOW_MLX=1 shows them anywhere,
+    for testing with MLX's Linux build."""
+    if os.environ.get("FRAGMENTA_SHOW_MLX") == "1":
+        return True
+    return sys.platform == "darwin" and platform.machine() == "arm64"
 
 
 class _DownloadCancelled(Exception):
@@ -291,16 +342,13 @@ class ModelManager:
             self._catalog_entry(mid)
             for mid, info in _SA3_CATALOG.items()
             if include_hidden or info.get("user_visible")
+            or (info.get("kind") == "mlx" and mlx_models_visible())
         ]
 
     def _catalog_entry(self, model_id: str) -> Dict[str, Any]:
         info = _SA3_CATALOG[model_id]
         downloaded = self.is_model_downloaded(model_id)
-        bytes_total = 0
-        if downloaded:
-            for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id)):
-                if d.exists():
-                    bytes_total += self._dir_size(d)
+        bytes_total = self._model_bytes(model_id) if downloaded else 0
 
         # Surface the most recent in-flight job for this model so the
         # frontend can resume the progress bar after the Checkpoint Manager
@@ -327,7 +375,7 @@ class ModelManager:
             "hardware": info["hardware"],
             "max_duration_sec": info.get("max_duration_sec"),
             "description": info["description"],
-            "user_visible": info.get("user_visible", False),
+            "user_visible": info.get("user_visible", False) or (info.get("kind") == "mlx" and mlx_models_visible()),
             "downloaded": downloaded,
             "downloaded_bytes": bytes_total,
             "active_job": active_job,
@@ -360,6 +408,8 @@ class ModelManager:
         if model_id not in _SA3_CATALOG:
             return False
         info = _SA3_CATALOG[model_id]
+        if info.get("kind") == "mlx":
+            return all(self._bundle_file(model_id, name) for name in info["files"])
         if info.get("kind") == "tagger":
             # Single-file artifacts live in <models_pretrained>/<group>/<filename>.
             # auto_annotator owns the exact path for CLAP, so we delegate.
@@ -395,6 +445,47 @@ class ModelManager:
         # "ready to train / generate" — without one the first run blocks for
         # 30s+ on an HF fetch.
         return self._is_companion_present(model_id)
+
+    # --- MLX bundles: several models, one repo, shared files ---------------------
+    def _bundle_file(self, model_id: str, name: str) -> Optional[Path]:
+        """A finished file of this model's repo, or None."""
+        for found in sorted((self._hub_cache_dir_for(model_id) / "snapshots").glob(f"*/MLX/{name}")):
+            if found.exists():
+                return found
+        return None
+
+    def _files_in_use_elsewhere(self, model_id: str) -> set:
+        keep: set = set()
+        for other, info in _SA3_CATALOG.items():
+            if other != model_id and info.get("kind") == "mlx" and self.is_model_downloaded(other):
+                keep.update(info["files"])
+        return keep
+
+    def _delete_bundle(self, model_id: str) -> bool:
+        """Remove the files only this model uses, and any half-written ones."""
+        info = _SA3_CATALOG[model_id]
+        keep = self._files_in_use_elsewhere(model_id)
+        repo_dir = self._hub_cache_dir_for(model_id)
+        removed = False
+        for name in info["files"]:
+            if name in keep:
+                continue
+            for link in (repo_dir / "snapshots").glob(f"*/MLX/{name}"):
+                blob = link.resolve()
+                link.unlink(missing_ok=True)
+                if blob != link:
+                    blob.unlink(missing_ok=True)
+                removed = True
+        purge_incomplete(repo_dir)
+        return removed
+
+    def _model_bytes(self, model_id: str) -> int:
+        info = _SA3_CATALOG[model_id]
+        if info.get("kind") == "mlx":
+            found = (self._bundle_file(model_id, name) for name in info["files"])
+            return sum(f.stat().st_size for f in found if f)
+        return sum(self._dir_size(d) for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id))
+                   if d.exists())
 
     def _is_companion_present(self, model_id: str) -> bool:
         from app.core.training.sa3_lora_runner import SA3_T5GEMMA_SIBLINGS, snapshot_has_conditioner
@@ -607,6 +698,10 @@ class ModelManager:
         target = self._hub_cache_dir_for(job.model_id)
         if job.keep_partial:
             purge_incomplete(target)  # hf-hub starts a new partial file every time
+        if info.get("kind") == "mlx":
+            job.shared_folder = True
+            if job.keep_partial:
+                job.downloaded_bytes = self._model_bytes(job.model_id)
 
         # Ungated repos download without credentials, so a stale or invalid
         # stored token can't turn into a 401.
@@ -638,7 +733,7 @@ class ModelManager:
                     repo_id=info["repo"],
                     cache_dir=str(cache_dir),
                     token=token,
-                    allow_patterns=[
+                    allow_patterns=[f"MLX/{name}" for name in info["files"]] if info.get("files") else [
                         "*.safetensors", "*.json", "*.txt", "*.model",
                         "tokenizer*", "*.tiktoken",
                     ],
@@ -679,7 +774,7 @@ class ModelManager:
             with xet_disabled():
                 _fetch()
             job.status = "complete"
-            job.downloaded_bytes = self._dir_size(target)
+            job.downloaded_bytes = self._model_bytes(job.model_id)
             if progress_callback:
                 progress_callback(100, f"Downloaded {info['name']}")
         except _DownloadCancelled:
@@ -688,7 +783,9 @@ class ModelManager:
                 return
             job.status = "cancelled"
             job.error = "Cancelled by user"
-            if not main_snapshot_complete:
+            if info.get("kind") == "mlx":
+                self._delete_bundle(job.model_id)
+            elif not main_snapshot_complete:
                 shutil.rmtree(target, ignore_errors=True)
             elif sibling_dir is not None and not sibling_preexisting:
                 # Cancelled during the companion fetch. Keep the completed
@@ -717,6 +814,8 @@ class ModelManager:
     def delete_model(self, model_id: str) -> bool:
         if model_id not in _SA3_CATALOG:
             return False
+        if _SA3_CATALOG[model_id].get("kind") == "mlx":
+            return self._delete_bundle(model_id)
         # Remove both the canonical hub copy and the legacy flat copy if
         # they exist. Either being present is enough to consider the
         # model "downloaded", so both must be cleaned for the row to
@@ -735,17 +834,23 @@ class ModelManager:
     def get_storage_info(self) -> Dict[str, Any]:
         per_model: List[Dict[str, Any]] = []
         total_used = 0
-        for mid in _SA3_CATALOG:
-            bytes_ = 0
-            for d in (self._hub_cache_dir_for(mid), self._legacy_flat_dir_for(mid)):
-                if d.exists():
-                    bytes_ += self._dir_size(d)
+        counted_files = set()
+        for mid, info in _SA3_CATALOG.items():
+            bytes_ = self._model_bytes(mid)
             per_model.append({
                 "id": mid,
                 "downloaded": self.is_model_downloaded(mid),
                 "bytes": bytes_,
             })
-            total_used += bytes_
+            if info.get("kind") == "mlx":
+                # Files shared between MLX models only take up the space once.
+                for name in info["files"]:
+                    found = self._bundle_file(mid, name)
+                    if found and name not in counted_files:
+                        counted_files.add(name)
+                        total_used += found.stat().st_size
+            else:
+                total_used += bytes_
         return {
             "total_used_bytes": total_used,
             "total_free_bytes": shutil.disk_usage(self.models_dir).free,
@@ -845,11 +950,12 @@ def _disk_progress_poller(
     # Count only bytes written during this run, so a partial leftover from a
     # failed attempt doesn't make the bar start mid-way (or over 100%). A resumed
     # download does want the bar to start where it left off.
-    baseline = 0 if job.keep_partial else _size()
+    start = job.downloaded_bytes
+    baseline = 0 if job.keep_partial and not start and not job.shared_folder else _size()
 
     def _loop() -> None:
         while not stop.wait(interval):
-            size = max(0, _size() - baseline)
+            size = start + max(0, _size() - baseline)
             if size > job.downloaded_bytes:
                 job.downloaded_bytes = size
                 if progress_callback and job.total_bytes:
