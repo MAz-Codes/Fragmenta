@@ -1,8 +1,8 @@
-"""SA3 inference engine.
+"""Generation: everything that isn't model sampling.
 
-Thin wrapper around stable_audio_3.StableAudioModel.from_pretrained() that
-caches the loaded model between requests (eviction on model_id change),
-auto-detects the device, and writes 44.1 kHz stereo int16 WAV.
+Builds the request, reads input audio, reports progress, handles stop, and writes
+the 44.1 kHz stereo int16 WAV with its tags. The sampling itself belongs to an
+engine (engine.py); this picks the one that runs the requested model.
 
 Generations are serialized: `generate_audio` holds an internal lock for the
 whole run, so concurrent requests (e.g. a Performance-channel generation
@@ -14,18 +14,16 @@ Cancellation is per-run: each generation gets its own stop event, set by
 checks the event and aborts mid-run. Starting a new generation can never
 clear a stop aimed at the previous one.
 """
-import os
 import re
-import sys
 import threading
 import time
-import warnings
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import numpy as np
-import torch
 
+from app.core.generation.engine import Capabilities, Engine, GenerationRequest
+from app.core.generation.models import MODEL_INFO as _MODEL_INFO, engine_for
 from app.core.generation.provenance import generation_tags, write_tagged_wav
 from utils.logger import get_logger
 
@@ -79,26 +77,6 @@ def _reset_progress() -> None:
             "started_at": None, "ended_at": None, "error": None,
         })
 
-# Vendored SA3 lives at <repo>/vendor/stable-audio-3 — put it on sys.path so
-# `import stable_audio_3` resolves without a global pip install.
-_SA3_VENDOR = Path(__file__).resolve().parents[3] / "vendor" / "stable-audio-3"
-if str(_SA3_VENDOR) not in sys.path:
-    sys.path.insert(0, str(_SA3_VENDOR))
-
-
-# model_id -> (sa3_name passed to StableAudioModel.from_pretrained,
-#              "user-visible or base" tag, max duration seconds).
-# Kept in sync manually with _SA3_CATALOG in app/core/model_manager.py.
-_MODEL_INFO: Dict[str, Tuple[str, str, int]] = {
-    "sa3-small-music":      ("small-music",      "post", 120),
-    "sa3-small-sfx":        ("small-sfx",        "post", 120),
-    "sa3-medium":           ("medium",           "post", 380),
-    "sa3-small-music-base": ("small-music-base", "base", 120),
-    "sa3-small-sfx-base":   ("small-sfx-base",   "base", 120),
-    "sa3-medium-base":      ("medium-base",      "base", 380),
-}
-
-
 class GenerationStopped(Exception):
     """Raised when an in-flight generation is interrupted by a stop request."""
 
@@ -108,35 +86,67 @@ def _slugify(text: str, max_len: int = 40) -> str:
     return s[:max_len].strip("_").lower() or "audio"
 
 
-def _autodetect_device() -> str:
-    """cuda → mps → cpu, with FRAGMENTA_FORCE_DEVICE override."""
-    override = os.environ.get("FRAGMENTA_FORCE_DEVICE")
-    if override:
-        return override
-    if torch.cuda.is_available():
-        return "cuda"
-    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+# (engine, its distilled model, its base model) for the real-model contract test.
+ENGINE_TEST_MODELS = (("torch", "sa3-small-music", "sa3-small-music-base"),)
+
+
+def _engine_class(name: str) -> Any:
+    # Imported here: an engine's framework only loads on the machines that use it.
+    from app.core.generation.torch_engine import TorchEngine
+    return TorchEngine
+
+
+def _make_engine(name: str, config: Any) -> Engine:
+    return _engine_class(name)(config)
+
+
+def engine_available(name: str) -> bool:
+    return _engine_class(name).available()
+
+
+def engine_capabilities(name: str) -> Capabilities:
+    return _engine_class(name).capabilities
 
 
 class AudioGenerator:
-    """One-model warm cache. Reload only when model_id changes."""
+    """Runs generations on one engine at a time."""
 
     def __init__(self, config: Any) -> None:
         self.config = config
-        self.model: Any = None
-        self._model_id: Optional[str] = None
-        self._device: Optional[str] = None
-        # Tracks LoRAs currently injected into self.model. List of
-        # {"path": str, "strength": float}. Empty when no LoRAs are active.
-        self._loaded_loras: list = []
+        self._engines: Dict[str, Engine] = {}
+        self._active: Optional[Engine] = None
         # Serializes whole generations (and model unloads) — see module
         # docstring. _state_lock only guards the _current_stop swap so
         # request_stop() never blocks behind a running generation.
         self._gen_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._current_stop: Optional[threading.Event] = None
+
+    # --- engines --------------------------------------------------------------
+    def _engine(self, model_id: str) -> Engine:
+        if model_id not in _MODEL_INFO:
+            raise ValueError(f"Unknown SA3 model_id: {model_id}")
+        name = engine_for(model_id)
+        engine = self._engines.get(name)
+        if engine is None:
+            engine = self._engines[name] = _make_engine(name, self.config)
+        # Engines can share memory (unified memory on a Mac), so only one holds a model.
+        if self._active is not None and self._active is not engine:
+            self._active.unload()
+        self._active = engine
+        return engine
+
+    @property
+    def model(self) -> Any:
+        return self._active.model if self._active else None
+
+    @property
+    def _model_id(self) -> Optional[str]:
+        return self._active.model_id if self._active else None
+
+    @property
+    def _loaded_loras(self) -> List[Dict[str, Any]]:
+        return self._active.loaded_loras if self._active else []
 
     # --- cooperative cancel ---------------------------------------------------
     def request_stop(self) -> bool:
@@ -160,253 +170,24 @@ class AudioGenerator:
         Returns False (and does nothing) when a generation is in flight —
         yanking the model out from under the sampler would crash it.
 
-        The LoRA bookkeeping must die with the model: the adapters live as
+        The engine's LoRA bookkeeping dies with the model: the adapters live as
         parametrizations inside the model object, so after a drop the
-        `_apply_loras` fast path ("same paths → just update strengths") would
+        `apply_loras` fast path ("same paths → just update strengths") would
         otherwise no-op against a fresh, adapter-less model while the UI still
         claims the LoRA is active.
         """
         if not self._gen_lock.acquire(blocking=False):
             return False
         try:
-            self.model = None
-            self._model_id = None
-            self._loaded_loras = []
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if self._active is not None:
+                self._active.unload()
             return True
         finally:
             self._gen_lock.release()
 
-    # --- model load -----------------------------------------------------------
-    def _ensure_model(
-        self,
-        model_id: str,
-        device: Optional[str] = None,
-        half: bool = True,
-    ) -> None:
-        if model_id not in _MODEL_INFO:
-            raise ValueError(f"Unknown SA3 model_id: {model_id}")
-        sa3_name, _kind, _max_dur = _MODEL_INFO[model_id]
-
-        if model_id in ("sa3-medium", "sa3-medium-base"):
-            # Medium normally requires Flash Attention 2 for its long-form (up
-            # to 380s) sliding-window attention. FRAGMENTA_MEDIUM_NO_FLASH=1 is
-            # the Path-B validation switch: it lets medium load WITHOUT
-            # flash_attn and fall back to PyTorch-native attention
-            # (flex_attention -> chunked-halo SDPA -> masked SDPA; see
-            # transformer.apply_attn). Output is math-equivalent, but VRAM is
-            # higher and sampling slower at long durations. Off by default, so
-            # the shipped behaviour is unchanged until the fallback is validated.
-            allow_no_flash = os.environ.get("FRAGMENTA_MEDIUM_NO_FLASH") == "1"
-            try:
-                import flash_attn  # noqa: F401
-                have_flash = True
-            except ImportError as err:
-                have_flash = False
-                _flash_err = err
-
-            if not have_flash and not allow_no_flash:
-                raise RuntimeError(
-                    "sa3-medium needs Flash Attention 2 (flash_attn) but the "
-                    f"current install is unusable: {_flash_err}.\n"
-                    "Fragmenta installs it on Linux and Windows with an NVIDIA "
-                    "GPU; run the installer again to repair it.\n"
-                    "Or use sa3-small-music / sa3-small-sfx, or set "
-                    "FRAGMENTA_MEDIUM_NO_FLASH=1 to run on the (slower, "
-                    "higher-memory) PyTorch attention fallback."
-                ) from _flash_err
-
-            if not have_flash:
-                logger.warning(
-                    "sa3-medium loading WITHOUT Flash Attention 2 "
-                    "(FRAGMENTA_MEDIUM_NO_FLASH=1). Using the PyTorch-native "
-                    "attention fallback — expect higher VRAM and slower sampling "
-                    "at long durations. Validate memory headroom before "
-                    "generating long-form (up to 380s) clips."
-                )
-
-        device = device or _autodetect_device()
-        if (
-            self.model is not None
-            and self._model_id == model_id
-            and self._device == device
-        ):
-            return  # warm cache hit
-
-        if self.model is not None:
-            del self.model
-            self.model = None
-            # The LoRA stack was injected into the evicted model's
-            # parametrizations and is gone with it. Without this reset the
-            # next _apply_loras call with the same paths takes the
-            # strengths-only fast path and silently applies nothing.
-            self._loaded_loras = []
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-        # Two layouts to support during the unification transition:
-        #   1. Canonical (post-Phase 5c): HF cache layout rooted at
-        #      <app>/models/pretrained/sa3/hub/. model_manager sets
-        #      HF_HUB_CACHE to that path, so StableAudioModel.from_pretrained
-        #      finds files there without going to ~/.cache/huggingface.
-        #   2. Legacy: <app>/models/pretrained/sa3/<model_id>/ flat layout
-        #      from earlier downloads. We fall back to direct load so
-        #      pre-existing users don't have to re-download.
-        #
-        # Defense-in-depth: re-force the HF cache vars here too. model_manager
-        # sets them at construction, but if generation is reached via an
-        # alternate code path or the env was clobbered later, we still
-        # guarantee resolution into <pretrained>/sa3/hub/.
-        hub_dir = self.config.get_path("models_pretrained") / "sa3" / "hub"
-        hf_env_keys = ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE",
-                       "TRANSFORMERS_CACHE", "HF_HUB_OFFLINE")
-        prev_env = {k: os.environ.get(k) for k in hf_env_keys}
-        os.environ["HF_HUB_CACHE"] = str(hub_dir)
-        os.environ["HUGGINGFACE_HUB_CACHE"] = str(hub_dir)
-        os.environ["TRANSFORMERS_CACHE"] = str(hub_dir)
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        # huggingface_hub captures HF_HUB_CACHE and HF_HUB_OFFLINE as
-        # module-level constants AT IMPORT TIME. The Flask backend imports
-        # huggingface_hub (transitively, via model_manager.py) before we ever
-        # set these env vars, so the constants point at ~/.cache/huggingface/
-        # and offline=False. Setting os.environ now has no effect on already-
-        # captured constants. We have to monkey-patch them directly.
-        # Same trick we used for the CLAP loader.
-        prev_hub_constants = {}
-        try:
-            import huggingface_hub.constants as _hf_const
-            prev_hub_constants = {
-                "HF_HUB_CACHE": _hf_const.HF_HUB_CACHE,
-                "HF_HUB_OFFLINE": _hf_const.HF_HUB_OFFLINE,
-            }
-            _hf_const.HF_HUB_CACHE = str(hub_dir)
-            _hf_const.HF_HUB_OFFLINE = True
-        except Exception:
-            _hf_const = None
-        try:
-            try:
-                from stable_audio_3 import StableAudioModel
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    self.model = StableAudioModel.from_pretrained(
-                        sa3_name, device=device, model_half=half,
-                    )
-            except (FileNotFoundError, OSError) as primary_err:
-                # HF cache miss — fall back to flat layout.
-                legacy_dir = self.config.get_path("models_pretrained") / "sa3" / model_id
-                config_path = legacy_dir / "model_config.json"
-                ckpt_path = legacy_dir / "model.safetensors"
-                if not (config_path.exists() and ckpt_path.exists()):
-                    raise FileNotFoundError(
-                        f"Checkpoint '{model_id}' not found in HF cache "
-                        f"({os.environ.get('HF_HUB_CACHE')}) or legacy flat "
-                        f"layout ({legacy_dir}). Download it from the "
-                        f"Checkpoint Manager."
-                    ) from primary_err
-                import json
-                with open(config_path, encoding="utf-8") as fh:
-                    model_config = json.load(fh)
-                from stable_audio_3.model_configs import localize_conditioners
-                localize_conditioners(model_config, str(config_path))
-                from stable_audio_3.loading_utils import load_diffusion_cond
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    inner = load_diffusion_cond(
-                        model_config, str(ckpt_path),
-                        device=device, model_half=half,
-                    )
-                    inner.use_lora = False
-                    inner.lora_names = []
-                    self.model = StableAudioModel(inner, model_config, device, half)
-        finally:
-            for k, v in prev_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-            # Restore the patched constants so we don't permanently alter
-            # global huggingface_hub state for anything else in-process.
-            if _hf_const is not None and prev_hub_constants:
-                _hf_const.HF_HUB_CACHE = prev_hub_constants["HF_HUB_CACHE"]
-                _hf_const.HF_HUB_OFFLINE = prev_hub_constants["HF_HUB_OFFLINE"]
-        self._model_id = model_id
-        self._device = device
-
-    # --- LoRA stack -----------------------------------------------------------
-    def _apply_loras(self, loras: list) -> None:
-        """Inject the given LoRA stack into self.model (idempotent).
-
-        loras: [{"path": str, "strength": float}, ...]
-
-        Strategy:
-          * Same paths in same order → just update strengths in place.
-          * Different paths → remove all, load fresh.
-        """
-        if self.model is None:
-            return
-
-        new_paths = [l["path"] for l in loras]
-        cur_paths = [l["path"] for l in self._loaded_loras]
-
-        if new_paths == cur_paths:
-            # Path-set unchanged; only strengths may have moved.
-            for i, l in enumerate(loras):
-                self.model.set_lora_strength(l["strength"], lora_index=i)
-            self._loaded_loras = list(loras)
-            return
-
-        # Path-set changed. Remove any currently loaded, then load the new set.
-        if cur_paths:
-            try:
-                from stable_audio_3.models.lora import remove_lora
-                # SA3 applies LoRA to the DiffusionCond's DiT (.model) and
-                # conditioner (.conditioner) — mirror StableAudioModel's own
-                # set_lora_strength which iterates both submodules.
-                # `self.model` is StableAudioModel; `self.model.model` is the
-                # inner DiffusionCond.
-                #
-                # remove_lora() strips *every* LoRA parametrization in one
-                # pass. We use it instead of remove_lora_by_index(..., 0) in a
-                # loop: removal does NOT renumber the remaining adapters, so
-                # repeatedly popping index 0 only ever clears the first LoRA
-                # and leaves indices 1..n-1 stranded — stale adapters then
-                # contaminate every later generation with a different stack.
-                inner = self.model.model
-                remove_lora(inner.model)
-                remove_lora(inner.conditioner)
-            except Exception as exc:
-                # If removal fails (e.g. an upstream API change), force a
-                # base-model reload so we don't carry stale adapters. KEEP
-                # _model_id intact — _ensure_model needs it to know what to
-                # reload. (Previous code zeroed it; the reload then raised
-                # "Unknown SA3 model_id: None".)
-                logger.warning(
-                    "LoRA removal failed (%s); reloading base model %s",
-                    exc, self._model_id,
-                )
-                self.model = None
-
-        if self.model is None and self._model_id is not None:
-            # Forced full reload (only if remove failed above).
-            self._ensure_model(self._model_id, device=self._device, half=True)
-
-        if loras:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                self.model.load_lora(new_paths)
-            for i, l in enumerate(loras):
-                self.model.set_lora_strength(l["strength"], lora_index=i)
-
-        self._loaded_loras = list(loras)
-
     def set_lora_strength(self, index: int, strength: float) -> bool:
         """Live-update one slot's strength. Returns False if index invalid."""
-        if not self.model or index < 0 or index >= len(self._loaded_loras):
-            return False
-        self.model.set_lora_strength(float(strength), lora_index=index)
-        self._loaded_loras[index]["strength"] = float(strength)
-        return True
+        return bool(self._active) and self._active.set_lora_strength(index, strength)
 
     # --- public entry ---------------------------------------------------------
     def generate_audio(self, prompt: str, **kwargs: Any) -> Path:
@@ -475,8 +256,9 @@ class AudioGenerator:
             started_at=time.time(), ended_at=None,
         )
 
-        self._ensure_model(model_id, device=device, half=half)
-        self._apply_loras(loras or [])
+        engine = self._engine(model_id)
+        engine.load(model_id, device=device, half=half)
+        engine.apply_loras(loras or [])
 
         init_audio = self._load_audio(init_audio_path) if init_audio_path else None
         inpaint_audio = self._load_audio(inpaint_audio_path) if inpaint_audio_path else None
@@ -493,21 +275,7 @@ class AudioGenerator:
 
         duration = float(min(max(1.0, float(duration)), float(max_dur)))
 
-        target_samples = int(round(duration * 44100))
-        gen_duration = duration
         total_steps_logical = effective_steps
-
-        # The vendored generate() defaults sample_size=5292032 (=120s) and
-        # _adapt_sample_size CLAMPS the seconds_total-derived length to it. Since
-        # we never passed sample_size, every model — including medium — was
-        # capped at 120s, so medium's advertised 380s never materialised. Pass
-        # the model's native sample_size as the ceiling so _adapt sizes output to
-        # the requested duration (plus its 6s padding) within the real maximum.
-        try:
-            native_sample_size = int(self.model.model_config.get("sample_size"))
-        except Exception:
-            native_sample_size = 0
-        sample_size_ceiling = max(native_sample_size, target_samples)
 
         if stop_event.is_set():                   # stopped during model load
             _set_progress(phase="idle", is_generating=False, ended_at=time.time())
@@ -524,36 +292,25 @@ class AudioGenerator:
 
         _set_progress(phase="sampling", total_steps=int(total_steps_logical), step=0)
 
-        gen_kwargs = dict(
+        request = GenerationRequest(
             prompt=prompt,
-            negative_prompt=negative_prompt or None,
-            duration=gen_duration,
-            sample_size=sample_size_ceiling,
+            model_id=model_id,
+            duration=duration,
             steps=effective_steps,
             cfg_scale=effective_cfg,
             seed=int(seed),
+            negative_prompt=negative_prompt or None,
             batch_size=int(batch_size),
             chunked_decode=chunked_decode,
-            callback=_cb,
+            init_audio=init_audio,
+            init_noise_level=float(init_noise_level),
+            inpaint_audio=inpaint_audio,
+            inpaint_starts=list(inpaint_starts) if inpaint_starts is not None else None,
+            inpaint_ends=list(inpaint_ends) if inpaint_ends is not None else None,
         )
-        if init_audio is not None:
-            gen_kwargs["init_audio"] = init_audio
-            gen_kwargs["init_noise_level"] = float(init_noise_level)
-        if inpaint_audio is not None:
-            gen_kwargs["inpaint_audio"] = inpaint_audio
-            if inpaint_starts is not None and len(inpaint_starts) > 0:
-                # SA3 accepts a single float or a list for multi-region.
-                gen_kwargs["inpaint_mask_start_seconds"] = (
-                    list(inpaint_starts) if len(inpaint_starts) > 1 else float(inpaint_starts[0])
-                )
-            if inpaint_ends is not None and len(inpaint_ends) > 0:
-                gen_kwargs["inpaint_mask_end_seconds"] = (
-                    list(inpaint_ends) if len(inpaint_ends) > 1 else float(inpaint_ends[0])
-                )
 
         try:
-            audio = self.model.generate(**gen_kwargs)
-            # audio: torch.Tensor[B, channels=2, samples] in [-1, 1] @ 44.1 kHz
+            audio = engine.generate(request, _cb)
         except GenerationStopped:
             _set_progress(phase="idle", is_generating=False, ended_at=time.time())
             raise
@@ -590,12 +347,11 @@ class AudioGenerator:
     # --- audio loader (a2a + inpaint inputs) ----------------------------------
     @staticmethod
     def _load_audio(path: str):
-        """Load any accepted audio file into the (sample_rate, tensor) tuple SA3
-        expects.
+        """Load any accepted audio file as (sample_rate, samples).
 
-        Returns a stereo float32 tensor of shape (channels, samples). Mono
-        inputs are duplicated to stereo (SA3 expects 2 channels); ≥3-channel
-        inputs are truncated to the first 2.
+        Returns stereo float32 samples, shape (channels, samples). Mono inputs
+        are duplicated to stereo (SA3 expects 2 channels); ≥3-channel inputs are
+        truncated to the first 2.
         """
         from app.core.audio.decode import read_audio
         wav, sr = read_audio(path)   # (channels, samples), float32
@@ -603,15 +359,14 @@ class AudioGenerator:
             wav = wav.repeat(2, 1)
         elif wav.shape[0] > 2:
             wav = wav[:2]
-        return int(sr), wav
+        return int(sr), wav.numpy()
 
     # --- output --------------------------------------------------------------
-    def _finalize(self, audio: torch.Tensor, *, prompt: str, model_id: str) -> Path:
-        audio = audio.detach().clamp_(-1.0, 1.0).cpu()
-        if audio.ndim != 3:
-            raise RuntimeError(f"Unexpected SA3 output shape {tuple(audio.shape)}")
-        first = audio[0].numpy()                   # [C, samples]
-        # clamp_ bounds ±inf but lets NaN through (NaN compares false), and a
+    def _finalize(self, audio: np.ndarray, *, prompt: str, model_id: str) -> Path:
+        if audio.ndim != 2:
+            raise RuntimeError(f"Unexpected engine output shape {tuple(audio.shape)}")
+        first = np.clip(audio, -1.0, 1.0)          # [C, samples]
+        # clip bounds ±inf but lets NaN through (NaN compares false), and a
         # NaN hits int16 conversion as undefined behaviour — scrub it here so
         # a numerically unstable run yields silence, not a corrupt WAV.
         first = np.nan_to_num(first, nan=0.0, posinf=1.0, neginf=-1.0)
