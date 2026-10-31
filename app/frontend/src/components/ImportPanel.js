@@ -7,7 +7,6 @@ import {
     FormControlLabel,
     LinearProgress,
     Stack,
-    TextField,
     Typography,
 } from '@mui/material';
 import api from '../api';
@@ -22,7 +21,7 @@ const errorText = (e) => e.response?.data?.error || e.message;
 
 /** Settings → Import: bring models, projects and audio over from an older Fragmenta. */
 export default function ImportPanel() {
-    const [path, setPath] = useState('');
+    const [picking, setPicking] = useState(false);
     const [found, setFound] = useState(null);
     const [chosen, setChosen] = useState({});
     const [keepOld, setKeepOld] = useState(false);
@@ -67,15 +66,15 @@ export default function ImportPanel() {
 
     const chooseFolder = async () => {
         setError(null);
+        setPicking(true);
         try {
-            const r = await api.post('/api/pick-folder', { purpose: 'import', start_dir: path || undefined });
+            const r = await api.post('/api/pick-folder', { purpose: 'import', start_dir: found?.source });
             if (r.data.error) setError(r.data.error);
-            if (r.data.path) {
-                setPath(r.data.path);
-                scan(r.data.path);
-            }
+            if (r.data.path) scan(r.data.path);
         } catch (e) {
             setError(errorText(e));
+        } finally {
+            setPicking(false);
         }
     };
 
@@ -110,21 +109,20 @@ export default function ImportPanel() {
         <Stack spacing={2}>
             <Typography variant="h6">Import from an older Fragmenta</Typography>
 
-            <Stack direction="row" spacing={1} alignItems="center">
-                <TextField
-                    size="small"
-                    fullWidth
-                    placeholder="Fragmenta folder"
-                    value={path}
-                    disabled={running}
-                    onChange={(e) => setPath(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && path.trim()) scan(path.trim()); }}
-                    inputProps={{ 'aria-label': 'Fragmenta folder' }}
-                />
-                <Button onClick={chooseFolder} disabled={running} sx={{ flexShrink: 0 }}>Choose…</Button>
-                <Button variant="contained" onClick={() => scan(path.trim())} disabled={running || busy || !path.trim()} sx={{ flexShrink: 0 }}>
-                    Look inside
+            <Stack direction="row" spacing={1.5} alignItems="center">
+                <Button
+                    onClick={chooseFolder}
+                    disabled={running || picking}
+                    variant={found ? 'outlined' : 'contained'}
+                    sx={{ flexShrink: 0 }}
+                >
+                    {found ? 'Choose another folder' : 'Choose folder'}
                 </Button>
+                {found && (
+                    <Typography variant="caption" color="text.secondary" noWrap title={found.source} sx={{ minWidth: 0 }}>
+                        {found.source}
+                    </Typography>
+                )}
             </Stack>
 
             {busy && <LinearProgress />}

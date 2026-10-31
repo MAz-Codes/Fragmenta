@@ -80,6 +80,7 @@ import PerformancePanel from './components/PerformancePanel';
 import { setSampleRatePin } from './utils/performanceAudio';
 
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
+const STARTER_CARD_DELAY_MS = 7000;
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
@@ -142,6 +143,8 @@ function App() {
     // Closing the starter card only lasts until the next launch: this isn't
     // saved anywhere, so it comes back while there's still no model.
     const [starterClosed, setStarterClosed] = useState(false);
+    // Let people get into the app first; the card comes a little later.
+    const [starterDue, setStarterDue] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
@@ -752,6 +755,11 @@ function App() {
             setProcessingStatus('Your first model is ready — try a prompt');
         },
     });
+    useEffect(() => {
+        if (showWelcomePage) return undefined;
+        const timer = setTimeout(() => setStarterDue(true), STARTER_CARD_DELAY_MS);
+        return () => clearTimeout(timer);
+    }, [showWelcomePage]);
     const refreshStarter = starter.refresh;
     useEffect(() => {
         if (!checkpointMgrOpen) refreshStarter();
@@ -1405,7 +1413,7 @@ function App() {
                 />
 
                 <StarterCard
-                    open={Boolean(starter.status?.show) && !starterClosed && !showWelcomePage && !checkpointMgrOpen && !showSettings}
+                    open={Boolean(starter.status?.show) && starterDue && !starterClosed && !showWelcomePage && !checkpointMgrOpen && !showSettings}
                     onClose={() => setStarterClosed(true)}
                     starter={starter}
                     onOpenManager={() => setCheckpointMgrOpen(true)}
@@ -2197,7 +2205,7 @@ function App() {
                                                 {starter.status?.show && (
                                                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
                                                         {starterDownloading ? 'Your first model is downloading. ' : 'No model yet. '}
-                                                        <Typography component="a" variant="inherit" role="button" onClick={() => setStarterClosed(false)}
+                                                        <Typography component="a" variant="inherit" role="button" onClick={() => { setStarterDue(true); setStarterClosed(false); }}
                                                             sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
                                                             {starterDownloading ? 'See progress' : 'Set up your first model'}
                                                         </Typography>

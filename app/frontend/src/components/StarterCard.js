@@ -287,7 +287,14 @@ export default function StarterCard({ open, onClose, starter, onOpenManager, onI
 
     return (
         <>
-            <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth aria-labelledby="starter-title">
+            <Dialog
+                open={open}
+                onClose={onClose}
+                maxWidth="sm"
+                fullWidth
+                aria-labelledby="starter-title"
+                transitionDuration={{ enter: 900, exit: 200 }}
+            >
                 <DialogTitle id="starter-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box sx={{ flex: 1 }}>{status.returning ? 'No models installed' : 'Set up your first model'}</Box>
                     <IconButton size="small" onClick={onClose} aria-label="Close"><CloseIcon size={18} /></IconButton>
