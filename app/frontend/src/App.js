@@ -291,7 +291,7 @@ function App() {
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
-    const [steps, setSteps] = useState(250);
+    const [steps, setSteps] = useState(50);
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');

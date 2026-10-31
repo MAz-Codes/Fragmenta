@@ -144,7 +144,7 @@ function PerformancePanelInner({
     onRefreshModels,
     onSelectLora,
     onLoraMultiplierChange,
-    steps = 250,
+    steps = 50,
     onStepsChange,
     randomSeed = true,
     seedValue = '',
