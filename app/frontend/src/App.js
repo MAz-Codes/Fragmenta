@@ -67,7 +67,7 @@ import PreEncodeProgress from './components/PreEncodeProgress';
 import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
-import StarterCard, { useStarterModel } from './components/StarterCard';
+import StarterCard, { PAGE_FADE, useStarterModel } from './components/StarterCard';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
 import SettingsDialog from './components/SettingsDialog';
@@ -145,6 +145,7 @@ function App() {
     const [starterClosed, setStarterClosed] = useState(false);
     // Let people get into the app first; the card comes a little later.
     const [starterDue, setStarterDue] = useState(false);
+    const [pageFromCard, setPageFromCard] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
@@ -1416,8 +1417,8 @@ function App() {
                     open={Boolean(starter.status?.show) && starterDue && !starterClosed && !showWelcomePage && !checkpointMgrOpen && !showSettings}
                     onClose={() => setStarterClosed(true)}
                     starter={starter}
-                    onOpenManager={() => setCheckpointMgrOpen(true)}
-                    onImport={() => { setSettingsTab(3); setShowSettings(true); }}
+                    onOpenManager={() => { setPageFromCard(true); setCheckpointMgrOpen(true); }}
+                    onImport={() => { setPageFromCard(true); setSettingsTab(3); setShowSettings(true); }}
                 />
 
                 {isHfSpace && (
@@ -2833,7 +2834,8 @@ function App() {
                 open={showSettings}
                 showImport={!isDocker && !isHfSpace}
                 initialTab={settingsTab}
-                onClose={() => setShowSettings(false)}
+                onClose={() => { setShowSettings(false); setPageFromCard(false); }}
+                fade={pageFromCard ? PAGE_FADE : undefined}
                 aboutProps={{
                     onOpenDocumentation: handleOpenDocumentation,
                     isOpeningDocumentation,
@@ -2988,8 +2990,10 @@ function App() {
 
             <CheckpointManagerWindow
                 open={checkpointMgrOpen}
+                fade={pageFromCard ? PAGE_FADE : undefined}
                 onClose={() => {
                     setCheckpointMgrOpen(false);
+                    setPageFromCard(false);
                     refreshAllModels();
                 }}
             />

@@ -34,7 +34,7 @@ const fmtBytes = (n) => {
     return `${v.toFixed(v < 10 ? 2 : 1)} ${units[u]}`;
 };
 
-export default function CheckpointManagerWindow({ open, onClose }) {
+export default function CheckpointManagerWindow({ open, onClose, fade }) {
     const [catalog, setCatalog] = useState([]);
     const [storage, setStorage] = useState(null);
     const [env, setEnv] = useState(null);
@@ -103,7 +103,7 @@ export default function CheckpointManagerWindow({ open, onClose }) {
 
     return (
         <>
-            <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth scroll="paper">
+            <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth scroll="paper" {...fade}>
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Box sx={{ flex: 1 }}>Checkpoint Manager</Box>
                     <IconButton size="small" onClick={onClose}><CloseIcon size={18} /></IconButton>

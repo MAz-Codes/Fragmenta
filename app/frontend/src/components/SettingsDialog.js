@@ -96,7 +96,7 @@ function AudioSettingsPanel({ open }) {
  * Settings (the gear in the top toolbar): About first, exactly as the old
  * About dialog, then Audio and MIDI, as tabs down the left side.
  */
-export default function SettingsDialog({ open, onClose, aboutProps, showImport = false, initialTab = 0 }) {
+export default function SettingsDialog({ open, onClose, aboutProps, showImport = false, initialTab = 0, fade }) {
     const [tab, setTab] = useState(0);
     useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
     return (
@@ -108,6 +108,7 @@ export default function SettingsDialog({ open, onClose, aboutProps, showImport =
             maxWidth="md"
             fullWidth
             aria-label="Settings"
+            {...fade}
             PaperProps={{ sx: { height: 'min(660px, calc(100vh - 64px))' } }}
         >
             <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, overflow: 'hidden' }}>

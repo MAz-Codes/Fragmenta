@@ -30,6 +30,12 @@ const fmtLeft = (seconds) => {
 
 const errorText = (e) => e.response?.data?.error || e.message;
 
+// For pages opened from the card, so they don't just appear.
+export const PAGE_FADE = {
+    transitionDuration: { enter: 700, exit: 200 },
+    TransitionProps: { easing: { enter: 'ease-in-out' } },
+};
+
 const LINK_SX = { color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' };
 
 /**
@@ -86,7 +92,7 @@ export function useStarterModel({ onReady }) {
     return { status, refresh, resuming, setResuming };
 }
 
-export function LicenseViewer({ open, onClose, licenses }) {
+export function LicenseViewer({ open, onClose, licenses, fade }) {
     const [current, setCurrent] = useState(0);
     const [texts, setTexts] = useState({});
     const [error, setError] = useState(null);
@@ -101,7 +107,7 @@ export function LicenseViewer({ open, onClose, licenses }) {
     }, [open, license, texts]);
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth {...fade}>
             <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Box sx={{ flex: 1 }}>Licenses</Box>
                 <IconButton size="small" onClick={onClose} aria-label="Close licenses"><CloseIcon size={18} /></IconButton>
@@ -389,7 +395,12 @@ export default function StarterCard({ open, onClose, starter, onOpenManager, onI
                 </DialogActions>
             </Dialog>
 
-            <LicenseViewer open={licensesOpen} onClose={() => setLicensesOpen(false)} licenses={status.licenses} />
+            <LicenseViewer
+                open={licensesOpen}
+                onClose={() => setLicensesOpen(false)}
+                licenses={status.licenses}
+                fade={PAGE_FADE}
+            />
         </>
     );
 }
