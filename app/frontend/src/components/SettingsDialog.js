@@ -11,8 +11,9 @@ import {
     Tabs,
     Typography,
 } from '@mui/material';
-import { Info as InfoIcon, Volume2 as AudioIcon, Piano as MidiIcon } from 'lucide-react';
+import { Info as InfoIcon, Volume2 as AudioIcon, Piano as MidiIcon, FolderInput as ImportIcon } from 'lucide-react';
 import { AboutPanel } from './AboutDialog';
+import ImportPanel from './ImportPanel';
 import MidiSettingsPanel from './MidiSettingsPanel';
 import { useAudioSettings } from './AudioSettingsContext';
 import { appStyles } from '../theme';
@@ -95,7 +96,7 @@ function AudioSettingsPanel({ open }) {
  * Settings (the gear in the top toolbar): About first, exactly as the old
  * About dialog, then Audio and MIDI, as tabs down the left side.
  */
-export default function SettingsDialog({ open, onClose, aboutProps }) {
+export default function SettingsDialog({ open, onClose, aboutProps, showImport = false }) {
     const [tab, setTab] = useState(0);
     useEffect(() => { if (open) setTab(0); }, [open]);
     return (
@@ -128,12 +129,14 @@ export default function SettingsDialog({ open, onClose, aboutProps }) {
                         <Tab icon={<InfoIcon size={20} />} iconPosition="start" label="About" />
                         <Tab icon={<AudioIcon size={20} />} iconPosition="start" label="Audio" />
                         <Tab icon={<MidiIcon size={20} />} iconPosition="start" label="MIDI" />
+                        {showImport && <Tab icon={<ImportIcon size={20} />} iconPosition="start" label="Import" />}
                     </Tabs>
                 </Box>
                 <Box sx={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', pr: 0.5 }}>
                     {tab === 0 && <AboutPanel {...aboutProps} />}
                     {tab === 1 && <AudioSettingsPanel open={open} />}
                     {tab === 2 && <MidiSettingsPanel open={open} />}
+                    {tab === 3 && showImport && <ImportPanel />}
                 </Box>
             </DialogContent>
             <DialogActions>

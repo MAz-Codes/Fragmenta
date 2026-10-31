@@ -5,7 +5,7 @@ from utils.logger import setup_logging, get_logger
 from app.core.generation.audio_generator import AudioGenerator
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.generation.provenance import recording_tags, tag_existing_wav
-from app.backend import starter_model, update_check
+from app.backend import data_import, starter_model, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -955,7 +955,11 @@ def list_loras():
                     if requested_root and _base_root(base_model) != requested_root:
                         continue
 
-                    rel_path = str(ckpt.relative_to(config.project_root))
+                    # An installed app's data folder is outside the code folder.
+                    try:
+                        rel_path = str(ckpt.relative_to(config.project_root))
+                    except ValueError:
+                        rel_path = str(ckpt)
                     rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
                     alpha = _safe_int(
                         lora_config.get("alpha")
@@ -1641,6 +1645,39 @@ def delete_checkpoint_download(model_id):
         return jsonify({'error': 'Nothing to delete'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- Import from an older Fragmenta (app/backend/data_import.py) --------------
+
+@app.route('/api/import/scan', methods=['POST'])
+def import_scan():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.scan(data.get('path'))
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/start', methods=['POST'])
+def import_start():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.start(data.get('path'), data.get('items'),
+                                       bool(data.get('keep_old')), model_manager)
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/status', methods=['GET'])
+def import_status():
+    return jsonify(data_import.status())
+
+
+@app.route('/api/import/cancel', methods=['POST'])
+def import_cancel():
+    return jsonify(data_import.cancel())
 
 
 # --- First-run starter model (app/backend/starter_model.py) -------------------
@@ -2607,7 +2644,8 @@ def _annotator_labels_default_path():
 
 
 def _annotator_labels_user_path():
-    return Path(get_config().project_root) / 'config' / 'annotator_labels.user.json'
+    # user_data_dir: in an installed app the code folder is read-only.
+    return Path(get_config().user_data_dir) / 'config' / 'annotator_labels.user.json'
 
 
 def _annotator_labels_path():
@@ -2790,6 +2828,9 @@ def pick_folder():
 
     payload = request.json or {}
     start_dir = payload.get('start_dir') or str(Path.home())
+    # Fixed choices only: this ends up inside the command strings below.
+    dialog_title = ('Choose your older Fragmenta folder' if payload.get('purpose') == 'import'
+                    else 'Choose audio folder')
 
     # `start_dir` is request-controlled and gets interpolated into shell/AppleScript
     # command strings below. Validate it is an existing directory and fall back to
@@ -2826,7 +2867,7 @@ def pick_folder():
         has_kdialog = bool(_shutil.which('kdialog'))
         if has_zenity:
             chosen = _try(['zenity', '--file-selection', '--directory',
-                           f'--filename={start_dir}/', '--title=Choose audio folder'])
+                           f'--filename={start_dir}/', f'--title={dialog_title}'])
         if not chosen and has_kdialog:
             chosen = _try(['kdialog', '--getexistingdirectory', start_dir])
         if not chosen:
@@ -2834,7 +2875,7 @@ def pick_folder():
             script = (
                 "import tkinter as tk; from tkinter import filedialog; "
                 "r = tk.Tk(); r.withdraw(); "
-                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title='Choose audio folder'); "
+                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title={dialog_title!r}); "
                 "print(p or '')"
             )
             chosen = _try([sys_py, '-c', script])
@@ -2846,7 +2887,7 @@ def pick_folder():
         # AppleScript string literal and inject `do shell script` commands.
         safe_start = start_dir.replace('\\', '\\\\').replace('"', '\\"')
         chosen = _try(['osascript', '-e',
-                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{safe_start}")'])
+                       f'POSIX path of (choose folder with prompt "{dialog_title}" default location POSIX file "{safe_start}")'])
     elif sys.platform == 'win32':
         safe_start = (start_dir or '').replace("'", "''")
         ps = (

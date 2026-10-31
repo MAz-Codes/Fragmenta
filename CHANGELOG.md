@@ -19,6 +19,10 @@ All notable changes to Fragmenta are listed here. The format follows
   account needed. Read the licenses in the app, tick to agree, then download
   with pause and resume. It carries on after a restart, and the offer comes back
   at each launch until you have a model.
+- Settings → Import: bring models, LoRAs, projects, generated audio and your
+  CLAP vocabulary over from an older Fragmenta folder, so nothing needs
+  downloading again. It moves them on the same drive or copies them, and never
+  overwrites anything.
 
 ### Changed
 - Checkpoint Manager: Cancel stops a download right away, and Base models ask

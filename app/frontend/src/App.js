@@ -131,9 +131,12 @@ function App() {
     const [processingStatus, setProcessingStatus] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const [showWelcomePage, setShowWelcomePage] = useState(
-        () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
-    );
+    const [showWelcomePage, setShowWelcomePage] = useState(() => {
+        // Set just before Settings → Import starts the page again.
+        const skipOnce = window.sessionStorage.getItem('fragmenta-skip-welcome-once') === '1';
+        window.sessionStorage.removeItem('fragmenta-skip-welcome-once');
+        return !skipOnce && window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true';
+    });
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
     // Closing the starter card only lasts until the next launch: this isn't
     // saved anywhere, so it comes back while there's still no model.
@@ -2818,6 +2821,7 @@ function App() {
 
             <SettingsDialog
                 open={showSettings}
+                showImport={!isDocker && !isHfSpace}
                 onClose={() => setShowSettings(false)}
                 aboutProps={{
                     onOpenDocumentation: handleOpenDocumentation,
