@@ -57,6 +57,10 @@ All notable changes to Fragmenta are listed here. The format follows
   Each install writes a log to `logs/install-*.log`.
 
 ### Fixed
+- The backend only answers requests addressed to localhost and refuses
+  state-changing requests sent from other websites, so a web page can no
+  longer reach it through DNS rebinding or a cross-site post. Project routes
+  refuse names that aren't plain folder names.
 - Mac: the toolbar said "Not detected · CPU mode" although models run on the
   Apple GPU. It now shows free unified memory (what decides whether a model
   fits), and Free GPU memory works there too.

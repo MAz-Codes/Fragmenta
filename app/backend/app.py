@@ -19,6 +19,7 @@ import random
 import queue
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit
 import threading
 import time
 import json
@@ -216,6 +217,65 @@ def lazy_init():
         if request.path.startswith('/api/'):
             return jsonify({'error': f'Backend not ready: {e}'}), 503
         return None
+
+
+# --- Local-only guard ----------------------------------------------------------
+# CORS stops a web page from reading responses, not from sending requests, and
+# DNS rebinding sidesteps it entirely: a page at evil.example whose name is
+# pointed at 127.0.0.1 is same-origin as far as the browser is concerned. Two
+# checks close that on the desktop, where the backend binds a loopback address
+# (start.py, install.py --self-test and the launcher all set FLASK_HOST):
+#   * Host must be a loopback name; a rebinding page sends its own.
+#   * A state-changing request that carries an Origin must come from this
+#     server, a loopback page (any port: the webview, vite) or the CORS list.
+#     Browsers send Origin on every cross-site POST, so this also covers the
+#     routes that act without a JSON body.
+# Docker and the HF Space bind 0.0.0.0 and are reached through their own host
+# names, so there FLASK_HOST isn't loopback and the checks stay off.
+_LOOPBACK_HOSTS = {'localhost', '127.0.0.1', '::1'}
+
+
+def _hostname(netloc: str) -> str:
+    """'127.0.0.1:5001' or '[::1]:5001' -> the host part, '' if unparsable."""
+    try:
+        host = urlsplit('//' + netloc).hostname
+    except ValueError:
+        return ''
+    return host or netloc.lower()   # a bare '::1' has no hostname for urlsplit
+
+
+def _local_only() -> bool:
+    return _hostname(os.environ.get('FLASK_HOST', '')) in _LOOPBACK_HOSTS
+
+
+@app.before_request
+def guard_local_requests():
+    if not _local_only():
+        return None
+    if _hostname(request.host) not in _LOOPBACK_HOSTS:
+        return jsonify({'error': 'Fragmenta only answers requests addressed to localhost.'}), 403
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+    origin = request.headers.get('Origin')
+    if not origin:
+        return None
+    netloc = urlsplit(origin).netloc
+    if netloc == request.host or _hostname(netloc) in _LOOPBACK_HOSTS or origin in _ALLOWED_ORIGINS:
+        return None
+    return jsonify({'error': 'Cross-site request refused.'}), 403
+
+
+@app.before_request
+def guard_project_names():
+    """Every /api/projects/<name>… route: the name must be a plain folder name.
+    `.` would be the projects root, and DELETE on it removes every project."""
+    name = (request.view_args or {}).get('name')
+    if name is None or not request.path.startswith('/api/projects/'):
+        return None
+    from app.backend.data.projects import is_safe_project_name
+    if not is_safe_project_name(name):
+        return jsonify({'error': 'Invalid project name.'}), 400
+    return None
 
 
 @app.route('/api/health')

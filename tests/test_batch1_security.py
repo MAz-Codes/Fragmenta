@@ -357,6 +357,56 @@ check("count_running_pre_encode_jobs() == 0 at rest", count_running_pre_encode_j
 
 
 # =============================================================================
+print("\n=== Project routes refuse names that aren't plain folder names ===")
+(_TMP / "projects" / "keepme").mkdir(parents=True, exist_ok=True)
+for bad in [".", "a\\b", " "]:
+    r = client.get(f"/api/projects/{bad}")
+    check(f"GET /api/projects/{bad!r} → 400", r.status_code == 400, f"status={r.status_code}")
+r = client.delete("/api/projects/.")
+check("DELETE /api/projects/. → 400", r.status_code == 400, f"status={r.status_code}")
+check("…and the projects folder is still there", (_TMP / "projects" / "keepme").is_dir())
+r = client.delete("/api/projects/..")
+check("DELETE /api/projects/.. never reaches a project route", r.status_code in (400, 404, 405), f"status={r.status_code}")
+check("…and the projects folder is still there", (_TMP / "projects" / "keepme").is_dir())
+try:
+    P.project_path(".")
+    check("project_path('.') raises", False)
+except ValueError:
+    check("project_path('.') raises", True)
+check("project_path('keepme') still resolves", P.project_path("keepme").name == "keepme")
+r = client.get("/api/projects/keepme/health")
+check("a plain name still reaches its route", r.status_code in (200, 404), f"status={r.status_code}")
+
+# =============================================================================
+print("\n=== Local-only guard: Host and Origin (desktop binds loopback) ===")
+os.environ["FLASK_HOST"] = "127.0.0.1"
+r = client.get("/api/health", headers={"Host": "evil.example"})
+check("Host evil.example → 403 (DNS rebinding)", r.status_code == 403, f"status={r.status_code}")
+for host in ["127.0.0.1:5001", "localhost:5001", "localhost", "[::1]:5001"]:
+    r = client.get("/api/health", headers={"Host": host})
+    check(f"Host {host} → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "127.0.0.1:5001", "Origin": "http://evil.example"})
+check("POST with a foreign Origin → 403", r.status_code == 403, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "127.0.0.1:5001", "Origin": "http://127.0.0.1:5001"})
+check("POST from the app's own origin → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "127.0.0.1:5077", "Origin": "http://127.0.0.1:5077"})
+check("POST from a loopback page on another port → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "127.0.0.1:5001", "Origin": "http://localhost:3000"})
+check("POST from the vite dev server → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "127.0.0.1:5001"})
+check("POST with no Origin (curl, the launcher) → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.get("/api/health", headers={"Host": "evil.example", "Origin": "http://evil.example"})
+check("GET from a foreign page still fails on Host", r.status_code == 403, f"status={r.status_code}")
+os.environ["FLASK_HOST"] = "0.0.0.0"
+r = client.get("/api/health", headers={"Host": "my-space.hf.space"})
+check("bound to 0.0.0.0 (Docker/HF): any Host → 200", r.status_code == 200, f"status={r.status_code}")
+r = client.post("/api/welcome-page-closed", headers={"Host": "my-space.hf.space", "Origin": "https://my-space.hf.space"})
+check("bound to 0.0.0.0: same-site POST → 200", r.status_code == 200, f"status={r.status_code}")
+os.environ.pop("FLASK_HOST", None)
+r = client.get("/api/health", headers={"Host": "evil.example"})
+check("FLASK_HOST unset: guard off", r.status_code == 200, f"status={r.status_code}")
+
+# =============================================================================
 print("\n=== Regression: core read routes still 200 ===")
 for route in ["/api/health", "/api/projects"]:
     r = client.get(route)
