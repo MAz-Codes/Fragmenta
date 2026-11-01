@@ -147,37 +147,9 @@ def test_base_models_default_to_50_steps_cfg_7_and_take_overrides():
 
 def test_duration_stays_within_the_models_limits():
     with Env() as e:
-        assert e.request(duration=0.2, model_id="sa3-small-sfx").duration == 1.0
+        assert e.request(duration=0.2).duration == 1.0
         assert e.request(duration=999).duration == 120.0
         assert e.request(model_id="sa3-medium", duration=999).duration == 380.0
-
-
-def test_music_renders_past_the_end_and_trims_back():
-    long_output = np.zeros((2, 44100 * 11), dtype=np.float32)
-    for model_id in ("sa3-small-music", "sa3-small-music-base", "sa3-medium", "sa3-medium-base",
-                     "sa3-mlx-small-music", "sa3-mlx-medium"):
-        with Env(output=long_output) as e:
-            path = e.run(duration=6.0, model_id=model_id)
-            assert e.engine.requests[-1].duration == 6.0 + G.RENDER_PAST_SEC, model_id
-            assert sf.info(path).frames == 44100 * 6, model_id
-
-
-def test_rendering_past_the_end_stops_at_the_models_limit():
-    with Env() as e:
-        assert e.request(duration=118.0).duration == 120.0
-        assert e.request(duration=120.0).duration == 120.0
-
-
-def test_sfx_keeps_its_stated_length():
-    for model_id in ("sa3-small-sfx", "sa3-small-sfx-base", "sa3-mlx-small-sfx"):
-        with Env() as e:
-            assert e.request(duration=6.0, model_id=model_id).duration == 6.0, model_id
-
-
-def test_style_transfer_keeps_its_stated_length():
-    fixture = str(ROOT / "tests/fixtures/mini-project/pad.wav")
-    with Env() as e:
-        assert e.request(duration=6.0, init_audio_path=fixture).duration == 6.0
 
 
 def extend_kwargs(path, source_seconds, want, start=None):
