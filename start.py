@@ -48,6 +48,7 @@ WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
+ICON_COPY_PATH = Path.home() / ".local" / "share" / "icons" / "fragmenta.png"
 
 def _port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -293,20 +294,25 @@ def find_chromium() -> str | None:
 
 
 def ensure_desktop_entry() -> None:
-    if DESKTOP_ENTRY_PATH.exists():
-        return
-    DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # The icon gets a copy of its own: under an AppImage the code's path changes
+    # at every launch, so the entry can't point at it.
+    icon_bytes = APP_ICON_PATH.read_bytes()
+    if not ICON_COPY_PATH.exists() or ICON_COPY_PATH.read_bytes() != icon_bytes:
+        ICON_COPY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ICON_COPY_PATH.write_bytes(icon_bytes)
     contents = (
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Fragmenta\n"
         "Comment=Fine-tune and use text-to-audio models\n"
-        f"Icon={APP_ICON_PATH}\n"
+        f"Icon={ICON_COPY_PATH}\n"
         "Categories=AudioVideo;Audio;\n"
         f"StartupWMClass={APP_WM_CLASS}\n"
         "NoDisplay=true\n"
     )
-    DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
+    if not DESKTOP_ENTRY_PATH.exists() or DESKTOP_ENTRY_PATH.read_text(encoding="utf-8") != contents:
+        DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
 
 
 def run_chromium_app_mode(chromium_path: str) -> int:
