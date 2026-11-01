@@ -21,6 +21,10 @@ dill>=0.4.1
 
 librosa>=0.11.0,<0.12
 soundfile>=0.13.1
+# Signed AI-output marking. 0.38.0 is the newest with wheels for all our
+# platforms (0.38.1 has no Windows wheel, 0.38.2 is macOS only).
+c2pa-python==0.38.0
+cryptography>=41.0.0
 # m4a/AAC decoding (FFmpeg).
 av>=18.1,<20
 # python-rtmidi has no Python 3.14 wheels upstream; these are our builds of

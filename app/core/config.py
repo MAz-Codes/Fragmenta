@@ -82,6 +82,8 @@ class ProjectConfig:
             "uploads": uploads_dir,
             "logs": self.user_data_dir / "logs",
             "output": self.user_data_dir / "output",
+            # This install's signing key for exported audio: never in the code folder's git.
+            "credentials": self.user_data_dir / "credentials",
 
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",

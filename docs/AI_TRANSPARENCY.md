@@ -32,9 +32,21 @@ Metadata can be lost: converting a file, exporting it again from a DAW, or uploa
 
 In October 2026 we tested Meta's AudioSeal watermark on Fragmenta's own generations. At a strength that survives MP3 conversion, it was audible in a blind listening test on music; it sits only about 25–32 dB below the music and above it in sparse frequency bands. Weaker settings did not survive MP3, and shaping it to stay under the music made it undetectable. For a music tool, where the sound is the product, an audible watermark is not a workable solution, so Fragmenta does not add one. We will revisit this as watermarking for music improves.
 
-## What comes next
+## Signed metadata
 
-Fragmenta 2.0 adds **signed, time-stamped metadata** (C2PA Content Credentials) to exported files, verifiable with public C2PA tools. Like the tags above, it doesn't touch the audio.
+Fragmenta 2.0 adds **signed, time-stamped metadata** (C2PA Content Credentials) to exported files. Like the tags above, it doesn't touch the audio. Changing the audio or the tags after signing makes verification fail. To check a file:
+
+```
+pip install c2pa-python==0.38.0
+python utils/verify_credentials.py song.wav
+```
+
+What it does and doesn't show:
+
+- **It shows a file hasn't changed since it was signed, not who made it.** Each install signs with its own key, created on your computer, so verifiers report the signer as unverified. A key built into an open-source app could be copied, and anyone could then sign as Fragmenta.
+- **Re-saving or stripping removes it.** A file with no record proves nothing either way.
+- **Time-stamps use the internet.** For each export, Fragmenta sends a hash of the record, never audio or prompts, to DigiCert's public time-stamp server. Offline, files are signed without a time-stamp.
+- **Your files can be linked to each other.** All files from one install carry the same certificate. It contains no name or machine details.
 
 ## Code of Practice
 
@@ -44,7 +56,7 @@ Fragmenta has not signed the EU Code of Practice on Transparency of AI-Generated
 |---|---|
 | At least two machine-readable marking techniques | Metadata now; signed metadata (C2PA) in 2.0; no watermark (see above) |
 | Signed, time-stamped metadata | 2.0 (C2PA) |
-| A free way to detect the marks | Standard tag readers now; public C2PA verifiers from 2.0 |
+| A free way to detect the marks | Standard tag readers now; `utils/verify_credentials.py` and other C2PA tools from 2.0 |
 | Interoperable detection | Public formats: WAV INFO tags and the IPTC vocabulary now, the C2PA standard in 2.0 |
 | Users asked not to remove the marks | This page and the README now; the end-user terms in 2.0 |
 

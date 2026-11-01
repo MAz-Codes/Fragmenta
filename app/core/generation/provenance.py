@@ -8,7 +8,8 @@ DAWs and tag editors read. The comment embeds the IPTC digital source type
 URI so a machine can tell AI output apart from free text.
 
 These tags are unsigned — a good-faith Art. 50(2) baseline, not the Code of
-Practice's signed-metadata measure (see redesign/FRAGMENTA_2_0_MASTER_PLAN.md).
+Practice's signed-metadata measure. content_credentials.py signs what the
+*_manifest() functions here describe.
 """
 import os
 from pathlib import Path
@@ -66,6 +67,30 @@ def recording_tags() -> dict:
                     f"digital_source_type={SOURCE_COMPOSITE}"),
         "software": f"Fragmenta {_APP_VERSION}",
     }
+
+
+def _manifest(title: str, source_type: str, parameters: dict = None) -> dict:
+    agent = {"name": "Fragmenta", "version": _APP_VERSION}
+    action = {"action": "c2pa.created", "digitalSourceType": source_type, "softwareAgent": agent}
+    if parameters:
+        action["parameters"] = parameters
+    return {
+        "claim_generator_info": [agent],
+        "title": title,
+        "format": "audio/wav",
+        "assertions": [{"label": "c2pa.actions.v2", "data": {"actions": [action]}}],
+    }
+
+
+def generation_manifest(model_id: str, adapters: Iterable[str] = ()) -> dict:
+    """The signed counterpart of generation_tags()."""
+    return _manifest("AI-generated audio", SOURCE_GENERATED,
+                     {"model": model_id, "adapters": [_adapter_label(a) for a in adapters]})
+
+
+def recording_manifest() -> dict:
+    """The signed counterpart of recording_tags()."""
+    return _manifest("Performance recording with AI-generated audio", SOURCE_COMPOSITE)
 
 
 def _apply(f: sf.SoundFile, tags: dict) -> None:

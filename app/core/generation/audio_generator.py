@@ -24,7 +24,8 @@ import numpy as np
 
 from app.core.generation.engine import Capabilities, Engine, GenerationRequest
 from app.core.generation.models import MODEL_INFO as _MODEL_INFO, engine_for
-from app.core.generation.provenance import generation_tags, write_tagged_wav
+from app.core.generation.content_credentials import sign_wav
+from app.core.generation.provenance import generation_manifest, generation_tags, write_tagged_wav
 from utils.logger import get_logger
 
 logger = get_logger("AudioGenerator")
@@ -440,8 +441,7 @@ class AudioGenerator:
             out_path = out_dir / f"{base}_{counter}.wav"
             counter += 1
         # Machine-readable AI-output marking (EU AI Act Art. 50) — see provenance.py.
-        write_tagged_wav(
-            out_path, pcm, 44100,
-            generation_tags(model_id, [l["path"] for l in self._loaded_loras]),
-        )
+        adapters = [l["path"] for l in self._loaded_loras]
+        write_tagged_wav(out_path, pcm, 44100, generation_tags(model_id, adapters))
+        sign_wav(out_path, generation_manifest(model_id, adapters))
         return out_path
