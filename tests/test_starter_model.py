@@ -353,6 +353,87 @@ def test_no_download_uses_xet():
     assert hf_constants.HF_HUB_DISABLE_XET == before
 
 
+def clap_on_disk(e, deps=("roberta-base", "bert-base-uncased", "facebook/bart-base"), skip=()):
+    """The .pt, then each text encoder in the HF cache layout, as a download writes them."""
+    from app.backend.data.auto_annotator import CLAP_TEXT_DEP_FILES
+
+    clap = e.manager.models_dir / "clap"
+    clap.mkdir(parents=True, exist_ok=True)
+    (clap / "music_audioset_epoch_15_esc_90.14.pt").write_bytes(b"x" * 1000)
+    for repo in deps:
+        repo_dir = clap / "hub" / ("models--" + repo.replace("/", "--"))
+        (repo_dir / "blobs").mkdir(parents=True, exist_ok=True)
+        snap = repo_dir / "snapshots/rev"
+        snap.mkdir(parents=True, exist_ok=True)
+        for name in CLAP_TEXT_DEP_FILES[repo]:
+            if name not in skip:
+                (repo_dir / "blobs" / f"blob-{name}").write_bytes(b"x" * 100)
+                (snap / name).symlink_to(f"../../blobs/blob-{name}")
+    return clap
+
+
+def test_clap_isnt_installed_until_its_text_encoders_are():
+    with Env() as e:
+        clap_on_disk(e, deps=())
+        assert not e.manager.is_model_downloaded("clap-music")
+        clap_on_disk(e, deps=("roberta-base",))
+        assert not e.manager.is_model_downloaded("clap-music")
+    with Env() as e:
+        clap_on_disk(e, skip=("merges.txt",))
+        assert not e.manager.is_model_downloaded("clap-music")
+    with Env() as e:
+        clap_on_disk(e)
+        assert e.manager.is_model_downloaded("clap-music")
+
+
+def test_a_leftover_from_a_killed_download_doesnt_block_clap():
+    """Found with a real interrupted download: the stale file outlives the resume."""
+    with Env() as e:
+        clap = clap_on_disk(e)
+        (clap / "hub/models--roberta-base/blobs/half.incomplete").write_bytes(b"x")
+        assert e.manager.is_model_downloaded("clap-music")
+
+
+def test_clap_reports_its_real_size_and_deletes():
+    with Env() as e:
+        clap = clap_on_disk(e)
+        info = e.manager.get_model_info("clap-music")
+        expected = 1000 + 100 * 16  # the .pt, and the 16 files of its three text encoders
+        assert info["downloaded_bytes"] == expected and info["delete_frees_bytes"] == expected
+        assert e.manager.get_storage_info()["total_used_bytes"] == expected
+        assert e.manager.delete_model("clap-music") and not clap.exists()
+        assert not e.manager.is_model_downloaded("clap-music")
+        assert not e.manager.delete_model("clap-music")
+
+
+def test_a_half_downloaded_clap_says_whats_there():
+    with Env() as e:
+        clap_on_disk(e, deps=())
+        info = e.manager.get_model_info("clap-music")
+        assert not info["downloaded"] and info["on_disk_bytes"] == 1000
+
+
+def test_cancelling_clap_leaves_nothing_behind():
+    import threading
+
+    with Env() as e:
+        started = threading.Event()
+
+        def fake_clap(models_dir, phase_cb=None):
+            clap_on_disk(e, deps=())
+            started.set()
+            job._cancel_flag.wait(10)
+            raise mm._DownloadCancelled()
+
+        with mock.patch("app.backend.data.auto_annotator.download_clap_checkpoint", fake_clap):
+            job_id = e.manager.start_download("clap-music")["job_id"]
+            job = e.manager._jobs[job_id]
+            assert started.wait(10)
+            e.manager.cancel_job(job_id)
+            job._thread.join(20)
+        assert job.status == "cancelled" and not (e.manager.models_dir / "clap").exists()
+
+
 def test_clap_download_doesnt_use_xet_either():
     with Env() as e:
         seen = {}

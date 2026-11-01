@@ -75,6 +75,9 @@ All notable changes to Fragmenta are listed here. The format follows
   ones can be sliced.
 - Training on a dataset whose files can't be read stops with a clear error
   instead of retrying forever.
+- LAION-CLAP: it only shows as installed once its whole download has finished,
+  and an interrupted one carries on with Get. Its real size now shows in the
+  Checkpoint Manager and Storage, and Delete and Cancel remove it from disk.
 
 ## [1.2.0] - 2026-10-27
 

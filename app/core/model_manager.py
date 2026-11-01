@@ -378,8 +378,8 @@ class ModelManager:
             "user_visible": info.get("user_visible", False) or (info.get("kind") == "mlx" and mlx_models_visible()),
             "downloaded": downloaded,
             "downloaded_bytes": bytes_total,
-            # MLX models share files, so one not yet here may be partly on disk.
-            "on_disk_bytes": self._model_bytes(model_id) if info.get("kind") == "mlx" else bytes_total,
+            # MLX models share files and CLAP resumes, so one not yet here may be partly on disk.
+            "on_disk_bytes": self._model_bytes(model_id) if info.get("kind") in ("mlx", "tagger") else bytes_total,
             "delete_frees_bytes": self._delete_frees_bytes(model_id) if downloaded else 0,
             "active_job": active_job,
         }
@@ -495,6 +495,8 @@ class ModelManager:
         if info.get("kind") == "mlx":
             found = (self._bundle_file(model_id, name) for name in info["files"])
             return sum(f.stat().st_size for f in found if f)
+        if info.get("kind") == "tagger":
+            return self._dir_size(self.models_dir / "clap")
         return sum(self._dir_size(d) for d in (self._hub_cache_dir_for(model_id), self._legacy_flat_dir_for(model_id))
                    if d.exists())
 
@@ -693,6 +695,7 @@ class ModelManager:
             except _DownloadCancelled:
                 job.status = "cancelled"
                 job.error = "Cancelled by user"
+                shutil.rmtree(clap_dir, ignore_errors=True)
                 job.finished_at = datetime.now().isoformat()
             except OSError as err:
                 job.status = "failed"
@@ -827,6 +830,11 @@ class ModelManager:
             return False
         if _SA3_CATALOG[model_id].get("kind") == "mlx":
             return self._delete_bundle(model_id)
+        if _SA3_CATALOG[model_id].get("kind") == "tagger":
+            clap_dir = self.models_dir / "clap"
+            any_existed = clap_dir.exists()
+            shutil.rmtree(clap_dir, ignore_errors=True)
+            return any_existed and not clap_dir.exists()
         # Remove both the canonical hub copy and the legacy flat copy if
         # they exist. Either being present is enough to consider the
         # model "downloaded", so both must be cleaned for the row to
