@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
     Box,
     Accordion,
@@ -7,14 +7,16 @@ import {
     Button,
     Typography,
     Stack,
-    Menu,
     MenuItem,
+    MenuList,
+    Paper,
     Select,
     Slider,
     IconButton,
     Chip,
     Alert,
 } from '@mui/material';
+import { createPortal } from 'react-dom';
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
@@ -61,6 +63,29 @@ const checkpointsOf = (lora) => (
  * is the load order (slot 0 first); drag the handle to reorder. Bypass keeps
  * a slot in the stack but sends strength 0.
  */
+const SUBMENU_SWITCH_MS = 180;
+
+// Where a fixed panel goes beside a row, on the row's right if it fits. The app
+// zooms the page on small windows, and browsers differ in whether measured sizes
+// include that zoom, so the scale between the two is measured rather than assumed.
+const besideRow = (row, panel) => {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;left:0;top:0;width:100px;height:100px;visibility:hidden';
+    document.body.append(probe);
+    const scale = probe.getBoundingClientRect().width / 100;
+    probe.style.cssText = 'position:fixed;inset:0;visibility:hidden';
+    const view = probe.getBoundingClientRect();
+    probe.remove();
+
+    const gap = 4 * scale;
+    const anchor = row.getBoundingClientRect();
+    const { width, height } = panel.getBoundingClientRect();
+    const fitsRight = anchor.right + gap + width <= view.width;
+    const x = fitsRight ? anchor.right + gap : Math.max(0, anchor.left - gap - width);
+    const y = Math.max(0, Math.min(anchor.top, view.height - height));
+    return { left: x / scale, top: y / scale };
+};
+
 export default function LoraStack({ selectedModel, value, onChange }) {
     const [available, setAvailable] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -70,6 +95,43 @@ export default function LoraStack({ selectedModel, value, onChange }) {
     // and the run whose checkpoint submenu is currently showing.
     const [openSlot, setOpenSlot] = useState(null);
     const [submenu, setSubmenu] = useState(null);  // { anchorEl, lora } | null
+    // The run the pointer is aiming at, the timer that shows it, and where the
+    // pointer is (a scroll moves rows under it without any mouse event).
+    const aimed = useRef(null);
+    const aimTimer = useRef(null);
+    const pointer = useRef(null);
+    const panelRef = useRef(null);
+    const [panelPosition, setPanelPosition] = useState({ left: 0, top: 0, visibility: 'hidden' });
+    const [listScroll, setListScroll] = useState(0);
+
+    // Switching waits a moment, so crossing a row on the way into the submenu
+    // doesn't swap it out from under the pointer.
+    const aimAt = (next) => {
+        const id = next ? next.lora.id : null;
+        if (aimed.current === id) return;
+        aimed.current = id;
+        clearTimeout(aimTimer.current);
+        aimTimer.current = setTimeout(() => setSubmenu(next), next && !submenu ? 0 : SUBMENU_SWITCH_MS);
+    };
+
+    const stayOnSubmenu = () => {
+        clearTimeout(aimTimer.current);
+        aimed.current = submenu ? submenu.lora.id : null;
+    };
+
+    const closeSubmenu = () => {
+        clearTimeout(aimTimer.current);
+        aimed.current = null;
+        setSubmenu(null);
+    };
+
+    useEffect(() => () => clearTimeout(aimTimer.current), []);
+
+    useLayoutEffect(() => {
+        if (submenu && panelRef.current) {
+            setPanelPosition(besideRow(submenu.anchorEl, panelRef.current));
+        }
+    }, [submenu, listScroll]);
 
     useEffect(() => {
         let cancelled = false;
@@ -115,6 +177,28 @@ export default function LoraStack({ selectedModel, value, onChange }) {
         next.splice(target, 0, moved);
         setDragIndex(null);
         onChange(next);
+    };
+
+    // Which run's row is under the pointer, for hovering and for scrolling.
+    const aimAtRowAt = (x, y) => {
+        const row = document.elementFromPoint(x, y)?.closest('[data-lora-row]');
+        const lora = row && compatible.find((l) => String(l.id) === row.dataset.loraRow);
+        aimAt(lora && checkpointsOf(lora).length > 1 ? { anchorEl: row, lora } : null);
+    };
+
+    const listPaperProps = {
+        // The theme's menus don't scroll, and on a zoomed page a tall one is pushed off the top.
+        sx: { overflowY: 'auto', maxHeight: '60vh' },
+        onMouseMove: (e) => {
+            pointer.current = { x: e.clientX, y: e.clientY };
+            aimAtRowAt(e.clientX, e.clientY);
+        },
+        onMouseLeave: () => aimAt(null),
+        // Capture: the list inside this paper is what scrolls, and scrolls don't bubble.
+        onScrollCapture: (e) => {
+            setListScroll(e.target.scrollTop);
+            if (pointer.current) aimAtRowAt(pointer.current.x, pointer.current.y);
+        },
     };
 
     const hint = (() => {
@@ -193,7 +277,8 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                         displayEmpty
                                         open={openSlot === idx}
                                         onOpen={() => setOpenSlot(idx)}
-                                        onClose={() => { setOpenSlot(null); setSubmenu(null); }}
+                                        onClose={() => { setOpenSlot(null); closeSubmenu(); }}
+                                        MenuProps={{ PaperProps: listPaperProps }}
                                         onChange={(e) => setSlot(idx, { path: String(e.target.value) })}
                                         renderValue={(v) => {
                                             if (!v) return <em style={{ opacity: 0.6 }}>Pick a LoRA</em>;
@@ -207,7 +292,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                         }}
                                         sx={{ flex: 1, minWidth: 0 }}
                                     >
-                                        <MenuItem value="" disabled onMouseEnter={() => setSubmenu(null)}>
+                                        <MenuItem value="" disabled>
                                             <em>Pick a LoRA</em>
                                         </MenuItem>
                                         {/* One row per RUN. Clicking it takes the latest checkpoint
@@ -230,13 +315,7 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                                                 <MenuItem
                                                     key={l.id}
                                                     value={ckpts[ckpts.length - 1]}
-                                                    // Entering any row retargets the submenu, so moving
-                                                    // down the list never leaves a stale one open. We
-                                                    // deliberately don't close on mouseleave — that would
-                                                    // fight the diagonal travel into the submenu itself.
-                                                    onMouseEnter={(e) => setSubmenu(
-                                                        multi ? { anchorEl: e.currentTarget, lora: l } : null
-                                                    )}
+                                                    data-lora-row={l.id}
                                                 >
                                                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
                                                         <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -316,55 +395,40 @@ export default function LoraStack({ selectedModel, value, onChange }) {
                 </Button>
             </Stack>
 
-            {/* Checkpoint submenu. Rendered outside the Select (both are
-                portaled, and this mounts later so it paints above) and anchored
-                to whichever run row the pointer is over. autoFocus is off so the
-                Select keeps keyboard focus and the two menus don't fight. */}
-            <Menu
-                open={Boolean(submenu)}
-                anchorEl={submenu?.anchorEl || null}
-                onClose={() => setSubmenu(null)}
-                anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
-                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-                autoFocus={false}
-                disableAutoFocusItem
-                disableAutoFocus
-                disableEnforceFocus
-                disableRestoreFocus
-                // The submenu opens on top of the Select's own popover, so its
-                // backdrop would stack with that one — the theme's global
-                // MuiBackdrop override (rgba(5,4,3,.6) + blur) beats MUI's
-                // normally-invisible popover backdrop, and two of them read as
-                // a heavy double dim. Keep this one fully transparent so the
-                // page fades exactly once.
-                BackdropProps={{
-                    invisible: true,
-                    sx: { backgroundColor: 'transparent', backdropFilter: 'none' },
-                }}
-                // Instant: the submenu re-targets on every row hover, and a
-                // grow/fade on each one makes scanning the list feel sticky.
-                transitionDuration={0}
-                MenuListProps={{ dense: true, sx: { py: 0.5 } }}
-                PaperProps={{ sx: { maxHeight: 320, ml: 0.5 } }}
+            {/* Checkpoint submenu. Not a Menu: a Menu is a modal, whose full-screen
+                layer would keep the pointer and the wheel from the list underneath,
+                so nothing but a click could change or close it. */}
+            {submenu && createPortal(
+            <Box
+                ref={panelRef}
+                onMouseEnter={stayOnSubmenu}
+                onMouseLeave={() => aimAt(null)}
+                sx={(t) => ({ position: 'fixed', zIndex: t.zIndex.modal + 1, ...panelPosition })}
             >
-                {(submenu ? checkpointsOf(submenu.lora) : []).map((ckpt, ci, arr) => (
-                    <MenuItem
-                        key={ckpt}
-                        selected={slots[openSlot]?.path === ckpt}
-                        onClick={() => {
-                            if (openSlot !== null) setSlot(openSlot, { path: ckpt });
-                            setSubmenu(null);
-                            setOpenSlot(null);
-                        }}
-                        sx={{ gap: 1 }}
-                    >
-                        <Typography variant="body2">{parseCheckpointLabel(ckpt)}</Typography>
-                        {ci === arr.length - 1 && (
-                            <Chip size="small" label="latest" color="primary" variant="outlined" sx={{ height: 16, fontSize: 9 }} />
-                        )}
-                    </MenuItem>
-                ))}
-            </Menu>
+                <Paper sx={{ maxHeight: 320, overflowY: 'auto' }}>
+                    <MenuList dense sx={{ py: 0.5 }}>
+                        {checkpointsOf(submenu.lora).map((ckpt, ci, arr) => (
+                            <MenuItem
+                                key={ckpt}
+                                selected={slots[openSlot]?.path === ckpt}
+                                onClick={() => {
+                                    if (openSlot !== null) setSlot(openSlot, { path: ckpt });
+                                    closeSubmenu();
+                                    setOpenSlot(null);
+                                }}
+                                sx={{ gap: 1 }}
+                            >
+                                <Typography variant="body2">{parseCheckpointLabel(ckpt)}</Typography>
+                                {ci === arr.length - 1 && (
+                                    <Chip size="small" label="latest" color="primary" variant="outlined" sx={{ height: 16, fontSize: 9 }} />
+                                )}
+                            </MenuItem>
+                        ))}
+                    </MenuList>
+                </Paper>
+            </Box>,
+            document.body,
+            )}
             </AccordionDetails>
         </Accordion>
     );
