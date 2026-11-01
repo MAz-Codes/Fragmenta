@@ -173,8 +173,8 @@ export const TIPS = {
         mode: 'Style transfer re-imagines the whole clip toward your prompt. Inpaint replaces just a selected region, keeping the rest. Extend continues the clip past its end.',
         initNoise: 'How far to push the source toward the prompt. Low keeps the original\'s character and timing; high lets the prompt dominate (closer to generating from scratch).',
         maskRegion: 'The slice that gets regenerated — drag on the waveform or type start/end seconds. Everything outside it is preserved, and the output stays the same total length.',
-        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt.',
-        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region; for Style/Extend it steers the whole result.',
+        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt. If the source fades out at its end, the new audio replaces that fade.',
+        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region, and the surrounding audio matters more than the prompt: a small region stays close to the original, so select more for a bigger change. For Style it steers the whole result; for Extend, the new part.',
         generateButton: 'Run the edit on the source clip with the settings above. Disabled until a source clip is loaded.',
     },
 

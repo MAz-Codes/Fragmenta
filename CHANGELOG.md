@@ -78,6 +78,9 @@ All notable changes to Fragmenta are listed here. The format follows
   instead of retrying forever.
 - Training and pre-encoding no longer die at the start with "can't initialize sys
   standard streams" after the terminal that launched Fragmenta was closed.
+- Edit → Extend: the new part keeps playing. Before, the model took the new end
+  as the end of the track and most extensions faded out or came out silent. If
+  the source fades at its end, the new part now starts where the fade begins.
 - LAION-CLAP: it only shows as installed once its whole download has finished,
   and an interrupted one carries on with Get. Its real size now shows in the
   Checkpoint Manager and Storage, and Delete and Cancel remove it from disk.

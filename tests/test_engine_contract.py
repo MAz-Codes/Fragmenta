@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
+import soundfile as sf
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -149,6 +150,59 @@ def test_duration_stays_within_the_models_limits():
         assert e.request(duration=0.2).duration == 1.0
         assert e.request(duration=999).duration == 120.0
         assert e.request(model_id="sa3-medium", duration=999).duration == 380.0
+
+
+def extend_kwargs(path, source_seconds, want, start=None):
+    """An Extend request as the Edit panel sends it, on a source this long."""
+    sf.write(path, np.zeros((int(source_seconds * 44100), 2), dtype="float32"), 44100)
+    return dict(duration=want, inpaint_audio_path=str(path),
+                inpaint_starts=[source_seconds if start is None else start], inpaint_ends=[want])
+
+
+def test_extending_renders_past_the_end_and_trims_back():
+    long_output = np.zeros((2, 44100 * 24), dtype=np.float32)
+    with Env(output=long_output) as e:
+        path = e.run(**extend_kwargs(e.out / "source.wav", 10.0, 14.0))
+        r = e.engine.requests[-1]
+        assert (r.duration, r.inpaint_starts, r.inpaint_ends) == (24.0, [10.0], [24.0])
+        assert sf.info(path).frames == 44100 * 14
+
+
+def test_extending_starts_where_the_source_fades():
+    rng = np.random.default_rng(1)
+    level = np.ones(44100 * 10, dtype="float32")
+    level[44100 * 9:] = np.linspace(1, 0, 44100, dtype="float32") ** 3
+    level[int(44100 * 9.5):] = 0
+    faded = rng.normal(0, 0.2, (2, 44100 * 10)).astype("float32") * level
+    plain = rng.normal(0, 0.2, (2, 44100 * 10)).astype("float32")
+    quiet_tail = plain.copy()
+    quiet_tail[:, 44100 * 2:] = 0  # silent for 8 s: never give up more than 3 s of a source
+    assert 8.9 <= G._fade_start((44100, faded)) <= 9.5
+    assert G._fade_start((44100, plain)) == 10.0
+    assert G._fade_start((44100, quiet_tail)) == 7.0
+
+    with Env() as e:
+        path = e.out / "source.wav"
+        sf.write(path, faded.T, 44100)
+        r = e.request(duration=14.0, inpaint_audio_path=str(path), inpaint_starts=[10.0], inpaint_ends=[14.0])
+        assert 8.9 <= r.inpaint_starts[0] <= 9.5
+
+
+def test_extending_stops_at_the_models_limit():
+    with Env() as e:
+        r = e.request(**extend_kwargs(e.out / "source.wav", 100.0, 115.0))
+        assert (r.duration, r.inpaint_ends) == (120.0, [120.0])
+
+
+def test_inpainting_is_not_extending():
+    with Env() as e:
+        # A region inside the clip, and one running to the end of a clip no longer
+        # than its source (the Edit panel can send an end past the clip's length).
+        for start, end in ((2.5, 7.5), (2.5, 150.0)):
+            kw = extend_kwargs(e.out / "source.wav", 10.0, end, start=start)
+            kw["duration"] = 10.0
+            r = e.request(**kw)
+            assert (r.duration, r.inpaint_ends) == (10.0, [end])
 
 
 def test_every_option_reaches_the_engine():

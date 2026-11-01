@@ -106,6 +106,43 @@ def _make_engine(name: str, config: Any) -> Engine:
     return _engine_class(name)(config)
 
 
+SAMPLE_RATE = 44100
+EXTEND_RENDER_PAST_SEC = 10.0  # less and some seeds still fade or fall silent (measured, Small)
+FADE_WINDOW_SEC = 0.5
+FADE_BELOW_MEDIAN = 0.25       # power, so 6 dB under the clip's typical level
+FADE_MAX_SEC = 3.0             # never regenerate more of the source than this
+
+
+def _is_extension(inpaint_audio, inpaint_ends, duration: float) -> bool:
+    """A region running to the end of a clip that's longer than its source."""
+    if inpaint_audio is None or not inpaint_ends:
+        return False
+    sample_rate, samples = inpaint_audio
+    return samples.shape[-1] / sample_rate < duration and max(inpaint_ends) >= duration
+
+
+def _fade_start(inpaint_audio) -> float:
+    """Where the source's closing fade begins, in seconds; its end if it has none.
+
+    The model continues what it hears, so after a fade it continues silence: up to
+    three seconds of it on Medium (measured). Generated clips nearly always end so.
+    """
+    sample_rate, samples = inpaint_audio
+    window = int(sample_rate * FADE_WINDOW_SEC)
+    frames = samples.shape[-1] // window
+    length = samples.shape[-1] / sample_rate
+    if frames < 2:
+        return length
+    # Whole windows back from the end, so the last one is really the clip's last.
+    offset = samples.shape[-1] - frames * window
+    power = (samples[..., offset:offset + frames * window] ** 2).mean(axis=0).reshape(frames, window).mean(axis=1)
+    if power.max() <= 0:
+        return length
+    typical = np.median(power[power > power.max() * 1e-4])  # of what's audible
+    last_loud = frames - 1 - int(np.argmax((power >= typical * FADE_BELOW_MEDIAN)[::-1]))
+    return max(length - FADE_MAX_SEC, (offset + (last_loud + 1) * window) / sample_rate)
+
+
 def engine_available(name: str) -> bool:
     return _engine_class(name).available()
 
@@ -281,6 +318,17 @@ class AudioGenerator:
 
         duration = float(min(max(1.0, float(duration)), float(max_dur)))
 
+        # Extending: the model takes the stated length as where the track ends and
+        # winds down towards it, so a short extension comes out as a fade or silence.
+        # Render past the end, with the regenerated region reaching that far, then trim.
+        requested_duration = duration
+        if _is_extension(inpaint_audio, inpaint_ends, duration):
+            duration = min(duration + EXTEND_RENDER_PAST_SEC, float(max_dur))
+            inpaint_ends = [duration if end >= requested_duration else end for end in inpaint_ends]
+            source_end = inpaint_audio[1].shape[-1] / inpaint_audio[0]
+            inpaint_starts = [min(start, _fade_start(inpaint_audio)) if start >= source_end - 0.01 else start
+                              for start in inpaint_starts]
+
         total_steps_logical = effective_steps
 
         if stop_event.is_set():                   # stopped during model load
@@ -324,6 +372,7 @@ class AudioGenerator:
             _set_progress(phase="failed", is_generating=False,
                           error=str(exc), ended_at=time.time())
             raise
+        audio = audio[..., :int(round(requested_duration * SAMPLE_RATE))]
 
         # Seamless-loop processing (quantize, inpaint, crossfade) was
         # removed: the user A/B-compared raw SA3 output against the full
