@@ -433,6 +433,16 @@ def test_full_fine_tunes_list_when_the_data_folder_is_outside_the_code():
     assert response.get_json()["models"][0]["ckpt_path"] == str(ckpt)
 
 
+def test_a_failed_training_says_why():
+    from app.core.training.sa3_trainer import _failure_reason
+    tail = ["Loading model", "Traceback (most recent call last):", '  File "x.py", line 3, in y', "    z()",
+            "TypeError: Cannot convert a MPS Tensor to float64 dtype",
+            "Epoch 0:   0%|   | 0/10 [00:00<?, ?it/s]"]
+    assert _failure_reason(tail) == "TypeError: Cannot convert a MPS Tensor to float64 dtype"
+    assert _failure_reason(["RuntimeError: boom", "UserWarning: this: isn't it"]) == "RuntimeError: boom"
+    assert _failure_reason([]) == ""
+
+
 def test_training_lists_checkpoints_when_the_data_folder_is_outside_the_code():
     """As in every installed app; this used to raise once a checkpoint was saved."""
     from app.core.training import sa3_trainer as T

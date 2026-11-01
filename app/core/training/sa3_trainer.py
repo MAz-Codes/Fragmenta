@@ -83,6 +83,18 @@ DEFAULT_PRECISION = "bf16"
 
 # --- SA3Trainer singleton --------------------------------------------------
 
+def _failure_reason(log_tail: List[str]) -> str:
+    """The error in a failed run's output: the exception line of its traceback.
+
+    Progress bars keep redrawing around it, so they're never the answer.
+    """
+    lines = [ln for ln in log_tail if ln.strip() and not ln.startswith((" ", "\t"))
+             and "Epoch " not in ln and "it/s" not in ln and "%|" not in ln]
+    named = re.compile(r"^[\w.]*(Error|Exception|Interrupt|Warning)\b.*:")
+    return next((ln for ln in reversed(lines) if named.match(ln) and "Warning" not in ln.split(":")[0]),
+                lines[-1] if lines else "")
+
+
 class SA3Trainer:
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config: Dict[str, Any] = config or {}
@@ -669,7 +681,9 @@ class SA3Trainer:
         else:
             self.status["status"] = "complete" if rc == 0 else "failed"
         if self.status["status"] == "failed" and not self.status.get("error"):
-            self.status["error"] = f"train_lora.py exited with code {rc}"
+            reason = _failure_reason(self.status["log_tail"])
+            self.status["error"] = f"train_lora.py exited with code {rc}" + (f": {reason[:300]}" if reason else "")
+            logger.error("Training failed (exit %s)\n%s", rc, "\n".join(self.status["log_tail"]))
 
         # Convert PyTorch Lightning .ckpt files to SA3's native .safetensors
         # LoRA format — the inference loader (/api/loras) only sees
