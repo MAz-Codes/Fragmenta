@@ -9,6 +9,9 @@ releases/latest/download/latest.json exists the moment it's published.
     # 1.2.x (source-only release, Python 3.11)
     python packaging/make_manifest.py --requires-python 3.11
 
+    # 1.3.0 (source-only; the launcher moves a 1.2 folder to Python 3.14 after git pull)
+    python packaging/make_manifest.py
+
     # 2.0.0 (installers; source installs must reinstall)
     python packaging/make_manifest.py --requires-python 3.14 --reinstall-required \\
         --upgrade-guide-url https://github.com/MAz-Codes/Fragmenta/blob/main/docs/UPGRADING.md \\
@@ -52,7 +55,7 @@ def sha256(path: Path) -> str:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--requires-python", required=True, help="major.minor the release runs on, e.g. 3.14")
+    p.add_argument("--requires-python", help="major.minor the release runs on, e.g. 3.14; leave out when git pull + the launcher can update a source install")
     p.add_argument("--reinstall-required", action="store_true", help="source installs can't update in place")
     p.add_argument("--upgrade-guide-url", help="page explaining a major upgrade (must be on the GitHub repo)")
     p.add_argument("--critical", action="store_true", help="security or data-loss fix")
@@ -62,7 +65,7 @@ def main() -> None:
     p.add_argument("-o", "--output", default="latest.json")
     args = p.parse_args()
 
-    if not re.fullmatch(r"\d+\.\d+", args.requires_python):
+    if args.requires_python and not re.fullmatch(r"\d+\.\d+", args.requires_python):
         raise SystemExit("--requires-python must look like 3.14")
     if args.upgrade_guide_url and not args.upgrade_guide_url.startswith(REPO + "/"):
         raise SystemExit("--upgrade-guide-url must be on the Fragmenta GitHub repo")
@@ -76,7 +79,7 @@ def main() -> None:
         "notes_url": f"{REPO}/releases/tag/{tag}",
         "highlights": changelog_highlights(version),
         "critical": args.critical,
-        "requires": {"python": args.requires_python},
+        **({"requires": {"python": args.requires_python}} if args.requires_python else {}),
         "reinstall_required": args.reinstall_required,
         "artifacts": {},
     }
@@ -94,7 +97,7 @@ def main() -> None:
 
     Path(args.output).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {args.output}: {version}, {len(manifest['highlights'])} highlights, "
-          f"{len(manifest['artifacts'])} artifacts, requires Python {args.requires_python}")
+          f"{len(manifest['artifacts'])} artifacts, requires Python {args.requires_python or "(not stated)"}")
 
 
 if __name__ == "__main__":

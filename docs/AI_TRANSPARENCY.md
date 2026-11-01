@@ -34,7 +34,7 @@ In October 2026 we tested Meta's AudioSeal watermark on Fragmenta's own generati
 
 ## Signed metadata
 
-Fragmenta 2.0 adds **signed metadata** (C2PA Content Credentials) to exported files. Like the tags above, it doesn't touch the audio. Changing the audio or the tags after signing makes verification fail. To check a file:
+Since 1.3, Fragmenta adds **signed metadata** (C2PA Content Credentials) to exported files. Like the tags above, it doesn't touch the audio. Changing the audio or the tags after signing makes verification fail. To check a file:
 
 ```
 pip install c2pa-python==0.38.0
@@ -54,10 +54,10 @@ Fragmenta has not signed the EU Code of Practice on Transparency of AI-Generated
 
 | Code measure | Fragmenta |
 |---|---|
-| At least two machine-readable marking techniques | Metadata now; signed metadata (C2PA) in 2.0; no watermark (see above) |
-| Signed, time-stamped metadata | Signed from 2.0 (C2PA); not time-stamped, for privacy |
-| A free way to detect the marks | Standard tag readers now; `utils/verify_credentials.py` and other C2PA tools from 2.0 |
-| Interoperable detection | Public formats: WAV INFO tags and the IPTC vocabulary now, the C2PA standard in 2.0 |
+| At least two machine-readable marking techniques | Metadata and signed metadata (C2PA); no watermark (see above) |
+| Signed, time-stamped metadata | Signed (C2PA); not time-stamped, for privacy |
+| A free way to detect the marks | Standard tag readers, `utils/verify_credentials.py` and other C2PA tools |
+| Interoperable detection | Public formats: WAV INFO tags, the IPTC vocabulary and the C2PA standard |
 | Users asked not to remove the marks | This page and the README |
 
 Questions: please open an issue on the [GitHub repository](https://github.com/MAz-Codes/Fragmenta).

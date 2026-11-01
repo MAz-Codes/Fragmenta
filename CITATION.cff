@@ -1,4 +1,4 @@
-cff-version: 1.2.0
+cff-version: 1.3.0
 message: "If you use this software, please cite it as below."
 title: "Fragmenta"
 abstract: "An open-source text-to-audio pipeline for musicians, built on Stable Audio 3, with dataset tooling, LoRA training, generation, editing, and a live performance mode."

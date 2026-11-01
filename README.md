@@ -5,11 +5,11 @@
 # Fragmenta 
 
 [![License](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Version](https://img.shields.io/badge/version-1.2.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-green.svg)](https://github.com/MAz-Codes/fragmenta/releases)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20692998.svg)](https://doi.org/10.5281/zenodo.20692998)
 [![Website](https://img.shields.io/badge/website-Fragmenta-purple.svg)](https://www.misaghazimi.com/fragmenta)
 [![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.11-red.svg)](https://pytorch.org/)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/MAz-Codes)
 
 
@@ -30,7 +30,7 @@
 
 </div>
 
-Fragmenta is an open-source app that brings the complete generative AI text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and live performance. After the initial installation, the app runs fully offline, and your data never leaves your device.
+Fragmenta is an open-source app that brings the complete generative AI text-to-audio pipeline to musicians: intuitive dataset creation, LoRA training, generation, audio editing, and live performance. After the initial setup it runs offline, and your data stays on your computer.
 
 Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragmenta is designed for all musicians, and especially for experimental music and sonic arts practitioners, giving them the ability to shape the latent space with their own audio and musical data, no coding required. It reflects the small-data, model-bending, and artist-first approaches to AI that are central to my [PhD research](https://www.misaghazimi.com/fragmenta). 
 > **Compatibility:** The beta version's engine has been removed; if you need it, use the [`v0.1.x-legacy`](https://github.com/MAz-Codes/fragmenta/releases) tag. 
@@ -39,14 +39,17 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 ## Features
 
 - **Desktop app** with a lightweight `pywebview` window and a pre-built React frontend
-- **Bulk auto-annotation** — generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
-- **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision — trains directly on a Dataset Workbench project
-- **LoRA adapters** — train LoRA, DoRA, or BoRA adapters (plus low-VRAM `-xs` variants) on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
-- **Text-to-audio generation** — variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
-- **Audio editing** — style transfer (audio-to-audio), region inpainting, and clip extension/continuation. _Temporarily hidden:_ these are implemented, but the upstream Stable Audio 3 runtime does not yet produce usable results for them, so the controls are switched off rather than shipped broken. They return in a future release once upstream support lands.
-- **Checkpoint Manager** — pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
-- **Performance Mode** — a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance))
+- **Apple Silicon:** Small - Music, Small - SFX and Medium run on MLX, with no account needed and far less memory than PyTorch
+- **No account to start:** with no model installed, Fragmenta offers one to download. Read the licenses, tick to agree, and go
+- **Bulk auto-annotation:** generate text prompts for your audio files via DSP analysis (Basic) or AI tagging with LAION-CLAP (Rich), with optional user-defined vocabulary
+- **Project-aware LoRA training** with configurable rank, steps, learning rate, batch size, checkpoint frequency, and precision. Trains directly on a Dataset Workbench project
+- **LoRA adapters:** train LoRA, DoRA, or BoRA adapters (plus low-VRAM `-xs` variants) on top of a frozen `*-base` checkpoint for consumer GPUs; stack up to 4 at once with per-slot strength, bypass, and reorder at generation time
+- **Text-to-audio generation:** variable-length clips (up to 120s small / 380s medium), with CFG scale, inference steps, seed control, and a multi-LoRA stack
+- **Audio editing:** style transfer, region inpainting and clip extension, under Edit existing on the Generation page
+- **Checkpoint Manager:** pick and download individual SA3 checkpoints (Small Music/SFX, Medium, and the matching `*-base` models) with per-item progress and hardware-compatibility hints
+- **Performance Mode:** a 4-channel live sampler: per-channel effects (gain, pan, filter, delay, reverb), master dBFS metering, bars-mode generation, launch quantization (standalone or via **Ableton Link**), persistent sessions, named presets, and MIDI learn (see [Performance Mode](#4-performance))
 - **Real-time GPU memory monitoring**
+- **Import from an older Fragmenta folder:** bring over models, LoRAs, projects, generated audio and your CLAP vocabulary from Settings → Import
 
 
 ---
@@ -54,13 +57,13 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 
 ## Before You Start
 
-Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU or Apple Silicon. After a one-time model download everything runs offline and on-device — the in-app **Checkpoint Manager** handles the downloads (see [Authenticate & Download Models](#0-authenticate--download-models)).
+Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU or Apple Silicon. After a one-time model download everything runs offline and on-device. The in-app **Checkpoint Manager** handles the downloads (see [Download Models](#0-download-models)).
 
 ---
 
 ## Run the App Locally
 
-> **Requirements:** Python 3.14 ([download](https://www.python.org/downloads/)) — other versions won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
+> **Requirements:** Python 3.14 ([download](https://www.python.org/downloads/)). Other versions won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
 
 Open your **Terminal** or **PowerShell** and paste the following:
 
@@ -77,7 +80,17 @@ Run the installer for your platform:
 | **macOS** | `fragmenta.command` |
 | **Windows** | `./fragmenta.bat` |
 
-The installer verifies Python 3.14 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster — re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
+The installer verifies Python 3.14 is available, sets up a virtual environment, installs all dependencies, and launches Fragmenta. The first run takes a while; subsequent launches are faster. Re-run the same script to start the app. The install is fully isolated: deleting the folder removes everything except Python itself.
+
+### Updating from 1.2
+
+Fragmenta 1.3 runs on Python 3.14 (1.2 used 3.11). In your Fragmenta folder, run:
+
+```bash
+git pull
+```
+
+Install [Python 3.14](https://www.python.org/downloads/) if you don't have it, then start Fragmenta with the same script as before. The first start rebuilds `venv/`, which can download up to about 8 GB. Your models, LoRAs, projects and generated audio stay where they are.
 
 
 
@@ -87,7 +100,7 @@ The installer verifies Python 3.14 is available, sets up a virtual environment, 
 
 ### 0. Download Models
 
-The Checkpoint Manager downloads models for you. The **Base** models (e.g. Small - Music (Base)) need no account — they download straight away.
+With no model installed, Fragmenta offers one to download when it opens. For the others, use the Checkpoint Manager. The **Base** models (e.g. Small - Music (Base)) need no account, and on Apple Silicon neither do the MLX models.
 
 > **HuggingFace token (distilled models only):** the faster distilled models are gated. To use them:
 > 1. Accept their license on the model page (while logged into your HF account).
@@ -97,12 +110,12 @@ The Checkpoint Manager downloads models for you. The **Base** models (e.g. Small
 ### 1. Dataset
 <img src="docs/Dataset.png" width="100%" alt="Dataset Workbench">
 
-Datasets are built in the **Dataset Workbench** (the *Dataset* tab) — an in-app workspace that takes you from raw audio to a captioned, training-ready dataset without spreadsheets or leaving the app. Everything is scoped to a **project**: a folder of audio clips and their text prompts.
+Datasets are built in the **Dataset Workbench** (the *Dataset* tab), an in-app workspace that takes you from raw audio to a captioned, training-ready dataset without spreadsheets or leaving the app. Everything is scoped to a **project**: a folder of audio clips and their text prompts.
 
-1. **Create or load a project** — start fresh, or reopen an existing one to keep editing.
-2. **Add audio** — ingest a folder by **copy** (duplicates the originals, safe) or **symlink** (references them in place, saves disk).
-3. **Inspect & slice** — every clip shows a waveform and plays back inline. Slice long files into training-sized segments.
-4. **Annotate** — type prompts by hand, or **auto-annotate** every clip (or just selected ones):
+1. **Create or load a project:** start fresh, or reopen an existing one to keep editing.
+2. **Add audio:** ingest a folder by **copy** (duplicates the originals, safe) or **symlink** (references them in place, saves disk).
+3. **Inspect & slice:** every clip shows a waveform and plays back inline. Slice long files into training-sized segments.
+4. **Annotate:** type prompts by hand, or **auto-annotate** every clip (or just selected ones):
 
    | Tier | Adds | Cost |
    |---|---|---|
@@ -110,9 +123,9 @@ Datasets are built in the **Dataset Workbench** (the *Dataset* tab) — an in-ap
    | **Rich** | Basic + zero-shot genre / mood / instruments via [LAION-CLAP](https://github.com/LAION-AI/CLAP) | ~2.35 GB one-time download |
 
    A **prompt template** (Music / Instrument / SFX) shapes how the tags are formatted, and the Rich tier's **CLAP vocabulary** is editable so tags match your own taxonomy.
-5. **Check & create** — a health strip flags empty or duplicate prompts, sub-1 s clips, and unsupported formats. **Save** keeps a restartable draft; **Create Dataset** writes the final, training-ready form. Optionally **pre-encode latents** here for a 5–10× per-step training speed-up.
+5. **Check & create:** a health strip flags empty or duplicate prompts, sub-1 s clips, and unsupported formats. **Save** keeps a restartable draft; **Create Dataset** writes the final, training-ready form. Optionally **pre-encode latents** here for a 5–10× per-step training speed-up.
 
-The finished project shows up directly in the Training tab — no export step.
+The finished project shows up directly in the Training tab, with no export step.
 
 
 
@@ -126,20 +139,26 @@ Training produces a **LoRA adapter** against a `*-base` checkpoint (`sa3-small-m
 | `sa3-small-*-base` | ~2.5 GB (≈2 GB with `-xs`) | Laptop / consumer GPU; fast iteration |
 | `sa3-medium-base` | ~6.5 GB (≈5.5 GB with `bf16`) | Best fidelity; needs an NVIDIA GPU |
 
-Pick a project from the Dataset Workbench, choose an **adapter type** (`dora-rows` is the recommended default), set rank/steps/learning rate, and Start. Each `step_<n>.safetensors` checkpoint appears in the LoRA picker as it's written.
+Pick a project from the Dataset Workbench, choose an **adapter type** (`dora-rows` is the recommended default), set rank/steps/learning rate, and Start. Each checkpoint appears in the LoRA picker as it's written, and the monitor shows time left and speed.
 
 
 
 ### 3. Generate
 <img src="docs/Generation.png" width="100%" alt="Generate">
 
-Use base or distilled models to generate audio from text prompts — up to 120 s on the Small models, 380 s on Medium. If you've trained a LoRA, pick one and dial in a multiplier to control how strongly the adapter biases the output.
+Use base or distilled models to generate audio from text prompts, up to 120 s on the Small models, 380 s on Medium. If you've trained a LoRA, pick one and dial in a multiplier to control how strongly the adapter biases the output.
 
 **Settings:**
-- **CFG scale** — how closely the model follows your prompt (higher = stricter)
-- **Inference steps** — diffusion steps per generation. More = higher quality, proportionally slower. Locked to 8 for the distilled small model.
-- **Seed** — control randomness; same seed produces identical results
-- **Batch generation** — generate multiple variations at once
+- **CFG scale:** how closely the model follows your prompt (higher = stricter)
+- **Inference steps:** diffusion steps per generation. More = higher quality, proportionally slower. Locked to 8 for the distilled small model.
+- **Seed:** control randomness; same seed produces identical results
+- **Batch generation:** generate multiple variations at once
+
+**Edit existing:**
+Switch from Create to Edit existing and drop in a clip, or drag a fragment's name onto it.
+- **Style transfer:** reshape a clip with a prompt. The strength slider runs from keeping the source (0) to following the prompt (1).
+- **Inpaint:** regenerate a region of a clip. A small region stays close to the original, so start wide and drag it smaller once you have the sound.
+- **Extend:** add to the end of a clip.
 
 
 
@@ -151,17 +170,18 @@ This is a 4-channel diffusion sampler designed for live performance use. Each ch
 **Per-channel controls:**
 - Text prompt and Generate (batch 1–4 for variations)
 - Gain, pan, bipolar filter (one knob: low-pass below center, high-pass above), delay, reverb
+- Pitch knob: transpose a clip up to an octave either way without changing its length. Double-click to reset
 - Mute, solo, loop toggle
 - Waveform display and per-channel level meter
-- Fragment history — every clip a channel generates is kept; audition it, star to keep, or drag it onto the waveform to load
+- Fragment history: every clip a channel generates is kept; audition it, star to keep, or drag it onto the waveform to load
 
 **Master controls:**
-- Master fader with peak-hold dBFS metering
+- Master output knob with peak-hold dBFS metering
 - Play All / Stop All, and Record the master output to WAV
-- Master tempo (BPM) — drives bars-mode generation and launch quantization
-- Launch quantization (`Q`) — snap launches to the grid (None, 1/32 → 8 Bars)
+- Master tempo (BPM): drives bars-mode generation and launch quantization
+- Launch quantization (`Q`): snap launches to the grid (None, 1/32 → 8 Bars)
 - Master reverb (selectable impulse response) and tempo-synced delay division
-- **Ableton Link** toggle — sync tempo with any Link-enabled app on the local network. The small Link binding (~1–2 MB) isn't bundled; the app offers to install it the first time you enable Link.
+- **Ableton Link** toggle: sync tempo with any Link-enabled app on the local network. The small Link binding (~1–2 MB) isn't bundled; the app offers to install it the first time you enable Link.
 
 **Bars-mode generation:**
 Switch a channel from `sec` to `bars` and pick a length (1, 2, 4, 8, or 16 bars). The clip is rendered to that bar count at the master BPM. 
@@ -174,10 +194,10 @@ With `Q` set to anything other than None, channel launches snap to the next quan
 - Click the floppy-disk icon in the toolbar to save the current configuration as a named preset, or load a saved one. **Restore defaults** wipes the session and MIDI mappings if you want to start clean.
 
 **MIDI:**
-Click **MIDI** in the toolbar to enter learn mode, then click any UI element and move a hardware knob/button to bind it. Mappings persist across sessions.
+Click **MIDI Learn** in the toolbar to enter learn mode, then click any UI element and move a hardware knob/button to bind it. Mappings persist across sessions.
 
 **Other:**
-- **Prompt injection** — optional toggles append the master tempo (BPM), a prompt key, and a time signature to each prompt (BPM is skipped if the prompt already names one). Set from the bottom bar.
+- **Prompt injection:** add a key and the master tempo (BPM) to each prompt, unless the prompt already names them. Set under Add to prompt in the top bar.
 - **Shared inference steps and seed** with the Generation page.
 
 
@@ -186,11 +206,11 @@ Click **MIDI** in the toolbar to enter learn mode, then click any UI element and
 
 ## Stats
 
-Real generation times measured in Fragmenta — **full clip** (sampling + VAE decode), warm model, batch size 1. Yours will vary with hardware, prompt, and settings.
+Real generation times measured in Fragmenta: **full clip** (sampling + VAE decode), warm model, batch size 1. Yours will vary with hardware, prompt, and settings.
 
 **Test machines:** NVIDIA RTX 5080 · AMD Ryzen 5 7600 (CPU, 12 threads) · Apple M1 (8-core)
 
-**Models:** *Small* = Music **or** SFX (same 433M architecture, near-identical speed; up to 120 s). *Medium* = 1.4B, NVIDIA GPU only (requires Flash Attention 2; up to 380 s). All values in **seconds**.
+**Models:** *Small* = Music **or** SFX (same 433M architecture, near-identical speed; up to 120 s). *Medium* = 1.4B, up to 380 s. It needs an NVIDIA GPU on PyTorch (with Flash Attention 2), or Apple Silicon on MLX. All values in **seconds**.
 
 ### Small (Music / SFX)
 
@@ -206,7 +226,7 @@ Real generation times measured in Fragmenta — **full clip** (sampling + VAE de
 | **CPU** (Apple M1) | 50 (base) | 43.0 | 83.9 | 134.9 | 548.1 |
 | **CPU** (Apple M1) | 250 (base) | 210.7 | 398.5 | 668.3 | 2515.9 |
 
-### Medium (GPU only)
+### Medium
 
 | Inference steps | Device | 10 s | 30 s | 60 s | 120 s | 250 s | 380 s |
 |---|---|---|---|---|---|---|---|
@@ -231,9 +251,12 @@ fragmenta/
 ├── models/                 # Model configs and checkpoints
 ├── utils/                  # Utility modules
 ├── config/                 # Configuration files
-├── fragmenta.sh            # Linux — first-time setup and subsequent launches
-├── fragmenta.bat           # Windows — first-time setup and subsequent launches
-├── fragmenta.command       # macOS — first-time setup and subsequent launches
+├── locks/                  # Pinned dependencies with checksums, per platform
+├── licenses/               # Model licenses and use policies
+├── docs/                   # AI transparency note and README images
+├── fragmenta.sh            # Linux: first-time setup and subsequent launches
+├── fragmenta.bat           # Windows: first-time setup and subsequent launches
+├── fragmenta.command       # macOS: first-time setup and subsequent launches
 ├── install.py              # Creates the venv + installs dependencies (run by the launch scripts)
 └── start.py                # Starts the backend + desktop window (run by install.py --launch)
 ```
@@ -245,11 +268,11 @@ fragmenta/
 | Problem | Solution |
 |---|---|
 | pywebview / GTK error on Linux | Install WebKitGTK / GTK runtime packages, then rerun the installer |
-| Flash-Attention won't install | Small models run without it; **Medium requires it** (NVIDIA GPU). On Windows, install the prebuilt wheel provided with the project |
-| GPU memory issues | Use the **Free GPU** button in the header, or reduce batch size |
+| Flash-Attention won't install | Small models run without it. On PyTorch, **Medium needs it** (NVIDIA GPU). The installer gets it on Linux and Windows, so rerun the installer |
+| GPU memory issues | Use **Free GPU memory** in the top toolbar, or reduce batch size |
 | Performance panel feels stuck or its state is wrong | Open the preset menu and click **Restore defaults** |
 | Multi-channel audio in Performance mode (macOS) | The native macOS window can't route audio to separate output devices. Open Fragmenta in your browser instead: [http://localhost:5001](http://localhost:5001) |
-| Import errors | Verify Python 3.14 is installed — other versions are not supported. [Download Python 3.14](https://www.python.org/downloads/). The installer rebuilds a `venv/` made with another Python by itself; if errors persist, delete `venv/` and rerun. |
+| Import errors | Verify Python 3.14 is installed. Other versions are not supported. [Download Python 3.14](https://www.python.org/downloads/). The installer rebuilds a `venv/` made with another Python by itself; if errors persist, delete `venv/` and rerun. |
 
 ---
 
@@ -257,7 +280,7 @@ fragmenta/
 
 If you use Fragmenta in your research, please cite it. You can use the **Cite this repository** button on GitHub (powered by [CITATION.cff](CITATION.cff)), or:
 
-> Azimi, M. (2026). *Fragmenta* (Version 1.0.0) [Computer software]. https://doi.org/10.5281/zenodo.20692998
+> Azimi, M. (2026). *Fragmenta* (Version 1.3.0) [Computer software]. https://doi.org/10.5281/zenodo.20692998
 
 **BibTeX:**
 
@@ -266,13 +289,13 @@ If you use Fragmenta in your research, please cite it. You can use the **Cite th
   author  = {Azimi, Misagh},
   title   = {Fragmenta},
   year    = {2026},
-  version = {1.0.0},
+  version = {1.3.0},
   doi     = {10.5281/zenodo.20692998},
   url     = {https://github.com/MAz-Codes/Fragmenta}
 }
 ```
 
-The DOI is a Zenodo concept DOI — it always resolves to the latest release.
+The DOI is a Zenodo concept DOI, so it always resolves to the latest release.
 
 ---
 
@@ -298,22 +321,22 @@ Before proposing a substantial change, please read the [contribution guidelines]
 
 Copyright 2025-2026 Misagh Azimi
 
-Licensed under the **GNU Affero General Public License v3.0** — see [LICENSE](LICENSE) for the full text.
+Licensed under the **GNU Affero General Public License v3.0**. See [LICENSE](LICENSE) for the full text.
 
 **What this means in practice:**
 - You can use, study, modify, and redistribute Fragmenta freely.
 - If you distribute Fragmenta (modified or not), or **run a modified version as a hosted/network service**, you must release your source code under the same AGPL-3.0 license.
 - You must keep the copyright notice and attribution.
 
-If you want to use Fragmenta under different terms (e.g. embedded in a closed-source commercial product), please reach out — as the sole copyright holder I'm open to discussing alternative licensing.
+If you want to use Fragmenta under different terms (e.g. embedded in a closed-source commercial product), please reach out. As the sole copyright holder I'm open to discussing alternative licensing.
 
 ### Update Notices
 
-Fragmenta asks GitHub once a day whether a newer version exists and shows a small notice if there is one. Nothing personal is sent — it's a plain request with no identifiers — and nothing is downloaded or installed automatically. Turn it off in About, or start Fragmenta with `FRAGMENTA_NO_UPDATE_CHECK=1`.
+Fragmenta asks GitHub once a day whether a newer version exists and shows a small notice if there is one. Nothing personal is sent, just a plain request with no identifiers, and nothing is downloaded or installed automatically. Turn it off in About, or start Fragmenta with `FRAGMENTA_NO_UPDATE_CHECK=1`.
 
 ### AI-Generated Output
 
-Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). Please keep these tags when you share the files. Details, limits and why there is no audio watermark: [docs/AI_TRANSPARENCY.md](docs/AI_TRANSPARENCY.md).
+Audio made with Fragmenta is AI-generated. To meet the EU AI Act's transparency rules (Art. 50), every generated file and every saved performance recording carries machine-readable metadata saying so (WAV INFO tags with the IPTC digital source type; check with `ffprobe <file>`). They also carry a signed record (C2PA Content Credentials), made on your computer, that shows whether the audio or tags have changed since. Please keep these marks when you share the files. Details, limits and why there is no audio watermark: [docs/AI_TRANSPARENCY.md](docs/AI_TRANSPARENCY.md).
 
 ### Third-Party Software
 
@@ -323,8 +346,8 @@ Fragmenta is **Powered by Stability AI**, using the [Stable Audio 3](https://git
 
 Full license texts and use policies for the models are in [`licenses/`](licenses/).
 
-- **Vendored code** — the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI — see [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
-- **Model weights** — **not** redistributed with Fragmenta; you download them from Hugging Face (the Base models without an account, the distilled ones after accepting their terms there), and by using them you accept their license. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
-- **Impulse responses** — the bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, with no external licensing.
+- **Vendored code:** the Stable Audio 3 inference/training code is bundled under [`vendor/stable-audio-3/`](vendor/stable-audio-3/) (pinned snapshot; see [UPSTREAM.md](vendor/stable-audio-3/UPSTREAM.md)) under the **MIT License**, © 2026 Stability AI. See [vendor/stable-audio-3/LICENSE](vendor/stable-audio-3/LICENSE).
+- **Model weights:** **not** redistributed with Fragmenta; you download them from Hugging Face (the Base models without an account, the distilled ones after accepting their terms there), and by using them you accept their license. Governed by the **[Stability AI Community License](https://stability.ai/community-license-agreement)** (free use up to USD $1M annual revenue; above that an enterprise license from Stability AI is required), and they include a T5Gemma text encoder under the **[Gemma Terms of Use](https://ai.google.dev/gemma/terms)**. LoRA adapters you train on the `*-base` checkpoints are Derivative Works under the same Community License.
+- **Impulse responses:** the bundled convolution-reverb impulse responses under [`app/frontend/public/ir/`](app/frontend/public/ir/) are **original**, synthesised by Fragmenta, with no external licensing.
 
 Fragmenta also depends on many open-source libraries. See [NOTICE.md](NOTICE.md) for the complete attribution and license list.
