@@ -210,6 +210,7 @@ def start_backend_subprocess() -> subprocess.Popen:
         [sys.executable, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
         env=env,
+        stdin=subprocess.DEVNULL,  # it outlives this terminal and never reads input
     )
 
 def run_browser_mode() -> int:

@@ -1857,7 +1857,7 @@ def link_install():
             [sys.executable, '-m', 'pip', 'install',
              '--disable-pip-version-check', '--quiet',
              'LinkPython-extern==1.3.0'],  # same pin as locks/ (packaging/lock.py)
-            capture_output=True, text=True, timeout=240,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or '').strip().splitlines()[-10:]

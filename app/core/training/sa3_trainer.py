@@ -531,6 +531,9 @@ class SA3Trainer:
             cmd,
             cwd=str(get_config().project_root),
             env=env,
+            # Not the backend's: it outlives the terminal that launched it, and
+            # Python won't start on a dead stream (macOS: "init_sys_streams").
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

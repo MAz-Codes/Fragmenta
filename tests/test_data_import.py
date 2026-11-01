@@ -433,6 +433,19 @@ def test_full_fine_tunes_list_when_the_data_folder_is_outside_the_code():
     assert response.get_json()["models"][0]["ckpt_path"] == str(ckpt)
 
 
+def test_python_children_never_inherit_the_backends_input():
+    """The backend outlives its terminal; Python won't start on a dead stream."""
+    import ast
+    root = Path(__file__).resolve().parent.parent
+    for rel, funcs in (("app/core/training/sa3_trainer.py", {"Popen"}), ("app/backend/data/pre_encoder.py", {"Popen"})):
+        calls = [n for n in ast.walk(ast.parse((root / rel).read_text(encoding="utf-8")))
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in funcs
+                 and getattr(n.func.value, "id", "") == "subprocess"]
+        assert calls, rel
+        for call in calls:
+            assert any(k.arg == "stdin" for k in call.keywords), f"{rel}:{call.lineno}"
+
+
 def test_a_failed_training_says_why():
     from app.core.training.sa3_trainer import _failure_reason
     tail = ["Loading model", "Traceback (most recent call last):", '  File "x.py", line 3, in y', "    z()",

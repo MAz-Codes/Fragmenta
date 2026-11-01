@@ -335,6 +335,7 @@ def _run_pre_encode(project_name: str, ae: str, sample_size: int) -> None:
             cmd,
             cwd=str(cfg.project_root),
             env=env,
+            stdin=subprocess.DEVNULL,  # see SA3Trainer: the backend's may be dead
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
