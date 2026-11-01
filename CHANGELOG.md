@@ -78,6 +78,7 @@ All notable changes to Fragmenta are listed here. The format follows
   instead of retrying forever.
 - Training and pre-encoding no longer die at the start with "can't initialize sys
   standard streams" after the terminal that launched Fragmenta was closed.
+- Performance: a channel's fragment list shows the newest on top.
 - Edit → Inpaint: the region now starts at nearly the whole clip, so the prompt
   is heard on the first try. A small region stays close to the original; drag it
   smaller once you've got the sound.

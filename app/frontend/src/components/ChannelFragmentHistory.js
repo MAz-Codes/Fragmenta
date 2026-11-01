@@ -70,7 +70,7 @@ function LoadDot({ loaded, color = 'currentColor', size = 14 }) {
  *   maxFragments:   cap, default 50 (informational; eviction lives in parent)
  *   on{Audition,Commit,ToggleStar,Delete}:  (fragmentId) => void
  *   onRename:       (fragmentId, label) => void  ('' clears the label)
- *   onMove:         (fragmentId, delta) => void  (-1 up, +1 down)
+ *   onMove:         (fragmentId, delta) => void  (in the list, so +1 shows as up)
  *   onClearAll:     () => void  (parent confirms separately — we still show
  *                   a confirm dialog here for the trash-everything action)
  */
@@ -142,7 +142,9 @@ export default function ChannelFragmentHistory({
                 <Box sx={styles.fragmentHistoryEmpty}>Empty</Box>
             ) : (
                 <Box sx={styles.fragmentHistoryList}>
-                    {fragments.map((fragment, rowIndex) => {
+                    {/* Newest on top. The list itself stays oldest first, as saved
+                        sessions and presets have it, so only the showing is reversed. */}
+                    {[...fragments].reverse().map((fragment, rowIndex) => {
                         const isAuditioning = auditioningId === fragment.id;
                         const isCommitted = committedId === fragment.id;
                         // The loaded row is filled with the lane colour, so its
@@ -173,7 +175,7 @@ export default function ChannelFragmentHistory({
                                         <span>
                                             <IconButton
                                                 size="small"
-                                                onClick={() => onMove?.(fragment.id, -1)}
+                                                onClick={() => onMove?.(fragment.id, 1)}
                                                 disabled={rowIndex === 0}
                                                 sx={styles.fragmentReorderBtn}
                                                 aria-label="Move fragment up"
@@ -186,7 +188,7 @@ export default function ChannelFragmentHistory({
                                         <span>
                                             <IconButton
                                                 size="small"
-                                                onClick={() => onMove?.(fragment.id, 1)}
+                                                onClick={() => onMove?.(fragment.id, -1)}
                                                 disabled={rowIndex === fragments.length - 1}
                                                 sx={styles.fragmentReorderBtn}
                                                 aria-label="Move fragment down"
