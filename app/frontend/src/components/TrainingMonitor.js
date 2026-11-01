@@ -5,6 +5,7 @@ import LossChart from './LossChart';
 import Tooltip from './Tooltip';
 import { TIPS } from '../tooltips';
 import { trainingMonitorStyles } from '../theme';
+import { formatTime } from '../utils/format';
 
 /**
  * TrainingMonitor — right-pane status card for the Training tab.
@@ -67,6 +68,8 @@ export default function TrainingMonitor({
         ?? trainingStatus?.checkpoints?.length
         ?? 0;
     const currentLoss = trainingStatus?.loss;
+    const stepsPerSec = trainingStatus?.is_training ? trainingStatus?.steps_per_sec : null;
+    const timeLeft = trainingStatus?.is_training ? formatTime(trainingStatus?.eta_seconds) : null;
     // Checkpoint steps, read from file names like "epoch=4-step=500.ckpt",
     // for the markers on the loss chart.
     const checkpointSteps = useMemo(() => (trainingStatus?.checkpoints || [])
@@ -126,17 +129,22 @@ export default function TrainingMonitor({
                     </Box>
                 </Tooltip>
                 <Box sx={trainingMonitorStyles.metricTile}>
-                    <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Phase</Typography>
-                    <Typography component="span" sx={[trainingMonitorStyles.metricValue, { textTransform: 'capitalize' }]}>
-                        {trainingStatus?.status || 'idle'}
-                    </Typography>
-                </Box>
-                <Box sx={trainingMonitorStyles.metricTile}>
                     <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Seed</Typography>
                     <Typography component="span" sx={trainingMonitorStyles.metricValue}>
                         {Number.isFinite(trainingStatus?.seed) ? trainingStatus.seed : '—'}
                     </Typography>
                 </Box>
+                <Tooltip title={TIPS.monitor.timeLeft}>
+                    <Box sx={trainingMonitorStyles.metricTile}>
+                        <Typography component="span" sx={trainingMonitorStyles.metricLabel}>Time left</Typography>
+                        <Typography component="span" sx={trainingMonitorStyles.metricValue}>{timeLeft || '—'}</Typography>
+                        {stepsPerSec > 0 && (
+                            <Typography component="span" sx={trainingMonitorStyles.stepText}>
+                                {stepsPerSec.toFixed(stepsPerSec < 1 ? 2 : 1)} it/s
+                            </Typography>
+                        )}
+                    </Box>
+                </Tooltip>
             </Box>
 
             {lossPoints.length > 0 && (

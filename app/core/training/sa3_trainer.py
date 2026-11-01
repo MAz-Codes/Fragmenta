@@ -44,6 +44,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -82,6 +83,32 @@ DEFAULT_PRECISION = "bf16"
 
 
 # --- SA3Trainer singleton --------------------------------------------------
+
+class _StepRate:
+    """Recent speed, from when steps land rather than tqdm's figure: that one
+    restarts with each epoch, and turns into s/it on a slow machine.
+
+    The first step waits for the model and the data, so timing starts after it.
+    """
+
+    WINDOW_SEC = 120.0
+    MIN_SPAN_SEC = 10.0
+
+    def __init__(self) -> None:
+        self._points: deque = deque(maxlen=256)
+
+    def add(self, now: float, step: int) -> None:
+        self._points.append((now, step))
+        while len(self._points) > 3 and now - self._points[0][0] > self.WINDOW_SEC:
+            self._points.popleft()
+
+    def steps_per_sec(self) -> Optional[float]:
+        if len(self._points) < 3:
+            return None
+        (first_time, first_step), (last_time, last_step) = self._points[0], self._points[-1]
+        span = last_time - first_time
+        return (last_step - first_step) / span if span >= self.MIN_SPAN_SEC else None
+
 
 def _failure_reason(log_tail: List[str]) -> str:
     """The error in a failed run's output: the exception line of its traceback.
@@ -524,6 +551,8 @@ class SA3Trainer:
             "started_at": time.time(),
             "ended_at": None,
             "checkpoints": [],
+            "steps_per_sec": None,
+            "eta_seconds": None,
             "message": "Starting training subprocess...",
         })
 
@@ -577,6 +606,7 @@ class SA3Trainer:
         prev_ckpt_count = 0
         current_epoch = 0
         batches_per_epoch = 0
+        step_rate = _StepRate()
         try:
             # UTF-8, not the Windows locale default (cp1252): the child's
             # stdout is decoded as UTF-8 (see Popen) and tqdm progress bars
@@ -616,6 +646,12 @@ class SA3Trainer:
                                         global_step = min(global_step, max_steps)
                                     if global_step > self.status.get("step", 0):
                                         self.status["step"] = global_step
+                                        step_rate.add(time.time(), global_step)
+                                        speed = step_rate.steps_per_sec()
+                                        self.status["steps_per_sec"] = speed
+                                        self.status["eta_seconds"] = (
+                                            (max_steps - global_step) / speed
+                                            if speed and max_steps > 0 else None)
 
                         m_loss = loss_pat.search(line)
                         if m_loss:
@@ -672,6 +708,7 @@ class SA3Trainer:
 
         self.status["ended_at"] = time.time()
         self.status["is_training"] = False
+        self.status["steps_per_sec"] = self.status["eta_seconds"] = None
         # The subprocess is gone — drop its PID file so it can't be reported
         # as an orphan. PID files only outlive a run when the backend died
         # while the child was still training.

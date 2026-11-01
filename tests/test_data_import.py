@@ -446,6 +446,26 @@ def test_python_children_never_inherit_the_backends_input():
             assert any(k.arg == "stdin" for k in call.keywords), f"{rel}:{call.lineno}"
 
 
+def test_training_speed_comes_from_recent_steps():
+    from app.core.training.sa3_trainer import _StepRate
+    rate = _StepRate()
+    rate.add(1000.0, 1)
+    assert rate.steps_per_sec() is None
+    rate.add(1005.0, 2)
+    rate.add(1009.0, 3)
+    assert rate.steps_per_sec() is None  # under 10 s isn't a measurement yet
+    rate.add(1021.0, 6)
+    assert abs(rate.steps_per_sec() - 5 / 21) < 1e-9
+
+    # A slow start falls out of the window, so the figure follows the current speed.
+    rate = _StepRate()
+    for second in range(0, 200, 10):
+        rate.add(1000.0 + second, second // 10)
+    for second in range(200, 400):
+        rate.add(1000.0 + second, 20 + (second - 200))
+    assert abs(rate.steps_per_sec() - 1.0) < 1e-9
+
+
 def test_a_failed_training_says_why():
     from app.core.training.sa3_trainer import _failure_reason
     tail = ["Loading model", "Traceback (most recent call last):", '  File "x.py", line 3, in y', "    z()",

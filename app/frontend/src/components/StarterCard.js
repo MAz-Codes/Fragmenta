@@ -18,15 +18,9 @@ import {
 } from '@mui/material';
 import { X as CloseIcon, ExternalLink as ExternalLinkIcon } from 'lucide-react';
 import api from '../api';
+import { formatTimeLeft } from '../utils/format';
 
 const fmtGb = (bytes) => `${((bytes || 0) / 1e9).toFixed(1)}`;
-
-const fmtLeft = (seconds) => {
-    if (!Number.isFinite(seconds) || seconds <= 0) return null;
-    if (seconds < 90) return 'under 2 min left';
-    if (seconds < 3600) return `~${Math.round(seconds / 60)} min left`;
-    return `~${(seconds / 3600).toFixed(1)} h left`;
-};
 
 const errorText = (e) => e.response?.data?.error || e.message;
 
@@ -303,7 +297,7 @@ export default function StarterCard({ open, onClose, starter, onOpenManager, onI
     if (speed.current && phase === 'downloading') {
         const seconds = (Date.now() - speed.current.at) / 1000;
         const rate = (downloaded - speed.current.bytes) / seconds;
-        if (seconds > 5 && rate > 0) left = fmtLeft((size - downloaded) / rate);
+        if (seconds > 5 && rate > 0) left = formatTimeLeft((size - downloaded) / rate);
     }
     const started = phase === 'downloading' || phase === 'paused' || phase === 'interrupted';
 

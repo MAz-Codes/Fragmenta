@@ -201,6 +201,7 @@ export const TIPS = {
     monitor: {
         lossChart: 'Training loss per step, lower is better. A curve that falls then flattens means the LoRA is converging; a flat or rising curve suggests the learning rate or data needs attention.',
         steps: 'Progress through the run, counted in optimizer steps (SA3 trains by steps, not epochs).',
+        timeLeft: 'Speed over the last two minutes, and how long the remaining steps take at that speed.',
         checkpoints: 'How many LoRA snapshots have been written so far. Each is a usable adapter you can generate with or keep training from.',
     },
 };

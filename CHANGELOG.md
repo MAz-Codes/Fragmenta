@@ -25,6 +25,7 @@ All notable changes to Fragmenta are listed here. The format follows
   Small - Music is the first-run offer there. LoRAs trained on a Base model work
   on them. Training still uses a PyTorch Base model, which the Training tab
   offers to download when it's missing.
+- Training monitor: the Phase card is now Time left, with the current speed.
 - Settings → Import: bring models, LoRAs, projects, generated audio and your
   CLAP vocabulary over from an older Fragmenta folder, so nothing needs
   downloading again. It moves them on the same drive or copies them, and never
