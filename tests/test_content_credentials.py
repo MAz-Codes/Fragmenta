@@ -28,8 +28,7 @@ UNTRUSTED = "signingCredential.untrusted"
 
 
 class Env:
-    """A scratch credentials folder, with the time-stamp server unreachable
-    unless a test says otherwise."""
+    """A scratch credentials folder."""
 
     def __enter__(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -37,15 +36,12 @@ class Env:
         self.creds = self.dir / "credentials"
         config = mock.Mock()
         config.get_path.return_value = self.creds
-        self._patches = [mock.patch.object(cc, "get_config", return_value=config),
-                         mock.patch.object(cc, "_timestamp_url", return_value=None)]
-        for p in self._patches:
-            p.start()
+        self._patch = mock.patch.object(cc, "get_config", return_value=config)
+        self._patch.start()
         return self
 
     def __exit__(self, *exc):
-        for p in self._patches:
-            p.stop()
+        self._patch.stop()
         self._tmp.cleanup()
 
     def wav(self, name="a.wav", tags=None):
@@ -189,24 +185,14 @@ def test_a_certificate_near_expiry_is_replaced():
         assert cc._usable(chain, key)
 
 
-def test_failed_time_stamp_still_signs_and_pauses_further_tries():
+def test_signing_asks_no_server_for_a_time_stamp():
     with Env() as env:
         path, _ = env.wav()
-        with mock.patch.object(cc, "_timestamp_url", return_value="http://127.0.0.1:9/x"), \
-                mock.patch.object(cc, "_skip_timestamp_until", 0.0):
+        with mock.patch.object(c2pa, "C2paSignerInfo", wraps=c2pa.C2paSignerInfo) as info:
             assert cc.sign_wav(path, pv.generation_manifest("m"))
-            assert cc._skip_timestamp_until > 0
+        assert info.call_args.kwargs["ta_url"] is None
         data = store(path)
         assert "time" not in data["manifests"][data["active_manifest"]]["signature_info"]
-
-
-def test_no_network_means_no_time_stamp_attempt():
-    real = cc.__dict__["_timestamp_url"]
-    with mock.patch.object(cc, "_skip_timestamp_until", 0.0), \
-            mock.patch.object(cc.socket, "create_connection", side_effect=OSError("offline")) as connect:
-        assert real() is None
-        assert real() is None  # paused: doesn't try the network again
-        assert connect.call_count == 1
 
 
 def test_signing_failures_leave_the_tagged_file_untouched():

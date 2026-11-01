@@ -48,7 +48,8 @@ def check(path: str) -> tuple:
                     lines.append(f"details: {json.dumps(action['parameters'])}")
     signature = manifest.get("signature_info", {})
     lines.append(f"signer: {signature.get('issuer', 'unknown')}")
-    lines.append(f"signed at: {signature.get('time') or 'no time-stamp (signed offline)'}")
+    if signature.get("time"):
+        lines.append(f"time-stamped: {signature['time']}")
 
     if failures or store.get("validation_state") == "Invalid":
         return CHANGED, ["CHANGED since it was signed: " + ", ".join(sorted(failures))] + lines

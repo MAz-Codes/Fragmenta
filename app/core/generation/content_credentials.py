@@ -10,28 +10,19 @@ could then sign as Fragmenta. So a signature shows the file hasn't changed since
 that install signed it, not who made it, and verifiers report the signer as
 untrusted. Files from one install share a certificate, so they can be linked.
 
-Time-stamping sends a hash, never audio, to a public server. Offline, files are
-signed without a time-stamp. Marking never blocks an export: on any failure the
+Signing is fully local. There's no time-stamp, because that would tell a public
+server about every export. Marking never blocks an export: on any failure the
 tagged file stays as it is and the reason goes to the log.
 """
 import datetime as dt
 import os
-import socket
 import threading
-import time
 from pathlib import Path
 
 from app.core.config import get_config
 from utils.logger import get_logger
 
 logger = get_logger("ContentCredentials")
-
-TIMESTAMP_HOST = "timestamp.digicert.com"
-TIMESTAMP_URL = f"http://{TIMESTAMP_HOST}"
-_CONNECT_TIMEOUT_S = 1.5
-# After a failure, don't let every export wait on the same dead network. A
-# server that accepts and then stalls costs 30 s (the library's limit) once.
-_TIMESTAMP_RETRY_S = 300
 
 _CERT_YEARS = 10
 _RENEW_BEFORE = dt.timedelta(days=30)
@@ -41,7 +32,6 @@ _KEY_FILE = "signing_key.pem"
 _SIGNER_ORG = "Fragmenta install (self-issued, unverified)"
 
 _key_lock = threading.Lock()
-_skip_timestamp_until = 0.0
 
 
 def _new_credentials() -> tuple:
@@ -133,27 +123,8 @@ def _load_credentials() -> tuple:
         return chain, key
 
 
-def _timestamp_url():
-    """The server's URL if it's worth trying right now. Without this check a
-    dead network could hold up every export while DNS or connecting times out."""
-    if time.monotonic() < _skip_timestamp_until:
-        return None
-    try:
-        socket.create_connection((TIMESTAMP_HOST, 80), timeout=_CONNECT_TIMEOUT_S).close()
-        return TIMESTAMP_URL
-    except OSError:
-        _pause_timestamps()
-        return None
-
-
-def _pause_timestamps() -> None:
-    global _skip_timestamp_until
-    _skip_timestamp_until = time.monotonic() + _TIMESTAMP_RETRY_S
-
-
-def _sign(c2pa, src: Path, dest: Path, manifest: dict, chain: bytes, key: bytes, url) -> None:
-    info = c2pa.C2paSignerInfo(alg=b"es256", sign_cert=chain, private_key=key,
-                               ta_url=url.encode() if url else None)
+def _sign(c2pa, src: Path, dest: Path, manifest: dict, chain: bytes, key: bytes) -> None:
+    info = c2pa.C2paSignerInfo(alg=b"es256", sign_cert=chain, private_key=key, ta_url=None)
     with c2pa.Signer.from_info(info) as signer, c2pa.Builder(manifest) as builder:
         with open(src, "rb") as source, open(dest, "w+b") as output:
             builder.sign(signer, "audio/wav", source, output)
@@ -168,15 +139,7 @@ def sign_wav(path: Path, manifest: dict) -> bool:
         import c2pa
 
         chain, key = _load_credentials()
-        url = _timestamp_url()
-        try:
-            _sign(c2pa, path, tmp, manifest, chain, key, url)
-        except Exception as exc:
-            if url is None:
-                raise
-            logger.info(f"Signing {path.name} without a time-stamp: {exc}")
-            _pause_timestamps()
-            _sign(c2pa, path, tmp, manifest, chain, key, None)
+        _sign(c2pa, path, tmp, manifest, chain, key)
         os.replace(tmp, path)
         return True
     except Exception as exc:
