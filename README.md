@@ -54,7 +54,7 @@ Built on [Stable Audio 3](https://github.com/Stability-AI/stable-audio-3), Fragm
 
 ## Before You Start
 
-Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU. After a one-time model download everything runs offline and on-device — the in-app **Checkpoint Manager** handles the downloads (see [Authenticate & Download Models](#0-authenticate--download-models)).
+Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple Silicon, or GPU; **Medium** needs an NVIDIA GPU or Apple Silicon. After a one-time model download everything runs offline and on-device — the in-app **Checkpoint Manager** handles the downloads (see [Authenticate & Download Models](#0-authenticate--download-models)).
 
 ---
 
