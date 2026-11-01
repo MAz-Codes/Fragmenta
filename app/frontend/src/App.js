@@ -61,6 +61,7 @@ import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
+import ConfirmDialog from './components/ConfirmDialog';
 import { hiddenOnMac } from './utils/macModels';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
@@ -142,6 +143,7 @@ function App() {
         return !skipOnce && window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true';
     });
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
+    const [confirmPrompt, setConfirmPrompt] = useState(null);
     // Closing the starter card only lasts until the next launch: this isn't
     // saved anywhere, so it comes back while there's still no model.
     const [starterClosed, setStarterClosed] = useState(false);
@@ -727,12 +729,15 @@ function App() {
     // Delete a fine-tuned model OR a LoRA — both live under models/fine_tuned/<name>
     // so the same endpoint (rmtree on the directory) handles either. After
     // success, clear any selection that pointed at it and refresh both lists.
-    const handleDeleteFineTunedOrLora = async (name, { isLora } = {}) => {
-        const kind = isLora ? 'LoRA' : 'fine-tuned model';
-        const confirmed = window.confirm(
-            `Delete ${kind} "${name}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteFineTunedOrLora = (name, { isLora } = {}) => setConfirmPrompt({
+        title: `Delete ${isLora ? 'LoRA' : 'fine-tuned model'} "${name}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteFineTunedOrLora(name, isLora),
+    });
+
+    const deleteFineTunedOrLora = async (name, isLora) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(name)}`);
             if (isLora) {
@@ -3007,6 +3012,8 @@ function App() {
                     </Button>
                 </DialogActions>
             </Dialog>
+
+            <ConfirmDialog prompt={confirmPrompt} onClose={() => setConfirmPrompt(null)} />
 
             <CheckpointManagerWindow
                 open={checkpointMgrOpen}

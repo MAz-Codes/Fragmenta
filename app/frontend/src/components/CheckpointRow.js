@@ -3,11 +3,6 @@ import {
     Box,
     Typography,
     Button,
-    Dialog,
-    DialogActions,
-    DialogContent,
-    DialogContentText,
-    DialogTitle,
     LinearProgress,
     Stack,
     IconButton,
@@ -16,6 +11,7 @@ import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import { Trash2 as DeleteIcon } from 'lucide-react';
 import api from '../api';
+import ConfirmDialog from './ConfirmDialog';
 import { LicenseAgreementDialog } from './StarterCard';
 
 export const fmtBytes = (n) => {
@@ -155,7 +151,6 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
     };
 
     const deleteCheckpoint = async () => {
-        setConfirmingDelete(false);
         setBusy(true);
         try {
             await api.delete(`/api/checkpoints/${checkpoint.id}`);
@@ -300,19 +295,17 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
                 </Typography>
             )}
 
-            <Dialog open={confirmingDelete} onClose={() => setConfirmingDelete(false)}>
-                <DialogTitle>Delete {checkpoint.name}?</DialogTitle>
-                <DialogContent>
-                    <DialogContentText>
-                        This frees {fmtBytes(frees)}.
-                        {stays > 0 && ` The other ${fmtBytes(stays)} stays, because another installed model uses it.`}
-                    </DialogContentText>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setConfirmingDelete(false)}>Cancel</Button>
-                    <Button onClick={deleteCheckpoint} color="error" variant="contained">Delete</Button>
-                </DialogActions>
-            </Dialog>
+            <ConfirmDialog
+                prompt={confirmingDelete ? {
+                    title: `Delete ${checkpoint.name}?`,
+                    text: `This frees ${fmtBytes(frees)}.`
+                        + (stays > 0 ? ` The other ${fmtBytes(stays)} stays, because another installed model uses it.` : ''),
+                    confirmLabel: 'Delete',
+                    danger: true,
+                    onConfirm: deleteCheckpoint,
+                } : null}
+                onClose={() => setConfirmingDelete(false)}
+            />
 
             <LicenseAgreementDialog
                 checkpoint={asking ? checkpoint : null}

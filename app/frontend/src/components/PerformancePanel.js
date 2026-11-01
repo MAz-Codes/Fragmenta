@@ -43,6 +43,7 @@ import {
     Plus as PlusIcon,
     ChevronDown as ChevronDownIcon,
 } from 'lucide-react';
+import ConfirmDialog from './ConfirmDialog';
 import api from '../api';
 import { extractError } from '../utils/errors';
 import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
@@ -180,6 +181,7 @@ function PerformancePanelInner({
     const [linkEnabled, setLinkEnabled] = useState(session.linkEnabled ?? false);
     const [linkPeers, setLinkPeers] = useState(0);
     const [linkInstalling, setLinkInstalling] = useState(false);
+    const [confirmPrompt, setConfirmPrompt] = useState(null);
     // Link sync: Fragmenta schedules Link launches early by its measured
     // output latency (performanceAudio.js); this per-output-device trim covers
     // what the browser doesn't report. Per-viewer convenience → localStorage.
@@ -899,25 +901,29 @@ function PerformancePanelInner({
     useEffect(() => { if (!linkEnabled) stopCalibration(); }, [linkEnabled, stopCalibration]);
     useEffect(() => () => engineRef.current?.stopCalibrationClicks(), []);
 
+    const installLink = useCallback(async () => {
+        setLinkInstalling(true);
+        try {
+            await api.post('/api/link/install');
+            setLinkAvailable(true);
+            await api.post('/api/link/enable');
+            setLinkEnabled(true);
+        } catch (err) {
+            setError(`Link install failed: ${extractError(err, 'Install failed')}`);
+        } finally {
+            setLinkInstalling(false);
+        }
+    }, []);
+
     const handleToggleLink = useCallback(async () => {
         // First click when Link isn't installed: offer to install it.
         if (!linkAvailable) {
-            const confirmed = window.confirm(
-                'Ableton Link requires the LinkPython-extern package (~1–2 MB, ~30s install).\n\n'
-                + 'Install it now? You\'ll only need to do this once.'
-            );
-            if (!confirmed) return;
-            setLinkInstalling(true);
-            try {
-                await api.post('/api/link/install');
-                setLinkAvailable(true);
-                await api.post('/api/link/enable');
-                setLinkEnabled(true);
-            } catch (err) {
-                setError(`Link install failed: ${extractError(err, 'Install failed')}`);
-            } finally {
-                setLinkInstalling(false);
-            }
+            setConfirmPrompt({
+                title: 'Install Ableton Link?',
+                text: 'Ableton Link needs the LinkPython-extern package (~1–2 MB, ~30 s to install). You\'ll only need to do this once.',
+                confirmLabel: 'Install',
+                onConfirm: installLink,
+            });
             return;
         }
 
@@ -934,7 +940,7 @@ function PerformancePanelInner({
             if (err?.response?.status === 503) setLinkAvailable(false);
             setError(extractError(err, 'Link toggle failed'));
         }
-    }, [linkEnabled, linkAvailable]);
+    }, [linkEnabled, linkAvailable, installLink]);
 
     const handlePlayAll = () => {
         engineRef.current?.playAll(true);
@@ -1099,11 +1105,15 @@ function PerformancePanelInner({
         if (onSelectModel) onSelectModel(value);
     };
 
-    const handleDeleteFineTuned = async (modelName) => {
-        const confirmed = window.confirm(
-            `Delete fine-tuned model "${modelName}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteFineTuned = (modelName) => setConfirmPrompt({
+        title: `Delete fine-tuned model "${modelName}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteFineTuned(modelName),
+    });
+
+    const deleteFineTuned = async (modelName) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(modelName)}`);
             if (selectedModel === modelName) {
@@ -1117,11 +1127,15 @@ function PerformancePanelInner({
 
     // LoRAs share the same on-disk layout as fine-tuned models (one dir under
     // models/fine_tuned/<name>/), so the same DELETE endpoint handles both.
-    const handleDeleteLora = async (loraName) => {
-        const confirmed = window.confirm(
-            `Delete LoRA "${loraName}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteLora = (loraName) => setConfirmPrompt({
+        title: `Delete LoRA "${loraName}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteLora(loraName),
+    });
+
+    const deleteLora = async (loraName) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(loraName)}`);
             // Clear the active LoRA if it points anywhere inside the deleted dir.
@@ -2171,6 +2185,8 @@ function PerformancePanelInner({
 
 
             {/* Name + save dialog for a finished master recording. */}
+            <ConfirmDialog prompt={confirmPrompt} onClose={() => setConfirmPrompt(null)} />
+
             <Dialog
                 open={Boolean(pendingRecording)}
                 onClose={savingRecording ? undefined : handleDiscardRecording}
