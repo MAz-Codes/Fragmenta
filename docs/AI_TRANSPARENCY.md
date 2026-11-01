@@ -58,6 +58,6 @@ Fragmenta has not signed the EU Code of Practice on Transparency of AI-Generated
 | Signed, time-stamped metadata | 2.0 (C2PA) |
 | A free way to detect the marks | Standard tag readers now; `utils/verify_credentials.py` and other C2PA tools from 2.0 |
 | Interoperable detection | Public formats: WAV INFO tags and the IPTC vocabulary now, the C2PA standard in 2.0 |
-| Users asked not to remove the marks | This page and the README now; the end-user terms in 2.0 |
+| Users asked not to remove the marks | This page and the README |
 
 Questions: please open an issue on the [GitHub repository](https://github.com/MAz-Codes/Fragmenta).
