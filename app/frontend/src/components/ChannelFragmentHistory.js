@@ -14,7 +14,7 @@ import {
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
-    Play as PlayIcon,
+    Headphones as CueIcon,
     Square as StopIcon,
     Star as StarIcon,
     Trash2 as DeleteIcon,
@@ -45,7 +45,7 @@ function LoadDot({ loaded, color = 'currentColor', size = 14 }) {
  *
  * Each row exposes four actions, all visible by default (no hover-reveal —
  * Performance use is fast, can't afford the discoverability tax):
- *   • Cue ▶/■   — audition through the cue output (separate from main mix)
+ *   • Cue 🎧/■  — audition through the cue output (separate from main mix)
  *   • Star ★/☆ — mark as a keeper. Starred fragments survive the cap
  *                  eviction; unstarred get dropped FIFO when over cap.
  *   • Delete ⌫  — remove this fragment from history (cancellable confirm not
@@ -217,7 +217,7 @@ export default function ChannelFragmentHistory({
                                         >
                                             {isAuditioning
                                                 ? <StopIcon size={12} />
-                                                : <PlayIcon size={12} />}
+                                                : <CueIcon size={12} />}
                                         </IconButton>
                                     </Tooltip>
                                 </MidiMappable>
