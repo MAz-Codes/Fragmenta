@@ -69,7 +69,7 @@ import PreEncodeProgress from './components/PreEncodeProgress';
 import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
-import StarterCard, { PAGE_FADE, useStarterModel } from './components/StarterCard';
+import StarterCard, { NoModelNote, PAGE_FADE, useStarterModel } from './components/StarterCard';
 import TrainingModelOffer from './components/TrainingModelOffer';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
@@ -784,6 +784,7 @@ function App() {
         if (!checkpointMgrOpen) refreshStarter();
     }, [checkpointMgrOpen, refreshStarter]);
     const starterDownloading = Boolean(starter.status?.show) && starter.status.phase === 'downloading';
+    const openStarterCard = () => { setStarterDue(true); setStarterClosed(false); };
     const starterPct = starter.status?.size_bytes
         ? Math.min(100, Math.floor((starter.status.downloaded_bytes / starter.status.size_bytes) * 100))
         : 0;
@@ -2228,13 +2229,8 @@ function App() {
                                                 </Box>
 
                                                 {starter.status?.show && (
-                                                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                                                        {starterDownloading ? 'Your first model is downloading. ' : 'No model yet. '}
-                                                        <Typography component="a" variant="inherit" role="button" onClick={() => { setStarterDue(true); setStarterClosed(false); }}
-                                                            sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
-                                                            {starterDownloading ? 'See progress' : 'Get your first model'}
-                                                        </Typography>
-                                                    </Typography>
+                                                    <NoModelNote downloading={starterDownloading} onOpen={openStarterCard}
+                                                        sx={{ display: 'block', mb: 1 }} />
                                                 )}
                                                 <Box sx={appStyles.generationModelRow}>
                                                     <Tooltip title={TIPS.generate.modelSelect}>
@@ -2714,6 +2710,10 @@ function App() {
                                     onRandomSeedChange={setRandomSeed}
                                     onSeedValueChange={setSeedValue}
                                     onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
+                                    noModelNote={starter.status?.show ? (
+                                        <NoModelNote downloading={starterDownloading} onOpen={openStarterCard}
+                                            sx={{ ml: 'auto', whiteSpace: 'nowrap' }} />
+                                    ) : null}
                                 />}
                             </TabPanel>
                             </Box>

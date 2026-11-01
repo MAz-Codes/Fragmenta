@@ -153,6 +153,7 @@ function PerformancePanelInner({
     onSeedValueChange,
     onPresetLoaded,
     onOpenCheckpointManager,
+    noModelNote = null,
     // False while another tab is shown (the panel stays mounted via
     // keepMounted). Used to pause the meter RAF loops, which otherwise run
     // at full frame rate behind every other tab.
@@ -1654,11 +1655,12 @@ function PerformancePanelInner({
                 {/* Generation settings: one summary pill; the model, LoRA,
                     steps and seed live in its popover (set once, rarely
                     changed mid-set). */}
+                {noModelNote}
                 <ButtonBase
                     onClick={(e) => setGenMenuAnchor(e.currentTarget)}
                     aria-label="Generation settings"
                     sx={(theme) => ({
-                        ml: 'auto',
+                        ml: noModelNote ? 1.5 : 'auto',
                         height: perfTokens.height.compact,
                         px: 1.75,
                         gap: 0.75,

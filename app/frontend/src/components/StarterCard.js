@@ -105,6 +105,19 @@ export function useStarterModel({ onReady }) {
     return { status, refresh, resuming, setResuming };
 }
 
+/** Beside the model pickers while no model is installed: opens the starter card. */
+export function NoModelNote({ downloading, onOpen, sx }) {
+    return (
+        <Typography variant="caption" color="text.secondary" sx={sx}>
+            {downloading ? 'Your first model is downloading. ' : 'No model yet. '}
+            <Typography component="a" variant="inherit" role="button" onClick={onOpen}
+                sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
+                {downloading ? 'See progress' : 'Get your first model'}
+            </Typography>
+        </Typography>
+    );
+}
+
 export function LicenseViewer({ open, onClose, licenses, fade }) {
     const [current, setCurrent] = useState(0);
     const [texts, setTexts] = useState({});
