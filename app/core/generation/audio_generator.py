@@ -108,6 +108,7 @@ def _make_engine(name: str, config: Any) -> Engine:
 
 
 SAMPLE_RATE = 44100
+RENDER_PAST_SEC = 5.0          # less and some clips still end early, more doesn't help (measured, Small + Medium)
 EXTEND_RENDER_PAST_SEC = 10.0  # less and some seeds still fade or fall silent (measured, Small)
 FADE_WINDOW_SEC = 0.5
 FADE_BELOW_MEDIAN = 0.25       # power, so 6 dB under the clip's typical level
@@ -322,8 +323,13 @@ class AudioGenerator:
         # Extending: the model takes the stated length as where the track ends and
         # winds down towards it, so a short extension comes out as a fade or silence.
         # Render past the end, with the regenerated region reaching that far, then trim.
+        # A plain generation winds down the same way, leaving silence at the end, so it
+        # gets the same treatment. Not SFX: a sound ending early is often just its end,
+        # and rendering past that could cut off its decay.
         requested_duration = duration
-        if _is_extension(inpaint_audio, inpaint_ends, duration):
+        if init_audio is None and inpaint_audio is None and "sfx" not in model_id:
+            duration = min(duration + RENDER_PAST_SEC, float(max_dur))
+        elif _is_extension(inpaint_audio, inpaint_ends, duration):
             duration = min(duration + EXTEND_RENDER_PAST_SEC, float(max_dur))
             inpaint_ends = [duration if end >= requested_duration else end for end in inpaint_ends]
             source_end = inpaint_audio[1].shape[-1] / inpaint_audio[0]

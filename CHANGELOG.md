@@ -6,6 +6,12 @@ All notable changes to Fragmenta are listed here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- Music clips no longer end in silence. The models wind down towards the stated
+  length, so Fragmenta now renders 5 s past it and trims. Clips end on a cut rather
+  than a fade, and the same seed gives a different result than before. SFX models
+  are unchanged.
+
 ### Added
 - Pitch knob next to Generate on every Performance channel: transpose a clip
   up to an octave up or down in semitones without changing its length, so
