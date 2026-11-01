@@ -28,7 +28,7 @@ const ROW_COLUMNS = '190px repeat(3, minmax(0, 1fr))';
 const purposeRows = (mac, signedIn) => [
     {
         key: 'mlx',
-        title: 'Fast on this Mac',
+        title: 'Optimized for Mac (MLX)',
         about: 'Quick results, built for Apple Silicon. No account needed.',
     },
     {
@@ -217,7 +217,7 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                         <Typography variant="body2" sx={{ mb: 2.5 }}>
                             <strong>Pick a model to get started.</strong>{' '}
                             {appleSilicon
-                                ? 'Small - Music under Fast on this Mac downloads without an account (1.9 GB).'
+                                ? 'Small - Music under Optimized for Mac (MLX) downloads without an account (1.9 GB).'
                                 : 'Small - Music (Base) downloads without an account (3.5 GB).'}
                         </Typography>
                     )}
