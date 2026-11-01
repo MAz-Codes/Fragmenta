@@ -3,6 +3,11 @@ import {
     Box,
     Typography,
     Button,
+    Dialog,
+    DialogActions,
+    DialogContent,
+    DialogContentText,
+    DialogTitle,
     LinearProgress,
     Stack,
     IconButton,
@@ -84,6 +89,7 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
     const [error, setError] = useState(null);
     const [busy, setBusy] = useState(false);
     const [asking, setAsking] = useState(false);
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
     const pollTimer = useRef(null);
 
     // If the parent's refresh tells us about an in-flight job and we don't
@@ -149,12 +155,7 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
     };
 
     const deleteCheckpoint = async () => {
-        const frees = checkpoint.delete_frees_bytes ?? checkpoint.downloaded_bytes;
-        const stays = checkpoint.downloaded_bytes - frees;
-        const question = stays > 0
-            ? `Delete ${checkpoint.name}? This frees ${fmtBytes(frees)}. The other ${fmtBytes(stays)} stays, because another installed model uses it.`
-            : `Delete ${checkpoint.name} (${fmtBytes(frees)})?`;
-        if (!window.confirm(question)) return;
+        setConfirmingDelete(false);
         setBusy(true);
         try {
             await api.delete(`/api/checkpoints/${checkpoint.id}`);
@@ -166,6 +167,8 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
         }
     };
 
+    const frees = checkpoint.delete_frees_bytes ?? checkpoint.downloaded_bytes;
+    const stays = checkpoint.downloaded_bytes - frees;
     const downloading = !!jobId && job?.status === 'running';
     const queued = !!jobId && job?.status === 'queued';
     const pct = job?.total_bytes ? (job.downloaded_bytes / job.total_bytes) * 100 : 0;
@@ -179,7 +182,7 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
                     <IconButton
                         className="delete-model"
                         size="small"
-                        onClick={deleteCheckpoint}
+                        onClick={() => setConfirmingDelete(true)}
                         disabled={busy}
                         aria-label={`Delete ${checkpoint.name} from disk`}
                     >
@@ -296,6 +299,20 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
                     {error}
                 </Typography>
             )}
+
+            <Dialog open={confirmingDelete} onClose={() => setConfirmingDelete(false)}>
+                <DialogTitle>Delete {checkpoint.name}?</DialogTitle>
+                <DialogContent>
+                    <DialogContentText>
+                        This frees {fmtBytes(frees)}.
+                        {stays > 0 && ` The other ${fmtBytes(stays)} stays, because another installed model uses it.`}
+                    </DialogContentText>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setConfirmingDelete(false)}>Cancel</Button>
+                    <Button onClick={deleteCheckpoint} color="error" variant="contained">Delete</Button>
+                </DialogActions>
+            </Dialog>
 
             <LicenseAgreementDialog
                 checkpoint={asking ? checkpoint : null}
