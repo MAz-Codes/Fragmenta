@@ -61,6 +61,8 @@ All notable changes to Fragmenta are listed here. The format follows
   state-changing requests sent from other websites, so a web page can no
   longer reach it through DNS rebinding or a cross-site post. Project routes
   refuse names that aren't plain folder names.
+- Training monitor: a finished run says how it ended instead of staying on
+  "Starting training subprocess…".
 - Mac: the toolbar said "Not detected · CPU mode" although models run on the
   Apple GPU. It now shows free unified memory (what decides whether a model
   fits), and Free GPU memory works there too.

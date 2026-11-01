@@ -720,6 +720,12 @@ class SA3Trainer:
             self.status["status"] = "stopped"
         else:
             self.status["status"] = "complete" if rc == 0 else "failed"
+        # Replace "Starting training subprocess..." right away; the final
+        # wording with the step and checkpoint counts follows the scan below.
+        self.status["message"] = {
+            "complete": "Training complete. Converting checkpoints…",
+            "stopped": "Training stopped.",
+        }.get(self.status["status"], "Training failed.")
         if self.status["status"] == "failed" and not self.status.get("error"):
             reason = _failure_reason(self.status["log_tail"])
             self.status["error"] = f"train_lora.py exited with code {rc}" + (f": {reason[:300]}" if reason else "")
@@ -757,6 +763,17 @@ class SA3Trainer:
         final_loss = self.status.get("loss")
         final_ckpts = len(self.status.get("checkpoints") or [])
         loss_str = f"{final_loss:.4f}" if isinstance(final_loss, (int, float)) else "—"
+        # The message was "Starting training subprocess..." for the whole run;
+        # say how it ended, so a finished run doesn't still read as starting.
+        if self.status["status"] == "complete":
+            self.status["message"] = (
+                f"Training complete: {final_step}/{final_total} steps, "
+                f"{final_ckpts} checkpoint{'s' if final_ckpts != 1 else ''} saved."
+            )
+        elif self.status["status"] == "stopped":
+            self.status["message"] = f"Training stopped at step {final_step}/{final_total}."
+        else:
+            self.status["message"] = "Training failed."
         if self.status["status"] == "complete":
             logger.info(
                 "Training complete · %d/%d steps · final loss %s · %d checkpoint(s) · run=%s",
