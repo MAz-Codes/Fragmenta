@@ -149,7 +149,12 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
     };
 
     const deleteCheckpoint = async () => {
-        if (!window.confirm(`Delete ${checkpoint.name} (${fmtBytes(checkpoint.downloaded_bytes)})?`)) return;
+        const frees = checkpoint.delete_frees_bytes ?? checkpoint.downloaded_bytes;
+        const stays = checkpoint.downloaded_bytes - frees;
+        const question = stays > 0
+            ? `Delete ${checkpoint.name}? This frees ${fmtBytes(frees)}. The other ${fmtBytes(stays)} stays, because another installed model uses it.`
+            : `Delete ${checkpoint.name} (${fmtBytes(frees)})?`;
+        if (!window.confirm(question)) return;
         setBusy(true);
         try {
             await api.delete(`/api/checkpoints/${checkpoint.id}`);

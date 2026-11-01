@@ -380,6 +380,7 @@ class ModelManager:
             "downloaded_bytes": bytes_total,
             # MLX models share files, so one not yet here may be partly on disk.
             "on_disk_bytes": self._model_bytes(model_id) if info.get("kind") == "mlx" else bytes_total,
+            "delete_frees_bytes": self._delete_frees_bytes(model_id) if downloaded else 0,
             "active_job": active_job,
         }
 
@@ -462,6 +463,14 @@ class ModelManager:
             if other != model_id and info.get("kind") == "mlx" and self.is_model_downloaded(other):
                 keep.update(info["files"])
         return keep
+
+    def _delete_frees_bytes(self, model_id: str) -> int:
+        info = _SA3_CATALOG[model_id]
+        if info.get("kind") != "mlx":
+            return self._model_bytes(model_id)
+        keep = self._files_in_use_elsewhere(model_id)
+        found = (self._bundle_file(model_id, name) for name in info["files"] if name not in keep)
+        return sum(f.stat().st_size for f in found if f)
 
     def _delete_bundle(self, model_id: str) -> bool:
         """Remove the files only this model uses, and any half-written ones."""

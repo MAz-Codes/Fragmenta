@@ -431,6 +431,17 @@ def test_an_mlx_model_reports_what_its_siblings_already_brought():
         assert e.manager.get_model_info("sa3-medium")["on_disk_bytes"] == 0
 
 
+def test_an_mlx_model_says_what_deleting_it_really_frees():
+    with Env() as e:
+        music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
+        mlx_snapshot(e, *music)
+        assert e.manager.get_model_info("sa3-mlx-small-music")["delete_frees_bytes"] == 100 * len(music)
+        mlx_snapshot(e, *sfx)
+        assert e.manager.get_model_info("sa3-mlx-small-music")["delete_frees_bytes"] == 100 * len(set(music) - set(sfx))
+        e.manager.delete_model("sa3-mlx-small-sfx")
+        assert e.manager.get_model_info("sa3-mlx-small-music")["delete_frees_bytes"] == 100 * len(music)
+
+
 def test_deleting_an_mlx_model_keeps_what_another_still_uses():
     with Env() as e:
         music, sfx = mlx_files("sa3-mlx-small-music"), mlx_files("sa3-mlx-small-sfx")
