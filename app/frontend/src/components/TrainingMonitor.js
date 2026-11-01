@@ -5,7 +5,7 @@ import LossChart from './LossChart';
 import Tooltip from './Tooltip';
 import { TIPS } from '../tooltips';
 import { trainingMonitorStyles } from '../theme';
-import { formatTime } from '../utils/format';
+import { formatHoursMinutes } from '../utils/format';
 
 /**
  * TrainingMonitor — right-pane status card for the Training tab.
@@ -69,7 +69,7 @@ export default function TrainingMonitor({
         ?? 0;
     const currentLoss = trainingStatus?.loss;
     const stepsPerSec = trainingStatus?.is_training ? trainingStatus?.steps_per_sec : null;
-    const timeLeft = trainingStatus?.is_training ? formatTime(trainingStatus?.eta_seconds) : null;
+    const timeLeft = trainingStatus?.is_training ? formatHoursMinutes(trainingStatus?.eta_seconds) : null;
     // Checkpoint steps, read from file names like "epoch=4-step=500.ckpt",
     // for the markers on the loss chart.
     const checkpointSteps = useMemo(() => (trainingStatus?.checkpoints || [])
