@@ -201,12 +201,11 @@ export default function EditPanel({ model_id, negativePrompt, loraStack, steps, 
                     // measured in source seconds, so the output must be the same
                     // length or the masked region drifts off the audio you see.
                     setDuration(Math.max(1, Math.min(maxDuration, Math.round(a.duration))));
-                    // Seed inpaint region to the middle quarter so the
-                    // waveform shows something sensible without a 4 s default
-                    // landing past the end of short clips.
-                    const q = a.duration / 4;
-                    setMaskStart(Math.max(0, q));
-                    setMaskEnd(Math.min(a.duration, q * 3));
+                    // Seed inpaint region to nearly the whole clip: the audio
+                    // around a region matters more than the prompt, so a small
+                    // one comes back close to the original. Narrow it from here.
+                    setMaskStart(a.duration * 0.05);
+                    setMaskEnd(a.duration * 0.95);
                 }
                 URL.revokeObjectURL(url);
             }, { once: true });
