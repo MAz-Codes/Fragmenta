@@ -3,6 +3,7 @@
 Caches the loaded model between requests (eviction on model_id change) and
 auto-detects the device. CUDA, MPS or CPU.
 """
+import logging
 import os
 import sys
 import warnings
@@ -11,6 +12,10 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
+
+# Windows CUDA builds of torch come without triton, and torch warns about that the
+# first time it loads its FLOP counter, which Fragmenta never uses.
+logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
 
 from app.core.generation.engine import Capabilities, Engine, GenerationRequest, StepCallback
 from app.core.generation.models import MODEL_INFO

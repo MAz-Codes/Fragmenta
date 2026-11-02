@@ -44,8 +44,8 @@ const purposeRows = (mac, signedIn) => [
         key: 'base',
         title: mac ? 'Training' : 'Full control and training',
         about: mac
-            ? 'LoRAs train on these. Slower to generate with, every setting open. No account needed.'
-            : 'Every setting open. Train LoRAs on these. No account needed.',
+            ? 'LoRAs train on these. Slower to generate with. No account needed.'
+            : 'Generate with these or train LoRAs on them. Slower than Fast generation. No account needed.',
     },
     {
         key: 'tagger',
