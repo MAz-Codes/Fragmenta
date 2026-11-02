@@ -558,7 +558,15 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
     except Exception:
         pass
 
-    margin, shadow, padding = 18, 12, 28
+    # Tk sizes text in points, so on a scaled desktop (a 4K screen at 125% runs
+    # Tk at 192 dpi) the text grows; the layout is in pixels and grows with it.
+    # macOS lays out in points too, so it needs nothing.
+    ui = 1.0 if sys.platform == "darwin" else max(1.0, float(root.tk.call("tk", "scaling")) * 72 / 96)
+
+    def px(value: float) -> int:
+        return round(value * ui)
+
+    margin, shadow, padding = px(18), px(12), px(28)
     wordmark_font = tkfont.Font(family=_FONT, size=26, weight="bold")
     title_font = tkfont.Font(family=_FONT, size=20, weight="bold")
     body_font = tkfont.Font(family=_FONT, size=13)
@@ -579,7 +587,7 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
         canvas.configure(width=w, height=h)
         root.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 3}")
         # The card sits under everything drawn so far.
-        card = shape(w - 2 * margin + 2 * shadow, h - 2 * margin + 2 * shadow, 24, _CARD, _BG, shadow)
+        card = shape(w - 2 * margin + 2 * shadow, h - 2 * margin + 2 * shadow, px(24), _CARD, _BG, shadow)
         canvas.tag_lower(canvas.create_image(margin - shadow, margin - shadow, image=card, anchor="nw"))
 
     # macOS Aqua Tk needs a real mainloop() to stay responsive (a bare
@@ -635,21 +643,21 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
 
     def draw_progress() -> None:
         canvas.delete("all")
-        w = max(460, body_font.measure(_LONGEST_STATUS) + 2 * (margin + padding))
-        canvas.create_text(w // 2, 76, text="Fragmenta", font=wordmark_font, fill=_FG)
-        canvas.create_text(w // 2, 118, text=state["status"], font=body_font, fill=_SUBFG, tags="status")
-        track_w, glider_w, bar_h = w - 2 * (margin + padding), 96, 8
-        left, top = (w - track_w) // 2, 146
+        w = max(px(460), body_font.measure(_LONGEST_STATUS) + 2 * (margin + padding))
+        canvas.create_text(w // 2, px(76), text="Fragmenta", font=wordmark_font, fill=_FG)
+        canvas.create_text(w // 2, px(118), text=state["status"], font=body_font, fill=_SUBFG, tags="status")
+        track_w, glider_w, bar_h = w - 2 * (margin + padding), px(96), px(8)
+        left, top = (w - track_w) // 2, px(146)
         canvas.create_image(left, top, anchor="nw", image=shape(track_w, bar_h, bar_h / 2, _CONTROL, _CARD))
         canvas.create_image(left, top, anchor="nw", image=shape(glider_w, bar_h, bar_h / 2, _ACCENT, _CONTROL),
                             tags="glider")
         state["bar"] = (left, top, track_w - glider_w)
-        h = 196
+        h = px(196)
         warnings = state["run"].warnings
         if warnings:
-            item = canvas.create_text(left, top + bar_h + 18, anchor="nw", text="\n".join(warnings), width=track_w,
-                                      font=small_font, fill=_SUBFG)
-            h = canvas.bbox(item)[3] + 34
+            item = canvas.create_text(left, top + bar_h + px(18), anchor="nw", text="\n".join(warnings),
+                                      width=track_w, font=small_font, fill=_SUBFG)
+            h = canvas.bbox(item)[3] + px(34)
         place_window(w, h)
 
     def show_progress(status: str) -> None:
@@ -668,11 +676,11 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
             animate()
 
     def button_width(label: str) -> int:
-        return max(92, button_font.measure(label) + 40)
+        return max(px(92), button_font.measure(label) + px(40))
 
     def add_button(x: int, y: int, label: str, command, primary: bool = False, enabled: bool = True) -> int:
         """A pill drawn at x, y; returns where the next one can start."""
-        w, h = button_width(label), 38
+        w, h = button_width(label), px(38)
         fill, hover = (_ACCENT, _ACCENT_HOVER) if primary else (_CONTROL, _CONTROL_HOVER)
         rest_image, hover_image = shape(w, h, h / 2, fill, _CARD), shape(w, h, h / 2, hover, _CARD)
         tag = "button-" + label.split()[0].lower()
@@ -693,7 +701,7 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
             # After the click's own binding returns: Quit and Retry remove this
             # very item, and destroying the window from inside its binding crashes Tk.
             canvas.tag_bind(tag, "<ButtonRelease-1>", lambda _event: root.after(0, command))
-        return x + w + 8
+        return x + w + px(8)
 
     def show_error() -> None:
         failure = state["run"].failure or {}
@@ -702,17 +710,17 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
         canvas.configure(cursor="")
         inner = margin + padding
         labels = ("Retry", "Open log", "Copy diagnostics", "Quit")
-        width = max(620, sum(button_width(label) + 8 for label in labels) - 8 + 2 * inner)
-        canvas.create_text(inner, inner + 2, anchor="nw", text="Fragmenta couldn't start",
+        width = max(px(620), sum(button_width(label) + px(8) for label in labels) - px(8) + 2 * inner)
+        canvas.create_text(inner, inner + px(2), anchor="nw", text="Fragmenta couldn't start",
                            font=title_font, fill=_FG)
-        message = canvas.create_text(inner, inner + 46, anchor="nw", width=width - 2 * inner,
+        message = canvas.create_text(inner, inner + px(46), anchor="nw", width=width - 2 * inner,
                                      text=failure.get("message", _GENERIC_FAILURE), font=body_font, fill=_SUBFG)
-        y = canvas.bbox(message)[3] + 22
+        y = canvas.bbox(message)[3] + px(22)
         x = add_button(inner, y, "Retry", retry, primary=True)
         x = add_button(x, y, "Open log", open_log, enabled=bool(failure.get("log")))
         x = add_button(x, y, "Copy diagnostics", copy_diagnostics)
         add_button(x, y, "Quit", lambda: finish("quit"))
-        place_window(width, y + 38 + inner)
+        place_window(width, y + px(38) + inner)
         root.bind("<Return>", lambda _event: retry())
         root.bind("<Escape>", lambda _event: finish("quit"))
         try:
