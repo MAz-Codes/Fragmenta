@@ -16,6 +16,8 @@ from anywhere; paths resolve to the repo root. assemble.py uses `git archive
 HEAD`, so commit changes first. Unsigned (D22).
 #>
 $ErrorActionPreference = "Stop"
+# The build scripts print non-ASCII (→); the console's code page can't encode it.
+$env:PYTHONUTF8 = "1"
 
 $REPO    = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $VERSION = (Get-Content (Join-Path $REPO "VERSION") -Raw).Trim()
