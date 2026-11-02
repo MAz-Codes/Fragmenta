@@ -172,34 +172,44 @@ def _macos_link_libpython(venv_path: Path) -> None:
         dst.symlink_to(src)
 
 
-def _venv_home_missing() -> bool:
-    cfg = VENV_PATH / "pyvenv.cfg"
+def _venv_cfg() -> dict:
     try:
-        for line in cfg.read_text(encoding="utf-8").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "home":
-                return not Path(value.strip()).exists()
+        lines = (VENV_PATH / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return True
-    return False
+        return {}
+    return {k.strip(): v.strip() for k, _, v in (line.partition("=") for line in lines)}
+
+
+def _venv_home_missing() -> bool:
+    home = _venv_cfg().get("home")
+    return not home or not Path(home).exists()
+
+
+def _refresh_venv() -> None:
+    log("refreshing the venv for this Python…")
+    rc = run([sys.executable, "-m", "venv", "--upgrade", "--copies", str(VENV_PATH)])
+    if rc != 0:
+        fail(f"could not refresh the venv at {VENV_PATH} (exit {rc}).")
 
 
 def ensure_venv() -> Path:
     py = venv_python()
     if VENV_PATH.exists():
+        # A venv whose base Python is gone can't even report its version. If it
+        # was made for this minor version, point it at this Python first: an
+        # AppImage mounts at a new path every launch, and an update can move the app.
+        recorded = _venv_cfg().get("version", "")
+        if _venv_home_missing() and recorded.startswith(f"{REQUIRED_PY_STR}."):
+            _refresh_venv()
         v = python_version_of(py) if py.exists() else None
         if v is None or v[:2] != REQUIRED_PY:
             log(f"existing venv is not Python {REQUIRED_PY_STR} — recreating…")
             shutil.rmtree(VENV_PATH, ignore_errors=True)
         else:
-            if v != tuple(sys.version_info[:3]) or _venv_home_missing():
-                # Same minor version, but the base Python changed or moved
-                # (an app update ships a newer 3.14.x): refresh the venv's
-                # copied interpreter instead of rebuilding every package.
-                log("refreshing the venv for this Python…")
-                rc = run([sys.executable, "-m", "venv", "--upgrade", "--copies", str(VENV_PATH)])
-                if rc != 0:
-                    fail(f"could not refresh the venv at {VENV_PATH} (exit {rc}).")
+            if v != tuple(sys.version_info[:3]):
+                # Same minor version, but an app update ships a newer 3.14.x:
+                # refresh the copied interpreter instead of rebuilding every package.
+                _refresh_venv()
             _macos_link_libpython(VENV_PATH)
             return py
     log(f"creating virtual environment at {VENV_PATH} …")

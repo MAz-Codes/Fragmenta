@@ -577,6 +577,43 @@ def test_launcher_without_a_display_reports_a_failure_and_its_exit_code():
     assert out.returncode == 4 and "Something went wrong" in out.stderr, out
 
 
+def venv_with(home: str, version: str):
+    """A venv made with this Python, then pointed at another base."""
+    tmp = tempfile.TemporaryDirectory()
+    path = Path(tmp.name) / "venv"
+    subprocess.check_call([sys.executable, "-m", "venv", "--copies", "--without-pip", str(path)])
+    cfg = path / "pyvenv.cfg"
+    lines = [l for l in cfg.read_text().splitlines() if not l.startswith(("home", "version"))]
+    cfg.write_text("\n".join(lines + [f"home = {home}", f"version = {version}"]) + "\n")
+    (path / "marker").write_text("packages live here")
+    return tmp, path
+
+
+def runs_only_with_its_base(_python):
+    """The bundled Python can't start, so can't report a version, while its base is gone."""
+    return None if install._venv_home_missing() else tuple(sys.version_info[:3])
+
+
+def test_a_venv_whose_base_python_moved_is_kept():
+    # An AppImage mounts at a new path every launch: rebuilding would mean 8 GB again.
+    tmp, path = venv_with("/tmp/.mount_gone/runtime/python/bin", "%d.%d.%d" % sys.version_info[:3])
+    with tmp, mock.patch.object(install, "VENV_PATH", path), mock.patch.object(install, "log"), \
+            mock.patch.object(install, "python_version_of", runs_only_with_its_base):
+        install.ensure_venv()
+        assert (path / "marker").exists()
+        assert not install._venv_home_missing()
+
+
+def test_a_venv_for_another_python_is_rebuilt_even_without_its_base():
+    tmp, path = venv_with("/tmp/.mount_gone/bin", "3.11.9")
+    with tmp, mock.patch.object(install, "VENV_PATH", path), mock.patch.object(install, "log"), \
+            mock.patch.object(install.venv, "EnvBuilder"), mock.patch.object(install.subprocess, "check_call"), \
+            mock.patch.object(install, "_refresh_venv") as refresh, \
+            mock.patch.object(install, "python_version_of", return_value=None):
+        install.ensure_venv()
+        assert not refresh.called and not (path / "marker").exists()
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in tests:
