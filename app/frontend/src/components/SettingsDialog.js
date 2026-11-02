@@ -15,7 +15,9 @@ import { Info as InfoIcon, Volume2 as AudioIcon, Piano as MidiIcon, FolderInput 
 import { AboutPanel } from './AboutDialog';
 import ImportPanel from './ImportPanel';
 import MidiSettingsPanel from './MidiSettingsPanel';
+import UninstallDialog from './UninstallDialog';
 import { useAudioSettings } from './AudioSettingsContext';
+import api from '../api';
 import { appStyles } from '../theme';
 
 // How often an open Settings tab looks for devices plugged in or removed.
@@ -99,6 +101,17 @@ function AudioSettingsPanel({ open }) {
 export default function SettingsDialog({ open, onClose, aboutProps, showImport = false, initialTab = 0, fade }) {
     const [tab, setTab] = useState(0);
     useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
+    // Only the installed app can uninstall itself; source installs never see the button.
+    const [canUninstall, setCanUninstall] = useState(false);
+    const [uninstalling, setUninstalling] = useState(false);
+    useEffect(() => {
+        if (!open) return undefined;
+        let cancelled = false;
+        api.get('/api/uninstall')
+            .then(({ data }) => { if (!cancelled) setCanUninstall(Boolean(data.available)); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, [open]);
     return (
         // Fixed at the About page's size: every tab gets the same window, and
         // longer pages (the MIDI mappings) scroll inside it.
@@ -112,27 +125,33 @@ export default function SettingsDialog({ open, onClose, aboutProps, showImport =
             PaperProps={{ sx: { height: 'min(660px, calc(100vh - 64px))' } }}
         >
             <DialogContent sx={{ display: 'flex', gap: 3, pt: 3, overflow: 'hidden' }}>
-                {/* The same card and tabs as the app's left sidebar. */}
-                <Box sx={(t) => ({
-                    flexShrink: 0,
-                    width: 200,
-                    alignSelf: 'flex-start',
-                    borderRadius: '24px',
-                    backgroundColor: t.palette.fragmenta.surface,
-                    boxShadow: t.palette.fragmenta.shadowSoft,
-                })}>
-                    <Tabs
-                        orientation="vertical"
-                        value={tab}
-                        onChange={(_, v) => setTab(v)}
-                        sx={appStyles.navigationTabs(false, false)}
-                    >
-                        <Tab icon={<InfoIcon size={20} />} iconPosition="start" label="About" />
-                        <Tab icon={<AudioIcon size={20} />} iconPosition="start" label="Audio" />
-                        <Tab icon={<MidiIcon size={20} />} iconPosition="start" label="MIDI" />
-                        {showImport && <Tab icon={<ImportIcon size={20} />} iconPosition="start" label="Import" />}
-                    </Tabs>
+                <Box sx={{ flexShrink: 0, width: 200, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    {/* The same card and tabs as the app's left sidebar. */}
+                    <Box sx={(t) => ({
+                        borderRadius: '24px',
+                        backgroundColor: t.palette.fragmenta.surface,
+                        boxShadow: t.palette.fragmenta.shadowSoft,
+                    })}>
+                        <Tabs
+                            orientation="vertical"
+                            value={tab}
+                            onChange={(_, v) => setTab(v)}
+                            sx={appStyles.navigationTabs(false, false)}
+                        >
+                            <Tab icon={<InfoIcon size={20} />} iconPosition="start" label="About" />
+                            <Tab icon={<AudioIcon size={20} />} iconPosition="start" label="Audio" />
+                            <Tab icon={<MidiIcon size={20} />} iconPosition="start" label="MIDI" />
+                            {showImport && <Tab icon={<ImportIcon size={20} />} iconPosition="start" label="Import" />}
+                        </Tabs>
+                    </Box>
+                    {canUninstall && (
+                        <Button variant="contained" color="error" size="small" fullWidth
+                            onClick={() => setUninstalling(true)}>
+                            Uninstall Fragmenta…
+                        </Button>
+                    )}
                 </Box>
+                <UninstallDialog open={uninstalling} onClose={() => setUninstalling(false)} />
                 <Box sx={{ flex: 1, minWidth: 0, height: '100%', overflowY: 'auto', pr: 0.5 }}>
                     {tab === 0 && <AboutPanel {...aboutProps} />}
                     {tab === 1 && <AudioSettingsPanel open={open} />}
