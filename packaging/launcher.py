@@ -586,31 +586,39 @@ def _run_window(run: _Run, initial_status: str) -> "_Run | None":
     # root.update() loop leaves the window frozen). The dismiss races the app's
     # webview window stealing focus — once this launcher is in the background
     # macOS App Nap throttles its Tk timers and a late dismiss stalls. So poll
-    # tightly and tear the window down the instant we see readiness, while this
+    # tightly and hide the window the instant we see readiness, while this
     # process is still frontmost. start.py also yields briefly after printing the
     # readiness sentinel (packaged mode) to guarantee that head start.
     state = {"run": run, "done": False, "status": initial_status, "showing": None, "started": time.monotonic()}
+
+    def close() -> None:
+        try:
+            root.destroy()
+        except tk.TclError:
+            pass
+
+    def close_when_app_quits() -> None:
+        if state["run"].thread.is_alive():
+            root.after(500, close_when_app_quits)
+        else:
+            close()
 
     def finish(reason: str) -> None:
         if state["done"]:
             return
         state["done"] = True
         _dbg(f"window dismissing ({reason})")
-        # Take the window off-screen and flush that to the window server *while the
-        # event loop is still spinning* (we're inside a mainloop() callback, and
-        # start.py keeps us frontmost for ~0.6s here). A bare root.destroy() leaves
-        # a ghost on macOS: mainloop() returns and the process immediately blocks
-        # in the join with no run loop left to clear the pixels, so the dead
-        # splash stays frozen on screen. withdraw()+update() removes it now.
         try:
             root.withdraw()
-            root.update()
         except tk.TclError:
             pass
-        try:
-            root.destroy()
-        except tk.TclError:
-            pass
+        if reason == "ready":
+            # Keep the event loop running, window hidden, for as long as the app
+            # does. Leaving it here (destroy, then wait for the app) left the window
+            # on screen in the packaged Mac app, frozen and "not responding".
+            close_when_app_quits()
+        else:
+            close()
 
     def set_status(text: str) -> None:
         state["status"] = text

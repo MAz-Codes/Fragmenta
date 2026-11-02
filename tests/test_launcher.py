@@ -54,10 +54,11 @@ FAKE_INSTALL = textwrap.dedent("""\
     if mode == "backend":
         print("Backend failed to start in time. é✓", flush=True)
         sys.exit(4)
+    import time
     if mode == "slow":
-        import time
         time.sleep(float(os.environ["FAKE_SLEEP"]))
     print("__FRAGMENTA_UI_READY__", flush=True)
+    time.sleep(float(os.environ.get("FAKE_SESSION", "0")))  # the app running
 """)
 
 
@@ -520,6 +521,41 @@ def test_quit_from_a_real_window_exits_cleanly():
             x, y = int(found["X"]) + 500, int(found["Y"]) + int(found["HEIGHT"]) - 65
             subprocess.run([xdotool, "mousemove", str(x), str(y), "click", "1"], env=env, check=True)
             assert app.wait(timeout=10) == 2, app.stderr.read()  # the "damaged install" exit code
+    finally:
+        screen.terminate()
+        screen.wait()
+
+
+def test_window_leaves_when_the_app_is_ready_and_the_launcher_exits_with_it():
+    """The window hides as soon as the app is ready; the launcher keeps its event
+    loop running until the app quits. Waiting without one left the window frozen
+    on screen in the packaged Mac app."""
+    xvfb, xdotool = shutil.which("Xvfb"), shutil.which("xdotool")
+    if not (xvfb and xdotool):
+        print("    (skipped: needs Xvfb and xdotool)")
+        return
+    display = ":92"
+    screen = subprocess.Popen([xvfb, display, "-screen", "0", "1000x600x24"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        with Bundle() as b:
+            ready_at = launcher.SPLASH_AFTER_SECONDS + 2
+            env = {**os.environ, **b.env("slow", FAKE_SLEEP=str(ready_at), FAKE_SESSION="4"),
+                   "DISPLAY": display, "FRAGMENTA_BUNDLE": str(b.path), "XDG_RUNTIME_DIR": str(b.path)}
+            env.pop("WAYLAND_DISPLAY", None)
+            app = subprocess.Popen([sys.executable, str(ROOT / "packaging" / "launcher.py")], env=env,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+
+            def window_shown() -> bool:
+                return bool(subprocess.run([xdotool, "search", "--onlyvisible", "--name", "^Fragmenta$"],
+                                           env=env, capture_output=True, text=True).stdout.strip())
+
+            time.sleep(launcher.SPLASH_AFTER_SECONDS + 1)
+            assert window_shown()
+            time.sleep(ready_at - launcher.SPLASH_AFTER_SECONDS + 0.5)
+            assert not window_shown() and app.poll() is None
+            assert app.wait(timeout=10) == 0, app.stderr.read()
     finally:
         screen.terminate()
         screen.wait()
