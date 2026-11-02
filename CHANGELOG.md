@@ -16,10 +16,10 @@ All notable changes to Fragmenta are listed here. The format follows
   account. Read the licenses, tick to agree, then download with pause and resume.
 - Settings → Import: bring models, LoRAs, projects, generated audio and your
   CLAP vocabulary over from an older Fragmenta folder. Nothing gets overwritten.
-- Settings window with Audio, MIDI and About pages.
+- New Settings window with Audio, MIDI and About pages.
 - Pitch knob on every Performance channel: transpose a clip up to an octave
   either way without changing its length. Double-click to reset.
-- Mac: choose the output device in Settings → Audio, and send Main and Cue to
+- New on Mac: choose the output device in Settings → Audio, and send Main and Cue to
   different channels of an audio interface.
 - Generated audio and performance recordings now carry signed metadata (C2PA
   Content Credentials), made on your computer. See `docs/AI_TRANSPARENCY.md`.
@@ -39,7 +39,7 @@ All notable changes to Fragmenta are listed here. The format follows
 - Performance: model, LoRA, steps and seed moved into one pill in the top bar.
   The fragment list shows the newest on top.
 - Base models start at 50 steps, not 250.
-- Tabs and the top toolbar lock while training runs.
+- Tabs and the top toolbar lock while training runs to avoid crashes.
 - Stable Audio 3 code updated to Stability's October release. Adapter strengths
   between bypassed and full sound slightly different than in 1.2.
 
