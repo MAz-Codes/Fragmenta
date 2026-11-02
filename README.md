@@ -61,6 +61,19 @@ Works on Windows, macOS, and Linux. **Small** Music/SFX models run on CPU, Apple
 
 ---
 
+## Download the App
+
+Get the file for your system from the [latest release](https://github.com/MAz-Codes/Fragmenta/releases/latest): `.dmg` for Mac (Apple Silicon, macOS 14 or newer), `Setup.exe` for Windows 10 or 11, `.AppImage` for Linux. The first launch downloads Fragmenta's Python packages (up to about 8 GB) and takes a few minutes.
+
+**First open on Mac and Windows.** The downloads aren't signed with an Apple or Microsoft certificate, so your computer asks before opening them. Only allow a file you downloaded from this repository's release page.
+
+- **Mac:** drag Fragmenta to Applications and open it. When macOS says it can't verify Fragmenta, click **Done**, then go to **System Settings → Privacy & Security**, click **Open Anyway** next to "Fragmenta was blocked", and confirm. You only do this once. If you use Ableton Link, allow Fragmenta to find devices on your local network when macOS asks.
+- **Windows:** if your browser says the file isn't commonly downloaded, choose **Keep**. When Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
+
+To remove Fragmenta, use **Settings → Uninstall Fragmenta…**. Deleting the app alone leaves its data folder (packages, models, projects, outputs) behind.
+
+---
+
 ## Run the App Locally
 
 > **Requirements:** Python 3.14 ([download](https://www.python.org/downloads/)). Other versions won't install the dependencies. On Mac, Fragmenta supports **Apple Silicon (M1 or newer) on macOS 14 (Sonoma or newer); Intel Macs are not supported**.
