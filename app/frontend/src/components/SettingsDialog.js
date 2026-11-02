@@ -145,9 +145,18 @@ export default function SettingsDialog({ open, onClose, aboutProps, showImport =
                         </Tabs>
                     </Box>
                     {canUninstall && (
-                        <Button variant="contained" color="error" size="small" fullWidth
-                            onClick={() => setUninstalling(true)}>
-                            Uninstall Fragmenta…
+                        <Button variant="contained" color="error"
+                            onClick={() => setUninstalling(true)}
+                            sx={(t) => ({
+                                alignSelf: 'center',
+                                minHeight: 44,
+                                px: 2.5,
+                                fontWeight: 600,
+                                backgroundColor: t.palette.error.main,
+                                color: '#FFFFFF',
+                                '&:hover': { backgroundColor: t.palette.fragmenta.errorLo },
+                            })}>
+                            Uninstall Fragmenta
                         </Button>
                     )}
                 </Box>
