@@ -6,6 +6,7 @@ import {
     Select,
     MenuItem,
     Button,
+    Switch,
     IconButton,
     Divider,
     ToggleButton,
@@ -26,7 +27,7 @@ const CHANNEL_OPTIONS = [
     ...Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `Ch ${i + 1}` })),
 ];
 
-// The MIDI settings (device, channel filter, takeover, mappings), shown as
+// The MIDI settings (devices, channel filter, takeover, mappings), shown as
 // the MIDI tab of the app's Settings dialog.
 export default function MidiSettingsPanel({ open = true }) {
     const ctx = useMidi();
@@ -45,9 +46,10 @@ export default function MidiSettingsPanel({ open = true }) {
     const {
         config,
         inputs,
+        failedInputs,
         supported,
         permissionError,
-        setDevice,
+        setDeviceEnabled,
         setChannelFilter,
         setTakeover,
         clearMapping,
@@ -55,6 +57,12 @@ export default function MidiSettingsPanel({ open = true }) {
     } = ctx;
 
     const sortedMappings = [...config.mappings].sort((a, b) => a.label.localeCompare(b.label));
+    // Every input plugged in, plus switched-on ones that aren't, so they can
+    // be switched off.
+    const devices = [
+        ...inputs.map((i) => i.id),
+        ...config.deviceIds.filter((id) => !inputs.some((i) => i.id === id)),
+    ];
 
     return (
         <Box>
@@ -78,44 +86,80 @@ export default function MidiSettingsPanel({ open = true }) {
                 <Box>
                     <Tooltip title={TIPS.midi.device}>
                         <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
-                            Input device
+                            Input devices
                         </Typography>
                     </Tooltip>
-                    <FormControl size="small" fullWidth>
-                        <Select
-                            value={config.deviceId && inputs.some(i => i.id === config.deviceId) ? config.deviceId : ''}
-                            onChange={(e) => setDevice(e.target.value || null)}
-                            displayEmpty
-                            disabled={!supported}
-                            renderValue={(value) => {
-                                if (!value) return <em style={{ opacity: 0.6 }}>None</em>;
-                                const found = inputs.find(i => i.id === value);
-                                return found ? found.name : 'Disconnected';
-                            }}
-                            sx={{ fontSize: perfTokens.fontSize.sm }}
-                        >
-                            <MenuItem value="" sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                <em>None</em>
-                            </MenuItem>
-                            {inputs.map((input) => (
-                                <MenuItem key={input.id} value={input.id} sx={{ fontSize: perfTokens.fontSize.sm }}>
-                                    {input.name}
-                                </MenuItem>
-                            ))}
-                        </Select>
-                    </FormControl>
-                    {config.deviceName && !inputs.some(i => i.name === config.deviceName) && (
-                        <Typography sx={{
-                            fontSize: perfTokens.fontSize.xs,
-                            color: 'warning.main',
-                            fontStyle: 'italic',
-                            display: 'block',
-                            mt: 0.5,
-                        }}>
-                            Saved device "{config.deviceName}" not connected
-                        </Typography>
-                    )}
-                    <Button size="small" onClick={() => refreshInputs?.()} sx={{ mt: 0.5 }}>Refresh devices</Button>
+                    <Box sx={{
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        bgcolor: 'background.default',
+                    }}>
+                        {devices.length === 0 ? (
+                            <Typography sx={{
+                                px: 1,
+                                py: 1.5,
+                                textAlign: 'center',
+                                fontSize: perfTokens.fontSize.xs,
+                                color: 'text.disabled',
+                                fontStyle: 'italic',
+                            }}>
+                                No MIDI devices found. Plug one in and it shows up here.
+                            </Typography>
+                        ) : devices.map((id) => {
+                            const on = config.deviceIds.includes(id);
+                            const present = inputs.some((i) => i.id === id);
+                            const status = !present
+                                ? 'Not connected'
+                                : on && failedInputs.includes(id)
+                                    ? "Couldn't open it. Is another app using it?"
+                                    : null;
+                            return (
+                                <Box
+                                    key={id}
+                                    sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: 1,
+                                        pl: 1,
+                                        pr: 0.5,
+                                        py: 0.4,
+                                        borderBottom: '1px solid',
+                                        borderColor: 'divider',
+                                        '&:last-child': { borderBottom: 'none' },
+                                    }}
+                                >
+                                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                                        <Typography sx={{
+                                            fontSize: perfTokens.fontSize.sm,
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                        }}>
+                                            {id}
+                                        </Typography>
+                                        {status && (
+                                            <Typography sx={{
+                                                fontSize: perfTokens.fontSize.xs,
+                                                color: 'warning.main',
+                                                fontStyle: 'italic',
+                                            }}>
+                                                {status}
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                    <Switch
+                                        size="small"
+                                        checked={on}
+                                        onChange={(e) => setDeviceEnabled(id, e.target.checked)}
+                                        disabled={!supported}
+                                        inputProps={{ 'aria-label': `Listen to ${id}` }}
+                                    />
+                                </Box>
+                            );
+                        })}
+                    </Box>
+                    <Button size="small" variant="outlined" onClick={() => refreshInputs?.()} sx={{ mt: 1 }}>Refresh devices</Button>
                 </Box>
 
                 <Box sx={{ display: 'flex', gap: 1 }}>

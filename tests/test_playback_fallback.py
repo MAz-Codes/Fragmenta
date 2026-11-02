@@ -78,20 +78,86 @@ def test_route_reports_undecodable_audio():
     assert r.status_code == 415, r.status_code
 
 
+class _FakeMidiIn:
+    """rtmidi.MidiIn stand-in: `ports` are plugged in, `busy` won't open."""
+    ports = ["Twister", "X-Touch Mini", "Busy"]
+    busy = {"Busy"}
+
+    def get_ports(self):
+        return list(self.ports)
+
+    def open_port(self, index):
+        if self.ports[index] in self.busy:
+            raise RuntimeError("in use")
+        self.port = self.ports[index]
+
+    def ignore_types(self, **_):
+        pass
+
+    def set_callback(self, fn, data=None):
+        self.callback = (fn, data)
+
+    def cancel_callback(self):
+        pass
+
+    def close_port(self):
+        pass
+
+    def delete(self):
+        pass
+
+
+def _fake_rtmidi():
+    return mock.patch.multiple(M, rtmidi=mock.Mock(MidiIn=_FakeMidiIn), _RTMIDI_OK=True)
+
+
+def test_several_midi_devices_open_at_once():
+    client = A.app.test_client()
+    with _fake_rtmidi():
+        r = client.post("/api/midi/select", json={"port_ids": ["Twister", "X-Touch Mini"]})
+        assert r.status_code == 200 and r.get_json()["open"] == ["Twister", "X-Touch Mini"], r.get_data()
+        r = client.post("/api/midi/select", json={"port_ids": ["X-Touch Mini"]})
+        assert r.get_json()["open"] == ["X-Touch Mini"], "the device switched off stayed open"
+        client.post("/api/midi/select", json={"port_ids": []})
+        assert M.current_ports() == []
+
+
+def test_messages_carry_the_port_they_came_from():
+    q = M.subscribe()
+    try:
+        with _fake_rtmidi():
+            M.open_inputs(["Twister"])
+            fn, port = M._inputs["Twister"].callback
+            fn(([0xB1, 0, 127], 0.0), port)
+            assert q.get_nowait() == {"data": [0xB1, 0, 127], "port": "Twister"}
+            M.open_inputs([])
+    finally:
+        M.unsubscribe(q)
+
+
 def test_missing_midi_device_is_not_an_error():
     client = A.app.test_client()
-    with mock.patch.object(M, "open_input", return_value=False), \
-            mock.patch.object(M, "list_inputs", return_value=[]):
-        r = client.post("/api/midi/select", json={"port_id": "Gone"})
-    assert r.status_code == 200 and r.get_json() == {"current": None, "missing": True}, r.get_data()
+    with _fake_rtmidi():
+        r = client.post("/api/midi/select", json={"port_ids": ["Gone", "Twister"]})
+        client.post("/api/midi/select", json={"port_ids": []})
+    assert r.status_code == 200, r.status_code
+    assert r.get_json() == {"open": ["Twister"], "missing": ["Gone"], "failed": []}, r.get_data()
 
 
-def test_a_present_midi_device_that_fails_is_still_an_error():
+def test_a_device_that_wont_open_doesnt_stop_the_others():
     client = A.app.test_client()
-    with mock.patch.object(M, "open_input", return_value=False), \
-            mock.patch.object(M, "list_inputs", return_value=[{"id": "Busy", "name": "Busy", "index": 0}]):
-        r = client.post("/api/midi/select", json={"port_id": "Busy"})
-    assert r.status_code == 400, r.status_code
+    with _fake_rtmidi():
+        r = client.post("/api/midi/select", json={"port_ids": ["Busy", "Twister"]})
+        client.post("/api/midi/select", json={"port_ids": []})
+    assert r.get_json() == {"open": ["Twister"], "missing": [], "failed": ["Busy"]}, r.get_data()
+
+
+def test_old_single_port_requests_still_work():
+    client = A.app.test_client()
+    with _fake_rtmidi():
+        r = client.post("/api/midi/select", json={"port_id": "Twister"})
+        client.post("/api/midi/select", json={"port_ids": []})
+    assert r.get_json()["open"] == ["Twister"], r.get_data()
 
 
 if __name__ == "__main__":

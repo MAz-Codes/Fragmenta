@@ -3721,24 +3721,24 @@ def midi_devices():
     return jsonify({
         "available": midi_input.is_available(),
         "inputs": midi_input.list_inputs(),
-        "current": midi_input.current_port(),
+        "open": midi_input.current_ports(),
     })
 
 
 @app.route('/api/midi/select', methods=['POST'])
 def midi_select():
+    """Listen to exactly the ports in `port_ids`. A saved device that isn't
+    plugged in is normal, not an error: its mappings stay and it reopens when
+    the device comes back. One that is plugged in but won't open is listed
+    under `failed`, without stopping the others."""
     from app.core.audio import midi_input
     data = request.get_json(silent=True) or {}
-    port_id = data.get('port_id')
-    ok = midi_input.open_input(port_id)
-    if not ok and port_id:
-        # A saved device that isn't plugged in is normal, not an error: the
-        # mapping stays and it reopens when the device comes back.
-        if not any(i["id"] == port_id for i in midi_input.list_inputs()):
-            return jsonify({"current": None, "missing": True})
-        return jsonify(APIResponse.error(
-            "Could not open that MIDI input port.", status_code=400)), 400
-    return jsonify({"current": midi_input.current_port()})
+    port_ids = data.get('port_ids')
+    if port_ids is None:
+        port_ids = [data['port_id']] if data.get('port_id') else []
+    if not isinstance(port_ids, list) or not all(isinstance(p, str) for p in port_ids):
+        return jsonify(APIResponse.error("port_ids must be a list of port names.", status_code=400)), 400
+    return jsonify(midi_input.open_inputs(port_ids))
 
 
 # --- Output device on macOS -------------------------------------------------
