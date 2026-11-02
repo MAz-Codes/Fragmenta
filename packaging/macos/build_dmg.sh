@@ -1,65 +1,61 @@
 #!/usr/bin/env bash
-# Build Fragmenta.app + .dmg (Apple Silicon).
+# Build Fragmenta.app and its .dmg (Apple Silicon). Runs on a Mac; CI runs it too.
 #
-# Runs on macOS (Apple Silicon). Steps:
-#   1. PyInstaller freezes packaging/launcher.py -> Fragmenta.app skeleton.
-#   2. Drop the assembled bundle (runtime/ + payload/) into Resources.
-#   3. Install our Info.plist + .icns.
-#   4. codesign (hardened runtime + entitlements) and notarize — if creds exist.
-#   5. Wrap in a .dmg with create-dmg.
+#   Fragmenta.app/Contents/
+#   ├── MacOS/fragmenta            frozen packaging/launcher.py
+#   ├── Frameworks/                PyInstaller's Python + Tk for the launcher
+#   ├── Info.plist  Resources/fragmenta.icns
+#   └── Resources/fragmenta/       the bundle: runtime/{python,uv} + payload/
 #
-# Signing/notarization are SKIPPED when the relevant env vars are unset, so a
-# plain local build still produces an (unsigned, Gatekeeper-blocked) .app/.dmg
-# for smoke-testing.
+# No Developer ID and no notarization (D22). Apple Silicon only runs signed code,
+# so everything gets an ad-hoc signature instead. A downloaded copy then opens
+# after System Settings → Privacy & Security → Open Anyway. Without the hardened
+# runtime, the unsigned packages installed at first run load without entitlements.
 #
-# Env (optional, for a shippable signed build):
-#   MAC_SIGN_IDENTITY   "Developer ID Application: Name (TEAMID)"
-#   AC_APPLE_ID         Apple ID email           (notarization)
-#   AC_TEAM_ID          Developer Team ID        (notarization)
-#   AC_PASSWORD         app-specific password    (notarization)
+# Env: BUILD_NUMBER  CFBundleVersion, rising with every build (CI: its run number).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO"
 VERSION="$(tr -d '[:space:]' < VERSION)"
+SHORT_VERSION="${VERSION%%-*}"            # 2.0.0-rc.1 -> 2.0.0: macOS wants numbers
+BUILD_NUMBER="${BUILD_NUMBER:-$SHORT_VERSION}"
 DIST="packaging/build"
-APP="$DIST/Fragmenta.app"
 BUNDLE="$DIST/bundle"
+STAGE="$DIST/dmg"                         # what the .dmg window shows
+APP="$STAGE/Fragmenta.app"
 DMG="$DIST/Fragmenta-${VERSION}-macOS-arm64.dmg"
+PYINSTALLER="pyinstaller==6.22.3"
 
-echo "==> Fragmenta $VERSION — macOS arm64 build"
+echo "==> Fragmenta $VERSION (build $BUILD_NUMBER), macOS arm64"
 
-# 1. Assemble the bundle (runtime/python + runtime/uv + payload/).
-python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$BUNDLE"
+# 1. Bundle: runtime/python + runtime/uv + payload/.
+python3 packaging/assemble.py --target macos-arm64 --out "$REPO/$BUNDLE" --ref "${FRAGMENTA_REF:-HEAD}"
 
-# 2. Freeze the launcher into an .app skeleton.
-# The launcher's first-run progress splash uses Tkinter. Rather than depend on
-# the build machine's system Python shipping Tk (it usually doesn't — hence the
-# old 'brew install python-tk' requirement), we freeze with the SAME standalone
-# CPython we ship: python-build-standalone bundles _tkinter + Tcl/Tk, so
-# PyInstaller picks up the splash for free and the build needs nothing
-# preinstalled. PyInstaller lives in a throwaway venv built from that interpreter
-# so the shipped payload Python stays pristine (no PyInstaller riding along).
+# 2. Freeze the launcher with the Python we ship: it carries Tk for the first-run
+# window, so the build Mac needs none. PyInstaller sits in a throwaway venv, so it
+# never lands in the shipped Python.
 PBS_PY="$BUNDLE/runtime/python/bin/python3"
 BUILD_VENV="$DIST/_buildvenv"
 "$PBS_PY" -c "import tkinter" 2>/dev/null || {
-    echo "ERROR: the bundled standalone Python lacks Tkinter — the first-run splash" >&2
-    echo "       would be missing. Bump PBS_RELEASE in packaging/python_standalone.py" >&2
-    echo "       to a build that ships Tcl/Tk and rebuild." >&2
+    echo "ERROR: the bundled Python has no Tkinter, so the launcher window would be missing." >&2
     exit 1
 }
-rm -rf "$BUILD_VENV"
+rm -rf "$BUILD_VENV" "$STAGE" "$DIST/_pyi"
 "$PBS_PY" -m venv "$BUILD_VENV"
-"$BUILD_VENV/bin/python" -m pip install --quiet --upgrade pip pyinstaller
-rm -rf "$APP" "$DIST/fragmenta.app" build/launcher *.spec
+"$BUILD_VENV/bin/python" -m pip install --quiet "$PYINSTALLER"
+mkdir -p "$STAGE"
 "$BUILD_VENV/bin/python" -m PyInstaller --noconfirm --windowed --name fragmenta \
-    --distpath "$DIST" --workpath "$DIST/_pyi" --specpath "$DIST/_pyi" \
+    --osx-bundle-identifier com.misaghazimi.fragmenta --target-arch arm64 \
+    --distpath "$DIST/_pyi/dist" --workpath "$DIST/_pyi/work" --specpath "$DIST/_pyi" \
     packaging/launcher.py
-mv "$DIST/fragmenta.app" "$APP"
+mv "$DIST/_pyi/dist/fragmenta.app" "$APP"
 
-# 3. Bundle -> Contents/Resources; Info.plist + icon.
-cp -R "$BUNDLE/." "$APP/Contents/Resources/"
-sed "s/@@VERSION@@/$VERSION/g" packaging/macos/Info.plist.in > "$APP/Contents/Info.plist"
+# 3. Bundle into its own folder under Resources; Info.plist + icon.
+ditto "$BUNDLE" "$APP/Contents/Resources/fragmenta"
+sed -e "s/@@VERSION@@/$SHORT_VERSION/g" -e "s/@@BUILD@@/$BUILD_NUMBER/g" \
+    packaging/macos/Info.plist.in > "$APP/Contents/Info.plist"
+plutil -lint "$APP/Contents/Info.plist" >/dev/null
 ICON_PNG="app/frontend/public/fragmenta_icon_1024.png"
 ICONSET="$DIST/fragmenta.iconset"
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
@@ -69,39 +65,24 @@ for sz in 16 32 64 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/fragmenta.icns"
 
-# 4. Sign + notarize (only if an identity is provided).
-if [[ -n "${MAC_SIGN_IDENTITY:-}" ]]; then
-    echo "==> codesign (hardened runtime)"
-    # Sign nested Mach-O (bundled Python, uv, any dylibs) first, then the app.
-    find "$APP/Contents/Resources/runtime" -type f \( -name "*.dylib" -o -name "*.so" -o -perm -111 \) \
-        -exec codesign --force --options runtime --timestamp \
-        --entitlements packaging/macos/entitlements.plist --sign "$MAC_SIGN_IDENTITY" {} + || true
-    codesign --force --options runtime --timestamp \
-        --entitlements packaging/macos/entitlements.plist \
-        --sign "$MAC_SIGN_IDENTITY" "$APP"
+# 4. Ad-hoc signature: every Mach-O file first, then the app, which seals the
+# rest. Any failure stops the build.
+echo "==> ad-hoc signature"
+find "$APP/Contents" -type f ! -path "$APP/Contents/MacOS/fragmenta" -print0 \
+    | xargs -0 file -N -F $'\t' | awk -F'\t' '$2 ~ /Mach-O/ {print $1}' > "$DIST/_macho.txt"
+echo "    $(wc -l < "$DIST/_macho.txt" | tr -d ' ') Mach-O files"
+tr '\n' '\0' < "$DIST/_macho.txt" | xargs -0 codesign --force --sign -
+codesign --force --sign - "$APP"
+codesign --verify --strict --deep "$APP"
 
-    if [[ -n "${AC_APPLE_ID:-}" && -n "${AC_TEAM_ID:-}" && -n "${AC_PASSWORD:-}" ]]; then
-        echo "==> notarize"
-        ditto -c -k --keepParent "$APP" "$DIST/_notarize.zip"
-        xcrun notarytool submit "$DIST/_notarize.zip" \
-            --apple-id "$AC_APPLE_ID" --team-id "$AC_TEAM_ID" --password "$AC_PASSWORD" --wait
-        xcrun stapler staple "$APP"
-    else
-        echo "==> notarization creds absent — skipping (app will be Gatekeeper-blocked)"
-    fi
-else
-    echo "==> MAC_SIGN_IDENTITY unset — unsigned build (local smoke-test only)"
-fi
-
-# 5. .dmg
-echo "==> create-dmg"
+# 5. .dmg: the app beside a link to Applications.
+echo "==> dmg"
+ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-if command -v create-dmg >/dev/null 2>&1; then
-    create-dmg --volname "Fragmenta $VERSION" \
-        --app-drop-link 480 170 --icon "Fragmenta.app" 160 170 \
-        --window-size 640 360 "$DMG" "$APP"
-else
-    echo "create-dmg not found; falling back to hdiutil"
-    hdiutil create -volname "Fragmenta $VERSION" -srcfolder "$APP" -ov -format UDZO "$DMG"
-fi
+for attempt in 1 2 3; do  # hdiutil sometimes reports a busy device on CI
+    hdiutil create -volname "Fragmenta $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" && break
+    [ "$attempt" = 3 ] && exit 1
+    sleep 5
+done
+shasum -a 256 "$DMG"
 echo "==> done: $DMG"

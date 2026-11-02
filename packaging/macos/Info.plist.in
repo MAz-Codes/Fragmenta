@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Substituted by build_dmg.sh: @@VERSION@@ -> VERSION file. -->
+<!-- Filled in by build_dmg.sh: @@VERSION@@ -> X.Y.Z (VERSION without any -rc.N),
+     @@BUILD@@ -> a build number that rises with every build. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -10,7 +11,7 @@
     <key>CFBundleIdentifier</key>
     <string>com.misaghazimi.fragmenta</string>
     <key>CFBundleVersion</key>
-    <string>@@VERSION@@</string>
+    <string>@@BUILD@@</string>
     <key>CFBundleShortVersionString</key>
     <string>@@VERSION@@</string>
     <key>CFBundlePackageType</key>
@@ -22,8 +23,15 @@
     <!-- Apple Silicon + MPS bf16 needs macOS 14 (Sonoma). -->
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <!-- Shown when Ableton Link first looks for other apps on the network. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Fragmenta uses Ableton Link to keep tempo in sync with other music apps on your network.</string>
     <!-- The visible app window is opened by a child process (start.py), which
          provides the real (branded) Dock icon. This launcher only shows the
          first-run splash, then stays alive headless to drain the child's output

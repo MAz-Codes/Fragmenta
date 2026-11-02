@@ -41,8 +41,9 @@ Layout it expects (see packaging/assemble.py), with no version in any name:
     └── payload/            install.py  start.py  locks/  app/  vendor/ …
 
 On macOS the launcher exe lives in ``Fragmenta.app/Contents/MacOS/`` and the
-bundle is ``Fragmenta.app/Contents/Resources/``; on Windows the bundle is the
-install directory, beside the exe.
+bundle is ``Fragmenta.app/Contents/Resources/fragmenta/`` (its own folder, apart
+from PyInstaller's files); on Windows the bundle is the install directory,
+beside the exe.
 """
 from __future__ import annotations
 
@@ -116,9 +117,9 @@ def _bundle_root() -> Path:
 
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable).resolve()
-        # macOS .app: …/Contents/MacOS/fragmenta  ->  …/Contents/Resources
+        # macOS .app: …/Contents/MacOS/fragmenta  ->  …/Contents/Resources/fragmenta
         if sys.platform == "darwin" and exe.parent.name == "MacOS":
-            return exe.parent.parent / "Resources"
+            return exe.parent.parent / "Resources" / "fragmenta"
         # Windows / Linux one-dir: the bundle sits beside the launcher exe.
         return exe.parent
 
@@ -131,6 +132,33 @@ def _bundled_python(bundle: Path) -> Path:
     if os.name == "nt":
         return bundle / "runtime" / "python" / "python.exe"
     return bundle / "runtime" / "python" / "bin" / "python3"
+
+
+def _child_env() -> dict:
+    env = {**os.environ, "FRAGMENTA_PACKAGED": "1", "PYTHONIOENCODING": "utf-8"}
+    if sys.platform == "darwin":
+        # Python would otherwise write .pyc files inside the app, which breaks its
+        # signature, and macOS then calls the app damaged. Same folder as
+        # install.py's data dir. Not on Windows: the cache path repeats the source
+        # path and would pass Windows' path length limit.
+        env["PYTHONPYCACHEPREFIX"] = str(Path.home() / "Library" / "Application Support"
+                                         / "FragmentaDesktop" / "cache" / "pycache")
+    return env
+
+
+# Held while Fragmenta runs, so the Windows installer can tell it's open.
+_WINDOWS_MUTEX = "FragmentaLauncherMutex"
+
+
+def _hold_windows_mutex() -> object:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        return ctypes.windll.kernel32.CreateMutexW(None, False, _WINDOWS_MUTEX)
+    except Exception as exc:
+        _dbg(f"could not create the mutex: {exc}")
+        return None
 
 
 _LONGEST_STATUS = "Downloading components - this can take a few minutes..."
@@ -307,10 +335,14 @@ class _Run:
             self._note("Missing: " + ", ".join(missing))
             self._fail("corrupt", "Fragmenta's installation is damaged. Please reinstall it.", returncode=2)
             return
+        # macOS runs an app opened straight from the disk image or Downloads from a
+        # random read-only copy, which moves with every launch.
+        if sys.platform == "darwin" and "/AppTranslocation/" in str(self.bundle):
+            self._fail("moved", "Drag Fragmenta into your Applications folder, then open it from there.",
+                       returncode=2)
+            return
 
-        env = dict(os.environ)
-        env["FRAGMENTA_PACKAGED"] = "1"
-        env["PYTHONIOENCODING"] = "utf-8"
+        env = _child_env()
 
         self.q.put(("line", "[preflight] checking\n"))
         self.report = _run_preflight(python, install_py, env)
@@ -328,7 +360,10 @@ class _Run:
                 return
 
         # start.py opens the real window; this thread stays alive (draining the
-        # child's output) for the whole app session.
+        # child's output) for the whole app session. On Windows the child gets a
+        # hidden console, which everything it starts shares, so no console window
+        # stays open beside the app.
+        flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
         proc = subprocess.Popen(
             [str(python), str(install_py), "--launch"],
             cwd=str(payload),
@@ -339,6 +374,7 @@ class _Run:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            **flags,
         )
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -376,7 +412,7 @@ def _self_test(bundle: Path) -> int:
     except Exception as exc:
         _dbg(f"self-test: no Tk in this build: {exc!r}")
         return 3
-    env = {**os.environ, "FRAGMENTA_PACKAGED": "1", "PYTHONIOENCODING": "utf-8"}
+    env = _child_env()
     flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     proc = subprocess.Popen([str(python), str(install_py), "--self-test"], cwd=str(install_py.parent), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
@@ -735,6 +771,7 @@ def main() -> int:
     if "--self-test" in sys.argv[1:]:
         return _self_test(_bundle_root())
 
+    mutex = _hold_windows_mutex()  # noqa: F841  (released when the process exits)
     run = _Run(_bundle_root())
 
     # Phase 1: warm launches reach readiness fast — don't flash a splash.

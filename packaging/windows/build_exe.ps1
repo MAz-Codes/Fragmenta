@@ -1,24 +1,19 @@
 <#
-Build Fragmenta-<ver>-Setup.exe (Windows x64).
+Build Fragmenta-<ver>-Windows-x64-Setup.exe. Runs on Windows; CI runs it too.
 
-Mirrors macos/build_dmg.sh. Steps:
+Steps:
   1. Assemble the bundle (runtime\python + runtime\uv.exe + payload\).
-  2. Generate the .ico PyInstaller needs at build time.
-  3. Freeze packaging/launcher.py -> fragmenta.exe.
-  4. Wrap the frozen launcher + payload into a per-user installer with Inno Setup.
+  2. Freeze packaging/launcher.py -> fragmenta.exe, with a version resource.
+  3. Wrap the frozen launcher + bundle into a per-user installer with Inno Setup.
 
-The launcher's first-run progress splash uses Tkinter. Rather than depend on the
-build box's Python shipping Tk, we freeze with the SAME standalone CPython we
-ship: python-build-standalone bundles _tkinter + Tcl/Tk, so PyInstaller captures
-the splash for free and the build needs nothing preinstalled. PyInstaller lives
-in a throwaway venv built from that interpreter so the shipped payload Python
-stays pristine (no PyInstaller riding along).
+The launcher's first-run window uses Tkinter, so it is frozen with the SAME
+standalone CPython we ship (python-build-standalone carries Tcl/Tk) and the
+build box needs no Python with Tk. PyInstaller lives in a throwaway venv built
+from that interpreter, so it never rides along in the shipped Python.
 
-Prereqs: git, Inno Setup (iscc on PATH). Run from anywhere; paths resolve to the
-repo root. assemble.py uses `git archive HEAD`, so commit changes first.
-
-Signing is left to the caller: sign packaging\build\Fragmenta-<ver>-Setup.exe
-with signtool using your code-signing cert.
+Prereqs: git, any Python 3.11+ on PATH (runs assemble.py), Inno Setup 6. Run
+from anywhere; paths resolve to the repo root. assemble.py uses `git archive
+HEAD`, so commit changes first. Unsigned (D22).
 #>
 $ErrorActionPreference = "Stop"
 
@@ -27,40 +22,44 @@ $VERSION = (Get-Content (Join-Path $REPO "VERSION") -Raw).Trim()
 $DIST    = Join-Path $REPO "packaging\build"
 $BUNDLE  = Join-Path $DIST "bundle"
 $WIN     = Join-Path $DIST "win"
+$Ref     = if ($env:FRAGMENTA_REF) { $env:FRAGMENTA_REF } else { "HEAD" }
+
+function Invoke-Checked {
+    # Native commands don't stop the script on failure by themselves.
+    & $args[0] $args[1..($args.Count - 1)]
+    if ($LASTEXITCODE -ne 0) { throw "$($args[0]) failed with exit $LASTEXITCODE" }
+}
 
 Write-Host "==> Fragmenta $VERSION - Windows x64 build"
 Set-Location $REPO
 
-# 1. Assemble the bundle (runtime\python + runtime\uv.exe + payload\).
-python packaging\assemble.py --target windows-x64 --out $BUNDLE
+$Iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+if (-not $Iscc) { $Iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe" }
+if (-not (Test-Path $Iscc)) { throw "Inno Setup 6 not found (iscc)" }
 
-# 2. Build tooling in a throwaway venv built from the SAME standalone CPython we
-# ship (it bundles Tkinter, so PyInstaller captures the splash). Keeping the
-# tools here means the build box needs no preinstalled PyInstaller/Pillow and the
-# shipped payload Python stays pristine.
+# 1. Bundle.
+Invoke-Checked python packaging\assemble.py --target windows-x64 --out $BUNDLE --ref $Ref
+
+# 2. Freeze the launcher.
 $PbsPy     = Join-Path $BUNDLE "runtime\python\python.exe"
 $BuildVenv = Join-Path $DIST "_buildvenv"
 & $PbsPy -c "import tkinter" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Error ("the bundled standalone Python lacks Tkinter - the first-run splash`n" +
-        "would be missing. Bump PBS_RELEASE in packaging/python_standalone.py to a`n" +
-        "build that ships Tcl/Tk and rebuild.")
-    exit 1
-}
+if ($LASTEXITCODE -ne 0) { throw "the bundled Python has no Tkinter, so the launcher window would be missing" }
 if (Test-Path $BuildVenv) { Remove-Item -Recurse -Force $BuildVenv }
-& $PbsPy -m venv $BuildVenv
+Invoke-Checked $PbsPy -m venv $BuildVenv
 $VenvPy = Join-Path $BuildVenv "Scripts\python.exe"
-& $VenvPy -m pip install --quiet --upgrade pip pyinstaller pillow
-
-# 3. App icon (PyInstaller needs the .ico at build time) — via the venv's Pillow,
-# so the build box itself needs nothing preinstalled.
-& $VenvPy -c "from PIL import Image; Image.open('app/frontend/public/fragmenta_icon_1024.png').save('app/frontend/public/fragmenta.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"
-
-# 4. Freeze the launcher with the bundled standalone Python (ships Tkinter).
+Invoke-Checked $VenvPy -m pip install --quiet pyinstaller==6.22.3
 if (Test-Path $WIN) { Remove-Item -Recurse -Force $WIN }
-& $VenvPy -m PyInstaller packaging\windows\launcher.spec `
+Invoke-Checked $VenvPy -m PyInstaller --noconfirm packaging\windows\launcher.spec `
     --distpath $WIN --workpath (Join-Path $DIST "_pyi")
 
-# 5. Inno Setup installer.
-iscc /DAppVersion=$VERSION packaging\windows\fragmenta.iss
-Write-Host "==> done: $DIST\Fragmenta-$VERSION-Setup.exe"
+# 3. Installer. Windows' file version is X.Y.Z.N (N = rc number, 100 = final),
+# the same numbers launcher.spec writes into fragmenta.exe.
+if ($VERSION -notmatch '^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$') { throw "VERSION $VERSION isn't X.Y.Z or X.Y.Z-rc.N" }
+$N = if ($Matches[4]) { $Matches[4] } else { "100" }
+$VersionInfo = "$($Matches[1]).$($Matches[2]).$($Matches[3]).$N"
+Invoke-Checked $Iscc /Q "/DAppVersion=$VERSION" "/DVersionInfo=$VersionInfo" packaging\windows\fragmenta.iss
+
+$Setup = Join-Path $DIST "Fragmenta-$VERSION-Windows-x64-Setup.exe"
+(Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLower() + "  " + (Split-Path $Setup -Leaf)
+Write-Host "==> done: $Setup"
