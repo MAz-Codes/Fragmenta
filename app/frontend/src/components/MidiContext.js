@@ -15,7 +15,7 @@ const STORAGE_KEY = 'fragmenta.midi.config.v1';
 
 const DEFAULT_CONFIG = {
     deviceIds: [],              // every input listened to, by port name
-    channelFilter: 0,           
+    channelFilters: {},         // port name -> channel (1-16); none = any
     takeover: 'jump',           
     mappings: [],              
 };
@@ -30,16 +30,21 @@ function loadConfig() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return { ...DEFAULT_CONFIG, mappings: [] };
-        const { deviceId, deviceName, ...parsed } = JSON.parse(raw);
+        const { deviceId, deviceName, channelFilter, ...parsed } = JSON.parse(raw);
         // Before several inputs could be on at once there was one device;
         // its port name is the id now.
         const deviceIds = Array.isArray(parsed.deviceIds)
             ? parsed.deviceIds
             : (deviceName || deviceId ? [deviceName || deviceId] : []);
+        // The one channel filter there was belonged to that one device.
+        const channelFilters = parsed.channelFilters && typeof parsed.channelFilters === 'object'
+            ? parsed.channelFilters
+            : Object.fromEntries(channelFilter ? deviceIds.map((id) => [id, channelFilter]) : []);
         return {
             ...DEFAULT_CONFIG,
             ...parsed,
             deviceIds,
+            channelFilters,
             mappings: Array.isArray(parsed.mappings) ? parsed.mappings : [],
         };
     } catch {
@@ -148,8 +153,10 @@ export function MidiProvider({ children }) {
         const type = status & 0xf0;
         const channel = (status & 0x0f) + 1;
         const cfg = configRef.current;
+        const port = event.port || null;
 
-        if (cfg.channelFilter && channel !== cfg.channelFilter) return;
+        const onlyChannel = cfg.channelFilters?.[port];
+        if (onlyChannel && channel !== onlyChannel) return;
 
         const isCC = type === MIDI_MODE.CC;
         const isNoteOn = type === MIDI_MODE.NOTE_ON && data2 > 0;
@@ -157,7 +164,6 @@ export function MidiProvider({ children }) {
         if (!isCC && !isNoteOn && !isNoteOff) return;
 
         const incomingType = isCC ? 'cc' : 'note';
-        const port = event.port || null;
         let prevCC;
         if (isCC) {
             const ccKey = `${port}:${channel}:${data1}`;
@@ -312,8 +318,11 @@ export function MidiProvider({ children }) {
         });
     }, []);
 
-    const setChannelFilter = useCallback((channel) => {
-        setConfig((prev) => ({ ...prev, channelFilter: channel }));
+    const setChannelFilter = useCallback((deviceId, channel) => {
+        setConfig((prev) => {
+            const { [deviceId]: _old, ...rest } = prev.channelFilters || {};
+            return { ...prev, channelFilters: channel ? { ...rest, [deviceId]: channel } : rest };
+        });
     }, []);
 
     const setTakeover = useCallback((mode) => {

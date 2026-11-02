@@ -27,7 +27,7 @@ const CHANNEL_OPTIONS = [
     ...Array.from({ length: 16 }, (_, i) => ({ value: i + 1, label: `Ch ${i + 1}` })),
 ];
 
-// The MIDI settings (devices, channel filter, takeover, mappings), shown as
+// The MIDI settings (devices and their channels, takeover, mappings), shown as
 // the MIDI tab of the app's Settings dialog.
 export default function MidiSettingsPanel({ open = true }) {
     const ctx = useMidi();
@@ -148,6 +148,25 @@ export default function MidiSettingsPanel({ open = true }) {
                                             </Typography>
                                         )}
                                     </Box>
+                                    {/* Only a device that's on has a channel to pick;
+                                        the space stays so the switches line up. */}
+                                    {on ? (
+                                        <Tooltip title={TIPS.midi.channelFilter}>
+                                            <FormControl size="small" sx={{ width: 96, flexShrink: 0 }}>
+                                                <Select
+                                                    value={config.channelFilters?.[id] || 0}
+                                                    onChange={(e) => setChannelFilter(id, Number(e.target.value))}
+                                                    disabled={!supported}
+                                                    SelectDisplayProps={{ 'aria-label': `Channel for ${id}` }}
+                                                    sx={{ fontSize: perfTokens.fontSize.sm }}
+                                                >
+                                                    {CHANNEL_OPTIONS.map(opt => (
+                                                        <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: perfTokens.fontSize.sm }}>{opt.label}</MenuItem>
+                                                    ))}
+                                                </Select>
+                                            </FormControl>
+                                        </Tooltip>
+                                    ) : <Box sx={{ width: 96, flexShrink: 0 }} />}
                                     <Switch
                                         size="small"
                                         checked={on}
@@ -163,27 +182,7 @@ export default function MidiSettingsPanel({ open = true }) {
                 </Box>
 
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Box sx={{ flex: 1 }}>
-                        <Tooltip title={TIPS.midi.channelFilter}>
-                            <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
-                                Channel filter
-                            </Typography>
-                        </Tooltip>
-                        <FormControl size="small" fullWidth>
-                            <Select
-                                value={config.channelFilter}
-                                onChange={(e) => setChannelFilter(Number(e.target.value))}
-                                disabled={!supported}
-                                sx={{ fontSize: perfTokens.fontSize.sm }}
-                            >
-                                {CHANNEL_OPTIONS.map(opt => (
-                                    <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: perfTokens.fontSize.sm }}>{opt.label}</MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Box>
-
-                    <Box sx={{ flex: 1 }}>
+                    <Box sx={{ width: '50%' }}>
                         <Tooltip title={TIPS.midi.takeover}>
                             <Typography sx={{ ...appStyles.fieldCaps, display: 'inline-block', mb: 0.5 }}>
                                 Takeover
