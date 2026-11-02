@@ -77,6 +77,7 @@ import SettingsDialog from './components/SettingsDialog';
 import { AudioSettingsProvider } from './components/AudioSettingsContext';
 import { MidiProvider } from './components/MidiContext';
 import { formatDuration } from './utils/format';
+import { extractError } from './utils/errors';
 import { appStyles, lightTheme } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
@@ -1270,7 +1271,7 @@ function App() {
                     `Generation stopped after ${completedRuns}/${totalRuns} fragment${completedRuns === 1 ? '' : 's'}.`
                 );
             } else {
-                setProcessingStatus(`Generation error: ${error.response?.data?.error || error.message}`);
+                setProcessingStatus(`Generation error: ${extractError(error)}`);
             }
         } finally {
             stopProgressTicker();
