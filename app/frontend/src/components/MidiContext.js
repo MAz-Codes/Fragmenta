@@ -77,6 +77,9 @@ export function MidiProvider({ children }) {
 
     const subscribersRef = useRef(new Map());
     const pickupArmedRef = useRef(new Map());
+    // Last value seen per CC, so a CC button fires once per press and Learn
+    // can tell a press from a turn.
+    const ccValuesRef = useRef(new Map());
     const configRef = useRef(config);
     const learnTargetRef = useRef(learnTarget);
 
@@ -155,9 +158,23 @@ export function MidiProvider({ children }) {
         if (!isCC && !isNoteOn && !isNoteOff) return;
 
         const incomingType = isCC ? 'cc' : 'note';
+        let prevCC;
+        if (isCC) {
+            const ccKey = `${channel}:${data1}`;
+            prevCC = ccValuesRef.current.get(ccKey);
+            ccValuesRef.current.set(ccKey, data2);
+        }
         const target = learnTargetRef.current;
-        if (target && (isCC || isNoteOn)) {
-            captureLearn(target, { type: incomingType, channel, number: data1 });
+        if (target) {
+            // Learn only what fits the control. Encoders without detents (MIDI
+            // Fighter Twister) turn a little when pressed, so the first message
+            // alone can't be trusted: knobs take a CC that moved off its ends,
+            // buttons a note or a CC pressed and released.
+            const kind = subscribersRef.current.get(target)?.opts?.kind || 'continuous';
+            const fits = kind === 'trigger'
+                ? isNoteOn || (isCC && data2 === 0 && prevCC >= 64)
+                : isCC && data2 > 0 && data2 < 127;
+            if (fits) captureLearn(target, { type: incomingType, channel, number: data1 });
             return;
         }
 
@@ -172,7 +189,8 @@ export function MidiProvider({ children }) {
                 applyContinuous(sub, m, data2, cfg.takeover);
             } else if (sub.opts.kind === 'trigger') {
                 if (isNoteOn) sub.handler();
-                else if (isCC && data2 >= 64) sub.handler();
+                // Once per press, not on every message a turning knob sends.
+                else if (isCC && data2 >= 64 && !(prevCC >= 64)) sub.handler();
             }
         }
     }, [captureLearn]);
