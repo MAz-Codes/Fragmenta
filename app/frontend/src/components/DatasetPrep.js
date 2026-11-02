@@ -756,9 +756,14 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
 
                     {isAnnotating && annotateJob && (
                         <Box>
+                            {/* Same motion as pre-encode: slides until the first
+                                clip is done, then fills with dashes running ahead. */}
                             <LinearProgress
-                                variant={annotateJob.total > 0 ? 'determinate' : 'indeterminate'}
+                                variant={annotateJob.total > 0 && annotateJob.current > 0 ? 'buffer' : 'indeterminate'}
                                 value={annotateJob.total > 0 ? (annotateJob.current / annotateJob.total) * 100 : undefined}
+                                valueBuffer={annotateJob.total > 0
+                                    ? (Math.min(annotateJob.current + 1, annotateJob.total) / annotateJob.total) * 100
+                                    : undefined}
                             />
                             <Box sx={{ mt: 0.75, display: 'flex', alignItems: 'center', gap: 1.5 }}>
                                 <Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>
