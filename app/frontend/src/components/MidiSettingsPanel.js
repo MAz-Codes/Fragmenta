@@ -148,9 +148,10 @@ export default function MidiSettingsPanel({ open = true }) {
                                             </Typography>
                                         )}
                                     </Box>
-                                    {/* Only a device that's on has a channel to pick;
-                                        the space stays so the switches line up. */}
-                                    {on ? (
+                                    {/* Only a device that's on has a channel to pick. The
+                                        menu is there but hidden while it's off, so turning
+                                        a device on doesn't change the row's height. */}
+                                    <Box sx={{ flexShrink: 0, visibility: on ? 'visible' : 'hidden' }}>
                                         <Tooltip title={TIPS.midi.channelFilter}>
                                             <FormControl size="small" sx={{ width: 96, flexShrink: 0 }}>
                                                 <Select
@@ -166,7 +167,7 @@ export default function MidiSettingsPanel({ open = true }) {
                                                 </Select>
                                             </FormControl>
                                         </Tooltip>
-                                    ) : <Box sx={{ width: 96, flexShrink: 0 }} />}
+                                    </Box>
                                     <Switch
                                         size="small"
                                         checked={on}
