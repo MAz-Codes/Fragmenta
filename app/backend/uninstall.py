@@ -25,10 +25,13 @@ from app.core.config import get_config
 EXIT_CODE = 86
 # Rebuilt by the app at its next launch, so they go even when data is kept.
 PACKAGES = ("venv", "cache")
-# start.py writes these on Linux; they would point at an app that's gone.
+# start.py writes these on Linux; they would point at an app that's gone. The
+# last two are the window's names on Wayland (start.wayland_app_id).
 LINUX_ENTRIES = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop",
     Path.home() / ".local" / "share" / "icons" / "fragmenta.png",
+    Path.home() / ".local" / "share" / "applications" / "brave-127.0.0.1__-Default.desktop",
+    Path.home() / ".local" / "share" / "applications" / "chrome-127.0.0.1__-Default.desktop",
 )
 WAIT_SECONDS = 60
 

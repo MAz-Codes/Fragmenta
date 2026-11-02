@@ -311,26 +311,40 @@ def find_chromium() -> str | None:
     return None
 
 
-def ensure_desktop_entry() -> None:
+def wayland_app_id(chromium_path: str) -> str:
+    """What the desktop calls the app window on Wayland, where Chromium ignores
+    --class: "<browser>-<host>__-<profile>" (GetXdgAppIdForWebApp in Chromium's
+    shell_integration_linux.cc). Chrome and Chromium both say "chrome"."""
+    browser = "brave" if "brave" in Path(chromium_path).name else "chrome"
+    return f"{browser}-{BACKEND_HOST}__-Default"
+
+
+def ensure_desktop_entry(chromium_path: str) -> None:
     # The icon gets a copy of its own: under an AppImage the code's path changes
     # at every launch, so the entry can't point at it.
     icon_bytes = APP_ICON_PATH.read_bytes()
     if not ICON_COPY_PATH.exists() or ICON_COPY_PATH.read_bytes() != icon_bytes:
         ICON_COPY_PATH.parent.mkdir(parents=True, exist_ok=True)
         ICON_COPY_PATH.write_bytes(icon_bytes)
-    contents = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Name=Fragmenta\n"
-        "Comment=Fine-tune and use text-to-audio models\n"
-        f"Icon={ICON_COPY_PATH}\n"
-        "Categories=AudioVideo;Audio;\n"
-        f"StartupWMClass={APP_WM_CLASS}\n"
-        "NoDisplay=true\n"
-    )
-    if not DESKTOP_ENTRY_PATH.exists() or DESKTOP_ENTRY_PATH.read_text(encoding="utf-8") != contents:
-        DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
+    # One entry per name the window can have: --class on X11, the browser's own
+    # name for it on Wayland. The desktop matches either by file name or by
+    # StartupWMClass.
+    app_id = wayland_app_id(chromium_path)
+    for path, wm_class in ((DESKTOP_ENTRY_PATH, APP_WM_CLASS),
+                           (DESKTOP_ENTRY_PATH.with_name(f"{app_id}.desktop"), app_id)):
+        contents = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Fragmenta\n"
+            "Comment=Fine-tune and use text-to-audio models\n"
+            f"Icon={ICON_COPY_PATH}\n"
+            "Categories=AudioVideo;Audio;\n"
+            f"StartupWMClass={wm_class}\n"
+            "NoDisplay=true\n"
+        )
+        if not path.exists() or path.read_text(encoding="utf-8") != contents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents, encoding="utf-8")
 
 
 def run_chromium_app_mode(chromium_path: str) -> int:
@@ -345,7 +359,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         announce_ui_ready()
 
         if sys.platform == "linux":
-            ensure_desktop_entry()
+            ensure_desktop_entry(chromium_path)
         CHROMIUM_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         # Sized and scaled from the display, not baked in — this is the
