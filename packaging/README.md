@@ -1,88 +1,100 @@
 # Fragmenta packaging
 
-Builds the **macOS `.dmg`** (Apple Silicon) and **Windows `.exe`** installer for
-the desktop distribution described in [`../distribution.md`](../distribution.md).
+Builds the downloads for all three systems:
 
-Linux is not packaged — it builds from source (`./fragmenta.sh`).
+| System | File |
+|---|---|
+| macOS (Apple Silicon, 14+) | `Fragmenta-<ver>-macOS-arm64.dmg` |
+| Windows (x64, 10 1809+) | `Fragmenta-<ver>-Windows-x64-Setup.exe` (per-user, no admin) |
+| Linux (x86_64, glibc 2.28+) | `Fragmenta-<ver>-Linux-x86_64.AppImage` + `.tar.gz` of the same tree |
+
+All unsigned (D22): macOS gets an ad-hoc signature, which Apple Silicon needs to
+run anything; Windows shows SmartScreen's "More info → Run anyway".
 
 ## The model
 
-A **thin native launcher** is frozen with PyInstaller. It carries no torch — it
-just locates the bundle next to itself (`runtime/python`, `runtime/uv`,
-`payload/`), sets `FRAGMENTA_PACKAGED=1`, and runs `payload/install.py --launch`.
-On first run `install.py` builds a venv in the user-data dir and syncs it with
-the bundled uv to the platform's hashed lock (`payload/locks/`); later launches
-are the fast idempotent path.
+A thin launcher carries no torch. It finds the bundle next to itself
+(`runtime/python`, `runtime/uv`, `payload/`), sets `FRAGMENTA_PACKAGED=1`, and runs
+`payload/install.py --launch`. On first run `install.py` builds a venv in the
+user-data dir and syncs it with the bundled uv to the platform's hashed lock
+(`payload/locks/`); later launches take the fast path.
 
 ```
-launcher.py ──frozen──▶ Fragmenta.app / fragmenta.exe
-                        └─ runs ─▶ runtime/python  payload/install.py --launch
-                                   └─ runtime/uv pip sync locks/<platform>.txt
-                                                 └─ venv in user-data dir ─▶ start.py
+launcher ─▶ runtime/python  payload/install.py --launch
+            └─ runtime/uv pip sync locks/<platform>.txt ─▶ venv in user-data dir ─▶ start.py
 ```
 
-No directory name carries a version, so an update replaces files in place.
-Read-only bundle code + writable user-data dir (`~/Library/Application Support/FragmentaDesktop`,
-`%LOCALAPPDATA%\FragmentaDesktop`, `$XDG_DATA_HOME/FragmentaDesktop`) is handled by
-`install.py` / `app/core/config.py` keying off `FRAGMENTA_PACKAGED`.
+The launcher is `packaging/launcher.py`: frozen with PyInstaller on macOS
+(`Fragmenta.app/Contents/MacOS/fragmenta`, bundle in `Contents/Resources/fragmenta/`)
+and Windows (`fragmenta.exe`, bundle beside it); run as a script by the AppImage's
+`AppRun` on Linux. No directory name carries a version, so an update replaces
+files in place. User data lives outside the install: `~/Library/Application Support/FragmentaDesktop`,
+`%LOCALAPPDATA%\FragmentaDesktop`, `$XDG_DATA_HOME/FragmentaDesktop`.
 
 ## Pieces
 
 | File | Role |
 |---|---|
-| `launcher.py` | Stdlib-only launcher; PyInstaller target. `--self-test` installs, checks the app works and exits 0 or not, with no window and no model download (`logs/self-test.json` has the details). |
-| `python_standalone.py` | Download `python-build-standalone` CPython 3.14 into `runtime/python`. Version + per-target SHA-256 pinned at the top; a mismatch is refused. |
-| `uv_standalone.py` | Download the pinned uv into `runtime/uv`, same pinning. |
-| `fetch.py` | Checksum-verified download with retries; safe extraction (`filter="data"`). |
-| `lock.py` | Regenerate the hashed dependency locks in `../locks/` from `requirements.txt`. |
-| `assemble.py` | Build the staged **bundle**: `runtime/` (Python + uv) and `payload/` (app code via `git archive`, locks, `manifest.json`). |
-| `macos/build_dmg.sh` | `.app` + sign + notarize + `.dmg`. |
-| `macos/Info.plist.in`, `macos/entitlements.plist` | App metadata; hardened-runtime entitlements (needed for unsigned pip dylibs). |
-| `windows/build_exe.ps1` | Assemble → freeze → Inno Setup, end to end. |
-| `windows/launcher.spec` | PyInstaller spec → `fragmenta.exe`. |
-| `windows/fragmenta.iss` | Inno Setup per-user installer (+ WebView2 check). |
-| `../VERSION` | Single source of truth for the version. |
+| `launcher.py` | Stdlib-only launcher. `--self-test` installs, checks the app works and exits 0 or not, with no window and no model download (`logs/self-test.json` has the details). |
+| `python_standalone.py`, `uv_standalone.py` | Download the pinned standalone CPython 3.14 and uv; per-target SHA-256 pinned, a mismatch is refused. |
+| `fetch.py` | Checksum-verified download with retries; safe extraction. |
+| `lock.py` | Regenerate the hashed locks in `../locks/` from `requirements.txt`; `--check` fails if they're stale. |
+| `assemble.py` | Build the bundle: `runtime/` + `payload/` (app code via `git archive`, locks, `manifest.json`). |
+| `make_manifest.py` | `latest.json` for the in-app update notifier. |
+| `macos/build_dmg.sh` | `.app` + ad-hoc signature + `.dmg`. `entitlements.plist` is only for a future Developer ID build. |
+| `windows/build_exe.ps1` | Bundle → freeze (`launcher.spec`, with version info) → Inno Setup (`fragmenta.iss`). |
+| `linux/build_appimage.sh` | AppDir → tarball + AppImage (pinned appimagetool + runtime). |
+| `../.github/workflows/release.yml` | CI: all three builds, a self-test of each, draft release. |
+| `../VERSION` | Single source of the version. |
 
 Build output goes to `packaging/build/` (gitignored).
 
-## Building (run on the target OS)
+## Building with CI (normal way)
 
-Builds are produced **locally on each OS** — a Mac for the `.dmg`, a Windows
-box for the `.exe`. `assemble.py` uses `git archive HEAD`, so commit your
-changes on the build machine first (`git pull` the repo there).
+Pushing a tag on a `dev/2.0` commit starts `release.yml`. It checks that the
+locks and the committed frontend build are current, builds the three downloads,
+installs each on a fresh GitHub machine and runs `--self-test` there.
+
+- `build-dry-<anything>`: files only, attached to the run (Actions → the run →
+  Artifacts). Delete the tag afterwards.
+- `build-v<VERSION>` (e.g. `build-v2.0.0-rc.1`): also a **draft** release
+  `v<VERSION>` with the files, `SHA256SUMS` and `latest.json`. An `-rc.N` version
+  is marked pre-release.
 
 ```bash
-# macOS (on a Mac):
-bash packaging/macos/build_dmg.sh            # -> packaging/build/Fragmenta-<ver>-macOS-arm64.dmg
+git tag build-dry-1 && git push origin build-dry-1
+gh run watch                               # or the Actions tab
+git push origin :build-dry-1 && git tag -d build-dry-1
+```
+
+## Release checklist
+
+1. On `dev/2.0`: set `VERSION`, add the `## [<VERSION>]` section to `CHANGELOG.md`
+   (`latest.json` takes its highlights from it), `npm run build` in `app/frontend`
+   and commit the build.
+2. If `requirements.txt` changed: `python packaging/lock.py`, commit `locks/`.
+3. `git tag build-v<VERSION> && git push origin build-v<VERSION>` → draft release.
+4. Test the downloads on real machines (Mac, Windows + NVIDIA, Linux + NVIDIA).
+5. rc: write the notes and publish the draft as a pre-release on the `dev/2.0` commit.
+   Final: open the `release/X.Y` PR into `main` without the dev-only paths; after
+   it's merged, retarget the draft to the merge commit, write the notes, publish.
+   Check `latest.json` first: CI writes it like 1.3's, with no `requires`.
+6. Update the HF Space in place.
+
+## Building by hand (same scripts)
+
+Each runs on its own system. `assemble.py` uses `git archive HEAD`, so commit first.
+
+```bash
+bash packaging/macos/build_dmg.sh          # Mac
+bash packaging/linux/build_appimage.sh     # any x86_64 Linux
 ```
 
 ```powershell
-# Windows (PowerShell; needs git + Inno Setup with iscc on PATH):
+# Windows: needs git, Python 3.11+ and Inno Setup 6
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_exe.ps1
-# -> packaging\build\Fragmenta-<ver>-Setup.exe
 ```
 
-The script assembles the bundle, generates the `.ico`, freezes the launcher,
-and runs Inno Setup. Like the macOS build it freezes with the **bundled
-standalone Python** (which ships Tkinter) via a throwaway venv, so the first-run
-splash is captured without the build box needing Tk — and PyInstaller never rides
-along in the shipped payload Python.
-
-```bash
-# Inspect the bundle only (any OS, no Python/uv download):
-python packaging/assemble.py --skip-runtime --out /tmp/bundle
-```
-
-### Signing (optional)
-
-Set these env vars before building for a signed/notarized artifact; leave them
-unset for an unsigned local build:
-
-- macOS: `MAC_SIGN_IDENTITY` (and `AC_APPLE_ID`, `AC_TEAM_ID`, `AC_PASSWORD` to notarize)
-- Windows: sign `Fragmenta-<ver>-Setup.exe` with `signtool` using your code-signing cert.
-
-## First-run note for users
-
-First launch needs internet and a few minutes (pip pulls the GBs; models
-download via the Checkpoint Manager). User data (models, projects, output)
-lives outside the install dir and survives uninstall.
+Then `--self-test` on the result: `Fragmenta.app/Contents/MacOS/fragmenta --self-test`,
+`fragmenta.exe --self-test` (prints nothing; read `logs\self-test.json`),
+`./Fragmenta-*.AppImage --self-test`.
