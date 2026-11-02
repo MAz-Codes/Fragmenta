@@ -116,8 +116,9 @@ def plan_slices(
     if strategy not in VALID_STRATEGIES:
         raise ValueError(f"Unknown strategy: {strategy}")
     import librosa
+    from app.core.audio.decode import load_mono
     # Use mono for boundary detection only; final write uses the original.
-    y, sr = librosa.load(str(audio_path), sr=22050, mono=True)
+    y, sr = load_mono(audio_path, 22050)
     duration = float(len(y) / sr) if len(y) else 0.0
     if duration <= 0:
         raise ValueError(f"{audio_path.name} has zero duration")
@@ -151,21 +152,36 @@ def write_slices(
     import soundfile as sf
     import numpy as np
 
-    info = sf.info(str(audio_path))
-    sr = info.samplerate
-    total_frames = info.frames
+    try:
+        src = sf.SoundFile(str(audio_path))
+        sr, total_frames = src.samplerate, src.frames
+
+        def read(start, frames):
+            src.seek(start)
+            return src.read(frames, dtype="float32", always_2d=True)
+    except RuntimeError:
+        # m4a/AAC: soundfile can't open it, so decode it once with the shared
+        # decoder and slice in memory.
+        from app.core.audio.decode import read_audio
+        src = None
+        audio, sr = read_audio(audio_path)
+        whole = audio.numpy().T
+        total_frames = len(whole)
+
+        def read(start, frames):
+            return whole[start:start + frames]
+
     written: List[Path] = []
     width = max(3, len(str(len(plans))))
 
-    with sf.SoundFile(str(audio_path)) as src:
+    try:
         for plan in plans:
             start_frame = max(0, int(plan.start_sec * sr))
             end_frame = min(total_frames, int(plan.end_sec * sr))
             if end_frame <= start_frame:
                 logger.warning("Skipping empty slice %s [%.2f-%.2f]", plan.index, plan.start_sec, plan.end_sec)
                 continue
-            src.seek(start_frame)
-            data = src.read(end_frame - start_frame, dtype="float32", always_2d=True)
+            data = read(start_frame, end_frame - start_frame)
 
             child_name = f"{stem}__{plan.index:0{width}d}.wav"
             child_path = out_dir / child_name
@@ -180,4 +196,7 @@ def write_slices(
                     k += 1
             sf.write(str(child_path), data, sr, subtype="PCM_16")
             written.append(child_path)
+    finally:
+        if src is not None:
+            src.close()
     return written

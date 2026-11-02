@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { Box } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 
-const DEFAULT_COLOR = '#279FBB';
 // Fixed, low waveform resolution — matches the dataset-page waveforms
 // (/peaks?n=80). Decoding to a constant bucket count (instead of one pair per
 // pixel) means the decode runs once per clip rather than re-running on every
@@ -24,7 +24,7 @@ const PEAK_COUNT = 80;
  *   currentTime: number          — playback head position in seconds.
  *   duration:    number          — total length in seconds.
  *   height:      number          — canvas height in px (default 28).
- *   color:       string          — accent color (default theme amber).
+ *   color:       string          — accent color (default: the theme's primary).
  *   onSeek:      (fraction) => void — called with 0..1 on click / drag.
  */
 export default function GenerationWaveform({
@@ -33,9 +33,14 @@ export default function GenerationWaveform({
     currentTime = 0,
     duration = 0,
     height = 28,
-    color = DEFAULT_COLOR,
+    color: colorProp,
+    pastel: pastelProp,
     onSeek,
 }) {
+    const theme = useTheme();
+    // Deep shade for the played part and the detail, pastel for the soft layer.
+    const color = colorProp || theme.palette.perf.channelsDeep[0];
+    const pastel = pastelProp || theme.palette.fragmenta.faint.cool;
     const containerRef = useRef(null);
     const canvasRef = useRef(null);
     const scrubbingRef = useRef(false);
@@ -53,7 +58,8 @@ export default function GenerationWaveform({
         if (!el) return;
         const rect = el.getBoundingClientRect();
         if (rect.width > 0) {
-            setWidth(Math.max(1, Math.floor(rect.width)));
+            // Inside the capsule's side padding (height / 4 each side).
+            setWidth(Math.max(1, Math.floor(rect.width - 2 * Math.round(height / 4))));
         }
         const ro = new ResizeObserver((entries) => {
             const w = Math.max(1, Math.floor(entries[0].contentRect.width));
@@ -134,41 +140,60 @@ export default function GenerationWaveform({
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, width, height);
 
-        // Always draw a faint center line so the row has a visible "this is
-        // a waveform area" cue even while decode is in flight or has failed.
-        ctx.fillStyle = `${color}33`;
-        ctx.fillRect(0, height / 2 - 0.5, width, 1);
-
         if (!peaks) return;
 
-        const mid = height / 2;
-        const scale = (height - 2) / 2;
-        // Stretch the fixed PEAK_COUNT buckets across the canvas width as bars
-        // (with a 1px gap), matching the dataset-page waveform look.
+        // Organic capsule: a soft gradient envelope, the body in the faint
+        // colour where it hasn't played yet and the main colour where it has.
         const n = peaks.length / 2;
-        const step = width / n;
-        const barW = Math.max(1, step - 1);
-        const progressFrac = duration > 0
-            ? Math.max(0, Math.min(1, currentTime / duration))
-            : 0;
-        const progressPx = progressFrac * width;
-        const splitIdx = Math.floor(progressFrac * n);
-
+        const mid = height / 2;
+        const scale = (height - 6) / 2;
+        const amp = new Float32Array(n);
+        for (let i = 0; i < n; i++) amp[i] = Math.max(Math.abs(peaks[i * 2]), Math.abs(peaks[i * 2 + 1]));
+        const smooth = new Float32Array(n);
         for (let i = 0; i < n; i++) {
-            const mn = peaks[i * 2];
-            const mx = peaks[i * 2 + 1];
-            const y0 = mid - mx * scale;
-            const y1 = mid - mn * scale;
-            // Played bars: full color; unplayed: dimmed (35% alpha of accent).
-            ctx.fillStyle = i < splitIdx ? color : `${color}59`;
-            ctx.fillRect(i * step, y0, barW, Math.max(1, y1 - y0));
+            let sum = 0, cnt = 0;
+            for (let k = Math.max(0, i - 1); k <= Math.min(n - 1, i + 1); k++) { sum += amp[k]; cnt++; }
+            smooth[i] = sum / cnt;
         }
-        // Thin playhead at the split.
-        if (progressPx > 0 && progressPx < width) {
+        const x = (i) => (i / (n - 1)) * width;
+        const shape = (a) => {
+            ctx.beginPath();
+            ctx.moveTo(0, mid - a(0));
+            for (let i = 1; i < n; i++) ctx.lineTo(x(i), mid - a(i));
+            for (let i = n - 1; i >= 0; i--) ctx.lineTo(x(i), mid + a(i));
+            ctx.closePath();
+            ctx.fill();
+        };
+        const across = ctx.createLinearGradient(0, 0, width, 0);
+        across.addColorStop(0, pastel);
+        across.addColorStop(0.5, color);
+        across.addColorStop(1, pastel);
+        ctx.globalAlpha = 0.35;
+        ctx.fillStyle = across;
+        shape((i) => Math.max(1, smooth[i] * scale));
+        const progressFrac = duration > 0 ? Math.max(0, Math.min(1, currentTime / duration)) : 0;
+        const body = (i) => Math.max(0.5, amp[i] * scale * 0.7);
+        // At rest the body is the faint colour; the played part the main one.
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = pastel;
+        shape(body);
+        if (progressFrac > 0) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, 0, progressFrac * width, height);
+            ctx.clip();
+            ctx.globalAlpha = 0.9;
             ctx.fillStyle = color;
-            ctx.fillRect(progressPx - 0.5, 0, 1, height);
+            shape(body);
+            ctx.restore();
+            // The playhead, as on the dataset page: some main/faint pairs are
+            // too close in colour to show progress on their own.
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = theme.palette.text.primary;
+            ctx.fillRect(Math.min(width - 1, progressFrac * width) - 0.75, 2, 1.5, height - 4);
         }
-    }, [width, height, peaks, color, currentTime, duration]);
+        ctx.globalAlpha = 1;
+    }, [width, height, peaks, color, pastel, currentTime, duration, theme]);
 
     useEffect(() => { draw(); }, [draw]);
 
@@ -177,8 +202,11 @@ export default function GenerationWaveform({
         const el = containerRef.current;
         if (!el || !onSeek) return;
         const rect = el.getBoundingClientRect();
-        if (!rect.width) return;
-        onSeek(Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)));
+        // The waveform sits inside the capsule's side padding.
+        const pad = Math.round(height / 4);
+        const inner = rect.width - 2 * pad;
+        if (inner <= 0) return;
+        onSeek(Math.min(1, Math.max(0, (clientX - rect.left - pad) / inner)));
     };
 
     const endScrub = (e) => {
@@ -203,7 +231,7 @@ export default function GenerationWaveform({
             onPointerMove={(e) => { if (scrubbingRef.current) seekTo(e.clientX); }}
             onPointerUp={endScrub}
             onPointerCancel={endScrub}
-            sx={{
+            sx={(t) => ({
                 // Floor the width so the container is never zero — without
                 // this, a tight flex row could collapse it before
                 // ResizeObserver fires, leaving the canvas un-sized.
@@ -212,7 +240,12 @@ export default function GenerationWaveform({
                 height,
                 cursor: onSeek ? 'pointer' : 'default',
                 touchAction: 'none',
-            }}
+                // A capsule; the waveform is inset from its round ends.
+                boxSizing: 'border-box',
+                px: `${Math.round(height / 4)}px`,
+                borderRadius: '999px',
+                backgroundColor: `rgba(${t.palette.fragmenta.bgRgb}, 0.75)`,
+            })}
         >
             <canvas
                 ref={canvasRef}

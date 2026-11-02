@@ -23,7 +23,7 @@ APP_WM_CLASS = "Fragmenta"
 APP_ICON_PATH = PROJECT_ROOT / "app" / "frontend" / "public" / "fragmenta_icon_1024.png"
 
 try:
-    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text().strip() or "1.0.0"
+    ABOUT_VERSION = (PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip() or "1.0.0"
 except Exception:
     ABOUT_VERSION = "1.0.0"
 ABOUT_COPYRIGHT = "© 2026 Misagh Azimi · www.misaghazimi.com"
@@ -48,6 +48,7 @@ WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
+ICON_COPY_PATH = Path.home() / ".local" / "share" / "icons" / "fragmenta.png"
 
 def _port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -210,6 +211,7 @@ def start_backend_subprocess() -> subprocess.Popen:
         [sys.executable, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
         env=env,
+        stdin=subprocess.DEVNULL,  # it outlives this terminal and never reads input
     )
 
 def run_browser_mode() -> int:
@@ -292,20 +294,25 @@ def find_chromium() -> str | None:
 
 
 def ensure_desktop_entry() -> None:
-    if DESKTOP_ENTRY_PATH.exists():
-        return
-    DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # The icon gets a copy of its own: under an AppImage the code's path changes
+    # at every launch, so the entry can't point at it.
+    icon_bytes = APP_ICON_PATH.read_bytes()
+    if not ICON_COPY_PATH.exists() or ICON_COPY_PATH.read_bytes() != icon_bytes:
+        ICON_COPY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ICON_COPY_PATH.write_bytes(icon_bytes)
     contents = (
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Fragmenta\n"
         "Comment=Fine-tune and use text-to-audio models\n"
-        f"Icon={APP_ICON_PATH}\n"
+        f"Icon={ICON_COPY_PATH}\n"
         "Categories=AudioVideo;Audio;\n"
         f"StartupWMClass={APP_WM_CLASS}\n"
         "NoDisplay=true\n"
     )
-    DESKTOP_ENTRY_PATH.write_text(contents)
+    if not DESKTOP_ENTRY_PATH.exists() or DESKTOP_ENTRY_PATH.read_text(encoding="utf-8") != contents:
+        DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
 
 
 def run_chromium_app_mode(chromium_path: str) -> int:
@@ -334,8 +341,6 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         # to be worked out in the scaled coordinate space, not raw pixels.
         logical = (int(screen[0] / scale), int(screen[1] / scale)) if screen else None
         win_w, win_h, _, _ = _window_geometry(logical)
-        if screen:
-            print(f"Screen {screen[0]}x{screen[1]} -> scale {scale}, window {win_w}x{win_h} dip")
 
         launch_args_base = [
             chromium_path,
@@ -354,6 +359,11 @@ def run_chromium_app_mode(chromium_path: str) -> int:
             launch_args_base.insert(2, f"--force-device-scale-factor={scale}")
         if sys.platform == "linux":
             launch_args_base.insert(2, f"--class={APP_WM_CLASS}")
+            # 256-frame audio buffer (~5 ms): measured output latency on a
+            # PipeWire desktop drops from ~35 ms to ~26 ms, so Link launches
+            # need less compensation. 256 frames is a standard, safe size;
+            # 128 only saved another 1-2 ms at more risk of crackles.
+            launch_args_base.append("--audio-buffer-size=256")
 
         attempts = [
             (
@@ -730,27 +740,19 @@ def _window_geometry(screen: tuple[int, int] | None) -> tuple[int, int, int, int
     if sw <= 0 or sh <= 0:
         return default_w, default_h, min_w, min_h
 
-    # 75% of the screen, in the screen's own shape — independent width and
-    # height caps gave a ~3:2 box on 16:9 panels. On a small screen 75% is
-    # cramped, so never go under the width we've always shipped unless that
-    # would take more than 90% of the screen. Capped because past ~2000px the
-    # layout just grows margins rather than showing more. Height always
-    # follows from the width: flooring it separately (as before) broke the
-    # shape on every screen under ~1900 wide. The shape follows the screen
-    # between 16:10 and 16:9, so an ultrawide doesn't get a letterbox and a
-    # portrait monitor doesn't get a tower.
-    width = min(max(int(sw * 0.75), min(default_w, int(sw * 0.9))), 2000)
-    shape = min(max(sw / sh, 1.6), 16 / 9)
-    height = min(int(width / shape), int(sh * 0.9))
+    # The UI is laid out for a 1650x960 viewport and zooms itself to fit
+    # whatever window it gets (index.html), so the window only needs the
+    # right shape: that design size plus a title bar, scaled down evenly
+    # when it doesn't fit in 92% of the screen. Same composition everywhere.
+    design_w, design_h = 1650, 952
+    fit = min(1.0, sw * 0.92 / design_w, sh * 0.92 / design_h)
+    width, height = int(design_w * fit), int(design_h * fit)
 
     # Never demand a minimum the screen can't satisfy, or the window manager
     # gets a window that won't fit on the display.
     min_w = min(min_w, max(640, sw - 80))
     min_h = min(min_h, max(480, sh - 80))
-    # And never open smaller than the minimum.
-    width, height = max(width, min_w), max(height, min_h)
 
-    print(f"Screen {sw}x{sh} -> window {width}x{height}")
     return width, height, min_w, min_h
 
 
@@ -806,7 +808,7 @@ def run_pywebview_mode() -> int:
                 width=win_w,
                 height=win_h,
                 min_size=(min_w, min_h),
-                background_color="#0D1117",
+                background_color="#F2EDE1",  # Linen's background, shown until the page paints
             )
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
@@ -861,8 +863,29 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+def _warn_if_environment_stale() -> None:
+    """Starting this file directly skips the installer, so after an update it
+    can run on an old Python or old packages with nothing saying so."""
+    if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+        return
+    try:
+        import install
+        wrong_python = sys.version_info[:2] != install.REQUIRED_PY
+        stale = wrong_python or not install.deps_up_to_date(install.platform_lock())
+    except Exception:
+        return  # a broken check shouldn't stop the app from starting
+    if not stale:
+        return
+    launcher = {"win32": "fragmenta.bat", "darwin": "fragmenta.command"}.get(sys.platform, "fragmenta.sh")
+    found = "Python %d.%d" % sys.version_info[:2]
+    problem = (f"Fragmenta needs Python {install.REQUIRED_PY_STR}, but this is {found}."
+               if wrong_python else "The installed packages don't match this version of Fragmenta.")
+    print(f"WARNING: {problem} Start it with {launcher} to update them.", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_args()
+    _warn_if_environment_stale()
     _install_sigterm_handler()
     configure_backend_endpoint()
     if args.browser:

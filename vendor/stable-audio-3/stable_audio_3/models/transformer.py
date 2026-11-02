@@ -602,7 +602,7 @@ class Attention(nn.Module):
              heads_per_kv_head = self.num_heads // self.kv_heads
              k, v = map(lambda t: t.repeat_interleave(heads_per_kv_head, dim = 1), (k, v))
 
-        # flash-attn kernels are CUDA-only. When flash_attn is installed (e.g. an
+        # Fragmenta: flash-attn kernels are CUDA-only. When flash_attn is installed (e.g. an
         # NVIDIA box) but generation is forced onto CPU/MPS, the tensors aren't on
         # a CUDA device and calling flash_attn crashes with
         # "flash_attn::_flash_attn_varlen_forward ... not implemented for CPU".

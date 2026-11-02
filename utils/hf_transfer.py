@@ -10,18 +10,14 @@ faster, but it is not a drop-in substitute for the classic HTTP transfer:
   404s there; `FacebookAI/roberta-base` does not.
 * It reconstructs a blob from chunks rather than writing it front-to-back,
   which some filesystems refuse.
+* Its worker threads swallow exceptions from progress callbacks, so a download
+  can't be stopped once it starts.
 
-Callers that hit either case can force the classic path for a block.
+Callers that hit any of these can force the classic path for a block.
 """
 import contextlib
 import os
 from pathlib import Path
-
-
-def xet_enabled() -> bool:
-    """Whether hf-hub would route a download through the Xet transfer."""
-    from huggingface_hub.utils import _runtime
-    return _runtime.is_xet_available()
 
 
 @contextlib.contextmanager

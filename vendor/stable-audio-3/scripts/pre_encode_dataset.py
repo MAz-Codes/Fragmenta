@@ -36,7 +36,7 @@ from stable_audio_3.data.dataset import (
 
 
 def caption_metadata_fn(info, _audio):
-    # Import locally so it resolves inside DataLoader workers. On spawn-based
+    # Fragmenta: import locally so it resolves inside DataLoader workers. On spawn-based
     # platforms (macOS, Windows) workers don't inherit this module's globals,
     # so the top-level `from pathlib import Path` is invisible here and every
     # call would raise NameError — which SampleDataset.__getitem__ swallows and
@@ -60,7 +60,8 @@ def main(args):
     dataset = SampleDataset(
         [
             LocalDatasetConfig(
-                id="train", path=args.data_dir, custom_metadata_fn=caption_metadata_fn
+                id="train", path=args.data_dir, custom_metadata_fn=caption_metadata_fn,
+                filelist_path=args.filelist,  # Fragmenta: --filelist
             )
         ],
         sample_size=args.sample_size,
@@ -69,6 +70,12 @@ def main(args):
         # Fragmenta: normalize to -16 LUFS at encode time so the cached latents
         # match what train_lora.py produces (which also sets volume_norm=True).
         volume_norm=True,
+        # Fragmenta: encode each clip at its own length when encoding one at a
+        # time, instead of padding every clip to --sample_size first (a 30 s
+        # clip cost a 285 s encode: 9x slower on CPU, and SAME-L ran out of
+        # memory). Latents match the padded encode to within CPU/GPU noise
+        # except the last few frames. Batches still need equal lengths.
+        pad=args.pad or args.batch_size > 1,
     )
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -90,7 +97,7 @@ def main(args):
         if args.model_half:
             silence_audio = silence_audio.half()
         with torch.no_grad():
-            silence_latent = ae.encode(silence_audio, ae.sample_rate)
+            silence_latent = ae.encode(silence_audio, ae.sample_rate, chunked=args.chunked)  # Fragmenta: --chunked
         np.save(silence_path, silence_latent.cpu().numpy())
 
     for nb, (audio, metadata) in enumerate(loader):
@@ -104,7 +111,7 @@ def main(args):
         if args.model_half:
             audio = audio.half()
 
-        latents = ae.encode(audio, ae.sample_rate)
+        latents = ae.encode(audio, ae.sample_rate, chunked=args.chunked)  # Fragmenta: --chunked
 
         for i, latent in enumerate(latents):
             latent_np = latent.cpu().numpy()
@@ -150,6 +157,13 @@ if __name__ == "__main__":
         required=True,
         help="Folder with audio files and matching .txt captions",
     )
+    # Fragmenta: encode only the clips listed (one path per line, relative
+    # to --data_dir) instead of every audio file in it.
+    parser.add_argument(
+        "--filelist",
+        default=None,
+        help="Text file listing the clips to use, relative to --data_dir (default: all)",
+    )
     parser.add_argument(
         "--output_path", required=True, help="Folder to write .npy/.json latent pairs"
     )
@@ -162,6 +176,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--model_half", action="store_true", help="Run autoencoder in fp16"
+    )
+    # Fragmenta: overlapping-chunk encoding keeps memory flat for long clips
+    # (SAME-L on CPU: ~7.4 GB at any length, and linear time).
+    parser.add_argument(
+        "--chunked", action="store_true", help="Encode in overlapping chunks to bound memory"
     )
     parser.add_argument(
         "--pad", action="store_true", help="Pad audio samples to --sample_size"

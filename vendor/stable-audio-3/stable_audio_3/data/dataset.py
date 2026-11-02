@@ -2,6 +2,7 @@ import numpy as np
 import json
 import os
 import dill
+import math
 import random
 import time
 import torch
@@ -12,6 +13,25 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T, VolumeNorm, strip_trailing_silence
+from .audio_io import AUDIO_EXTENSIONS, audio_length, read_audio  # Fragmenta: soundfile + PyAV, no torchaudio I/O
+
+# Fragmenta: a sample that fails, is silent or is rejected is replaced by
+# another random one. Upstream recursed with no limit (a dataset of bad files
+# recursed until the stack or RAM ran out); this caps it.
+_RETRY = object()
+_MAX_TRIES = 32
+
+
+def _with_bounded_retries(get_once, idx, n):
+    for _ in range(_MAX_TRIES):
+        item = get_once(idx)
+        if item is not _RETRY:
+            return item
+        idx = random.randrange(n)
+    raise RuntimeError(
+        f"No usable sample after {_MAX_TRIES} tries: check the dataset for "
+        "unreadable, silent or uncaptioned files."
+    )
 
 AUDIO_KEYS = ("flac", "wav", "mp3", "m4a", "ogg", "opus")
 
@@ -88,7 +108,7 @@ def keyword_scandir(
 def get_audio_filenames(
     paths: list,  # directories in which to search
     keywords=None,
-    exts=['.wav', '.mp3', '.flac', '.ogg', '.aif', '.opus'],
+    exts=AUDIO_EXTENSIONS,  # Fragmenta: shared list (adds .aiff, .m4a, .aac)
     filelist_path=None
 ):
     "recursively get a list of audio filenames"
@@ -229,10 +249,8 @@ class SampleDataset(torch.utils.data.Dataset):
 
         print(f'Found {len(self.filenames)} files')
 
-    def load_file(self, filename):
-        ext = filename.split(".")[-1]
-
-        audio, in_sr = torchaudio.load(filename, format=ext)
+    def load_file(self, filename, offset=0.0, duration=None):
+        audio, in_sr = read_audio(filename, duration=duration, offset=offset)  # Fragmenta: was torchaudio.load
 
         if in_sr != self.sr:
             resample_tf = T.Resample(in_sr, self.sr)
@@ -240,25 +258,59 @@ class SampleDataset(torch.utils.data.Dataset):
 
         return audio
 
+    def _long_file_window(self, filename):
+        """(offset_s, total_s) of the window to read when `filename` is
+        longer than the crop window, else None. Fragmenta."""
+        frames, in_sr = audio_length(filename)
+        if not frames or not in_sr:
+            return None
+        total_s = frames / in_sr
+        window_s = self.pad_crop.n_samples / self.sr
+        if total_s <= window_s:
+            return None
+        offset_s = random.uniform(0, total_s - window_s) if self.pad_crop.randomize else 0.0
+        return offset_s, total_s
+
     def __len__(self):
         return len(self.filenames)
 
     def __getitem__(self, idx):
+        return _with_bounded_retries(self._get_once, idx, len(self))  # Fragmenta
+
+    def _get_once(self, idx):
         audio_filename = self.filenames[idx]
         try:
             start_time = time.time()
-            audio = self.load_file(audio_filename)
+            # Fragmenta: a file longer than the window is read only for the
+            # window it contributes, so loading and loudness normalisation
+            # cost one window, not the whole file (a 33-minute track peaked at
+            # 15 GB of RAM for a 285 s crop). Timing info is still reported
+            # against the whole file, as pad_crop would.
+            window = self._long_file_window(audio_filename)
+            if window is None:
+                audio = self.load_file(audio_filename)
+            else:
+                audio = self.load_file(audio_filename, offset=window[0],
+                                       duration=self.pad_crop.n_samples / self.sr)
 
             audio = self.volume_norm(audio)
 
-            if self.strip_silence:
+            if self.strip_silence and window is None:
                 audio = strip_trailing_silence(audio, self.sr)
 
             audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio)
+            if window is not None:
+                offset_s, total_s = window
+                n = self.pad_crop.n_samples
+                total = int(round(total_s * self.sr))
+                offset = int(round(offset_s * self.sr))
+                t_start, t_end = offset / max(total, n), (offset + n) / max(total, n)
+                seconds_start = math.floor(offset_s)
+                seconds_total = math.ceil(total_s)
 
             # Check for silence
             if is_silence(audio):
-                return self[random.randrange(len(self))]
+                return _RETRY
 
             # Run augmentations on this sample (including random crop)
             if self.augs is not None:
@@ -295,7 +347,7 @@ class SampleDataset(torch.utils.data.Dataset):
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
-                    return self[random.randrange(len(self))]
+                    return _RETRY
 
                 # Provide audio inputs as their own dictionary to be merged into info, each audio element will be normalized in the same way as the main audio
                 if "__audio__" in info:
@@ -312,7 +364,7 @@ class SampleDataset(torch.utils.data.Dataset):
             return (audio, info)
         except Exception as e:
             print(f'Couldn\'t load file {audio_filename}: {e}')
-            return self[random.randrange(len(self))]
+            return _RETRY
 
 
 class PreEncodedDataset(torch.utils.data.Dataset):
@@ -371,6 +423,9 @@ class PreEncodedDataset(torch.utils.data.Dataset):
         return None
 
     def __getitem__(self, idx):
+        return _with_bounded_retries(self._get_once, idx, len(self))  # Fragmenta
+
+    def _get_once(self, idx):
         latent_filename, md_filename = self.filenames[idx]
         try:
             latents = torch.from_numpy(np.load(latent_filename)) # [C, N]
@@ -431,10 +486,10 @@ class PreEncodedDataset(torch.utils.data.Dataset):
             seconds_total = info["seconds_total"]
 
             if self.min_length_sec is not None and seconds_total < self.min_length_sec:
-                return self[random.randrange(len(self))]
+                return _RETRY
 
             if self.max_length_sec is not None and seconds_total > self.max_length_sec:
-                return self[random.randrange(len(self))]
+                return _RETRY
 
             for custom_md_path in self.custom_metadata_fns.keys():
                 if custom_md_path in latent_filename:
@@ -443,7 +498,7 @@ class PreEncodedDataset(torch.utils.data.Dataset):
                     info.update(custom_metadata)
 
                 if "__reject__" in info and info["__reject__"]:
-                    return self[random.randrange(len(self))]
+                    return _RETRY
 
                 if "__replace__" in info and info["__replace__"] is not None:
                     # Replace the latents with the new latents if the custom metadata function returns a new set of latents
@@ -473,7 +528,7 @@ class PreEncodedDataset(torch.utils.data.Dataset):
             return (latents, info)
         except Exception as e:
             print(f'Couldn\'t load file {latent_filename}: {e}')
-            return self[random.randrange(len(self))]
+            return _RETRY
 
 # get_dbmax and is_silence copied from https://github.com/drscotthawley/aeiou/blob/main/aeiou/core.py under Apache 2.0 License
 # License can be found in LICENSES/LICENSE_AEIOU.txt

@@ -37,7 +37,7 @@ export const TIPS = {
                     : enabled
                         ? `Link on — ${peers} peer${peers === 1 ? '' : 's'} (click to disable)`
                         : 'Click to sync BPM with Ableton Link',
-        linkSync: 'Latency compensation for Link — click to fine-tune or calibrate by ear',
+        linkSync: "Link sync. Use Offset only for delay Fragmenta can't measure, e.g. Bluetooth headphones.",
         midiMode: ({ supported, permissionError, learnMode }) =>
             !supported
                 ? (permissionError || 'Web MIDI is not available')
@@ -109,6 +109,7 @@ export const TIPS = {
         injectScope: 'Which clips get the text — every clip in the project, or only the ones ticked in the table. Switches to Selected automatically as soon as you tick something.',
         injectUndo: 'Roll back the last injection, one pass at a time. Clips you\'ve edited by hand since are left as they are, so undo never eats newer work.',
         selectClips: 'Click to select these clips — then Auto-annotate them.',
+        emptyPrompts: 'Clips without a prompt are left out of pre-encoding and training. Click to select them, then Auto-annotate or write prompts.',
         autoAnnotateClip: 'Auto-annotate this clip (overwrites any current prompt)',
         sliceClip: 'Slice this clip into shorter children (immediate)',
         removeClip: 'Remove this clip from the project (immediate)',
@@ -149,7 +150,6 @@ export const TIPS = {
     checkpoints: {
         gatedAccess: "Open on HuggingFace to accept the model's gated-access terms",
         openOnHf: 'Open the model page on HuggingFace',
-        noAccount: 'Not gated on HuggingFace — downloads without an account or token.',
     },
 
     // App.js — main Audio Generation tab (the primary "create" surface).
@@ -173,8 +173,8 @@ export const TIPS = {
         mode: 'Style transfer re-imagines the whole clip toward your prompt. Inpaint replaces just a selected region, keeping the rest. Extend continues the clip past its end.',
         initNoise: 'How far to push the source toward the prompt. Low keeps the original\'s character and timing; high lets the prompt dominate (closer to generating from scratch).',
         maskRegion: 'The slice that gets regenerated — drag on the waveform or type start/end seconds. Everything outside it is preserved, and the output stays the same total length.',
-        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt.',
-        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region; for Style/Extend it steers the whole result.',
+        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt. If the source fades out at its end, the new audio replaces that fade.',
+        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region, and the surrounding audio matters more than the prompt: a small region stays close to the original, so select more for a bigger change. For Style it steers the whole result; for Extend, the new part.',
         generateButton: 'Run the edit on the source clip with the settings above. Disabled until a source clip is loaded.',
     },
 
@@ -195,13 +195,13 @@ export const TIPS = {
         hfLoginDemo: 'Disabled in this demonstration Space. Install Fragmenta locally from misaghazimi.com/fragmenta to sign in with your own HuggingFace account.',
         hfLogout: 'Forget the saved HuggingFace token on this machine.',
         hfToken: 'Paste a HuggingFace access token (starts with "hf_"). Create one at huggingface.co/settings/tokens — read scope is enough for downloads.',
-        refresh: 'Re-scan the catalog and disk for which models are downloaded, in case something changed outside the app.',
     },
 
     // TrainingMonitor.js — training status card.
     monitor: {
         lossChart: 'Training loss per step, lower is better. A curve that falls then flattens means the LoRA is converging; a flat or rising curve suggests the learning rate or data needs attention.',
         steps: 'Progress through the run, counted in optimizer steps (SA3 trains by steps, not epochs).',
+        timeLeft: 'Hours and minutes left, estimated from the speed over the last two minutes.',
         checkpoints: 'How many LoRA snapshots have been written so far. Each is a usable adapter you can generate with or keep training from.',
     },
 };

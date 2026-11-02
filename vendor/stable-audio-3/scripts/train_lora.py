@@ -70,7 +70,7 @@ def load_model(model_name: str, device: torch.device):
     localize_conditioners(model_config, local_config)  # Fragmenta: token-free base models
     model = create_diffusion_cond_from_config(model_config)
     copy_state_dict(model, load_file(local_ckpt))
-    # On MPS we train with precision="32-true" (no autocast), so the frozen
+    # Fragmenta: on MPS we train with precision="32-true" (no autocast), so the frozen
     # base must stay fp32 to match the fp32 input — a bf16 base raises
     # "Input type (MPSFloatType) and weight type (MPSBFloat16Type) should be
     # the same" in the first conv. CUDA/CPU keep bf16 (autocast reconciles
@@ -83,7 +83,7 @@ def load_model(model_name: str, device: torch.device):
 
 
 def _pick_device():
-    # cuda → mps (Apple Silicon) → cpu. Gated so CUDA/CPU behaviour is
+    # Fragmenta: cuda → mps (Apple Silicon) → cpu. Gated so CUDA/CPU behaviour is
     # unchanged: MPS is selected ONLY when CUDA is absent and a built,
     # available MPS backend exists. Lightning's accelerator="auto" would also
     # land the module on MPS, but selecting it explicitly here keeps the
@@ -96,7 +96,7 @@ def _pick_device():
 
 
 def _worker_seed_init(worker_id, base_seed):
-    # Must be a top-level (picklable) function, not a closure/lambda: on
+    # Fragmenta: must be a top-level (picklable) function, not a closure/lambda: on
     # Windows DataLoader workers are spawned, not forked, so worker_init_fn
     # is pickled to each child. A local lambda raises
     # "Can't pickle local object 'train.<locals>.<lambda>'".
@@ -104,7 +104,7 @@ def _worker_seed_init(worker_id, base_seed):
 
 
 def caption_metadata_fn(info, audio):
-    # Import Path locally rather than relying on the module global. SA3
+    # Fragmenta: import Path locally rather than relying on the module global. SA3
     # dill-serializes this fn and dill.loads() it inside each DataLoader
     # worker; under Windows/macOS spawn the worker imports this script as
     # __mp_main__, so the reconstructed fn's globals don't contain the
@@ -159,6 +159,7 @@ def train(args):
                     id="train",
                     path=args.data_dir,
                     custom_metadata_fn=caption_metadata_fn,
+                    filelist_path=args.filelist,  # Fragmenta: --filelist
                 )
             ],
             sample_size=sample_size,
@@ -177,6 +178,9 @@ def train(args):
         drop_last=True,
         collate_fn=collation_fn,
         worker_init_fn=functools.partial(_worker_seed_init, base_seed=seed),
+        # Fragmenta: keep workers between epochs. Windows and macOS spawn them,
+        # re-importing torch each time: a pause on every pass over the dataset.
+        persistent_workers=args.num_workers > 0,
     )
 
     lora_state_dict = None
@@ -204,7 +208,7 @@ def train(args):
         }
     }
 
-    # On MPS the base stays fp32 (see load_model + the "32-true" precision
+    # Fragmenta: on MPS the base stays fp32 (see load_model + the "32-true" precision
     # below), so skip the wrapper's bf16/fp16 downcast — otherwise it would
     # re-cast model, conditioner and pretransform back to bf16 and reintroduce
     # the fp32-input/bf16-weight mismatch. CUDA/CPU keep args.base_precision.
@@ -331,7 +335,7 @@ def train(args):
     summary = pl.callbacks.ModelSummary(max_depth=2)
     callbacks.append(summary)
 
-    # bf16-mixed relies on autocast, whose MPS support for bfloat16 is
+    # Fragmenta: bf16-mixed relies on autocast, whose MPS support for bfloat16 is
     # version-dependent and historically unreliable. On Apple Silicon fall
     # back to full fp32 ("32-true") for a correct (if slower) run; CUDA/CPU
     # keep the original bf16 mixed-precision path unchanged.
@@ -370,6 +374,13 @@ def main():
         "--data_dir",
         default=None,
         help="Folder with audio files and matching .txt captions",
+    )
+    # Fragmenta: train only the clips listed (one path per line, relative to
+    # --data_dir) instead of every audio file in it.
+    p.add_argument(
+        "--filelist",
+        default=None,
+        help="Text file listing the clips to use, relative to --data_dir (default: all)",
     )
     p.add_argument(
         "--encoded_dir",

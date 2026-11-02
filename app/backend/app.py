@@ -2,20 +2,24 @@ from utils.validators import Validator
 from utils.exceptions import ModelNotFoundError, ValidationError, GenerationError
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
-from app.core.generation.audio_generator import AudioGenerator
+from app.core.generation.audio_generator import AudioGenerator, engine_available
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
-from app.core.generation.provenance import recording_tags, tag_existing_wav
-from app.backend import update_check
+from app.core.generation.models import lora_family
+from app.core.generation.content_credentials import sign_wav
+from app.core.generation.provenance import recording_manifest, recording_tags, tag_existing_wav
+from app.backend import data_import, starter_model, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
+import mimetypes
 import os
 import re
 import random
 import queue
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit
 import threading
 import time
 import json
@@ -44,6 +48,10 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
 
 
 app = Flask(__name__, static_folder='../frontend/build', static_url_path='')
+# The frontend loads one library (the pitch shifter) as a native .mjs module,
+# and browsers refuse modules served with a non-JavaScript type. Python's map
+# for .mjs varies by platform (Windows reads it from the registry), so pin it.
+mimetypes.add_type('text/javascript', '.mjs')
 
 app.config['MAX_CONTENT_LENGTH'] = 1000 * 1024 * 1024
 # /api/upload-folder sends two multipart parts per file (files + rel_paths);
@@ -96,7 +104,7 @@ DEBUG_MODE = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
 # file per-request would make a stale process report the new version and
 # defeat that check.
 try:
-    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text().strip() or None
+    _APP_VERSION = (Path(__file__).resolve().parents[2] / "VERSION").read_text(encoding="utf-8").strip() or None
 except Exception:
     _APP_VERSION = None
 # Same idea for an update that keeps the version (a `git pull` between
@@ -116,6 +124,16 @@ _init_error = None
 _LEGACY_FINETUNED_CONFIG_PATH = "models/config/model_config_small.json"
 
 
+def _api_path(path: Path, config) -> str:
+    """A path for the frontend to send back. Relative to the code folder when it's
+    inside it; absolute otherwise, as for everything in an installed app's data
+    folder. The routes taking these paths accept both."""
+    try:
+        return str(path.relative_to(config.project_root))
+    except ValueError:
+        return str(path)
+
+
 def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[str]]:
     """Pick the architecture config + base-model identity for a fine-tuned model.
 
@@ -127,16 +145,13 @@ def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[s
     config_path: Optional[str] = None
     per_run_config = model_dir / "model_config.json"
     if per_run_config.exists():
-        try:
-            config_path = str(per_run_config.relative_to(config.project_root))
-        except ValueError:
-            config_path = str(per_run_config)
+        config_path = _api_path(per_run_config, config)
 
     base_model: Optional[str] = None
     metadata_path = model_dir / "training_metadata.json"
     if metadata_path.exists():
         try:
-            with open(metadata_path, 'r') as f:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
                 metadata = json.load(f)
             base_model = metadata.get("base_model")
             if config_path is None:
@@ -202,6 +217,65 @@ def lazy_init():
         if request.path.startswith('/api/'):
             return jsonify({'error': f'Backend not ready: {e}'}), 503
         return None
+
+
+# --- Local-only guard ----------------------------------------------------------
+# CORS stops a web page from reading responses, not from sending requests, and
+# DNS rebinding sidesteps it entirely: a page at evil.example whose name is
+# pointed at 127.0.0.1 is same-origin as far as the browser is concerned. Two
+# checks close that on the desktop, where the backend binds a loopback address
+# (start.py, install.py --self-test and the launcher all set FLASK_HOST):
+#   * Host must be a loopback name; a rebinding page sends its own.
+#   * A state-changing request that carries an Origin must come from this
+#     server, a loopback page (any port: the webview, vite) or the CORS list.
+#     Browsers send Origin on every cross-site POST, so this also covers the
+#     routes that act without a JSON body.
+# Docker and the HF Space bind 0.0.0.0 and are reached through their own host
+# names, so there FLASK_HOST isn't loopback and the checks stay off.
+_LOOPBACK_HOSTS = {'localhost', '127.0.0.1', '::1'}
+
+
+def _hostname(netloc: str) -> str:
+    """'127.0.0.1:5001' or '[::1]:5001' -> the host part, '' if unparsable."""
+    try:
+        host = urlsplit('//' + netloc).hostname
+    except ValueError:
+        return ''
+    return host or netloc.lower()   # a bare '::1' has no hostname for urlsplit
+
+
+def _local_only() -> bool:
+    return _hostname(os.environ.get('FLASK_HOST', '')) in _LOOPBACK_HOSTS
+
+
+@app.before_request
+def guard_local_requests():
+    if not _local_only():
+        return None
+    if _hostname(request.host) not in _LOOPBACK_HOSTS:
+        return jsonify({'error': 'Fragmenta only answers requests addressed to localhost.'}), 403
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+    origin = request.headers.get('Origin')
+    if not origin:
+        return None
+    netloc = urlsplit(origin).netloc
+    if netloc == request.host or _hostname(netloc) in _LOOPBACK_HOSTS or origin in _ALLOWED_ORIGINS:
+        return None
+    return jsonify({'error': 'Cross-site request refused.'}), 403
+
+
+@app.before_request
+def guard_project_names():
+    """Every /api/projects/<name>… route: the name must be a plain folder name.
+    `.` would be the projects root, and DELETE on it removes every project."""
+    name = (request.view_args or {}).get('name')
+    if name is None or not request.path.startswith('/api/projects/'):
+        return None
+    from app.backend.data.projects import is_safe_project_name
+    if not is_safe_project_name(name):
+        return jsonify({'error': 'Invalid project name.'}), 400
+    return None
 
 
 @app.route('/api/health')
@@ -468,10 +542,7 @@ def start_training():
         return jsonify({'error': error_msg}), 500
 
 
-_SA3_MODEL_IDS = {
-    "sa3-small-music", "sa3-small-sfx", "sa3-medium",
-    "sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base",
-}
+_SA3_MODEL_IDS = set(_SA3_MODEL_INFO)
 
 
 @app.route('/api/generate', methods=['POST'])
@@ -687,8 +758,7 @@ def generate_audio():
                 _lora_meta = {}
             _lora_base = _lora_meta.get('base_model') or _lora_meta.get('base_model_id')
             if _lora_base and str(_lora_base).startswith('sa3-'):
-                _strip = lambda m: m[:-5] if m.endswith('-base') else m
-                if _strip(str(_lora_base)) != _strip(model_id):
+                if lora_family(str(_lora_base)) != lora_family(model_id):
                     return jsonify(APIResponse.error(
                         f"LoRA base mismatch: '{Path(lora_path).name}' was trained "
                         f"against {_lora_base}, which is incompatible with {model_id}.",
@@ -785,7 +855,7 @@ def generate_audio():
                 "inpaint_ends": list(inpaint_ends) if inpaint_ends else None,
                 "edit_mode": edit_mode,
             }
-            with open(sidecar_path, "w") as f:
+            with open(sidecar_path, "w", encoding="utf-8") as f:
                 json.dump(sidecar, f, indent=2)
         except Exception as exc:
             logger.warning(f"Failed to write fragment sidecar at {sidecar_path}: {exc}")
@@ -835,19 +905,11 @@ def list_loras():
             (e.g. ?base_model=sa3-small-music or ?base_model=sa3-small-music-base).
             A small-music LoRA is compatible with both small-music and
             small-music-base (same backbone, different CFG distillation
-            state); the matcher strips a trailing `-base` from both sides
-            before comparing.
+            state), and so is that one's MLX build (see models.lora_family).
     """
     requested_base = (request.args.get('base_model') or '').strip()
 
-    def _base_root(model_id: str) -> str:
-        """Strip the `-base` suffix so LoRAs trained against `*-base` filter
-        as compatible with their post-trained sibling (same architecture)."""
-        if not model_id:
-            return ''
-        return model_id[:-5] if model_id.endswith('-base') else model_id
-
-    requested_root = _base_root(requested_base)
+    requested_root = lora_family(requested_base)
 
     try:
         config = get_config()
@@ -882,7 +944,7 @@ def list_loras():
                     model_name = run_dir.name
                     if meta_path.exists():
                         try:
-                            rm = json.loads(meta_path.read_text())
+                            rm = json.loads(meta_path.read_text(encoding="utf-8"))
                             base_model = rm.get("base_model")
                             model_name = rm.get("model_name") or model_name
                         except Exception:
@@ -937,7 +999,7 @@ def list_loras():
                         run_meta_path = run_dir / "training_metadata.json"
                         if run_meta_path.exists():
                             try:
-                                rm = json.loads(run_meta_path.read_text())
+                                rm = json.loads(run_meta_path.read_text(encoding="utf-8"))
                                 base_model = rm.get("base_model")
                             except Exception:
                                 pass
@@ -947,10 +1009,10 @@ def list_loras():
                     # Filter by requested base if the caller specified one.
                     # Treat `sa3-small-music` and `sa3-small-music-base` as
                     # compatible: same backbone, only differ in CFG state.
-                    if requested_root and _base_root(base_model) != requested_root:
+                    if requested_root and lora_family(base_model) != requested_root:
                         continue
 
-                    rel_path = str(ckpt.relative_to(config.project_root))
+                    rel_path = _api_path(ckpt, config)
                     rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
                     alpha = _safe_int(
                         lora_config.get("alpha")
@@ -1041,9 +1103,11 @@ def upload_source_audio():
     name = Path(fileobj.filename).name
     # Strip path components + restrict to known extensions.
     ext = Path(name).suffix.lower()
-    if ext not in {".wav", ".mp3", ".flac", ".m4a", ".ogg", ".opus"}:
+    from app.core.audio.decode import AUDIO_EXTENSIONS
+    if ext not in AUDIO_EXTENSIONS:
         return jsonify(APIResponse.error(
-            f"Unsupported audio format '{ext}'. Use wav/mp3/flac/m4a/ogg/opus.",
+            f"Unsupported audio format '{ext}'. Use "
+            + "/".join(e.lstrip('.') for e in AUDIO_EXTENSIONS) + ".",
             status_code=400)), 400
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(name).stem)[:60] or "upload"
 
@@ -1054,8 +1118,7 @@ def upload_source_audio():
     dest = uploads_dir / f"{ts}_{safe}{ext}"
     fileobj.save(str(dest))
 
-    rel = dest.relative_to(cfg.project_root)
-    return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
+    return jsonify({"path": _api_path(dest, cfg), "name": dest.name, "size_bytes": dest.stat().st_size})
 
 
 @app.route('/api/performance/recording', methods=['POST'])
@@ -1113,7 +1176,8 @@ def save_performance_recording():
 
     # The browser encodes the capture, so no server-side writer has tagged it:
     # add the AI-output marking (EU AI Act Art. 50) now — lossless rewrite.
-    tag_existing_wav(dest, recording_tags())
+    if tag_existing_wav(dest, recording_tags()):
+        sign_wav(dest, recording_manifest())
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None
@@ -1134,7 +1198,7 @@ def save_performance_recording():
         "source": "performance",
     }
     try:
-        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2))
+        (output_dir / f"{dest.name}.json").write_text(json.dumps(sidecar, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning(f"Failed to write recording sidecar for {dest.name}: {exc}")
 
@@ -1173,7 +1237,7 @@ def list_fragments():
     # Sidecared generations
     for sidecar_path in output_dir.glob("*.wav.json"):
         try:
-            with open(sidecar_path) as f:
+            with open(sidecar_path, encoding="utf-8") as f:
                 meta = json.load(f)
             wav_name = meta.get("filename") or sidecar_path.name[:-len(".json")]
             wav_path = output_dir / wav_name
@@ -1304,7 +1368,7 @@ def clear_fragments():
         source = None
         if sidecar.is_file():
             try:
-                source = (json.loads(sidecar.read_text()) or {}).get("source")
+                source = (json.loads(sidecar.read_text(encoding="utf-8")) or {}).get("source")
             except Exception:
                 source = None
         if source == "performance":
@@ -1475,7 +1539,7 @@ def get_models():
                 meta_path = model_dir / "training_metadata.json"
                 if meta_path.exists():
                     try:
-                        if json.loads(meta_path.read_text()).get("mode") == "lora":
+                        if json.loads(meta_path.read_text(encoding="utf-8")).get("mode") == "lora":
                             continue
                     except Exception:
                         pass
@@ -1495,7 +1559,7 @@ def get_models():
 
                     checkpoint_info = {
                         'name': name,
-                        'path': str(ckpt_file.relative_to(config.project_root)),
+                        'path': _api_path(ckpt_file, config),
                         'size_mb': round(ckpt_file.stat().st_size / (1024 * 1024), 1),
                         'created': ckpt_file.stat().st_mtime
                     }
@@ -1522,10 +1586,10 @@ def get_models():
 
                 models.append({
                     'name': model_dir.name,
-                    'path': str(model_dir.relative_to(config.project_root)),
+                    'path': _api_path(model_dir, config),
                     'has_checkpoint': has_checkpoint,
                     'has_config': has_config,
-                    'ckpt_path': str(latest_checkpoint.relative_to(config.project_root)) if latest_checkpoint else None,
+                    'ckpt_path': _api_path(latest_checkpoint, config) if latest_checkpoint else None,
                     'config_path': resolved['config_path'],
                     'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,
@@ -1575,7 +1639,16 @@ def get_checkpoint(model_id):
 
 @app.route('/api/checkpoints/<model_id>/download', methods=['POST'])
 def start_checkpoint_download(model_id):
+    # silent=True: the button posts no body once the terms are agreed.
+    data = request.get_json(silent=True) or {}
     try:
+        # Gated models get their terms accepted on Hugging Face; the no-account
+        # ones have only this agreement.
+        info = model_manager.get_model_info(model_id)
+        if info and info.get('token_free'):
+            refused = starter_model.agreement_error(data.get('accept_terms_version'))
+            if refused:
+                return jsonify(refused), 403
         result = model_manager.start_download(model_id)
         # _DownloadJob.to_dict() always includes the "error" key (None when
         # ok); use a truthy check so a successful job doesn't 400.
@@ -1625,6 +1698,84 @@ def delete_checkpoint_download(model_id):
         return jsonify({'error': 'Nothing to delete'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- Import from an older Fragmenta (app/backend/data_import.py) --------------
+
+@app.route('/api/import/scan', methods=['POST'])
+def import_scan():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.scan(data.get('path'))
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/start', methods=['POST'])
+def import_start():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.start(data.get('path'), data.get('items'),
+                                       bool(data.get('keep_old')), model_manager)
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/status', methods=['GET'])
+def import_status():
+    return jsonify(data_import.status())
+
+
+@app.route('/api/import/cancel', methods=['POST'])
+def import_cancel():
+    return jsonify(data_import.cancel())
+
+
+# --- First-run starter model (app/backend/starter_model.py) -------------------
+
+@app.route('/api/starter', methods=['GET'])
+def starter_status():
+    try:
+        return jsonify(starter_model.status(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/download', methods=['POST'])
+def starter_download():
+    # No force=True, and outside the try: a cross-site form post gets its 415.
+    data = request.get_json() or {}
+    try:
+        body, code = starter_model.start(model_manager, data.get('accept_terms_version'))
+        return jsonify(body), code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/pause', methods=['POST'])
+def starter_pause():
+    try:
+        return jsonify(starter_model.pause(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/cancel', methods=['POST'])
+def starter_cancel():
+    try:
+        return jsonify(starter_model.cancel(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/licenses/<license_id>', methods=['GET'])
+def starter_license(license_id):
+    text = starter_model.license_text(license_id)
+    if not text:
+        return jsonify({'error': 'Unknown license'}), 404
+    return jsonify(text)
 
 
 @app.route('/api/checkpoints/jobs/<job_id>', methods=['GET'])
@@ -1736,8 +1887,9 @@ def link_install():
     """Install LinkPython-extern via pip, on-demand and with user consent.
 
     Restricted to localhost — running pip as a side effect of an HTTP call is
-    only reasonable when the caller is the local user. In frozen PyInstaller
-    builds there's no pip, so we report that clearly instead of failing weirdly.
+    only reasonable when the caller is the local user. Packaged builds carry it
+    in their lock (an exact sync would remove anything pip added), so there it
+    never installs; source installs get the same pinned version.
     """
     # Localhost-only: prevents a remote attacker on the same Flask host (e.g. a
     # Docker image bound to 0.0.0.0) from installing arbitrary packages.
@@ -1745,7 +1897,13 @@ def link_install():
     if remote not in ('127.0.0.1', '::1', 'localhost'):
         return jsonify({'error': 'install endpoint is only accessible from localhost'}), 403
 
-    if getattr(sys, 'frozen', False):
+    from app.core.audio.link_sync import get_link_bridge
+    if get_link_bridge().available:
+        return jsonify({'success': True, 'available': True})
+
+    # The bootstrapper runs the venv's normal Python (not frozen), so the
+    # packaged flag is the check that matters there.
+    if getattr(sys, 'frozen', False) or os.environ.get('FRAGMENTA_PACKAGED') == '1':
         return jsonify({
             'success': False,
             'error': 'Automatic install is not available in the packaged desktop build. '
@@ -1760,8 +1918,8 @@ def link_install():
         proc = subprocess.run(
             [sys.executable, '-m', 'pip', 'install',
              '--disable-pip-version-check', '--quiet',
-             'LinkPython-extern'],
-            capture_output=True, text=True, timeout=240,
+             'LinkPython-extern==1.3.0'],  # same pin as locks/ (packaging/lock.py)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or '').strip().splitlines()[-10:]
@@ -2091,6 +2249,7 @@ def get_debug_stats():
 _gpu_memory_cache = {}
 _gpu_memory_cache_time = 0
 _gpu_memory_cache_duration = 2.0
+_nvidia_smi_failure_logged = False
 
 _last_memory_warning_time = 0
 _memory_warning_interval = 30
@@ -2388,6 +2547,45 @@ def get_license_info():
             "error": str(e)
         }), 500
 
+_apple_chip = None
+
+
+def _apple_chip_name():
+    global _apple_chip
+    if _apple_chip is None:
+        import subprocess
+        try:
+            _apple_chip = subprocess.run(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                capture_output=True, text=True, timeout=3).stdout.strip() or 'Apple Silicon'
+        except Exception:
+            _apple_chip = 'Apple Silicon'
+    return _apple_chip
+
+
+def _nvidia_smi_memory_gb():
+    """(used, total) GiB of GPU 0 across every process, or None if unavailable."""
+    import subprocess
+    global _nvidia_smi_failure_logged
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '-i', '0', '--query-gpu=memory.used,memory.total',
+             '--format=csv,noheader,nounits'],
+            capture_output=True, text=True, timeout=5,
+            # No console window flashing up on each poll from a windowed app.
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        used_mib, total_mib = (float(v) for v in result.stdout.strip().split(','))
+        if total_mib <= 0:
+            raise ValueError(f"total {total_mib}")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        # The fallback can stay fixed on Windows, so say why it's in use.
+        if not _nvidia_smi_failure_logged:
+            logger.warning("nvidia-smi memory reading failed (%s); using the CUDA driver's figure", exc)
+            _nvidia_smi_failure_logged = True
+        return None
+    return used_mib / 1024, total_mib / 1024
+
+
 @app.route('/api/gpu-memory-status', methods=['GET'])
 def get_gpu_memory_status():
     _log_api_call('gpu_memory_status')
@@ -2412,14 +2610,20 @@ def get_gpu_memory_status():
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
             cached_memory = torch.cuda.memory_reserved(0) / (1024**3)
 
-            # Device-wide usage across ALL processes via the CUDA driver.
-            # torch.cuda.memory_*() only sees THIS process, so it misses a
-            # training/generation subprocess running elsewhere — which is why the
-            # indicator read near-empty during training. mem_get_info() reports
-            # the driver's true device free/total, covering every process.
-            device_free_gb, device_total_gb = (
-                b / (1024**3) for b in torch.cuda.mem_get_info(0))
-            device_used_gb = device_total_gb - device_free_gb
+            # Device-wide usage across ALL processes. torch.cuda.memory_*() only
+            # sees THIS process, so it misses a training/generation subprocess
+            # running elsewhere. On Windows (WDDM) mem_get_info() didn't follow
+            # one either, staying put while nvidia-smi moved, so ask nvidia-smi
+            # and keep mem_get_info() for when it can't be run.
+            smi = _nvidia_smi_memory_gb()
+            memory_source = "nvidia-smi" if smi else "cuda-driver"
+            if smi:
+                device_used_gb, device_total_gb = smi
+                device_free_gb = device_total_gb - device_used_gb
+            else:
+                device_free_gb, device_total_gb = (
+                    b / (1024**3) for b in torch.cuda.mem_get_info(0))
+                device_used_gb = device_total_gb - device_free_gb
 
             nvidia_used_gb = device_used_gb
             nvidia_total_gb = device_total_gb
@@ -2432,7 +2636,6 @@ def get_gpu_memory_status():
             final_allocated = device_used_gb
             final_cached = cached_memory
             final_free = device_free_gb
-            memory_source = "cuda-driver"
 
             memory_info['cuda'] = {
                 'total': nvidia_total_gb,
@@ -2457,6 +2660,19 @@ def get_gpu_memory_status():
                     print(
                         f"  Low GPU Memory: {final_free:.2f}GB free, {final_allocated:.2f}GB allocated")
                     _last_memory_warning_time = current_time
+        elif getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available():
+            # Apple Silicon: the GPU runs models out of unified memory, so the
+            # memory still available system-wide is what decides whether a
+            # model fits (MPS now, MLX later), like free VRAM on CUDA. It
+            # also counts a training run in another process.
+            vm = psutil.virtual_memory()
+            memory_info['unified'] = {
+                'total': vm.total / (1024**3),
+                'free': vm.available / (1024**3),
+                'device': _apple_chip_name(),
+                'engine': 'mps',
+                'fragmenta': torch.mps.driver_allocated_memory() / (1024**3),
+            }
         else:
             memory_info['cpu'] = {
                 'total': psutil.virtual_memory().total / (1024**3),
@@ -2481,7 +2697,8 @@ def _annotator_labels_default_path():
 
 
 def _annotator_labels_user_path():
-    return Path(get_config().project_root) / 'config' / 'annotator_labels.user.json'
+    # user_data_dir: in an installed app the code folder is read-only.
+    return Path(get_config().user_data_dir) / 'config' / 'annotator_labels.user.json'
 
 
 def _annotator_labels_path():
@@ -2556,14 +2773,17 @@ def _clap_ckpt_path():
 @app.route('/api/environment', methods=['GET'])
 def environment():
     # Host capability flags so the Checkpoint Manager can grey out models this
-    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2; no Windows
-    # wheels). Mirrors the gate in audio_generator._ensure_model.
+    # machine can't run (e.g. sa3-medium needs CUDA + Flash-Attn 2). Mirrors the
+    # gate in audio_generator._ensure_model. Versions are for the About page.
     import platform as _platform
     cuda = mps = flash = False
+    torch_version = cuda_version = None
     try:
         import torch
         cuda = bool(torch.cuda.is_available())
         mps = bool(getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available())
+        torch_version = torch.__version__.split('+')[0]
+        cuda_version = torch.version.cuda if cuda else None
     except Exception:
         pass
     try:
@@ -2593,8 +2813,12 @@ def environment():
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,
+        'mlx_available': engine_available('mlx'),
         'flash_attn_available': flash,
         'beatsync_v2': beatsync_v2,
+        'python_version': _platform.python_version(),
+        'torch_version': torch_version,
+        'cuda_version': cuda_version,
     })
 
 
@@ -2602,7 +2826,7 @@ def environment():
 def upload_folder():
     # Browser-native folder upload path for containerised deployments
     # (e.g. HF Space) where no display server is available for a native dialog.
-    audio_exts = {'.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'}
+    from app.core.audio.decode import AUDIO_EXTENSIONS as audio_exts
 
     files = request.files.getlist('files')
     rel_paths = request.form.getlist('rel_paths')
@@ -2658,6 +2882,9 @@ def pick_folder():
 
     payload = request.json or {}
     start_dir = payload.get('start_dir') or str(Path.home())
+    # Fixed choices only: this ends up inside the command strings below.
+    dialog_title = ('Choose your older Fragmenta folder' if payload.get('purpose') == 'import'
+                    else 'Choose audio folder')
 
     # `start_dir` is request-controlled and gets interpolated into shell/AppleScript
     # command strings below. Validate it is an existing directory and fall back to
@@ -2694,7 +2921,7 @@ def pick_folder():
         has_kdialog = bool(_shutil.which('kdialog'))
         if has_zenity:
             chosen = _try(['zenity', '--file-selection', '--directory',
-                           f'--filename={start_dir}/', '--title=Choose audio folder'])
+                           f'--filename={start_dir}/', f'--title={dialog_title}'])
         if not chosen and has_kdialog:
             chosen = _try(['kdialog', '--getexistingdirectory', start_dir])
         if not chosen:
@@ -2702,7 +2929,7 @@ def pick_folder():
             script = (
                 "import tkinter as tk; from tkinter import filedialog; "
                 "r = tk.Tk(); r.withdraw(); "
-                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title='Choose audio folder'); "
+                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title={dialog_title!r}); "
                 "print(p or '')"
             )
             chosen = _try([sys_py, '-c', script])
@@ -2714,7 +2941,7 @@ def pick_folder():
         # AppleScript string literal and inject `do shell script` commands.
         safe_start = start_dir.replace('\\', '\\\\').replace('"', '\\"')
         chosen = _try(['osascript', '-e',
-                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{safe_start}")'])
+                       f'POSIX path of (choose folder with prompt "{dialog_title}" default location POSIX file "{safe_start}")'])
     elif sys.platform == 'win32':
         safe_start = (start_dir or '').replace("'", "''")
         ps = (
@@ -3082,6 +3309,14 @@ def clip_audio_route(name, file_name):
         audio_path = Path(clip.path)
     if not audio_path.exists():
         return jsonify({'error': 'Audio file missing on disk'}), 404
+    # Web engines can't play every format we accept; the player falls back to this.
+    if request.args.get('format') == 'wav':
+        from app.core.audio.decode import playable_wav
+        try:
+            return send_file(str(playable_wav(audio_path)), mimetype='audio/wav', conditional=True)
+        except Exception as exc:
+            logger.warning("Couldn't convert %s for playback: %s", audio_path.name, exc)
+            return jsonify({'error': 'Could not decode this audio file'}), 415
     return send_file(str(audio_path), conditional=True)
 
 
@@ -3473,9 +3708,38 @@ def midi_select():
     port_id = data.get('port_id')
     ok = midi_input.open_input(port_id)
     if not ok and port_id:
+        # A saved device that isn't plugged in is normal, not an error: the
+        # mapping stays and it reopens when the device comes back.
+        if not any(i["id"] == port_id for i in midi_input.list_inputs()):
+            return jsonify({"current": None, "missing": True})
         return jsonify(APIResponse.error(
             "Could not open that MIDI input port.", status_code=400)), 400
     return jsonify({"current": midi_input.current_port()})
+
+
+# --- Output device on macOS -------------------------------------------------
+# WKWebView can't pick an output device itself, so on macOS the backend makes
+# the chosen device the Mac's default output (Core Audio). Elsewhere the
+# engine picks it in the page (setSinkId) and this reports unavailable.
+@app.route('/api/audio/outputs', methods=['GET'])
+def audio_outputs():
+    from app.core.audio import macos_output
+    return jsonify({
+        "available": macos_output.is_available(),
+        "outputs": macos_output.list_outputs(),
+        "current": macos_output.current_output(),
+    })
+
+
+@app.route('/api/audio/outputs/select', methods=['POST'])
+def audio_outputs_select():
+    from app.core.audio import macos_output
+    data = request.get_json(silent=True) or {}
+    uid = data.get('uid')
+    if not isinstance(uid, str) or not macos_output.select_output(uid):
+        return jsonify(APIResponse.error(
+            "Could not switch to that output device.", status_code=400)), 400
+    return jsonify({"current": macos_output.current_output()})
 
 
 @app.route('/api/midi/stream', methods=['GET'])
@@ -3552,4 +3816,6 @@ if __name__ == '__main__':
     flask_debug = os.environ.get('FRAGMENTA_DEBUG', 'false').lower() == 'true'
     # Only the real server checks for updates (not imports or test clients).
     update_check.start_background_checker()
+    from app.core.audio import macos_output
+    macos_output.start()
     app.run(debug=flask_debug, host=host, port=port, threaded=True, use_reloader=False)

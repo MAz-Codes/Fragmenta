@@ -62,7 +62,7 @@ _last_manual_check = 0.0
 
 def current_version() -> Optional[str]:
     try:
-        v = (_PROJECT_ROOT / "VERSION").read_text().strip()
+        v = (_PROJECT_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         Version(v)
         return v
     except (OSError, InvalidVersion):

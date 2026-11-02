@@ -2,7 +2,7 @@ from pytorch_lightning.loggers import WandbLogger, CometLogger
 from ..interface.aeiou import pca_point_cloud
 
 import math
-try:
+try:  # Fragmenta: wandb is optional (training logs to CSV)
     import wandb
 except ImportError: 
     wandb = None

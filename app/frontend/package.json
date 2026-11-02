@@ -1,6 +1,6 @@
 {
   "name": "fragmenta-desktop",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Fragmenta",
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
     "@mui/material": "^5.14.0",
     "lucide-react": "^0.460.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "signalsmith-stretch": "1.3.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.0",

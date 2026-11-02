@@ -60,11 +60,13 @@ import {
     X as CloseIcon,
     TextCursorInput,
     Undo2,
+    Tags as TagsIcon,
 } from 'lucide-react';
 import api from '../api';
 import PreEncodeProgress from './PreEncodeProgress';
 import { extractError } from '../utils/errors';
-import { appStyles } from '../theme';
+import { paintWave } from '../utils/performanceAudio';
+import { appStyles, datasetStyles, waveColor } from '../theme';
 
 // Shared caveat for the switch/close confirms — the edits aren't lost, they
 // just aren't durable yet, and that distinction is the whole point of asking.
@@ -199,7 +201,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         pendingSeekRef.current = null;
         setPlayProgress(0);
         setPlayingFile(fileName);
-        audio.play().catch(() => {
+        audio.play().catch((err) => {
+            if (isHandledPlayError(err)) return;
             setPlayingFile(null);
         });
     }, [selectedName, playingFile]);
@@ -244,7 +247,8 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         setPlayProgress(frac);
         setPlayingFile(fileName);
         playingFileRef.current = fileName;
-        audio.play().catch(() => {
+        audio.play().catch((err) => {
+            if (isHandledPlayError(err)) return;
             setPlayingFile(null);
             playingFileRef.current = null;
         });
@@ -644,8 +648,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
         });
     }
 
+    // Two cards: the workbench header (title, load/new, errors) and, once a
+    // project is open, the project itself.
     return (
-        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: 2.5 }}>
+        <Stack spacing={2}>
+        <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: '24px' }}>
         <Stack spacing={2.5}>
             <Box>
                 <Box sx={{ ...appStyles.sectionCardHeader, mb: 0.5 }}>
@@ -677,7 +684,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 <Typography variant="body2" color="text.secondary">
                     Create a new dataset or load and edit one. 
                 </Typography>
-                <Typography variant="body2" color="text.secondary" paddingBottom={2}>
+                <Typography variant="body2" color="text.secondary">
                      You can auto-annotate using Librosa and CLAP or annotate everything manually.
                 </Typography>
             </Box>
@@ -720,8 +727,11 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                     </Box>
                 </Alert>
             )}
+        </Stack>
+        </Paper>
 
             {project && (
+                <Paper variant="outlined" sx={{ p: { xs: 2.25, sm: 3 }, borderRadius: '24px' }}>
                 <Stack spacing={2}>
                     <ProjectHeader
                         project={project}
@@ -806,17 +816,25 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                             />
                         </Box>
 
-                        <Paper
-                            variant="outlined"
+                        <Box
                             sx={{
-                                width: { xs: '100%', lg: 300 },
+                                // 300 px of cards plus 20 px each side, so the
+                                // scroll area doesn't clip the cards' shadows.
+                                width: { xs: '100%', lg: 340 },
+                                p: { lg: '20px' },
+                                m: { lg: '-20px' },
                                 flex: 'none',
-                                borderRadius: 2.5,
-                                overflow: 'hidden',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 2,
                                 // Sticky so the tools stay reachable while a
-                                // few hundred clips scroll past.
+                                // few hundred clips scroll past; capped to the
+                                // window and scrollable on its own, or its lower
+                                // sections (an open vocabulary) can't be reached.
                                 position: { lg: 'sticky' },
-                                top: { lg: 16 },
+                                top: { lg: -4 },
+                                maxHeight: { lg: 'calc(100vh + 8px)' },
+                                overflowY: { lg: 'auto' },
                             }}
                         >
                             <InspectorRail
@@ -839,7 +857,7 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                                 onError={(msg) => setError(msg)}
                                 requestConfirm={setConfirm}
                             />
-                        </Paper>
+                        </Box>
                     </Box>
 
                     <audio
@@ -862,9 +880,28 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                             }
                         }}
                         onEnded={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
-                        onError={() => { pendingSeekRef.current = null; setPlayingFile(null); setPlayProgress(0); }}
+                        onError={(e) => {
+                            const a = e.currentTarget;
+                            const file = loadedFileRef.current;
+                            // The web engine can't play this format (FLAC on
+                            // macOS): retry once with the backend's WAV copy.
+                            if (file && !a.src.includes('format=wav')) {
+                                a.src = `${a.src}?format=wav`;
+                                setPlayingFile(file);
+                                playingFileRef.current = file;
+                                a.play().catch((err) => {
+                                    if (!isHandledPlayError(err)) setPlayingFile(null);
+                                });
+                                return;
+                            }
+                            pendingSeekRef.current = null;
+                            setPlayingFile(null);
+                            setPlayProgress(0);
+                            if (file) setError(`Couldn't play ${file}.`);
+                        }}
                     />
                 </Stack>
+                </Paper>
             )}
 
             <CreateProjectDialog
@@ -978,7 +1015,6 @@ export default function DatasetPrep({ onOpenCheckpointManager, isDocker = false 
                 </Snackbar>
             </Portal>
         </Stack>
-        </Paper>
     );
 }
 
@@ -1252,7 +1288,7 @@ function InspectorRail({
                         <Button
                             variant="contained"
                             color="warm"
-                            size="small"
+                            size="medium"
                             fullWidth
                             startIcon={annotateStarting
                                 ? <CircularProgress size={16} color="inherit" />
@@ -1264,14 +1300,13 @@ function InspectorRail({
                         </Button>
                     </span>
                 </Tooltip>
+                {/* The vocabulary only feeds the Rich tier, so its button
+                    lives in the band that switched it on. */}
+                {tier === 'rich' && (
+                    <ClapVocabButton disabled={annotateBusy} requestConfirm={requestConfirm} />
+                )}
             </RailSection>
 
-            {/* Directly under Auto-annotate: the vocabulary only feeds the
-                Rich tier, so it belongs to the band that switched it on
-                rather than sitting at the far end of the rail. */}
-            {tier === 'rich' && (
-                <ClapVocabAccordion disabled={annotateBusy} requestConfirm={requestConfirm} />
-            )}
 
             <RailSection title="Inject text" icon={<TextCursorInput size={15} />}>
                 <PromptInjector
@@ -1324,28 +1359,27 @@ function InspectorRail({
 // `requestConfirm` is the parent's setConfirm — the confirm dialog lives at
 // the DatasetPrep level, so destructive actions down here route back up to
 // it rather than falling back to a browser-native prompt.
-function ClapVocabAccordion({ disabled, requestConfirm }) {
+function ClapVocabButton({ disabled, requestConfirm }) {
     const [labels, setLabels] = useState({ genre: [], mood: [], instruments: [] });
     const [overridden, setOverridden] = useState(false);
     const [dirty, setDirty] = useState(false);
     const [busy, setBusy] = useState(false);
     const [vocabError, setVocabError] = useState('');
 
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const { data } = await api.get('/api/annotator-labels');
-                if (cancelled) return;
-                setLabels(data.labels || { genre: [], mood: [], instruments: [] });
-                setOverridden(!!data.overridden);
-                setDirty(false);
-            } catch (e) {
-                if (!cancelled) setVocabError(extractError(e, 'Failed to load vocabulary'));
-            }
-        })();
-        return () => { cancelled = true; };
+    const [open, setOpen] = useState(false);
+
+    const load = useCallback(async () => {
+        try {
+            const { data } = await api.get('/api/annotator-labels');
+            setLabels(data.labels || { genre: [], mood: [], instruments: [] });
+            setOverridden(!!data.overridden);
+            setDirty(false);
+            setVocabError('');
+        } catch (e) {
+            setVocabError(extractError(e, 'Failed to load vocabulary'));
+        }
     }, []);
+    useEffect(() => { load(); }, [load]);
 
     function setCategory(cat, values) {
         setLabels((prev) => ({ ...prev, [cat]: values }));
@@ -1359,6 +1393,7 @@ function ClapVocabAccordion({ disabled, requestConfirm }) {
             await api.put('/api/annotator-labels', labels);
             setDirty(false);
             setOverridden(true);
+            setOpen(false);
         } catch (e) {
             setVocabError(extractError(e, 'Failed to save vocabulary'));
         } finally {
@@ -1392,75 +1427,58 @@ function ClapVocabAccordion({ disabled, requestConfirm }) {
         });
     }
 
-    const tagCount = (labels.genre?.length || 0) + (labels.mood?.length || 0) + (labels.instruments?.length || 0);
-
+    // A button in the rail; the editing happens in a dialog (tag lists are far
+    // too tall for the rail). Cancel discards unsaved edits.
+    const cancel = () => { if (dirty) load(); setOpen(false); };
     return (
-        <Accordion
-            disableGutters
-            sx={{ '&, &.Mui-expanded': { mt: 0, mb: 0 } }}
-        >
-            <AccordionSummary
-                expandIcon={<ChevronDownIcon size={18} />}
-                sx={{
-                    minHeight: 48,
-                    '&.Mui-expanded': { minHeight: 48 },
-                    '& .MuiAccordionSummary-content': {
-                        margin: '12px 0',
-                        '&.Mui-expanded': { margin: '12px 0' },
-                    },
-                }}
+        <>
+            <Button
+                variant="outlined"
+                fullWidth
+                startIcon={<TagsIcon size={16} />}
+                onClick={() => setOpen(true)}
+                disabled={disabled}
             >
-                <Typography variant="subtitle1">CLAP Vocabulary</Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, alignSelf: 'center' }}>
-                    {overridden ? 'custom' : 'defaults'} · {tagCount} tags
-                </Typography>
-            </AccordionSummary>
-            <AccordionDetails>
-                <Stack spacing={2}>
-                    <Typography variant="body2" color="text.secondary">
-                        Words CLAP scores each clip against. Empty categories are ignored. Tweak to match your dataset's territory.
-                    </Typography>
-                    <VocabCategory
-                        label="Genre"
-                        values={labels.genre || []}
-                        onChange={(v) => setCategory('genre', v)}
-                        disabled={disabled || busy}
-                    />
-                    <VocabCategory
-                        label="Mood"
-                        values={labels.mood || []}
-                        onChange={(v) => setCategory('mood', v)}
-                        disabled={disabled || busy}
-                    />
-                    <VocabCategory
-                        label="Instruments"
-                        values={labels.instruments || []}
-                        onChange={(v) => setCategory('instruments', v)}
-                        disabled={disabled || busy}
-                    />
-                    {vocabError && <Alert severity="error" onClose={() => setVocabError('')}>{vocabError}</Alert>}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Button
-                            variant="text"
-                            size="small"
-                            onClick={reset}
-                            disabled={disabled || busy || !overridden}
-                        >
-                            Reset to defaults
-                        </Button>
-                        <Box sx={{ flex: 1 }} />
-                        <Button
-                            variant="contained"
-                            size="small"
-                            onClick={save}
-                            disabled={disabled || busy || !dirty}
-                        >
-                            Save vocabulary
-                        </Button>
-                    </Box>
-                </Stack>
-            </AccordionDetails>
-        </Accordion>
+                Edit CLAP vocabulary
+            </Button>
+            <Dialog open={open} onClose={cancel} maxWidth="sm" fullWidth>
+                <DialogTitle>CLAP vocabulary</DialogTitle>
+                <DialogContent>
+                    <Stack spacing={2}>
+                        <Typography variant="body2" color="text.secondary">
+                            Words CLAP scores each clip against. Empty categories are ignored. Tweak to match your dataset's territory.
+                        </Typography>
+                        <VocabCategory
+                            label="Genre"
+                            values={labels.genre || []}
+                            onChange={(v) => setCategory('genre', v)}
+                            disabled={disabled || busy}
+                        />
+                        <VocabCategory
+                            label="Mood"
+                            values={labels.mood || []}
+                            onChange={(v) => setCategory('mood', v)}
+                            disabled={disabled || busy}
+                        />
+                        <VocabCategory
+                            label="Instruments"
+                            values={labels.instruments || []}
+                            onChange={(v) => setCategory('instruments', v)}
+                            disabled={disabled || busy}
+                        />
+                        {vocabError && <Alert severity="error" onClose={() => setVocabError('')}>{vocabError}</Alert>}
+                    </Stack>
+                </DialogContent>
+                <DialogActions>
+                    <Button variant="text" onClick={reset} disabled={busy || !overridden}>
+                        Reset to defaults
+                    </Button>
+                    <Box sx={{ flex: 1 }} />
+                    <Button variant="outlined" onClick={cancel} disabled={busy}>Cancel</Button>
+                    <Button variant="contained" onClick={save} disabled={busy || !dirty}>Save</Button>
+                </DialogActions>
+            </Dialog>
+        </>
     );
 }
 
@@ -1493,6 +1511,9 @@ function VocabCategory({ label, values, onChange, disabled }) {
                     label={label}
                     placeholder="Add tag, press Enter"
                     size="small"
+                    // Wraps onto several lines: the 24 px of taller elements,
+                    // not the one-line pill.
+                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: '24px' } }}
                 />
             )}
         />
@@ -1576,7 +1597,10 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <Stack direction="row" spacing={2} alignItems="center" sx={{ flex: 1, minWidth: 240 }}>
                 <Box>
-                    <Typography variant="h6">Project: &ldquo;{project.name}&rdquo;</Typography>
+                    {/* overline / h5: the page normalises body/caption sizes, so
+                        these use variants it leaves alone. */}
+                    <Typography component="div" variant="overline" sx={datasetStyles.kicker}>Project</Typography>
+                    <Typography component="h2" variant="h5" sx={datasetStyles.projectName}>{project.name}</Typography>
                     <Typography variant="body2" color="text.secondary">
                         {project.clip_count} clip{project.clip_count === 1 ? '' : 's'}
                         {' · '}{stateLabel}
@@ -1624,12 +1648,13 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
                     <span>
                         <Button
                             variant="contained"
+                            color="success"
                             size="small"
                             startIcon={<DatasetIcon size={16} />}
                             onClick={onCommit}
                             disabled={disabled || !project.dirty}
                         >
-                            Create Dataset
+                            Create dataset
                         </Button>
                     </span>
                 </Tooltip>
@@ -1657,22 +1682,13 @@ function ProjectHeader({ project, onSave, onCommit, onDiscard, onAddAudio, onClo
 function RailSection({ title, icon, defaultOpen = true, badge, children }) {
     const [open, setOpen] = useState(defaultOpen);
     return (
-        <Box sx={{ borderBottom: 1, borderColor: 'divider', '&:last-of-type': { borderBottom: 0 } }}>
+        <Box sx={datasetStyles.railCard}>
             <ButtonBase
                 onClick={() => setOpen((o) => !o)}
                 aria-expanded={open}
-                sx={{
-                    width: '100%',
-                    px: 1.5,
-                    py: 1.15,
-                    gap: 1,
-                    justifyContent: 'flex-start',
-                    color: 'text.primary',
-                    '&:hover': { bgcolor: 'action.hover' },
-                }}
+                sx={datasetStyles.railHeader}
             >
-                <Box component="span" sx={{ display: 'flex', color: 'text.secondary' }}>{icon}</Box>
-                <Typography variant="body2" sx={{ fontWeight: 600, flex: 1, textAlign: 'left' }}>
+                <Typography component="h3" variant="subtitle1" sx={datasetStyles.railTitle}>
                     {title}
                 </Typography>
                 {badge}
@@ -1689,7 +1705,7 @@ function RailSection({ title, icon, defaultOpen = true, badge, children }) {
                 </Box>
             </ButtonBase>
             <Collapse in={open} unmountOnExit>
-                <Stack spacing={1.25} sx={{ px: 1.5, pb: 1.75, pt: 0.25 }}>
+                <Stack spacing={1.5} sx={{ px: 2.25, pb: 2.25, pt: 0.25 }}>
                     {children}
                 </Stack>
             </Collapse>
@@ -1770,7 +1786,7 @@ function HealthSection({ health, onSelectFiles }) {
                     }}
                 >
                     {empty.count > 0 && (
-                        <Tooltip title={TIPS.dataset.selectClips}>
+                        <Tooltip title={TIPS.dataset.emptyPrompts}>
                             <Chip
                                 size="small"
                                 variant="outlined"
@@ -1819,7 +1835,7 @@ function HealthSection({ health, onSelectFiles }) {
     );
 }
 
-function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
+function Waveform({ projectName, fileName, isActive, progress, onSeek, colorIndex = 0 }) {
     const canvasRef = useRef(null);
     const theme = useTheme();
     const [peaks, setPeaks] = useState(null);
@@ -1831,12 +1847,22 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         setPeaks(null);
         setFailed(false);
         if (!projectName || !fileName) return;
-        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=80`;
+        const url = `/api/projects/${encodeURIComponent(projectName)}/clip/${encodeURIComponent(fileName)}/peaks?n=400`;
         api.get(url)
             .then(({ data }) => { if (!cancelled) setPeaks(data?.peaks || []); })
             .catch(() => { if (!cancelled) setFailed(true); });
         return () => { cancelled = true; };
     }, [projectName, fileName]);
+
+    // The cell's width follows the window, so redraw when it changes.
+    const [width, setWidth] = useState(0);
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return undefined;
+        const ro = new ResizeObserver(() => setWidth(canvas.clientWidth));
+        ro.observe(canvas);
+        return () => ro.disconnect();
+    }, []);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -1844,44 +1870,44 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         const dpr = window.devicePixelRatio || 1;
         const w = canvas.clientWidth;
         const h = canvas.clientHeight;
-        if (canvas.width !== w * dpr) canvas.width = w * dpr;
-        if (canvas.height !== h * dpr) canvas.height = h * dpr;
+        if (!(w > 0 && h > 0)) return;
+        if (canvas.width !== Math.round(w * dpr)) canvas.width = Math.round(w * dpr);
+        if (canvas.height !== Math.round(h * dpr)) canvas.height = Math.round(h * dpr);
         const ctx = canvas.getContext('2d');
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
 
+        const { main: deep, faint } = waveColor(theme, colorIndex);
         if (!peaks || !peaks.length) {
-            ctx.fillStyle = 'rgba(0,0,0,0.08)';
-            const midY = h / 2;
-            ctx.fillRect(0, midY - 0.5, w, 1);
+            ctx.fillStyle = `${deep}33`;
+            ctx.fillRect(0, h / 2 - 0.5, w, 1);
             return;
         }
 
-        const barCount = peaks.length;
-        const barWidth = Math.max(1, w / barCount - 1);
-        const playedIdx = isActive ? Math.floor(progress * barCount) : -1;
-        // Match the Generated-Fragments waveforms: teal accent for the played
-        // portion, dimmed (35% alpha) for the rest.
-        const playedColor = '#279FBB';
-        const restColor = '#279FBB59';
-
-        for (let i = 0; i < barCount; i++) {
-            const v = peaks[i];
-            const barH = Math.max(1, v * (h - 2));
-            const x = i * (w / barCount);
-            const y = (h - barH) / 2;
-            ctx.fillStyle = i <= playedIdx ? playedColor : restColor;
-            ctx.fillRect(x, y, barWidth, barH);
+        // Server peaks resampled to one per pixel column; the body stands in
+        // for the RMS the lanes compute from the decoded buffer.
+        const n = Math.max(1, Math.floor(w));
+        const peak = new Float32Array(n), rms = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+            const x = (i / n) * (peaks.length - 1);
+            const k = Math.floor(x), f = x - k;
+            const v = peaks[k] * (1 - f) + (peaks[Math.min(peaks.length - 1, k + 1)] || 0) * f;
+            peak[i] = v;
+            rms[i] = v * 0.55;
         }
-
-        // Playhead: bars are only 80 buckets wide, so a hairline is what makes
-        // the position readable enough to scrub against.
+        // The faint accent at rest; the main one marks what has played.
+        paintWave(ctx, n, w, h, peak, rms, faint, faint);
         if (isActive) {
+            // Played part in the main colour, then the playhead.
             const px = Math.min(w - 1, Math.max(0, progress * w));
-            ctx.fillStyle = playedColor;
-            ctx.fillRect(px, 0, 1, h);
+            ctx.globalCompositeOperation = 'source-atop';
+            ctx.fillStyle = deep;
+            ctx.fillRect(0, 0, px, h);
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = theme.palette.text.primary;
+            ctx.fillRect(px - 0.75, 2, 1.5, h - 4);
         }
-    }, [peaks, isActive, progress, theme]);
+    }, [peaks, isActive, progress, theme, width, colorIndex]);
 
     // Translate a pointer position into a 0..1 offset in the clip.
     const seekTo = useCallback((clientX) => {
@@ -1898,11 +1924,8 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
         try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     }, []);
 
-    // 100px rather than the original 120: the inspector rail took horizontal
-    // room out of the table, and the file name has to survive on one line.
-    // The waveform still reads fine at this size.
     return (
-        <Box sx={{ width: 100, height: 28, flexShrink: 0, opacity: failed ? 0.3 : 1 }}>
+        <Box sx={[datasetStyles.waveCapsule, { opacity: failed ? 0.3 : 1 }]}>
             <canvas
                 ref={canvasRef}
                 style={{
@@ -1917,7 +1940,7 @@ function Waveform({ projectName, fileName, isActive, progress, onSeek }) {
                     if (!onSeek || e.button !== 0) return;
                     // Stops the row's text selection from kicking in mid-drag.
                     e.preventDefault();
-                    // Pointer capture keeps the drag alive past the 120px canvas.
+                    // Pointer capture keeps the drag alive past the canvas edge.
                     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ }
                     scrubbingRef.current = true;
                     seekTo(e.clientX);
@@ -1939,7 +1962,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
     const partiallySelected = totalSelected > 0 && !allSelected;
     if (!clips || clips.length === 0) {
         return (
-            <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+            <Paper variant="outlined" sx={{ borderRadius: '24px', overflow: 'hidden' }}>
                 <Box sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                     <Typography variant="body2">
                         No clips yet. Use “Add audio” to bring in a folder.
@@ -1949,9 +1972,9 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
         );
     }
     return (
-        <Paper variant="outlined" sx={{ borderRadius: 2.5, overflow: 'hidden' }}>
+        <Box>
             <TableContainer>
-                <Table size="small">
+                <Table size="small" sx={datasetStyles.clipTable}>
                     <TableHead>
                         <TableRow>
                             <TableCell padding="checkbox">
@@ -1969,9 +1992,10 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                         </TableRow>
                     </TableHead>
                     <TableBody>
-                        {clips.map((c) => (
+                        {clips.map((c, i) => (
                             <ClipRow
                                 key={c.file_name}
+                                colorIndex={i}
                                 projectName={projectName}
                                 clip={c}
                                 isPlaying={playingFile === c.file_name}
@@ -1990,7 +2014,7 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
                     </TableBody>
                 </Table>
             </TableContainer>
-        </Paper>
+        </Box>
     );
 }
 
@@ -1999,14 +2023,14 @@ function ClipTable({ projectName, clips, playingFile, playProgress, onPlayToggle
 // identity intentionally ignored — they're stable in behavior, just inline
 // arrows from the parent, and re-creating a row only to re-bind a click
 // handler isn't worth the work. playProgress only matters on the active row.
-const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
+const ClipRow = React.memo(function ClipRow({ projectName, clip, colorIndex, isPlaying, playProgress, onPlayToggle, onSeek, onPromptChange, onAnnotate, onDelete, onSlice, selected, onToggleSelected, disabled }) {
     const [draft, setDraft] = useState(clip.prompt);
     useEffect(() => { setDraft(clip.prompt); }, [clip.prompt]);
 
     const dirty = draft !== clip.prompt;
 
     return (
-        <TableRow hover selected={selected}>
+        <TableRow hover selected={selected} sx={datasetStyles.clipRow(isPlaying)}>
             <TableCell padding="checkbox">
                 <Checkbox
                     size="small"
@@ -2014,44 +2038,54 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                     onChange={() => onToggleSelected && onToggleSelected(clip.file_name)}
                 />
             </TableCell>
-            <TableCell sx={{ wordBreak: 'break-all' }}>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                    <IconButton
-                        size="small"
-                        onClick={() => onPlayToggle(clip.file_name)}
-                        sx={{ width: 28, height: 28 }}
-                    >
-                        {isPlaying ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
-                    </IconButton>
-                    <Waveform
-                        projectName={projectName}
-                        fileName={clip.file_name}
-                        isActive={isPlaying}
-                        progress={playProgress}
-                        onSeek={onSeek}
-                    />
+            <TableCell>
+                {/* Name on top; the play button sits level with the waveform. */}
+                <Stack spacing={0.75}>
                     {/* overflowWrap rather than break-all: a name only breaks
-                        when it genuinely can't fit, instead of splitting
-                        "…04.wav" across lines the moment it's close. */}
+                        when it genuinely can't fit. */}
                     <Typography
                         variant="body2"
                         title={clip.file_name}
-                        sx={{ flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}
+                        sx={datasetStyles.fileName}
                     >
                         {clip.file_name}
                     </Typography>
+                    <Stack direction="row" alignItems="center" spacing={1.5}>
+                        <IconButton
+                            size="small"
+                            onClick={() => onPlayToggle(clip.file_name)}
+                            aria-label={isPlaying ? `Pause ${clip.file_name}` : `Play ${clip.file_name}`}
+                            sx={datasetStyles.playButton(isPlaying)}
+                        >
+                            {isPlaying ? <PauseIcon size={13} fill="currentColor" /> : <PlayIcon size={13} fill="currentColor" />}
+                        </IconButton>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                            <Waveform
+                                projectName={projectName}
+                                fileName={clip.file_name}
+                                isActive={isPlaying}
+                                progress={playProgress}
+                                onSeek={onSeek}
+                                colorIndex={colorIndex}
+                            />
+                        </Box>
+                    </Stack>
                 </Stack>
             </TableCell>
             <TableCell>
                 <TextField
                     fullWidth
                     size="small"
-                    variant="standard"
+                    multiline
+                    minRows={2}
+                    maxRows={4}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onBlur={() => { if (dirty) onPromptChange(clip.file_name, draft); }}
-                    placeholder="(empty — write a prompt or auto-annotate)"
+                    placeholder="No prompt yet: write one or auto-annotate"
                     disabled={disabled}
+                    inputProps={{ 'aria-label': `Prompt for ${clip.file_name}` }}
+                    sx={datasetStyles.promptField(!draft.trim())}
                 />
             </TableCell>
             <TableCell sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -2061,7 +2095,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onAnnotate(clip.file_name)}
                             disabled={disabled}
-                            sx={{ color: 'warm.main', '&:hover': { color: 'warm.light', bgcolor: 'action.hover' } }}
+                            aria-label={`Auto-annotate ${clip.file_name}`}
+                            sx={datasetStyles.rowActionWarm}
                         >
                             <WandSparkles size={16} />
                         </IconButton>
@@ -2073,6 +2108,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onSlice(clip.file_name)}
                             disabled={disabled}
+                            aria-label={`Slice ${clip.file_name}`}
+                            sx={datasetStyles.rowAction}
                         >
                             <ScissorsIcon size={16} />
                         </IconButton>
@@ -2084,6 +2121,8 @@ const ClipRow = React.memo(function ClipRow({ projectName, clip, isPlaying, play
                             size="small"
                             onClick={() => onDelete(clip.file_name)}
                             disabled={disabled}
+                            aria-label={`Remove ${clip.file_name}`}
+                            sx={datasetStyles.rowAction}
                         >
                             <TrashIcon size={16} />
                         </IconButton>
@@ -2246,7 +2285,8 @@ function IngestDialog({ open, projectName, ingestMode, onClose, onIngested, isDo
         // Filter to audio up front (mirrors the backend's accepted set) so
         // artwork/project clutter doesn't count against the request size and
         // multipart part limits.
-        const AUDIO_EXTS = ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac'];
+        // Keep in step with AUDIO_EXTENSIONS in app/core/audio/decode.py.
+        const AUDIO_EXTS = ['.wav', '.mp3', '.flac', '.ogg', '.opus', '.aif', '.aiff', '.m4a', '.aac'];
         const files = Array.from(fileList || []).filter((f) =>
             AUDIO_EXTS.some((ext) => f.name.toLowerCase().endsWith(ext)));
         if (!files.length) {
@@ -2350,7 +2390,7 @@ function IngestDialog({ open, projectName, ingestMode, onClose, onIngested, isDo
 
                         {folder ? (
                             <>
-                                <Typography variant="body2" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                                <Typography variant="body2" sx={{ color: 'primary.dark', fontWeight: 600 }}>
                                     {scanning
                                         ? 'Counting audio…'
                                         : count != null
@@ -2557,3 +2597,9 @@ function SliceDialog({ open, projectName, fileName, onClose, onSliced }) {
 
 // ---------- utils ----------------------------------------------------------
 
+
+// A rejected play() that the <audio> element's onError deals with (unplayable
+// format), or that only means a newer source replaced this one.
+function isHandledPlayError(err) {
+    return err?.name === 'NotSupportedError' || err?.name === 'AbortError';
+}

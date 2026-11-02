@@ -105,7 +105,7 @@ function defaultSession(channelCount) {
         linkEnabled: false,
         selectedModel: '',
         selectedUnwrappedModel: '',
-        steps: 250,
+        steps: 50,
         randomSeed: true,
         seedValue: '',
         cueDeviceId: '',

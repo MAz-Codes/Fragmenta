@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Optional, Union
-from datetime import datetime
+from datetime import datetime, timezone
 import traceback
 
 from .logger import get_logger
@@ -13,7 +13,7 @@ class APIResponse:
     def success(data: Any = None, message: str = None, meta: Dict[str, Any] = None) -> Dict[str, Any]:
         response = {
             "success": True,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": data
         }
         
@@ -50,7 +50,7 @@ class APIResponse:
         
         response = {
             "success": False,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "error": {
                 "message": message,
                 "code": status_code,
@@ -117,7 +117,7 @@ class APIResponse:
         
         response = {
             "success": True,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "progress": {
                 "current": current,
                 "total": total,

@@ -52,6 +52,7 @@ wheels/
 # ===== Datasets / user data =====
 projects/
 uploads/
+/credentials/
 /data/
 !/data/.gitkeep
 
@@ -117,7 +118,6 @@ build/fragmenta.spec
 build/windows_source/
 distribution
 distribution.md
-packaging/
 
 # ===== keep IR and manifest =====
 !app/frontend/build/ir/
@@ -131,7 +131,6 @@ packaging/
 scripts
 !vendor/stable-audio-3/scripts/
 !vendor/stable-audio-3/scripts/**
-tests/
 docker/
 .dockerignore
 .claude
@@ -145,3 +144,12 @@ phd
 
 # Desktop packaging build output
 packaging/build/
+
+# tests/ and packaging/ are tracked on dev/2.0 only, never on main: a release
+# branch strips them before its PR (master plan §3.3 rule 6). The A/B
+# listening material under tests/ stays local.
+!tests/fixtures/**/*.wav
+tests/ab_samples/
+tests/*_ab/
+tests/mode_comparison*/
+tests/percussion_grids/

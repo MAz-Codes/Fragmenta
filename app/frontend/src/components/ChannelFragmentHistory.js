@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useTheme } from '@mui/material/styles';
 import {
     Box,
     IconButton,
@@ -13,17 +14,28 @@ import {
 import { TIPS } from '../tooltips';
 import Tooltip from './Tooltip';
 import {
-    Play as PlayIcon,
+    Headphones as CueIcon,
     Square as StopIcon,
     Star as StarIcon,
     Trash2 as DeleteIcon,
-    Check as CommitIcon,
     Eraser as ClearAllIcon,
     ChevronUp as MoveUpIcon,
     ChevronDown as MoveDownIcon,
 } from 'lucide-react';
 import { performanceChannelStyles as styles } from '../theme';
 import { MidiMappable } from './MidiContext';
+
+// Load state as a radio button: an empty ring, with a centre dot on the
+// fragment loaded in the lane (click an empty one to load it).
+function LoadDot({ loaded, color = 'currentColor', size = 14 }) {
+    const c = size / 2;
+    return (
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+            <circle cx={c} cy={c} r={c - 1} fill="none" stroke={color} strokeWidth="1.5" />
+            {loaded && <circle cx={c} cy={c} r={c - 4} fill={color} />}
+        </svg>
+    );
+}
 
 /**
  * Per-channel rolling fragment history. Always visible (empty-state included)
@@ -33,7 +45,7 @@ import { MidiMappable } from './MidiContext';
  *
  * Each row exposes four actions, all visible by default (no hover-reveal —
  * Performance use is fast, can't afford the discoverability tax):
- *   • Cue ▶/■   — audition through the cue output (separate from main mix)
+ *   • Cue 🎧/■  — audition through the cue output (separate from main mix)
  *   • Star ★/☆ — mark as a keeper. Starred fragments survive the cap
  *                  eviction; unstarred get dropped FIFO when over cap.
  *   • Delete ⌫  — remove this fragment from history (cancellable confirm not
@@ -58,13 +70,15 @@ import { MidiMappable } from './MidiContext';
  *   maxFragments:   cap, default 50 (informational; eviction lives in parent)
  *   on{Audition,Commit,ToggleStar,Delete}:  (fragmentId) => void
  *   onRename:       (fragmentId, label) => void  ('' clears the label)
- *   onMove:         (fragmentId, delta) => void  (-1 up, +1 down)
+ *   onMove:         (fragmentId, delta) => void  (in the list, so +1 shows as up)
  *   onClearAll:     () => void  (parent confirms separately — we still show
  *                   a confirm dialog here for the trash-everything action)
  */
 export default function ChannelFragmentHistory({
     fragments,
     color,
+    soft,
+    deep,
     channelIndex,
     auditioningId,
     committedId,
@@ -77,6 +91,7 @@ export default function ChannelFragmentHistory({
     onMove,
     onClearAll,
 }) {
+    const theme = useTheme();
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     // Id of the row whose name is being edited, plus the in-progress text.
     // Kept here rather than in the parent so a rename never re-renders the
@@ -108,6 +123,9 @@ export default function ChannelFragmentHistory({
                 <Box component="span" sx={styles.fragmentHistoryHeaderText}>
                     Fragments
                 </Box>
+                <Box component="span" sx={{ ml: 'auto', mr: 0.5, fontSize: '0.6875rem', color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+                    {fragments.length} of {maxFragments}
+                </Box>
                 {fragments.length > 0 && (
                     <IconButton
                         size="small"
@@ -124,9 +142,14 @@ export default function ChannelFragmentHistory({
                 <Box sx={styles.fragmentHistoryEmpty}>Empty</Box>
             ) : (
                 <Box sx={styles.fragmentHistoryList}>
-                    {fragments.map((fragment, rowIndex) => {
+                    {/* Newest on top. The list itself stays oldest first, as saved
+                        sessions and presets have it, so only the showing is reversed. */}
+                    {[...fragments].reverse().map((fragment, rowIndex) => {
                         const isAuditioning = auditioningId === fragment.id;
                         const isCommitted = committedId === fragment.id;
+                        // The loaded row is filled with the lane colour, so its
+                        // marks switch to ink to stay visible.
+                        const markColor = isCommitted ? theme.palette.text.primary : (deep || color);
                         const isEditing = editingId === fragment.id;
                         const displayName = fragment.label || `F${fragment.number}`;
                         return (
@@ -139,18 +162,20 @@ export default function ChannelFragmentHistory({
                                     e.dataTransfer.setData(dragMime, fragment.id);
                                     e.dataTransfer.effectAllowed = 'copy';
                                 }}
-                                sx={{
-                                    ...styles.fragmentRow(color, isCommitted, isAuditioning),
-                                    cursor: isEditing ? 'default' : 'grab',
-                                    '&:active': { cursor: isEditing ? 'default' : 'grabbing' },
-                                }}
+                                sx={[
+                                    styles.fragmentRow(soft || color, isCommitted, isAuditioning),
+                                    {
+                                        // Pointing hand on hover (rows are still draggable).
+                                        cursor: isEditing ? 'default' : 'pointer',
+                                    },
+                                ]}
                             >
                                 <Box className="frag-reorder" sx={styles.fragmentReorderCol}>
                                     <Tooltip title={TIPS.fragments.moveUp} placement="top" arrow enterDelay={400}>
                                         <span>
                                             <IconButton
                                                 size="small"
-                                                onClick={() => onMove?.(fragment.id, -1)}
+                                                onClick={() => onMove?.(fragment.id, 1)}
                                                 disabled={rowIndex === 0}
                                                 sx={styles.fragmentReorderBtn}
                                                 aria-label="Move fragment up"
@@ -163,7 +188,7 @@ export default function ChannelFragmentHistory({
                                         <span>
                                             <IconButton
                                                 size="small"
-                                                onClick={() => onMove?.(fragment.id, 1)}
+                                                onClick={() => onMove?.(fragment.id, -1)}
                                                 disabled={rowIndex === fragments.length - 1}
                                                 sx={styles.fragmentReorderBtn}
                                                 aria-label="Move fragment down"
@@ -189,12 +214,12 @@ export default function ChannelFragmentHistory({
                                         <IconButton
                                             size="small"
                                             onClick={() => onAudition(fragment.id)}
-                                            sx={styles.fragmentIconBtn(color, isAuditioning, true)}
+                                            sx={styles.fragmentPlayBtn(isAuditioning, isCommitted)}
                                             aria-label={isAuditioning ? 'Stop cue' : 'Audition'}
                                         >
                                             {isAuditioning
                                                 ? <StopIcon size={12} />
-                                                : <PlayIcon size={12} />}
+                                                : <CueIcon size={12} />}
                                         </IconButton>
                                     </Tooltip>
                                 </MidiMappable>
@@ -237,6 +262,11 @@ export default function ChannelFragmentHistory({
                                             </Box>
                                         </Tooltip>
                                     )}
+                                    {!isEditing && Number.isFinite(fragment.duration) && (
+                                        <Box component="span" sx={styles.fragmentDuration}>
+                                            {fragment.duration.toFixed(1)} s
+                                        </Box>
+                                    )}
                                 </Box>
 
                                 <Tooltip
@@ -248,12 +278,13 @@ export default function ChannelFragmentHistory({
                                     <IconButton
                                         size="small"
                                         onClick={() => onToggleStar(fragment.id)}
-                                        sx={styles.fragmentIconBtn(color, fragment.starred)}
+                                        sx={[styles.fragmentIconBtn(markColor, fragment.starred), isCommitted && { color: markColor }]}
                                         aria-label={fragment.starred ? 'Unstar fragment' : 'Star fragment'}
                                     >
                                         <StarIcon
-                                            size={12}
-                                            fill={fragment.starred ? color : 'none'}
+                                            size={13}
+                                            color={fragment.starred || isCommitted ? markColor : 'currentColor'}
+                                            fill={fragment.starred ? markColor : 'none'}
                                             strokeWidth={2}
                                         />
                                     </IconButton>
@@ -262,30 +293,30 @@ export default function ChannelFragmentHistory({
                                 <IconButton
                                     size="small"
                                     onClick={() => onDelete(fragment.id)}
-                                    sx={styles.fragmentDeleteBtn}
+                                    sx={[styles.fragmentDeleteBtn, isCommitted && { color: markColor }]}
                                     aria-label="Delete fragment"
                                 >
                                     <DeleteIcon size={12} />
                                 </IconButton>
 
-                                <Tooltip
-                                    title={TIPS.fragments.commit(isCommitted)}
-                                    placement="top"
-                                    arrow
-                                    enterDelay={300}
-                                >
-                                    <span>
+                                {isCommitted ? (
+                                    <Tooltip title={TIPS.fragments.commit(true)} placement="top" arrow enterDelay={300}>
+                                        <Box component="span" sx={styles.fragmentLoadDot} aria-label="Loaded in channel">
+                                            <LoadDot loaded color={markColor} />
+                                        </Box>
+                                    </Tooltip>
+                                ) : (
+                                    <Tooltip title={TIPS.fragments.commit(false)} placement="top" arrow enterDelay={300}>
                                         <IconButton
                                             size="small"
                                             onClick={() => onCommit(fragment.id)}
-                                            disabled={isCommitted}
-                                            sx={styles.fragmentIconBtn(color, isCommitted, true)}
+                                            sx={styles.fragmentIconBtn(color, false)}
                                             aria-label="Load fragment into channel"
                                         >
-                                            <CommitIcon size={12} strokeWidth={isCommitted ? 3 : 2} />
+                                            <LoadDot loaded={false} />
                                         </IconButton>
-                                    </span>
-                                </Tooltip>
+                                    </Tooltip>
+                                )}
                             </Box>
                         );
                     })}
