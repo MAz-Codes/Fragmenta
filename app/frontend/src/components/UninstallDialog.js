@@ -38,7 +38,7 @@ export default function UninstallDialog({ open, onClose }) {
         setPlan(null);
         setKeep(true);
         setError(null);
-        api.get('/api/uninstall', { params: { sizes: 1 } })
+        api.get('/api/uninstall?sizes=1')
             .then(({ data }) => { if (!cancelled) setPlan(data); })
             .catch((e) => { if (!cancelled) setError(errorText(e)); });
         return () => { cancelled = true; };
