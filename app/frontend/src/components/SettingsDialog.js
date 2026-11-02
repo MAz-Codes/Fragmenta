@@ -84,7 +84,7 @@ function AudioSettingsPanel({ open }) {
                     No additional output devices detected.
                 </Typography>
             )}
-            <Button size="small" onClick={() => refresh?.()} sx={{ mt: 1 }}>Refresh devices</Button>
+            <Button size="small" variant="outlined" onClick={() => refresh?.()} sx={{ mt: 1 }}>Refresh devices</Button>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
                 {api.systemOutput
                     ? "The Mac's output until Fragmenta closes. Main and cue pairs: master strip."
