@@ -206,35 +206,38 @@ Click **MIDI Learn** in the toolbar to enter learn mode, then click any UI eleme
 
 ## Stats
 
-Real generation times measured in Fragmenta: **full clip** (sampling + VAE decode), warm model, batch size 1. Yours will vary with hardware, prompt, and settings.
+How long Fragmenta takes to make one clip of each length, in seconds: sampling plus decoding, with the model already loaded. Your times will vary with hardware, prompt and settings.
 
-**Test machines:** NVIDIA RTX 5080 · AMD Ryzen 5 7600 (CPU, 12 threads) · Apple M1 (8-core, 16 GB)
+*Small* means Small - Music or Small - SFX, which run at the same speed and go up to 120 s. *Medium* goes up to 380 s and needs an NVIDIA GPU or Apple Silicon. The fast models use 8 steps; the Base models were timed at their default of 50 steps and at 250.
 
-**Models:** *Small* = Music **or** SFX (same 433M architecture, near-identical speed; up to 120 s). *Medium* = 1.4B, up to 380 s. It needs an NVIDIA GPU on PyTorch (with Flash Attention 2), or Apple Silicon on MLX. All values in **seconds**.
+### NVIDIA RTX 5080
 
-### Small (Music / SFX)
-
-| Device | Inference steps | 10 s | 30 s | 60 s | 120 s |
-|---|---|---|---|---|---|
-| **GPU** (RTX 5080) | 8 (distilled) | 0.3 | 0.3 | 0.3 | 0.4 |
-| **GPU** (RTX 5080) | 50 (base) | 1.4 | 1.4 | 1.6 | 2.7 |
-| **GPU** (RTX 5080) | 250 (base) | 6.7 | 6.6 | 7.5 | 12.5 |
-| **CPU** (Ryzen 5 7600) | 8 (distilled) | 4.7 | 8.3 | 14.7 | 27.1 |
-| **CPU** (Ryzen 5 7600) | 50 (base) | 40.0 | 74.6 | 139.1 | 277.0 |
-| **CPU** (Ryzen 5 7600) | 250 (base) | 197.4 | 402.9 | 691.5 | 1301.3 |
-| **CPU** (Apple M1) | 8 (distilled) | 5.6 | 8.9 | 14.1 | 27.8 |
-| **CPU** (Apple M1) | 50 (base) | 43.0 | 83.9 | 134.9 | 548.1 |
-| **CPU** (Apple M1) | 250 (base) | 210.7 | 398.5 | 668.3 | 2515.9 |
-| **MLX** (Apple M1) | 8 (distilled) | 2.0 | 3.7 | 6.2 | 11.7 |
-
-### Medium
-
-| Inference steps | Device | 10 s | 30 s | 60 s | 120 s | 250 s | 380 s |
+| Model | Steps | 10 s | 30 s | 60 s | 120 s | 250 s | 380 s |
 |---|---|---|---|---|---|---|---|
-| 8 (distilled) | **GPU** (RTX 5080) | 0.4 | 0.5 | 0.6 | 1.1 | 2.3 | 5.7 |
-| 8 (distilled) | **MLX** (Apple M1) | 8.1 | 13.7 | 22.8 | 52.4 | – | – |
-| 50 (base) | **GPU** (RTX 5080) | 2.0 | 2.9 | 4.3 | 8.1 | 18.6 | 29.5 |
-| 250 (base) | **GPU** (RTX 5080) | 9.9 | 13.7 | 19.9 | 39 | 90 | 143 |
+| Small | 8 | 0.3 | 0.3 | 0.3 | 0.4 | – | – |
+| Small (Base) | 50 | 1.4 | 1.4 | 1.6 | 2.7 | – | – |
+| Small (Base) | 250 | 6.7 | 6.6 | 7.5 | 12.5 | – | – |
+| Medium | 8 | 0.4 | 0.5 | 0.6 | 1.1 | 2.3 | 5.7 |
+| Medium (Base) | 50 | 2.0 | 2.9 | 4.3 | 8.1 | 18.6 | 29.5 |
+| Medium (Base) | 250 | 9.9 | 13.7 | 19.9 | 39 | 90 | 143 |
+
+### Apple M1 (8-core, 16 GB)
+
+| Model | Runs on | Steps | 10 s | 30 s | 60 s | 120 s |
+|---|---|---|---|---|---|---|
+| Small | MLX | 8 | 2.0 | 3.7 | 6.2 | 11.7 |
+| Medium | MLX | 8 | 8.1 | 13.7 | 22.8 | 52.4 |
+| Small | CPU | 8 | 5.6 | 8.9 | 14.1 | 27.8 |
+| Small (Base) | CPU | 50 | 43.0 | 83.9 | 134.9 | 548.1 |
+| Small (Base) | CPU | 250 | 210.7 | 398.5 | 668.3 | 2515.9 |
+
+### CPU only (AMD Ryzen 5 7600, 12 threads)
+
+| Model | Steps | 10 s | 30 s | 60 s | 120 s |
+|---|---|---|---|---|---|
+| Small | 8 | 4.7 | 8.3 | 14.7 | 27.1 |
+| Small (Base) | 50 | 40.0 | 74.6 | 139.1 | 277.0 |
+| Small (Base) | 250 | 197.4 | 402.9 | 691.5 | 1301.3 |
 
 ---
 
