@@ -4,7 +4,7 @@ All notable changes to Fragmenta are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.3.0] - 2026-11-02
 
 ### Added
 - New look across the whole app, with a sidebar, a top toolbar and a new colour
@@ -120,5 +120,6 @@ All notable changes to Fragmenta are listed here. The format follows
   in their metadata (WAV INFO tags with the IPTC digital source type), as the
   EU AI Act's transparency rules (Art. 50) require. Check with `ffprobe <file>`.
 
+[1.3.0]: https://github.com/MAz-Codes/Fragmenta/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/MAz-Codes/Fragmenta/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/MAz-Codes/Fragmenta/compare/v1.1.0...v1.1.1
