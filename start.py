@@ -43,9 +43,11 @@ CHROMIUM_CANDIDATES = (
     "chromium-browser",
     "brave-browser",
 )
-CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+SOURCE_CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+SOURCE_WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
+CHROMIUM_USER_DATA_DIR = SOURCE_CHROMIUM_USER_DATA_DIR
 CHROMIUM_MIN_SESSION_SECONDS = 15.0
-WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
+WEBVIEW_STORAGE_DIR = SOURCE_WEBVIEW_STORAGE_DIR
 if os.environ.get("FRAGMENTA_PACKAGED") == "1":
     # The installed app keeps its window's storage with the rest of its data, so
     # Uninstall removes it and a source install on the same computer keeps its own.
@@ -360,6 +362,7 @@ def run_chromium_app_mode(chromium_path: str) -> int:
 
         if sys.platform == "linux":
             ensure_desktop_entry(chromium_path)
+        bring_over_window_storage(SOURCE_CHROMIUM_USER_DATA_DIR, CHROMIUM_USER_DATA_DIR)
         CHROMIUM_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         # Sized and scaled from the display, not baked in — this is the
@@ -622,6 +625,29 @@ def _windows_apply_window_icon() -> None:
             ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
     except Exception as exc:
         print(f"Could not set Windows window icon: {exc}")
+
+
+def bring_over_window_storage(source: Path, target: Path) -> None:
+    """The installed app's first launch starts from the window storage of a
+    source install on this computer, so its Performance channels, presets and
+    MIDI mappings come along; the page then moves them into the data folder.
+    Only while the app has no storage of its own, so none of it is replaced.
+    Not on a Mac: WKWebView keeps each app's storage itself and ignores the
+    folder we name."""
+    if (os.environ.get("FRAGMENTA_PACKAGED") != "1" or sys.platform == "darwin"
+            or target.exists() or not source.is_dir()):
+        return
+    try:
+        # Caches rebuild themselves; Singleton* and lockfile are the old
+        # window's locks.
+        shutil.copytree(source, target, symlinks=True,
+                        ignore=shutil.ignore_patterns("*Cache*", "Crashpad", "Singleton*", "lockfile"))
+        print(f"Brought over the window storage of {source}.")
+    except shutil.Error:
+        print(f"Brought over the window storage of {source}, except files it still had open.")
+    except OSError as exc:
+        print(f"Could not bring over the window storage of {source}: {exc}")
+        shutil.rmtree(target, ignore_errors=True)
 
 
 def _windows_show_output_devices(window) -> None:
@@ -897,6 +923,7 @@ def run_pywebview_mode() -> int:
             if backend_process is not None:
                 _close_on_uninstall(backend_process, window.destroy)
 
+            bring_over_window_storage(SOURCE_WEBVIEW_STORAGE_DIR, WEBVIEW_STORAGE_DIR)
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             start_kwargs = {"private_mode": False, "storage_path": str(WEBVIEW_STORAGE_DIR)}
             # pywebview 6's Windows backend builds the form icon from `icon`

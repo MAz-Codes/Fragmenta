@@ -7,7 +7,7 @@ from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.generation.models import lora_family
 from app.core.generation.content_credentials import sign_wav
 from app.core.generation.provenance import recording_manifest, recording_tags, tag_existing_wav
-from app.backend import data_import, starter_model, uninstall, update_check
+from app.backend import data_import, performance_state, starter_model, uninstall, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -3739,6 +3739,106 @@ def midi_select():
     if not isinstance(port_ids, list) or not all(isinstance(p, str) for p in port_ids):
         return jsonify(APIResponse.error("port_ids must be a list of port names.", status_code=400)), 400
     return jsonify(midi_input.open_inputs(port_ids))
+
+
+# --- Performance state in the data folder ----------------------------------
+# See performance_state.py. Off on the Space and in Docker, where the page
+# keeps its state in the window.
+def _performance_off():
+    if not performance_state.available():
+        return jsonify(APIResponse.error("Not available here.", status_code=404)), 404
+    return None
+
+
+@app.route('/api/performance/state', methods=['GET'])
+def performance_state_get():
+    if not performance_state.available():
+        return jsonify({"available": False})
+    return jsonify({"available": True, **performance_state.load()})
+
+
+@app.route('/api/performance/state/<name>', methods=['PUT', 'DELETE'])
+def performance_state_put(name):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'DELETE':
+            performance_state.delete_state(name)
+        else:
+            performance_state.save_state(name, request.get_json(force=True))
+    except ValueError:
+        return jsonify(APIResponse.error("Unknown state.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/presets/<path:name>', methods=['PUT', 'DELETE'])
+def performance_preset(name):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'DELETE':
+            performance_state.delete_preset(name)
+        else:
+            performance_state.save_preset(name, request.get_json(force=True))
+    except ValueError:
+        return jsonify(APIResponse.error("Bad preset name.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/fragments', methods=['GET'])
+def performance_fragments():
+    off = _performance_off()
+    if off:
+        return off
+    return jsonify({"fragments": performance_state.list_fragments()})
+
+
+@app.route('/api/performance/fragments/<scope>', methods=['DELETE'])
+def performance_fragment_scope(scope):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        performance_state.clear_scope(scope)
+    except ValueError:
+        return jsonify(APIResponse.error("Bad scope.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/fragments/<scope>/copy', methods=['POST'])
+def performance_fragment_copy(scope):
+    off = _performance_off()
+    if off:
+        return off
+    data = request.get_json(silent=True) or {}
+    try:
+        copied = performance_state.copy_scope(scope, data.get('to'))
+    except ValueError:
+        return jsonify(APIResponse.error("Bad scope.", status_code=400)), 400
+    return jsonify({"copied": copied})
+
+
+@app.route('/api/performance/fragments/<scope>/<path:fragment_id>', methods=['GET', 'PUT', 'DELETE'])
+def performance_fragment(scope, fragment_id):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'PUT':
+            performance_state.put_fragment(scope, fragment_id, request.get_data(), request.content_type)
+            return jsonify({"ok": True})
+        if request.method == 'DELETE':
+            performance_state.delete_fragment(scope, fragment_id)
+            return jsonify({"ok": True})
+        path = performance_state.get_fragment(scope, fragment_id)
+    except ValueError:
+        return jsonify(APIResponse.error("Bad fragment name.", status_code=400)), 400
+    if path is None:
+        # Normal while older audio is still moving over from the window: not logged.
+        return jsonify({"error": "No such fragment."}), 404
+    return send_file(str(path), mimetype=performance_state.content_type(path))
 
 
 # --- Output device on macOS -------------------------------------------------

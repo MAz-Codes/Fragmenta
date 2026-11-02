@@ -1,71 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    SESSION_KEY,
+    deletePresetFile,
+    readPresets,
+    savePresetFile,
+    saveState,
+    saveStateNow,
+} from '../utils/performanceStore';
 
-export const PERFORMANCE_SESSION_STORAGE_KEY = 'fragmenta.performance.session.v1';
-
-const STORAGE_KEY = PERFORMANCE_SESSION_STORAGE_KEY;
+// Session and presets are saved in the data folder; the window keeps a copy
+// for the synchronous reads here (utils/performanceStore.js).
+const STORAGE_KEY = SESSION_KEY;
 
 export function clearPerformanceSession() {
-    try { localStorage.removeItem(STORAGE_KEY); }
-    catch { /* non-fatal */ }
-}
-
-const PRESETS_STORAGE_KEY = 'fragmenta.performance.presets.v1';
-
-function readPresetBag() {
-    try {
-        const raw = localStorage.getItem(PRESETS_STORAGE_KEY);
-        if (!raw) return {};
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-        return {};
-    }
-}
-
-function writePresetBag(bag) {
-    try {
-        localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(bag));
-        return true;
-    } catch {
-        // Quota / serialization failure — report it so callers can tell the
-        // user their preset was NOT saved instead of silently claiming success.
-        return false;
-    }
+    saveState('session', null);
 }
 
 export function listPresetNames() {
-    return Object.keys(readPresetBag()).sort((a, b) => a.localeCompare(b));
+    return Object.keys(readPresets()).sort((a, b) => a.localeCompare(b));
 }
 
+// False when the window couldn't keep it (quota), so callers can tell the
+// user their preset was NOT saved instead of silently claiming success.
 export function savePreset(name, sessionData) {
     const trimmed = (name || '').trim();
     if (!trimmed) return false;
-    const bag = readPresetBag();
-    bag[trimmed] = sessionData;
-    return writePresetBag(bag);
+    return savePresetFile(trimmed, sessionData);
 }
 
 export function deletePreset(name) {
-    const bag = readPresetBag();
-    if (!(name in bag)) return false;
-    delete bag[name];
-    writePresetBag(bag);
+    if (!(name in readPresets())) return false;
+    deletePresetFile(name);
     return true;
 }
 
-// Replace the live session storage with a preset's snapshot. Caller is
-// expected to force-remount the panel afterward so its useState mirrors
-// pick up the new shape; localStorage alone won't reset mounted state.
+// Replace the live session with a preset's snapshot. Caller is expected to
+// force-remount the panel afterward so its useState mirrors pick up the new
+// shape; storage alone won't reset mounted state.
 export function loadPresetIntoSession(name) {
-    const bag = readPresetBag();
-    const preset = bag[name];
+    const preset = readPresets()[name];
     if (!preset) return false;
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(preset));
-        return true;
-    } catch {
-        return false;
-    }
+    return saveState('session', preset);
 }
 
 const CHANNEL_DEFAULT = {
@@ -164,15 +139,13 @@ export function usePerformanceSession(channelCount = 4) {
     const sessionRef = useRef(session);
 
     // Knobs and sliders fire many times per second; debounce writes so we don't
-    // hammer localStorage. Last-write-wins is fine for session continuity.
+    // hammer storage. Last-write-wins is fine for session continuity.
     useEffect(() => {
         sessionRef.current = session;
         if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
         persistTimerRef.current = setTimeout(() => {
             persistTimerRef.current = null;
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-            } catch { /* quota or serialization — non-fatal */ }
+            saveState('session', session);
         }, 250);
         return () => {
             if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
@@ -195,9 +168,7 @@ export function usePerformanceSession(channelCount = 4) {
     // 250 ms of final tweaks aren't lost when the window closes).
     const flushPersist = useCallback(() => {
         cancelPendingPersist();
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(sessionRef.current));
-        } catch { /* non-fatal */ }
+        saveStateNow('session', sessionRef.current);
     }, [cancelPendingPersist]);
 
     useEffect(() => {

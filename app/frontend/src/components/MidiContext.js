@@ -10,8 +10,10 @@ import React, {
 import { Box } from '@mui/material';
 import api from '../api';
 import { faderPosToDb, faderDbToPos } from '../utils/faderLaw';
+import { MIDI_KEY, saveState } from '../utils/performanceStore';
 
-const STORAGE_KEY = 'fragmenta.midi.config.v1';
+// Saved in the data folder; the window keeps a copy (utils/performanceStore.js).
+const STORAGE_KEY = MIDI_KEY;
 
 const DEFAULT_CONFIG = {
     deviceIds: [],              // every input listened to, by port name
@@ -53,16 +55,13 @@ function loadConfig() {
 }
 
 function saveConfig(config) {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    } catch { /* quota or serialization — non-fatal */ }
+    saveState('midi', config);
 }
 
 // Wipes the persisted MIDI device + mappings. The provider will pick up the
 // reset on its next mount (caller is expected to remount).
 export function clearMidiConfig() {
-    try { localStorage.removeItem(STORAGE_KEY); }
-    catch { /* non-fatal */ }
+    saveState('midi', null);
 }
 
 // Do two mappings answer the same messages? A mapping learned before
@@ -98,9 +97,12 @@ export function MidiProvider({ children }) {
     const configRef = useRef(config);
     const learnTargetRef = useRef(learnTarget);
 
+    // Saved only once something changes, so an install that never touched
+    // MIDI has no settings file and Settings > Import can bring one over.
+    const loadedConfigRef = useRef(config);
     useEffect(() => {
         configRef.current = config;
-        saveConfig(config);
+        if (config !== loadedConfigRef.current) saveConfig(config);
     }, [config]);
 
     useEffect(() => { learnTargetRef.current = learnTarget; }, [learnTarget]);

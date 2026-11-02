@@ -74,7 +74,8 @@ class Env:
         make_old(self.old)
         paths = {"models_pretrained": self.here / "models/pretrained",
                  "models_fine_tuned": self.here / "models/fine_tuned",
-                 "output": self.here / "output"}
+                 "output": self.here / "output",
+                 "performance": self.here / "performance"}
         config = SimpleNamespace(get_path=paths.__getitem__, user_data_dir=self.here)
         self.manager = SimpleNamespace(list_jobs=lambda: [])
         self.patches = [mock.patch.object(di, "get_config", return_value=config),

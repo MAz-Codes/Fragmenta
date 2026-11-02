@@ -58,6 +58,7 @@ uploads/
 
 # ===== Generated audio & checkpoints =====
 output/
+performance/
 *.wav
 *.mp3
 *.flac

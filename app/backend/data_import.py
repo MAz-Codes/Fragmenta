@@ -7,11 +7,14 @@ changes the old folder.
 """
 import errno
 import os
+import re
 import shutil
 import threading
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+from urllib.parse import unquote
 
+from app.backend import performance_state
 from app.backend.data.projects import get_projects_dir
 from app.core.config import get_config
 
@@ -48,6 +51,8 @@ def _items() -> List[Dict[str, Any]]:
         {"id": "output", "label": "Generated audio", "src": "output", "dst": config.get_path("output")},
         {"id": "vocabulary", "label": "CLAP vocabulary", "src": "config/annotator_labels.user.json",
          "dst": Path(config.user_data_dir) / "config" / "annotator_labels.user.json"},
+        {"id": "performance", "label": "Performance presets, session and MIDI settings",
+         "src": "performance", "dst": config.get_path("performance"), "performance": True},
     ]
 
 
@@ -87,9 +92,61 @@ def _merge_steps(src: Path, dst: Path) -> Iterator[Tuple[Path, Path]]:
             yield from _merge_steps(child, dst / child.name)
 
 
+IMPORTED_SESSION = "Imported session"
+
+
+def _performance_steps(src: Path, dst: Path) -> Dict[str, Any]:
+    """Presets by name, each with its channel audio; the old session as a new
+    preset, since this install has its own; MIDI settings if there are none
+    here (the page saves them only once they're changed)."""
+    steps: List[Tuple[Path, Path]] = []
+    entries = already = 0
+    frag_src, frag_dst = src / "fragments", dst / "fragments"
+    scopes = sorted(p.name for p in frag_src.iterdir() if p.is_dir()) if frag_src.is_dir() else []
+
+    def bring_scopes(old_prefix: str, new_prefix: str) -> None:
+        pattern = re.compile(re.escape(performance_state.file_name(old_prefix)) + r"\d+$")
+        for folder in scopes:
+            if pattern.match(folder):
+                channel = folder[len(performance_state.file_name(old_prefix)):]
+                target = frag_dst / performance_state.file_name(f"{new_prefix}{channel}")
+                if not _exists(target):
+                    steps.append((frag_src / folder, target))
+
+    presets_here = dst / "presets"
+    if (src / "presets").is_dir():
+        for preset in sorted((src / "presets").glob("*.json")):
+            entries += 1
+            if _exists(presets_here / preset.name):
+                already += 1
+                continue
+            steps.append((preset, presets_here / preset.name))
+            prefix = performance_state.preset_scope(unquote(preset.stem), 0)[:-1]
+            bring_scopes(prefix, prefix)
+
+    if (src / "session.json").is_file():
+        entries += 1
+        name, n = IMPORTED_SESSION, 1
+        while _exists(presets_here / f"{performance_state.file_name(name)}.json"):
+            n += 1
+            name = f"{IMPORTED_SESSION} {n}"
+        steps.append((src / "session.json", presets_here / f"{performance_state.file_name(name)}.json"))
+        bring_scopes("session-ch", performance_state.preset_scope(name, 0)[:-1])
+
+    if (src / "midi.json").is_file():
+        entries += 1
+        if _exists(dst / "midi.json"):
+            already += 1
+        else:
+            steps.append((src / "midi.json", dst / "midi.json"))
+    return {"steps": steps, "entries": entries, "already": already}
+
+
 def _steps(item: Dict[str, Any], source: Path) -> Dict[str, Any]:
     """The moves this item needs, plus how many of its entries are already here."""
     src, dst = source / item["src"], item["dst"]
+    if item.get("performance"):
+        return _performance_steps(src, dst) if src.is_dir() else {"steps": [], "entries": 0, "already": 0}
     steps: List[Tuple[Path, Path]] = []
     entries = 0
     already = 0
