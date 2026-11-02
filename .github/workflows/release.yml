@@ -210,5 +210,5 @@ jobs:
           case "$version" in *-*) prerelease="--prerelease" ;; esac
           gh release create "v$version" --draft $prerelease --target "$GITHUB_SHA" \
             --title "Fragmenta $version" \
-            --notes "Built by CI from $GITHUB_SHA. Write the notes before publishing." \
+            --notes-file ../packaging/release-notes.md \
             Fragmenta-* SHA256SUMS latest.json

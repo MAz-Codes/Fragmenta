@@ -76,6 +76,7 @@ git push origin :build-dry-1 && git tag -d build-dry-1
 3. `git tag build-v<VERSION> && git push origin build-v<VERSION>` → draft release.
 4. Test the downloads on real machines (Mac, Windows + NVIDIA, Linux + NVIDIA).
 5. rc: write the notes and publish the draft as a pre-release on the `dev/2.0` commit.
+   The draft starts from `release-notes.md` (first-open steps for Mac and Windows).
    Final: open the `release/X.Y` PR into `main` without the dev-only paths; after
    it's merged, retarget the draft to the merge commit, write the notes, publish.
    Check `latest.json` first: CI writes it like 1.3's, with no `requires`.
