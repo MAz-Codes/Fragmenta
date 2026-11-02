@@ -208,7 +208,7 @@ Click **MIDI Learn** in the toolbar to enter learn mode, then click any UI eleme
 
 Real generation times measured in Fragmenta: **full clip** (sampling + VAE decode), warm model, batch size 1. Yours will vary with hardware, prompt, and settings.
 
-**Test machines:** NVIDIA RTX 5080 · AMD Ryzen 5 7600 (CPU, 12 threads) · Apple M1 (8-core)
+**Test machines:** NVIDIA RTX 5080 · AMD Ryzen 5 7600 (CPU, 12 threads) · Apple M1 (8-core, 16 GB)
 
 **Models:** *Small* = Music **or** SFX (same 433M architecture, near-identical speed; up to 120 s). *Medium* = 1.4B, up to 380 s. It needs an NVIDIA GPU on PyTorch (with Flash Attention 2), or Apple Silicon on MLX. All values in **seconds**.
 
@@ -225,12 +225,14 @@ Real generation times measured in Fragmenta: **full clip** (sampling + VAE decod
 | **CPU** (Apple M1) | 8 (distilled) | 5.6 | 8.9 | 14.1 | 27.8 |
 | **CPU** (Apple M1) | 50 (base) | 43.0 | 83.9 | 134.9 | 548.1 |
 | **CPU** (Apple M1) | 250 (base) | 210.7 | 398.5 | 668.3 | 2515.9 |
+| **MLX** (Apple M1) | 8 (distilled) | 2.0 | 3.7 | 6.2 | 11.7 |
 
 ### Medium
 
 | Inference steps | Device | 10 s | 30 s | 60 s | 120 s | 250 s | 380 s |
 |---|---|---|---|---|---|---|---|
 | 8 (distilled) | **GPU** (RTX 5080) | 0.4 | 0.5 | 0.6 | 1.1 | 2.3 | 5.7 |
+| 8 (distilled) | **MLX** (Apple M1) | 8.1 | 13.7 | 22.8 | 52.4 | – | – |
 | 50 (base) | **GPU** (RTX 5080) | 2.0 | 2.9 | 4.3 | 8.1 | 18.6 | 29.5 |
 | 250 (base) | **GPU** (RTX 5080) | 9.9 | 13.7 | 19.9 | 39 | 90 | 143 |
 
