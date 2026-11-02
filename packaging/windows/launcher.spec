@@ -18,11 +18,13 @@ from PyInstaller.utils.win32.versioninfo import (
     FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
 )
 
-ICON = os.path.join("app", "frontend", "public", "fragmenta.ico")
+# PyInstaller reads relative paths from this file's folder; SPECPATH is that folder.
+ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+ICON = os.path.join(ROOT, "app", "frontend", "public", "fragmenta.ico")
 
 # Windows wants four numbers: X.Y.Z.N, N = the rc number, 100 for a final release,
 # so 2.0.0-rc.1 < 2.0.0-rc.2 < 2.0.0.
-VERSION = open("VERSION", encoding="utf-8").read().strip()
+VERSION = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
 _m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?", VERSION)
 if not _m:
     raise SystemExit(f"VERSION {VERSION!r} isn't X.Y.Z or X.Y.Z-rc.N")
@@ -45,7 +47,7 @@ VERSION_INFO = VSVersionInfo(
 )
 
 a = Analysis(
-    ["packaging/launcher.py"],
+    [os.path.join(ROOT, "packaging", "launcher.py")],
     pathex=[],
     binaries=[],
     datas=[],
