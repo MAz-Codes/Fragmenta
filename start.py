@@ -624,6 +624,39 @@ def _windows_apply_window_icon() -> None:
         print(f"Could not set Windows window icon: {exc}")
 
 
+def _windows_show_output_devices(window) -> None:
+    """Let Settings > Audio list the output devices on Windows.
+
+    WebView2, like Chromium, lists output devices only to pages with microphone
+    permission; without it the page sees the system device alone. Grant it to
+    the app's own page in the window's profile. No prompt appears, and the
+    microphone is never opened: the page doesn't call getUserMedia. The grant
+    is saved in the profile, so from the next launch it's there before the page
+    loads; this time Settings picks the devices up when it opens.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from System import Action
+        from Microsoft.Web.WebView2.Core import (
+            CoreWebView2PermissionKind,
+            CoreWebView2PermissionState,
+        )
+
+        form = window.native
+
+        def grant():
+            form.browser.webview.CoreWebView2.Profile.SetPermissionStateAsync(
+                CoreWebView2PermissionKind.Microphone,
+                BACKEND_URL,
+                CoreWebView2PermissionState.Allow,
+            )
+
+        form.Invoke(Action(grant))
+    except Exception as exc:
+        print(f"Could not let the window list output devices: {exc}")
+
+
 DEFAULT_WINDOW_SIZE = (1400, 850)
 DEFAULT_MIN_SIZE = (1000, 700)
 
@@ -856,6 +889,7 @@ def run_pywebview_mode() -> int:
             )
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
+                window.events.loaded += _windows_show_output_devices
             elif sys.platform == "linux":
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
