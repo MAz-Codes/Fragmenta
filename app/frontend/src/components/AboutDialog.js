@@ -14,6 +14,7 @@ import {
 import api from '../api';
 import { appStyles } from '../theme';
 import Tooltip from './Tooltip';
+import UninstallDialog from './UninstallDialog';
 import { APP_VERSION } from '../version';
 
 const LICENSES_URL = 'https://github.com/MAz-Codes/Fragmenta/tree/main/licenses';
@@ -58,10 +59,16 @@ export function AboutPanel({
     const us = update && update.status;
     const showUpdates = Boolean(us && us.disabled_reason !== 'hf_space');
     const [env, setEnv] = useState(null);
+    // Only the installed app can uninstall itself; source installs never see the button.
+    const [canUninstall, setCanUninstall] = useState(false);
+    const [uninstalling, setUninstalling] = useState(false);
     useEffect(() => {
         let cancelled = false;
         api.get('/api/environment')
             .then(({ data }) => { if (!cancelled) setEnv(data); })
+            .catch(() => {});
+        api.get('/api/uninstall')
+            .then(({ data }) => { if (!cancelled) setCanUninstall(Boolean(data.available)); })
             .catch(() => {});
         return () => { cancelled = true; };
     }, []);
@@ -168,6 +175,15 @@ export function AboutPanel({
                                 </Button>
                             </Box>
                         )}
+                    </Box>
+                )}
+
+                {canUninstall && (
+                    <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+                        <Button size="small" onClick={() => setUninstalling(true)} sx={{ color: 'text.secondary' }}>
+                            Uninstall Fragmenta…
+                        </Button>
+                        <UninstallDialog open={uninstalling} onClose={() => setUninstalling(false)} />
                     </Box>
                 )}
 

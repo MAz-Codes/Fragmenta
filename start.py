@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -45,6 +46,15 @@ CHROMIUM_CANDIDATES = (
 CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
 CHROMIUM_MIN_SESSION_SECONDS = 15.0
 WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
+if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+    # The installed app keeps its window's storage with the rest of its data, so
+    # Uninstall removes it and a source install on the same computer keeps its own.
+    from app.core.config import get_config
+    CHROMIUM_USER_DATA_DIR = get_config().user_data_dir / "chrome-profile"
+    WEBVIEW_STORAGE_DIR = get_config().user_data_dir / "webview-profile"
+# The backend exits with this once Uninstall has started; the window then closes.
+# Must stay in sync with app/backend/uninstall.py's EXIT_CODE.
+UNINSTALL_EXIT_CODE = 86
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
@@ -196,6 +206,14 @@ def wait_for_backend(timeout_seconds: int = 60) -> bool:
             return True
         time.sleep(0.4)
     return False
+
+def _close_on_uninstall(backend: subprocess.Popen, close) -> None:
+    """Call ``close`` from a thread once the backend exits for an uninstall."""
+    def watch() -> None:
+        if backend.wait() == UNINSTALL_EXIT_CODE:
+            close()
+    threading.Thread(target=watch, daemon=True).start()
+
 
 def backend_process_running() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -377,11 +395,23 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         ]
 
         quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        uninstalling = threading.Event()
+
+        def close_for_uninstall() -> None:
+            uninstalling.set()
+            if chromium_process is not None:
+                chromium_process.terminate()
+
+        if backend_process is not None:
+            _close_on_uninstall(backend_process, close_for_uninstall)
+
         last_exit_code = 1
         for index, (label, args) in enumerate(attempts):
             launched_at = time.monotonic()
             chromium_process = subprocess.Popen(args, cwd=str(PROJECT_ROOT), **quiet)
             chromium_process.wait()
+            if uninstalling.is_set():
+                return 0
             elapsed = time.monotonic() - launched_at
             last_exit_code = chromium_process.returncode or 0
             if last_exit_code == 0:
@@ -816,6 +846,8 @@ def run_pywebview_mode() -> int:
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
+            if backend_process is not None:
+                _close_on_uninstall(backend_process, window.destroy)
 
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             start_kwargs = {"private_mode": False, "storage_path": str(WEBVIEW_STORAGE_DIR)}

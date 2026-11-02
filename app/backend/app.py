@@ -7,7 +7,7 @@ from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
 from app.core.generation.models import lora_family
 from app.core.generation.content_credentials import sign_wav
 from app.core.generation.provenance import recording_manifest, recording_tags, tag_existing_wav
-from app.backend import data_import, starter_model, update_check
+from app.backend import data_import, starter_model, uninstall, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -1731,6 +1731,30 @@ def import_status():
 @app.route('/api/import/cancel', methods=['POST'])
 def import_cancel():
     return jsonify(data_import.cancel())
+
+
+# --- Uninstall from inside the installed app (app/backend/uninstall.py) -------
+
+@app.route('/api/uninstall', methods=['GET'])
+def uninstall_plan():
+    return jsonify(uninstall.plan(sizes=request.args.get('sizes') == '1'))
+
+
+@app.route('/api/uninstall', methods=['POST'])
+def uninstall_start():
+    data = request.get_json() or {}
+    busy = None
+    if get_training_status().get('is_training'):
+        busy = 'A training run is going. Stop it first.'
+    elif any(j['status'] in ('queued', 'running') for j in model_manager.list_jobs()):
+        busy = 'A model is downloading. Wait for it to finish, or cancel it first.'
+    elif data_import.status().get('state') == 'running':
+        busy = 'An import is running. Wait for it to finish, or cancel it first.'
+    body, code = uninstall.start(keep_data=data.get('keep_data') is not False, busy=busy)
+    if code == 202:
+        # Long enough for this answer to reach the page; start.py then closes the window.
+        threading.Timer(1.0, os._exit, args=(uninstall.EXIT_CODE,)).start()
+    return jsonify(body), code
 
 
 # --- First-run starter model (app/backend/starter_model.py) -------------------
