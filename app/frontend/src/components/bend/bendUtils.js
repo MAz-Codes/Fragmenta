@@ -240,7 +240,8 @@ export function mutatePatch(modules, registry, amount = 0.15) {
 // The model as a circuit board of unlabelled contacts. What each contact
 // does is fixed — a pure function of the contact — so touching the same
 // point always does the same thing. Nothing is chosen from a menu; it is
-// found by touching and listening (Ghazala's anti-theory; BEND_PLAN.md).
+// found by touching and listening (Ghazala's anti-theory, as Kotowski &
+// Font bring it to neural synthesis; the write-up is phd/network-bending.md).
 
 /** mulberry32 — tiny seeded PRNG, enough for a fixed per-contact behaviour. */
 export function seededRandom(seed) {
