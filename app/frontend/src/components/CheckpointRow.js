@@ -79,7 +79,7 @@ const hostIncompatReason = (hw, env) => {
     return null;
 };
 
-export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, onChanged }) {
+export default function CheckpointRow({ checkpoint, env, terms, name, note, onAuthRequired, onChanged }) {
     const [jobId, setJobId] = useState(checkpoint.active_job?.job_id || null);
     const [job, setJob] = useState(checkpoint.active_job || null);
     const [error, setError] = useState(null);
@@ -251,10 +251,11 @@ export default function CheckpointRow({ checkpoint, env, terms, onAuthRequired, 
                             '&:hover': { textDecoration: 'underline' },
                         }}
                     >
-                        {checkpoint.name}
+                        {name || checkpoint.name}
                     </Typography>
                 </Tooltip>
                 <Typography sx={MODEL_FACTS_SX}>{modelFacts(checkpoint)}</Typography>
+                {note && <Typography sx={MODEL_FACTS_SX}>{note}</Typography>}
             </Box>
             {renderAction()}
 

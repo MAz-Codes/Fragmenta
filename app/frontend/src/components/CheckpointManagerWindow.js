@@ -19,7 +19,7 @@ import CheckpointRow, { fmtBytes, MODEL_CARD_SX, MODEL_NAME_SX, MODEL_FACTS_SX }
 import StorageDrilldown from './StorageDrilldown';
 import Tooltip from './Tooltip';
 import { TIPS } from '../tooltips';
-import { hiddenOnMac } from '../utils/macModels';
+import { hiddenOnMac, bendOnlyOnMac } from '../utils/macModels';
 
 const ROW_COLUMNS = '190px repeat(3, minmax(0, 1fr))';
 
@@ -118,6 +118,12 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
     const anyInstalled = catalog.some(c => c.downloaded);
     const appleSilicon = catalog.some(c => c.kind === 'mlx');
     const shown = catalog.filter(c => !(appleSilicon && hiddenOnMac(c)));
+    // On a Mac the Bend tab's PyTorch model sits under its MLX twin, in the
+    // same cell of the MLX row, so it is clear it is only needed for that
+    // one tab. Off a Mac it is an ordinary Fast generation model.
+    const bendTwin = appleSilicon ? shown.find(bendOnlyOnMac) : null;
+    const MLX_TWIN_ID = 'sa3-mlx-small-music';
+    const rowOf = (c) => (c === bendTwin ? (shown.some(m => m.id === MLX_TWIN_ID) ? 'mlx' : c.kind) : c.kind);
     const hasGatedRow = shown.some(c => c.kind === 'post-trained' && !c.downloaded);
     // Public HF Spaces demo: checkpoints are pre-provisioned and visitors
     // must not hand a personal HF token to a shared Space, so sign-in is
@@ -223,13 +229,18 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                     )}
 
                     <Stack spacing={2.5}>
-                        {purposeRows(appleSilicon, hfAuth.signed_in).filter(row => shown.some(c => c.kind === row.key)).map((row, index) => {
-                            const models = shown.filter(c => c.kind === row.key);
+                        {purposeRows(appleSilicon, hfAuth.signed_in).filter(row => shown.some(c => rowOf(c) === row.key)).map((row, index) => {
+                            const models = shown.filter(c => rowOf(c) === row.key);
                             const withStorage = row.key === 'tagger';
                             return (
                                 <React.Fragment key={row.key}>
                                     {index > 0 && <Box sx={{ height: '1px', backgroundColor: 'divider' }} />}
-                                    <Box sx={{ display: 'grid', gridTemplateColumns: ROW_COLUMNS, gap: 1.5 }}>
+                                    <Box sx={{
+                                        display: 'grid', gridTemplateColumns: ROW_COLUMNS, gap: 1.5,
+                                        // The stacked Bend card makes its cell tall; the other
+                                        // cards keep their own height rather than stretching to it.
+                                        alignItems: bendTwin && row.key === 'mlx' ? 'start' : 'stretch',
+                                    }}>
                                         <Box sx={{ alignSelf: 'center', pr: 1.5 }}>
                                             <Typography variant="subtitle1" component="h3" sx={{ fontSize: 20, lineHeight: 1.15 }}>
                                                 {row.title}
@@ -238,16 +249,33 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                                                 {row.about}
                                             </Typography>
                                         </Box>
-                                        {models.map(c => (
-                                            <CheckpointRow
-                                                key={c.id}
-                                                checkpoint={c}
-                                                env={env}
-                                                terms={terms}
-                                                onAuthRequired={() => setShowTokenInput(true)}
-                                                onChanged={refresh}
-                                            />
-                                        ))}
+                                        {models.filter(c => !(c === bendTwin && rowOf(c) === 'mlx')).map(c => {
+                                            const card = (
+                                                <CheckpointRow
+                                                    key={c.id}
+                                                    checkpoint={c}
+                                                    env={env}
+                                                    terms={terms}
+                                                    onAuthRequired={() => setShowTokenInput(true)}
+                                                    onChanged={refresh}
+                                                />
+                                            );
+                                            if (!(bendTwin && c.id === MLX_TWIN_ID)) return card;
+                                            return (
+                                                <Box key={c.id} sx={{ display: 'grid', gap: 1.5, alignContent: 'start' }}>
+                                                    {card}
+                                                    <CheckpointRow
+                                                        checkpoint={bendTwin}
+                                                        name="Small - Music (PyTorch)"
+                                                        note="For the Bend tab only. Hugging Face account needed."
+                                                        env={env}
+                                                        terms={terms}
+                                                        onAuthRequired={() => setShowTokenInput(true)}
+                                                        onChanged={refresh}
+                                                    />
+                                                </Box>
+                                            );
+                                        })}
                                         {withStorage && (
                                             <Tooltip title={TIPS.manager.storage}>
                                                 {/* span wrapper so the tooltip works before storage has loaded */}

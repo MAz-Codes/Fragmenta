@@ -15,6 +15,7 @@ import Tooltip from '../Tooltip';
 import api from '../../api';
 import { TIPS } from '../../tooltips';
 import { appStyles } from '../../theme';
+import { BEND_MODEL } from '../../utils/macModels';
 import SignalPath from './SignalPath';
 import LoraStack from '../LoraStack';
 import BendModuleCard from './BendModuleCard';
@@ -48,6 +49,8 @@ import {
  */
 
 const STORE_KEY = 'fragmenta.bend.v1';
+// The models the board can bend (see the comment at downloadedModels).
+const BEND_MODELS = [BEND_MODEL];
 // Rack and Break are hidden unless this flag is set; see the header comment.
 const ADVANCED_KEY = 'fragmenta.bend.advanced';
 const readAdvanced = () => {
@@ -152,25 +155,26 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     const [loadingWeights, setLoadingWeights] = useState(false);
     const loadingSinceRef = useRef(null);
 
+    // Bending hooks PyTorch modules, so MLX models can't be bent; on a Mac
+    // the Checkpoint Manager offers this PyTorch model next to its MLX twin,
+    // for the Bend tab only, and it runs on the MPS path. Until more models
+    // are verified, the board offers this one model on every platform
+    // (verified contact by contact 4 Nov 2026 on CUDA: tests/verify_bend_board.py).
     const downloadedModels = useMemo(
-        () => (models || []).filter(m => m.downloaded), [models]);
+        () => (models || []).filter(m => m.downloaded && BEND_MODELS.includes(m.name)), [models]);
 
-    // Default model: first downloaded, preferring distilled small (fast
-    // audition loop — the modify→listen cycle must stay tight).
-    // Also replaces a remembered model that is no longer downloaded.
+    // Also replaces a remembered model that is no longer offered.
     useEffect(() => {
-        if (!downloadedModels.length) return;
+        if (!downloadedModels.length) { if (modelId) setModelId(''); return; }
         if (modelId && downloadedModels.some(m => m.name === modelId)) return;
-        const preferred = downloadedModels.find(m => m.name === 'sa3-small-music')
-            || downloadedModels[0];
-        setModelId(preferred.name);
+        setModelId(downloadedModels[0].name);
     }, [downloadedModels, modelId]);
 
     // Registry per model. A slow response for a model the user has already
     // switched away from must not overwrite the current one.
     useEffect(() => {
         let stale = false;
-        const id = modelId || 'sa3-small-music-base';
+        const id = modelId || BEND_MODELS[0];
         api.get(`/api/bend/targets?model_id=${encodeURIComponent(id)}`)
             .then(({ data }) => { if (!stale) setRegistry(data); })
             .catch(() => {});
@@ -693,7 +697,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                                 ))}
                                 {!downloadedModels.length && (
                                     <MenuItem value="" disabled>
-                                        No models downloaded — use Get models first
+                                        Bending needs Small - Music (the PyTorch build) — get it in the Checkpoint Manager
                                     </MenuItem>
                                 )}
                             </Select>

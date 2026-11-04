@@ -63,7 +63,7 @@ import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
 import ConfirmDialog from './components/ConfirmDialog';
-import { hiddenOnMac } from './utils/macModels';
+import { hiddenOnMac, bendOnlyOnMac } from './utils/macModels';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
 import PreEncodeProgress from './components/PreEncodeProgress';
@@ -747,7 +747,10 @@ function App() {
                 ...prevModels.filter(model => model.kind !== 'mlx').map(model => ({
                     ...model,
                     downloaded: byId[model.name]?.downloaded || false,
-                    hidden: mlxModels.length > 0 && Boolean(byId[model.name]) && hiddenOnMac(byId[model.name]),
+                    // On a Mac the Bend tab's PyTorch model stays out of the
+                    // Generation and Performance pickers; the Bend tab ignores `hidden`.
+                    hidden: mlxModels.length > 0 && Boolean(byId[model.name])
+                        && (hiddenOnMac(byId[model.name]) || bendOnlyOnMac(byId[model.name])),
                 })),
             ]);
         } catch (error) {
