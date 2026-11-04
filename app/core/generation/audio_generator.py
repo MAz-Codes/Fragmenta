@@ -137,18 +137,19 @@ def _bend_output_safety(audio: np.ndarray, report: list) -> np.ndarray:
     if rms > _BLOWN_RMS:
         blown = _spectral_flatness(a) > _BLOWN_FLATNESS
         a = a * (_BEND_RMS_CEILING / rms)
+        # Round off what is left of the peaks. Only here: tanh is
+        # near-linear below the ceiling but not linear (it took 0.3 dB off
+        # every take's RMS, and 1 dB off a base-model take, before 4 Nov
+        # 2026), and a take the bend did not blow up must go through the
+        # same arithmetic as its clean reference — the file writer's own
+        # clipping is the same for both.
+        a = (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING)
         report.append(
             "This bend blew up into noise — the model was pushed further than "
             "it can recover from. Lower the dry/wet or try another contact."
             if blown else
             f"Bent output was very loud ({20 * np.log10(rms):.1f} dBFS RMS); "
             f"level reduced to -16 dBFS for hearing safety.")
-    # Only a take that actually reaches the peak ceiling is soft-clipped;
-    # tanh is near-linear below it, but not linear (it took 0.3 dB off
-    # every take's RMS before 4 Nov 2026), and the bent and clean takes
-    # must go through the same arithmetic wherever the bend was harmless.
-    if float(np.abs(a).max()) > _BEND_PEAK_CEILING:
-        a = (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING)
     return a.astype(np.float32)
 
 
