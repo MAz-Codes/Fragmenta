@@ -101,7 +101,14 @@ class Probe:
             out = probe._orig(self_, t, mod, stage, feature_axis, tag)
             r_in = float(t.detach().float().pow(2).mean().sqrt())
             r_out = float(out.detach().float().pow(2).mean().sqrt())
-            rec = probe.calls.setdefault(mod["id"], {"steps": [], "ratio": [], "domain": mod["target"]["domain"]})
+            rec = probe.calls.setdefault(mod["id"], {
+                "steps": [], "ratio": [], "domain": mod["target"]["domain"],
+                "keep_level": bool(mod.get("keep_level")),
+                # Level matching is skipped by design where level is the
+                # whole effect (session.py), so those calls don't count
+                # against keep_level.
+                "level_only": mod.get("operator") in ("scale", "ablate")
+                and (mod["target"].get("features") or {}).get("mode", "all") == "all"})
             rec["steps"].append(int(self_._step))
             rec["ratio"].append(r_out / r_in if r_in > 0 else None)
             return out
@@ -235,6 +242,7 @@ def main() -> int:
             "params_restored": restored,
             "hooks_after": hook_count(inner),
             "calls": {mid: {"domain": c["domain"], "n": len(c["steps"]),
+                            "keep_level": c["keep_level"], "level_only": c["level_only"],
                             "steps": sorted(set(c["steps"])),
                             "level_ratio_mean": (float(np.mean([r for r in c["ratio"] if r is not None]))
                                                  if any(r is not None for r in c["ratio"]) else None),
@@ -342,7 +350,7 @@ def main() -> int:
         "weak_effect_below_-20dB": weak, "non_finite_output": nonfinite,
         "keep_level_max_dev": max([c["level_ratio_max_dev"] or 0.0 for e in ran
                                    for c in e["calls"].values()
-                                   if any(m.get("keep_level") for m in e["modules"])] or [0.0]),
+                                   if c.get("keep_level") and not c.get("level_only")] or [0.0]),
     }
     Path(args.out).write_text(json.dumps(report, indent=1))
     print(json.dumps(report["summary"], indent=1))
