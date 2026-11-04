@@ -143,8 +143,13 @@ def _bend_output_safety(audio: np.ndarray, report: list) -> np.ndarray:
             if blown else
             f"Bent output was very loud ({20 * np.log10(rms):.1f} dBFS RMS); "
             f"level reduced to -16 dBFS for hearing safety.")
-    # tanh is ~linear at low levels, so this only rounds off the peaks.
-    return (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING).astype(np.float32)
+    # Only a take that actually reaches the peak ceiling is soft-clipped;
+    # tanh is near-linear below it, but not linear (it took 0.3 dB off
+    # every take's RMS before 4 Nov 2026), and the bent and clean takes
+    # must go through the same arithmetic wherever the bend was harmless.
+    if float(np.abs(a).max()) > _BEND_PEAK_CEILING:
+        a = (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING)
+    return a.astype(np.float32)
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
