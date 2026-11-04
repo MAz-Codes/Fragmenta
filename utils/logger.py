@@ -65,8 +65,13 @@ class FragmentaLogger:
 
         numeric_level = getattr(logging, log_level, logging.INFO)
 
-        log_dir = Path("logs")
-        log_dir.mkdir(exist_ok=True)
+        # Packaged, the code folder may be read-only (an AppImage always is).
+        if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+            from app.core.config import _default_user_data_dir
+            log_dir = _default_user_data_dir() / "logs"
+        else:
+            log_dir = Path("logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
 
         root_logger = logging.getLogger()
         root_logger.setLevel(numeric_level)

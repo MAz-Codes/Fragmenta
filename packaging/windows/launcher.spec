@@ -10,14 +10,44 @@
 # Setup script then puts that folder together with the assembled bundle
 # (runtime\ + payload\) so the launcher finds them beside the exe.
 #
-# Icon: app/frontend/public/fragmenta.ico — generate it from fragmenta_icon_1024.png
-# before building (see packaging/README.md). If absent, the exe builds without an icon.
+# Icon: app/frontend/public/fragmenta.ico (committed).
 import os
+import re
 
-ICON = os.path.join("app", "frontend", "public", "fragmenta.ico")
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
+)
+
+# PyInstaller reads relative paths from this file's folder; SPECPATH is that folder.
+ROOT = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
+ICON = os.path.join(ROOT, "app", "frontend", "public", "fragmenta.ico")
+
+# Windows wants four numbers: X.Y.Z.N, N = the rc number, 100 for a final release,
+# so 2.0.0-rc.1 < 2.0.0-rc.2 < 2.0.0.
+VERSION = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
+_m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?", VERSION)
+if not _m:
+    raise SystemExit(f"VERSION {VERSION!r} isn't X.Y.Z or X.Y.Z-rc.N")
+NUMBERS = (int(_m[1]), int(_m[2]), int(_m[3]), int(_m[4] or 100))
+
+VERSION_INFO = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=NUMBERS, prodvers=NUMBERS),
+    kids=[
+        StringFileInfo([StringTable("040904B0", [
+            StringStruct("CompanyName", "Misagh Azimi"),
+            StringStruct("FileDescription", "Fragmenta"),
+            StringStruct("FileVersion", VERSION),
+            StringStruct("InternalName", "fragmenta"),
+            StringStruct("OriginalFilename", "fragmenta.exe"),
+            StringStruct("ProductName", "Fragmenta"),
+            StringStruct("ProductVersion", VERSION),
+        ])]),
+        VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+    ],
+)
 
 a = Analysis(
-    ["packaging/launcher.py"],
+    [os.path.join(ROOT, "packaging", "launcher.py")],
     pathex=[],
     binaries=[],
     datas=[],
@@ -36,7 +66,8 @@ exe = EXE(
     exclude_binaries=True,
     name="fragmenta",
     console=False,            # windowed launcher (no console flash)
-    icon=ICON if os.path.exists(ICON) else None,
+    icon=ICON,
+    version=VERSION_INFO,
 )
 
 coll = COLLECT(

@@ -3,13 +3,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
+import tempfile
+import threading
 import time
+import urllib.error
+import urllib.request
 import venv
 from pathlib import Path
 
@@ -39,6 +46,19 @@ LAION_CLAP_SPEC = "laion-clap>=1.1.6"
 # install still wants them for the native-window fallback.
 LINUX_GTK = {"pycairo", "pygobject"}
 KEEP_LOGS = 10
+
+# A first install is the ~8 GB CUDA venv and uv cache plus room to unpack them
+# (the Mac has no CUDA stack). An update reuses most of the cache.
+DISK_FIRST_INSTALL_GB = 4 if sys.platform == "darwin" else 12
+DISK_UPDATE_GB = 2 if sys.platform == "darwin" else 5
+DISK_MODEL_GB = 4  # the smallest base model is ~3.5 GB
+DOWNLOAD_HOSTS = ("pypi.org", "files.pythonhosted.org", "download.pytorch.org", "github.com")
+HOST_TIMEOUT = 5
+MIN_NVIDIA_DRIVER = 570  # the cu128 torch builds need R570
+MIN_MACOS = (14, 0)
+MIN_WINDOWS_BUILD = 17763  # Windows 10 1809
+MIN_GLIBC = (2, 28)
+BACKEND_START_TIMEOUT = 180  # a first start compiles every module
 
 
 def _required_python() -> tuple[int, int]:
@@ -152,34 +172,44 @@ def _macos_link_libpython(venv_path: Path) -> None:
         dst.symlink_to(src)
 
 
-def _venv_home_missing() -> bool:
-    cfg = VENV_PATH / "pyvenv.cfg"
+def _venv_cfg() -> dict:
     try:
-        for line in cfg.read_text(encoding="utf-8").splitlines():
-            key, _, value = line.partition("=")
-            if key.strip() == "home":
-                return not Path(value.strip()).exists()
+        lines = (VENV_PATH / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return True
-    return False
+        return {}
+    return {k.strip(): v.strip() for k, _, v in (line.partition("=") for line in lines)}
+
+
+def _venv_home_missing() -> bool:
+    home = _venv_cfg().get("home")
+    return not home or not Path(home).exists()
+
+
+def _refresh_venv() -> None:
+    log("refreshing the venv for this Python…")
+    rc = run([sys.executable, "-m", "venv", "--upgrade", "--copies", str(VENV_PATH)])
+    if rc != 0:
+        fail(f"could not refresh the venv at {VENV_PATH} (exit {rc}).")
 
 
 def ensure_venv() -> Path:
     py = venv_python()
     if VENV_PATH.exists():
+        # A venv whose base Python is gone can't even report its version. If it
+        # was made for this minor version, point it at this Python first: an
+        # AppImage mounts at a new path every launch, and an update can move the app.
+        recorded = _venv_cfg().get("version", "")
+        if _venv_home_missing() and recorded.startswith(f"{REQUIRED_PY_STR}."):
+            _refresh_venv()
         v = python_version_of(py) if py.exists() else None
         if v is None or v[:2] != REQUIRED_PY:
             log(f"existing venv is not Python {REQUIRED_PY_STR} — recreating…")
             shutil.rmtree(VENV_PATH, ignore_errors=True)
         else:
-            if v != tuple(sys.version_info[:3]) or _venv_home_missing():
-                # Same minor version, but the base Python changed or moved
-                # (an app update ships a newer 3.14.x): refresh the venv's
-                # copied interpreter instead of rebuilding every package.
-                log("refreshing the venv for this Python…")
-                rc = run([sys.executable, "-m", "venv", "--upgrade", "--copies", str(VENV_PATH)])
-                if rc != 0:
-                    fail(f"could not refresh the venv at {VENV_PATH} (exit {rc}).")
+            if v != tuple(sys.version_info[:3]):
+                # Same minor version, but an app update ships a newer 3.14.x:
+                # refresh the copied interpreter instead of rebuilding every package.
+                _refresh_venv()
             _macos_link_libpython(VENV_PATH)
             return py
     log(f"creating virtual environment at {VENV_PATH} …")
@@ -338,6 +368,318 @@ def verify(py: Path) -> None:
         _write_log(line + "\n")
 
 
+def _version_tuple(text: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", text))
+
+
+def _os_problem() -> str | None:
+    if sys.platform == "darwin":
+        found = platform.mac_ver()[0]
+        if found and _version_tuple(found) < MIN_MACOS:
+            return f"Fragmenta needs macOS {MIN_MACOS[0]} or newer (this is {found})."
+    elif sys.platform == "win32":
+        build = sys.getwindowsversion().build
+        if build < MIN_WINDOWS_BUILD:
+            return f"Fragmenta needs Windows 10 version 1809 or newer (this is build {build})."
+    else:
+        libc, found = platform.libc_ver()
+        if libc == "glibc" and found and _version_tuple(found) < MIN_GLIBC:
+            return f"Fragmenta needs glibc {'.'.join(map(str, MIN_GLIBC))} or newer (this is {found})."
+    return None
+
+
+def _data_dir_problem() -> str | None:
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=DATA_DIR):
+            pass
+    except OSError as exc:
+        return f"Fragmenta can't write to {DATA_DIR}: {exc}"
+    return None
+
+
+def _free_gb() -> float:
+    path = DATA_DIR
+    while not path.exists() and path != path.parent:
+        path = path.parent
+    return shutil.disk_usage(path).free / 1e9
+
+
+def _reaches(host: str) -> bool:
+    """Does anything answer at this host? Any HTTP status counts, and the
+    certificate isn't checked: uv does that on the real download."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    request = urllib.request.Request(f"https://{host}/", method="HEAD")
+    try:
+        urllib.request.urlopen(request, timeout=HOST_TIMEOUT, context=context).close()
+    except urllib.error.HTTPError:
+        pass
+    except Exception:
+        return False
+    return True
+
+
+def _reachable_hosts() -> dict[str, bool]:
+    results = dict.fromkeys(DOWNLOAD_HOSTS, False)
+
+    def probe(host: str) -> None:
+        results[host] = _reaches(host)
+
+    # Daemon threads: a stuck DNS lookup ignores the socket timeout.
+    threads = [threading.Thread(target=probe, args=(h,), daemon=True) for h in DOWNLOAD_HOSTS]
+    for t in threads:
+        t.start()
+    deadline = time.monotonic() + HOST_TIMEOUT + 1
+    for t in threads:
+        t.join(max(0, deadline - time.monotonic()))
+    return dict(results)
+
+
+def _nvidia_gpu() -> tuple[str, str] | None:
+    """(name, driver version) of the first NVIDIA GPU, if there is one."""
+    if sys.platform == "darwin":
+        return None
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+        )
+        name, driver = out.stdout.splitlines()[0].rsplit(",", 1)
+        return name.strip(), driver.strip()
+    except Exception:
+        return None
+
+
+def preflight(full: bool = False) -> dict:
+    """What would stop the app from installing or starting, before anything
+    changes. The network and GPU checks only run when an install is due (or
+    with ``full``), so an ordinary launch doesn't wait for them."""
+    failures: list[dict] = []
+    warnings: list[str] = []
+    notes: list[str] = []
+
+    def failed(code: str, message: str) -> None:
+        failures.append({"code": code, "message": message})
+
+    lock = platform_lock()
+    py = venv_python()
+    install_needed = not (py.exists() and is_required_py(py) and deps_up_to_date(lock))
+
+    version = PROJECT_ROOT / "VERSION"
+    system: dict = {
+        "version": version.read_text(encoding="utf-8").strip() if version.exists() else None,
+        "os": platform.platform(),
+        "arch": platform.machine(),
+        "python": platform.python_version(),
+        "lock": lock.name if lock else None,
+        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest() if lock else None,
+    }
+
+    problem = _os_problem()
+    if problem:
+        failed("os", problem)
+    if not lock:
+        message = f"There is no Fragmenta build for {sys.platform} on {platform.machine()}."
+        if PACKAGED:
+            failed("os", message)
+        else:
+            warnings.append(message + " Resolving requirements.txt instead.")
+
+    problem = _data_dir_problem()
+    if problem:
+        failed("permission", problem)
+
+    free = _free_gb()
+    system["disk_free_gb"] = round(free, 1)
+    if install_needed:
+        need = DISK_UPDATE_GB if VENV_PATH.exists() else DISK_FIRST_INSTALL_GB
+        if free < need:
+            failed("disk", f"Fragmenta needs about {need} GB of free space to install, and the drive "
+                           f"holding {DATA_DIR} has {free:.1f} GB free. Free up some space and try again.")
+        elif free < need + DISK_MODEL_GB:
+            warnings.append(f"Only {free:.1f} GB is free. Fragmenta will install, but models need "
+                            f"at least {DISK_MODEL_GB} GB more.")
+
+    proxies = sorted(k for k in os.environ if k.upper() in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"))
+    if proxies:
+        notes.append("Proxy settings found: " + ", ".join(proxies))
+
+    if install_needed or full:
+        hosts = _reachable_hosts()
+        system["hosts"] = hosts
+        down = [h for h, up in hosts.items() if not up]
+        if install_needed and len(down) == len(hosts):
+            failed("network", "Fragmenta needs the internet to finish installing, and couldn't reach "
+                              "any download server. Check your connection, firewall or proxy, and try again.")
+        elif install_needed and down:
+            warnings.append(f"Couldn't reach {', '.join(down)}. The install may not finish.")
+
+        gpu = _nvidia_gpu()
+        if gpu:
+            system["gpu"], system["driver"] = gpu
+            major = _version_tuple(gpu[1])[:1]
+            if major and major[0] < MIN_NVIDIA_DRIVER:
+                warnings.append(f"Your NVIDIA driver ({gpu[1]}) is older than version {MIN_NVIDIA_DRIVER}. "
+                                "Fragmenta won't use the GPU until it's updated.")
+
+    report = {
+        "ok": not failures,
+        "install_needed": install_needed,
+        "full": install_needed or full,
+        "failures": failures,
+        "warnings": warnings,
+        "notes": notes,
+        "system": system,
+        "log_dir": str(LOG_DIR),
+    }
+    if report["full"]:
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            (LOG_DIR / "preflight.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return report
+
+
+def _check(name: str, ok: bool, detail: str = "") -> dict:
+    log(f"{'PASS' if ok else 'FAIL'}  {name}" + (f": {detail}" if detail else ""))
+    return {"name": name, "ok": ok, "detail": detail}
+
+
+def _self_test_env() -> dict:
+    # What the shell happens to have on its path mustn't help or break this.
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"} | {"PYTHONIOENCODING": "utf-8"}
+
+
+def _import_checks(py: Path, lock: Path | None) -> list[dict]:
+    vendor = str(PROJECT_ROOT / "vendor" / "stable-audio-3")
+    snippets = {
+        "torch": "import torch; print(torch.__version__, 'with CUDA' if torch.cuda.is_available() else 'without CUDA')",
+        "stable_audio_3": f"import sys; sys.path.insert(0, {vendor!r}); import stable_audio_3",
+        "soundfile": "import soundfile",
+        "av": "import av",
+        "flask": "import flask",
+    }
+    if lock and "flash-attn" in lock.read_text(encoding="utf-8").lower().replace("_", "-"):
+        snippets["flash_attn"] = "import flash_attn"
+    checks = []
+    for name, snippet in snippets.items():
+        r = subprocess.run([str(py), "-c", snippet], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", env=_self_test_env(), cwd=PROJECT_ROOT)
+        lines = (r.stdout if r.returncode == 0 else r.stderr).strip().splitlines()
+        checks.append(_check(f"import {name}", r.returncode == 0, lines[-1] if lines else ""))
+    return checks
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _local_get(url: str) -> tuple[int, str]:
+    # No proxy: a proxy setting must not catch requests to this machine.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=30) as response:
+            return response.status, response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
+def _last_lines(path: Path, count: int = 3) -> str:
+    try:
+        return " | ".join(path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-count:])
+    except OSError:
+        return ""
+
+
+def _backend_checks(py: Path, timeout: float = BACKEND_START_TIMEOUT) -> list[dict]:
+    """Start the backend alone on a free port (no window, and no clash with a
+    Fragmenta already running) and ask it whether it works."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    backend_log = LOG_DIR / "self-test-backend.log"
+    port = _free_port()
+    base = f"http://127.0.0.1:{port}"
+    env = {**_self_test_env(), "FLASK_HOST": "127.0.0.1", "FLASK_PORT": str(port)}
+    with open(backend_log, "w", encoding="utf-8") as out:
+        proc = subprocess.Popen([str(py), "-m", "app.backend.app"], cwd=PROJECT_ROOT, env=env,
+                                stdout=out, stderr=subprocess.STDOUT)
+    try:
+        started = time.monotonic()
+        while True:
+            if proc.poll() is not None:
+                return [_check("backend starts", False, f"exit {proc.returncode}: {_last_lines(backend_log)}")]
+            if time.monotonic() - started > timeout:
+                return [_check("backend starts", False, f"no answer in {timeout:.0f} s: {_last_lines(backend_log)}")]
+            try:
+                status, _body = _local_get(f"{base}/api/health")
+                if status == 200:
+                    break
+            except OSError:
+                pass
+            time.sleep(0.5)
+        checks = [_check("backend starts", True, f"{time.monotonic() - started:.1f} s")]
+
+        # /api/health doesn't set the app up; any other route does.
+        status, body = _local_get(f"{base}/api/version")
+        checks.append(_check("backend sets up", status == 200, f"HTTP {status}" + ("" if status == 200 else f": {body[:200]}")))
+        health = json.loads(_local_get(f"{base}/api/health")[1])
+        checks.append(_check("no setup errors", bool(health.get("components_ready")) and not health.get("init_error"),
+                             str(health.get("init_error") or "")))
+        version_file = PROJECT_ROOT / "VERSION"
+        expected = version_file.read_text(encoding="utf-8").strip() if version_file.exists() else None
+        checks.append(_check("runs this version", health.get("version") == expected,
+                             f"{health.get('version')} (expected {expected})"))
+        status, body = _local_get(f"{base}/")
+        checks.append(_check("serves the UI", status == 200 and "<html" in body.lower(), f"HTTP {status}"))
+        return checks
+    except Exception as exc:
+        return [_check("backend answers", False, repr(exc))]
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def self_test() -> int:
+    """Install if needed, then check the result works, with no window and no
+    model download. Exit 0 when everything passed; logs/self-test.json has the
+    details, for builds whose launcher has no console to print to."""
+    started = time.monotonic()
+    checks: list[dict] = []
+    try:
+        report = preflight()
+        checks.append(_check("preflight", report["ok"], "; ".join(f["message"] for f in report["failures"])))
+        if report["ok"]:
+            require_host_py()
+            py = ensure_venv()
+            install_dependencies(py)
+            checks.append(_check("install", True))
+            checks += _import_checks(py, platform_lock())
+            checks += _backend_checks(py)
+    except SystemExit as exc:
+        checks.append(_check("install", False, f"exit {exc.code}"))
+    except Exception as exc:
+        checks.append(_check("self-test", False, repr(exc)))
+
+    ok = all(c["ok"] for c in checks)
+    result = {"ok": ok, "seconds": round(time.monotonic() - started, 1), "checks": checks}
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        (LOG_DIR / "self-test.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    failed = sum(not c["ok"] for c in checks)
+    log(f"self-test {'passed' if ok else f'FAILED ({failed} of {len(checks)})'} in {result['seconds']} s")
+    return 0 if ok else 1
+
+
 def launch(py: Path) -> "None":
     log("starting Fragmenta…")
     if _log_file:
@@ -351,7 +693,15 @@ def main() -> None:
     ap.add_argument("--launch", action="store_true", help="start the app after ensuring the environment")
     ap.add_argument("--reinstall", action="store_true", help="force a dependency reinstall")
     ap.add_argument("--check", action="store_true", help="report status only; change nothing")
+    ap.add_argument("--preflight", action="store_true", help="print what would stop an install or launch, as JSON")
+    ap.add_argument("--full", action="store_true", help="with --preflight: run the network and GPU checks anyway")
+    ap.add_argument("--self-test", action="store_true", help="install if needed, check it works, open no window")
     args = ap.parse_args()
+
+    if args.preflight:
+        report = preflight(full=args.full)
+        print(json.dumps(report, indent=2))
+        sys.exit(0 if report["ok"] else 1)
 
     if not REQUIREMENTS.exists():
         fail(f"requirements.txt not found at {REQUIREMENTS} — run from the Fragmenta folder.")
@@ -367,6 +717,8 @@ def main() -> None:
         sys.exit(0 if ok and deps_up_to_date(lock) else 1)
 
     log(f"install log: {open_log()}")
+    if args.self_test:
+        sys.exit(self_test())
     require_host_py()
     py = ensure_venv()
     install_dependencies(py, force=args.reinstall)

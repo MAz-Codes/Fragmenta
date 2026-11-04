@@ -21,6 +21,10 @@ dill>=0.4.1
 
 librosa>=0.11.0,<0.12
 soundfile>=0.13.1
+# Signed AI-output marking. 0.38.0 is the newest with wheels for all our
+# platforms (0.38.1 has no Windows wheel, 0.38.2 is macOS only).
+c2pa-python==0.38.0
+cryptography>=41.0.0
 # m4a/AAC decoding (FFmpeg).
 av>=18.1,<20
 # python-rtmidi has no Python 3.14 wheels upstream; these are our builds of
@@ -46,7 +50,8 @@ tqdm>=4.67,<5.0
 psutil>=5.9.0,<8.0
 omegaconf>=2.3.0,<3.0
 click>=8.1.0,<9.0
-Pillow>=9.0.0,<13.0
+# Pillow 13 closes a long list of decoder advisories open in every 12.x.
+Pillow>=13.0.0,<14.0
 python-dotenv>=1.0.0,<2.0
 
 pywebview>=4.4.1,<7.0
@@ -56,3 +61,7 @@ PyGObject<3.49 ; sys_platform == 'linux'
 # builds for torch 2.11 / cu128 (MAz-Codes/Fragmenta-wheels).
 flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'
 flash-attn @ https://github.com/MAz-Codes/Fragmenta-wheels/releases/download/flash-attn-2.8.3.post2-torch2.11-cu128/flash_attn-2.8.3.post2-cp314-cp314-win_amd64.whl ; sys_platform == 'win32'
+
+# MLX engine on Apple Silicon (app/core/generation/mlx_engine.py)
+mlx>=0.30 ; sys_platform == "darwin" and platform_machine == "arm64"
+sentencepiece>=0.2 ; sys_platform == "darwin" and platform_machine == "arm64"

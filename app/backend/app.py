@@ -2,10 +2,12 @@ from utils.validators import Validator
 from utils.exceptions import ModelNotFoundError, ValidationError, GenerationError
 from utils.api_responses import APIResponse, handle_api_error
 from utils.logger import setup_logging, get_logger
-from app.core.generation.audio_generator import AudioGenerator
+from app.core.generation.audio_generator import AudioGenerator, engine_available
 from app.core.generation.audio_generator import _MODEL_INFO as _SA3_MODEL_INFO
-from app.core.generation.provenance import recording_tags, tag_existing_wav
-from app.backend import update_check
+from app.core.generation.models import lora_family
+from app.core.generation.content_credentials import sign_wav
+from app.core.generation.provenance import recording_manifest, recording_tags, tag_existing_wav
+from app.backend import data_import, performance_state, starter_model, uninstall, update_check
 from app.core.training.sa3_trainer import start_training as start_training_func, get_training_status, stop_training, preview_training_plan
 from app.core.config import get_config
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
@@ -17,6 +19,7 @@ import random
 import queue
 from pathlib import Path
 import sys
+from urllib.parse import urlsplit
 import threading
 import time
 import json
@@ -128,6 +131,16 @@ _init_error = None
 _LEGACY_FINETUNED_CONFIG_PATH = "models/config/model_config_small.json"
 
 
+def _api_path(path: Path, config) -> str:
+    """A path for the frontend to send back. Relative to the code folder when it's
+    inside it; absolute otherwise, as for everything in an installed app's data
+    folder. The routes taking these paths accept both."""
+    try:
+        return str(path.relative_to(config.project_root))
+    except ValueError:
+        return str(path)
+
+
 def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[str]]:
     """Pick the architecture config + base-model identity for a fine-tuned model.
 
@@ -139,10 +152,7 @@ def _resolve_finetuned_metadata(model_dir: Path, config) -> Dict[str, Optional[s
     config_path: Optional[str] = None
     per_run_config = model_dir / "model_config.json"
     if per_run_config.exists():
-        try:
-            config_path = str(per_run_config.relative_to(config.project_root))
-        except ValueError:
-            config_path = str(per_run_config)
+        config_path = _api_path(per_run_config, config)
 
     base_model: Optional[str] = None
     metadata_path = model_dir / "training_metadata.json"
@@ -214,6 +224,65 @@ def lazy_init():
         if request.path.startswith('/api/'):
             return jsonify({'error': f'Backend not ready: {e}'}), 503
         return None
+
+
+# --- Local-only guard ----------------------------------------------------------
+# CORS stops a web page from reading responses, not from sending requests, and
+# DNS rebinding sidesteps it entirely: a page at evil.example whose name is
+# pointed at 127.0.0.1 is same-origin as far as the browser is concerned. Two
+# checks close that on the desktop, where the backend binds a loopback address
+# (start.py, install.py --self-test and the launcher all set FLASK_HOST):
+#   * Host must be a loopback name; a rebinding page sends its own.
+#   * A state-changing request that carries an Origin must come from this
+#     server, a loopback page (any port: the webview, vite) or the CORS list.
+#     Browsers send Origin on every cross-site POST, so this also covers the
+#     routes that act without a JSON body.
+# Docker and the HF Space bind 0.0.0.0 and are reached through their own host
+# names, so there FLASK_HOST isn't loopback and the checks stay off.
+_LOOPBACK_HOSTS = {'localhost', '127.0.0.1', '::1'}
+
+
+def _hostname(netloc: str) -> str:
+    """'127.0.0.1:5001' or '[::1]:5001' -> the host part, '' if unparsable."""
+    try:
+        host = urlsplit('//' + netloc).hostname
+    except ValueError:
+        return ''
+    return host or netloc.lower()   # a bare '::1' has no hostname for urlsplit
+
+
+def _local_only() -> bool:
+    return _hostname(os.environ.get('FLASK_HOST', '')) in _LOOPBACK_HOSTS
+
+
+@app.before_request
+def guard_local_requests():
+    if not _local_only():
+        return None
+    if _hostname(request.host) not in _LOOPBACK_HOSTS:
+        return jsonify({'error': 'Fragmenta only answers requests addressed to localhost.'}), 403
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+    origin = request.headers.get('Origin')
+    if not origin:
+        return None
+    netloc = urlsplit(origin).netloc
+    if netloc == request.host or _hostname(netloc) in _LOOPBACK_HOSTS or origin in _ALLOWED_ORIGINS:
+        return None
+    return jsonify({'error': 'Cross-site request refused.'}), 403
+
+
+@app.before_request
+def guard_project_names():
+    """Every /api/projects/<name>… route: the name must be a plain folder name.
+    `.` would be the projects root, and DELETE on it removes every project."""
+    name = (request.view_args or {}).get('name')
+    if name is None or not request.path.startswith('/api/projects/'):
+        return None
+    from app.backend.data.projects import is_safe_project_name
+    if not is_safe_project_name(name):
+        return jsonify({'error': 'Invalid project name.'}), 400
+    return None
 
 
 @app.route('/api/health')
@@ -490,10 +559,7 @@ def start_training():
         return jsonify({'error': error_msg}), 500
 
 
-_SA3_MODEL_IDS = {
-    "sa3-small-music", "sa3-small-sfx", "sa3-medium",
-    "sa3-small-music-base", "sa3-small-sfx-base", "sa3-medium-base",
-}
+_SA3_MODEL_IDS = set(_SA3_MODEL_INFO)
 
 
 @app.route('/api/generate', methods=['POST'])
@@ -709,8 +775,7 @@ def generate_audio():
                 _lora_meta = {}
             _lora_base = _lora_meta.get('base_model') or _lora_meta.get('base_model_id')
             if _lora_base and str(_lora_base).startswith('sa3-'):
-                _strip = lambda m: m[:-5] if m.endswith('-base') else m
-                if _strip(str(_lora_base)) != _strip(model_id):
+                if lora_family(str(_lora_base)) != lora_family(model_id):
                     return jsonify(APIResponse.error(
                         f"LoRA base mismatch: '{Path(lora_path).name}' was trained "
                         f"against {_lora_base}, which is incompatible with {model_id}.",
@@ -911,19 +976,11 @@ def list_loras():
             (e.g. ?base_model=sa3-small-music or ?base_model=sa3-small-music-base).
             A small-music LoRA is compatible with both small-music and
             small-music-base (same backbone, different CFG distillation
-            state); the matcher strips a trailing `-base` from both sides
-            before comparing.
+            state), and so is that one's MLX build (see models.lora_family).
     """
     requested_base = (request.args.get('base_model') or '').strip()
 
-    def _base_root(model_id: str) -> str:
-        """Strip the `-base` suffix so LoRAs trained against `*-base` filter
-        as compatible with their post-trained sibling (same architecture)."""
-        if not model_id:
-            return ''
-        return model_id[:-5] if model_id.endswith('-base') else model_id
-
-    requested_root = _base_root(requested_base)
+    requested_root = lora_family(requested_base)
 
     try:
         config = get_config()
@@ -1023,10 +1080,10 @@ def list_loras():
                     # Filter by requested base if the caller specified one.
                     # Treat `sa3-small-music` and `sa3-small-music-base` as
                     # compatible: same backbone, only differ in CFG state.
-                    if requested_root and _base_root(base_model) != requested_root:
+                    if requested_root and lora_family(base_model) != requested_root:
                         continue
 
-                    rel_path = str(ckpt.relative_to(config.project_root))
+                    rel_path = _api_path(ckpt, config)
                     rank = _safe_int(lora_config.get("rank") or meta.get("rank"))
                     alpha = _safe_int(
                         lora_config.get("alpha")
@@ -1147,8 +1204,7 @@ def upload_source_audio():
     dest = uploads_dir / f"{ts}_{safe}{ext}"
     fileobj.save(str(dest))
 
-    rel = dest.relative_to(cfg.project_root)
-    return jsonify({"path": str(rel), "name": dest.name, "size_bytes": dest.stat().st_size})
+    return jsonify({"path": _api_path(dest, cfg), "name": dest.name, "size_bytes": dest.stat().st_size})
 
 
 @app.route('/api/performance/recording', methods=['POST'])
@@ -1206,7 +1262,8 @@ def save_performance_recording():
 
     # The browser encodes the capture, so no server-side writer has tagged it:
     # add the AI-output marking (EU AI Act Art. 50) now — lossless rewrite.
-    tag_existing_wav(dest, recording_tags())
+    if tag_existing_wav(dest, recording_tags()):
+        sign_wav(dest, recording_manifest())
 
     try:
         duration = float(request.form["duration"]) if request.form.get("duration") else None
@@ -1588,7 +1645,7 @@ def get_models():
 
                     checkpoint_info = {
                         'name': name,
-                        'path': str(ckpt_file.relative_to(config.project_root)),
+                        'path': _api_path(ckpt_file, config),
                         'size_mb': round(ckpt_file.stat().st_size / (1024 * 1024), 1),
                         'created': ckpt_file.stat().st_mtime
                     }
@@ -1615,10 +1672,10 @@ def get_models():
 
                 models.append({
                     'name': model_dir.name,
-                    'path': str(model_dir.relative_to(config.project_root)),
+                    'path': _api_path(model_dir, config),
                     'has_checkpoint': has_checkpoint,
                     'has_config': has_config,
-                    'ckpt_path': str(latest_checkpoint.relative_to(config.project_root)) if latest_checkpoint else None,
+                    'ckpt_path': _api_path(latest_checkpoint, config) if latest_checkpoint else None,
                     'config_path': resolved['config_path'],
                     'base_model': resolved['base_model'],
                     'checkpoints': checkpoints,
@@ -1668,7 +1725,16 @@ def get_checkpoint(model_id):
 
 @app.route('/api/checkpoints/<model_id>/download', methods=['POST'])
 def start_checkpoint_download(model_id):
+    # silent=True: the button posts no body once the terms are agreed.
+    data = request.get_json(silent=True) or {}
     try:
+        # Gated models get their terms accepted on Hugging Face; the no-account
+        # ones have only this agreement.
+        info = model_manager.get_model_info(model_id)
+        if info and info.get('token_free'):
+            refused = starter_model.agreement_error(data.get('accept_terms_version'))
+            if refused:
+                return jsonify(refused), 403
         result = model_manager.start_download(model_id)
         # _DownloadJob.to_dict() always includes the "error" key (None when
         # ok); use a truthy check so a successful job doesn't 400.
@@ -1718,6 +1784,108 @@ def delete_checkpoint_download(model_id):
         return jsonify({'error': 'Nothing to delete'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# --- Import from an older Fragmenta (app/backend/data_import.py) --------------
+
+@app.route('/api/import/scan', methods=['POST'])
+def import_scan():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.scan(data.get('path'))
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/start', methods=['POST'])
+def import_start():
+    data = request.get_json() or {}
+    try:
+        body, code = data_import.start(data.get('path'), data.get('items'),
+                                       bool(data.get('keep_old')), model_manager)
+        return jsonify(body), code
+    except OSError as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/import/status', methods=['GET'])
+def import_status():
+    return jsonify(data_import.status())
+
+
+@app.route('/api/import/cancel', methods=['POST'])
+def import_cancel():
+    return jsonify(data_import.cancel())
+
+
+# --- Uninstall from inside the installed app (app/backend/uninstall.py) -------
+
+@app.route('/api/uninstall', methods=['GET'])
+def uninstall_plan():
+    return jsonify(uninstall.plan(sizes=request.args.get('sizes') == '1'))
+
+
+@app.route('/api/uninstall', methods=['POST'])
+def uninstall_start():
+    data = request.get_json() or {}
+    busy = None
+    if get_training_status().get('is_training'):
+        busy = 'A training run is going. Stop it first.'
+    elif any(j['status'] in ('queued', 'running') for j in model_manager.list_jobs()):
+        busy = 'A model is downloading. Wait for it to finish, or cancel it first.'
+    elif data_import.status().get('state') == 'running':
+        busy = 'An import is running. Wait for it to finish, or cancel it first.'
+    body, code = uninstall.start(keep_data=data.get('keep_data') is not False, busy=busy)
+    if code == 202:
+        # Long enough for this answer to reach the page; start.py then closes the window.
+        threading.Timer(1.0, os._exit, args=(uninstall.EXIT_CODE,)).start()
+    return jsonify(body), code
+
+
+# --- First-run starter model (app/backend/starter_model.py) -------------------
+
+@app.route('/api/starter', methods=['GET'])
+def starter_status():
+    try:
+        return jsonify(starter_model.status(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/download', methods=['POST'])
+def starter_download():
+    # No force=True, and outside the try: a cross-site form post gets its 415.
+    data = request.get_json() or {}
+    try:
+        body, code = starter_model.start(model_manager, data.get('accept_terms_version'))
+        return jsonify(body), code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/pause', methods=['POST'])
+def starter_pause():
+    try:
+        return jsonify(starter_model.pause(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/cancel', methods=['POST'])
+def starter_cancel():
+    try:
+        return jsonify(starter_model.cancel(model_manager))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/starter/licenses/<license_id>', methods=['GET'])
+def starter_license(license_id):
+    text = starter_model.license_text(license_id)
+    if not text:
+        return jsonify({'error': 'Unknown license'}), 404
+    return jsonify(text)
 
 
 @app.route('/api/checkpoints/jobs/<job_id>', methods=['GET'])
@@ -1861,7 +2029,7 @@ def link_install():
             [sys.executable, '-m', 'pip', 'install',
              '--disable-pip-version-check', '--quiet',
              'LinkPython-extern==1.3.0'],  # same pin as locks/ (packaging/lock.py)
-            capture_output=True, text=True, timeout=240,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=240,
         )
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout or '').strip().splitlines()[-10:]
@@ -2639,7 +2807,8 @@ def _annotator_labels_default_path():
 
 
 def _annotator_labels_user_path():
-    return Path(get_config().project_root) / 'config' / 'annotator_labels.user.json'
+    # user_data_dir: in an installed app the code folder is read-only.
+    return Path(get_config().user_data_dir) / 'config' / 'annotator_labels.user.json'
 
 
 def _annotator_labels_path():
@@ -2754,6 +2923,7 @@ def environment():
         'platform': _platform.system(),          # 'Windows' | 'Linux' | 'Darwin'
         'cuda_available': cuda,
         'mps_available': mps,
+        'mlx_available': engine_available('mlx'),
         'flash_attn_available': flash,
         'beatsync_v2': beatsync_v2,
         'python_version': _platform.python_version(),
@@ -2822,6 +2992,9 @@ def pick_folder():
 
     payload = request.json or {}
     start_dir = payload.get('start_dir') or str(Path.home())
+    # Fixed choices only: this ends up inside the command strings below.
+    dialog_title = ('Choose your older Fragmenta folder' if payload.get('purpose') == 'import'
+                    else 'Choose audio folder')
 
     # `start_dir` is request-controlled and gets interpolated into shell/AppleScript
     # command strings below. Validate it is an existing directory and fall back to
@@ -2858,7 +3031,7 @@ def pick_folder():
         has_kdialog = bool(_shutil.which('kdialog'))
         if has_zenity:
             chosen = _try(['zenity', '--file-selection', '--directory',
-                           f'--filename={start_dir}/', '--title=Choose audio folder'])
+                           f'--filename={start_dir}/', f'--title={dialog_title}'])
         if not chosen and has_kdialog:
             chosen = _try(['kdialog', '--getexistingdirectory', start_dir])
         if not chosen:
@@ -2866,7 +3039,7 @@ def pick_folder():
             script = (
                 "import tkinter as tk; from tkinter import filedialog; "
                 "r = tk.Tk(); r.withdraw(); "
-                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title='Choose audio folder'); "
+                f"p = filedialog.askdirectory(initialdir={start_dir!r}, title={dialog_title!r}); "
                 "print(p or '')"
             )
             chosen = _try([sys_py, '-c', script])
@@ -2878,7 +3051,7 @@ def pick_folder():
         # AppleScript string literal and inject `do shell script` commands.
         safe_start = start_dir.replace('\\', '\\\\').replace('"', '\\"')
         chosen = _try(['osascript', '-e',
-                       f'POSIX path of (choose folder with prompt "Choose audio folder" default location POSIX file "{safe_start}")'])
+                       f'POSIX path of (choose folder with prompt "{dialog_title}" default location POSIX file "{safe_start}")'])
     elif sys.platform == 'win32':
         safe_start = (start_dir or '').replace("'", "''")
         ps = (
@@ -3634,24 +3807,124 @@ def midi_devices():
     return jsonify({
         "available": midi_input.is_available(),
         "inputs": midi_input.list_inputs(),
-        "current": midi_input.current_port(),
+        "open": midi_input.current_ports(),
     })
 
 
 @app.route('/api/midi/select', methods=['POST'])
 def midi_select():
+    """Listen to exactly the ports in `port_ids`. A saved device that isn't
+    plugged in is normal, not an error: its mappings stay and it reopens when
+    the device comes back. One that is plugged in but won't open is listed
+    under `failed`, without stopping the others."""
     from app.core.audio import midi_input
     data = request.get_json(silent=True) or {}
-    port_id = data.get('port_id')
-    ok = midi_input.open_input(port_id)
-    if not ok and port_id:
-        # A saved device that isn't plugged in is normal, not an error: the
-        # mapping stays and it reopens when the device comes back.
-        if not any(i["id"] == port_id for i in midi_input.list_inputs()):
-            return jsonify({"current": None, "missing": True})
-        return jsonify(APIResponse.error(
-            "Could not open that MIDI input port.", status_code=400)), 400
-    return jsonify({"current": midi_input.current_port()})
+    port_ids = data.get('port_ids')
+    if port_ids is None:
+        port_ids = [data['port_id']] if data.get('port_id') else []
+    if not isinstance(port_ids, list) or not all(isinstance(p, str) for p in port_ids):
+        return jsonify(APIResponse.error("port_ids must be a list of port names.", status_code=400)), 400
+    return jsonify(midi_input.open_inputs(port_ids))
+
+
+# --- Performance state in the data folder ----------------------------------
+# See performance_state.py. Off on the Space and in Docker, where the page
+# keeps its state in the window.
+def _performance_off():
+    if not performance_state.available():
+        return jsonify(APIResponse.error("Not available here.", status_code=404)), 404
+    return None
+
+
+@app.route('/api/performance/state', methods=['GET'])
+def performance_state_get():
+    if not performance_state.available():
+        return jsonify({"available": False})
+    return jsonify({"available": True, **performance_state.load()})
+
+
+@app.route('/api/performance/state/<name>', methods=['PUT', 'DELETE'])
+def performance_state_put(name):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'DELETE':
+            performance_state.delete_state(name)
+        else:
+            performance_state.save_state(name, request.get_json(force=True))
+    except ValueError:
+        return jsonify(APIResponse.error("Unknown state.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/presets/<path:name>', methods=['PUT', 'DELETE'])
+def performance_preset(name):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'DELETE':
+            performance_state.delete_preset(name)
+        else:
+            performance_state.save_preset(name, request.get_json(force=True))
+    except ValueError:
+        return jsonify(APIResponse.error("Bad preset name.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/fragments', methods=['GET'])
+def performance_fragments():
+    off = _performance_off()
+    if off:
+        return off
+    return jsonify({"fragments": performance_state.list_fragments()})
+
+
+@app.route('/api/performance/fragments/<scope>', methods=['DELETE'])
+def performance_fragment_scope(scope):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        performance_state.clear_scope(scope)
+    except ValueError:
+        return jsonify(APIResponse.error("Bad scope.", status_code=400)), 400
+    return jsonify({"ok": True})
+
+
+@app.route('/api/performance/fragments/<scope>/copy', methods=['POST'])
+def performance_fragment_copy(scope):
+    off = _performance_off()
+    if off:
+        return off
+    data = request.get_json(silent=True) or {}
+    try:
+        copied = performance_state.copy_scope(scope, data.get('to'))
+    except ValueError:
+        return jsonify(APIResponse.error("Bad scope.", status_code=400)), 400
+    return jsonify({"copied": copied})
+
+
+@app.route('/api/performance/fragments/<scope>/<path:fragment_id>', methods=['GET', 'PUT', 'DELETE'])
+def performance_fragment(scope, fragment_id):
+    off = _performance_off()
+    if off:
+        return off
+    try:
+        if request.method == 'PUT':
+            performance_state.put_fragment(scope, fragment_id, request.get_data(), request.content_type)
+            return jsonify({"ok": True})
+        if request.method == 'DELETE':
+            performance_state.delete_fragment(scope, fragment_id)
+            return jsonify({"ok": True})
+        path = performance_state.get_fragment(scope, fragment_id)
+    except ValueError:
+        return jsonify(APIResponse.error("Bad fragment name.", status_code=400)), 400
+    if path is None:
+        # Normal while older audio is still moving over from the window: not logged.
+        return jsonify({"error": "No such fragment."}), 404
+    return send_file(str(path), mimetype=performance_state.content_type(path))
 
 
 # --- Output device on macOS -------------------------------------------------

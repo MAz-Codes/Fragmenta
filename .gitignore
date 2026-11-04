@@ -52,11 +52,13 @@ wheels/
 # ===== Datasets / user data =====
 projects/
 uploads/
+/credentials/
 /data/
 !/data/.gitkeep
 
 # ===== Generated audio & checkpoints =====
 output/
+performance/
 *.wav
 *.mp3
 *.flac

@@ -1278,13 +1278,13 @@ export default function PerformanceChannel({
                                 position: 'absolute', top: 0, bottom: 0, left: 0,
                                 width: `${trim.start * 100}%`,
                                 ...styles.trimVeil,
-                                borderRadius: '999px 0 0 999px',
+                                borderRadius: `${RADIUS.small} 0 0 ${RADIUS.small}`,
                             }} />
                             <Box sx={{
                                 position: 'absolute', top: 0, bottom: 0, right: 0,
                                 width: `${(1 - trim.end) * 100}%`,
                                 ...styles.trimVeil,
-                                borderRadius: '0 999px 999px 0',
+                                borderRadius: `0 ${RADIUS.small} ${RADIUS.small} 0`,
                             }} />
                             {/* In-point → cue: inside the loop, so heard on every
                                 repeat, but skipped on the launch pass. Tinted so

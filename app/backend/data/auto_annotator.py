@@ -37,6 +37,13 @@ CLAP_REPO = "lukewys/laion_clap"
 # under the canonical name would leave laion_clap fetching them again at
 # construction, defeating the offline staging.
 CLAP_TEXT_DEPS = ("roberta-base", "bert-base-uncased", "facebook/bart-base")
+# What each snapshot holds once complete. A file only appears there when it's
+# finished, so this also catches a download that stopped part-way.
+CLAP_TEXT_DEP_FILES = {
+    "roberta-base": ("config.json", "merges.txt", "model.safetensors", "tokenizer.json", "tokenizer_config.json", "vocab.json"),
+    "bert-base-uncased": ("config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json", "vocab.txt"),
+    "facebook/bart-base": ("config.json", "merges.txt", "model.safetensors", "tokenizer.json", "vocab.json"),
+}
 
 # Whole-clip CLAP embedding windowing. laion_clap (enable_fusion=False) only
 # looks at max_len=480000 samples (10 s @ 48 kHz) and picks a RANDOM offset
@@ -497,7 +504,11 @@ def clap_hub_dir(models_pretrained_dir: Path) -> Path:
 
 
 def clap_checkpoint_available(models_pretrained_dir: Path) -> bool:
-    return clap_checkpoint_path(models_pretrained_dir).exists()
+    """The .pt arrives first, so it alone doesn't mean the download finished."""
+    hub_dir = clap_hub_dir(models_pretrained_dir)
+    return clap_checkpoint_path(models_pretrained_dir).exists() and all(
+        _text_dep_snapshot_present(hub_dir, repo_id) for repo_id in CLAP_TEXT_DEPS
+    )
 
 
 def _text_dep_snapshot_present(hub_dir: Path, repo_id: str) -> bool:
@@ -505,7 +516,7 @@ def _text_dep_snapshot_present(hub_dir: Path, repo_id: str) -> bool:
     snap_root = hub_dir / safe / "snapshots"
     if not snap_root.exists():
         return False
-    return any(snap_root.iterdir())
+    return any(all((snap / name).exists() for name in CLAP_TEXT_DEP_FILES[repo_id]) for snap in snap_root.iterdir())
 
 
 def download_clap_checkpoint(

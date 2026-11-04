@@ -10,13 +10,14 @@ import React, {
 import { Box } from '@mui/material';
 import api from '../api';
 import { faderPosToDb, faderDbToPos } from '../utils/faderLaw';
+import { MIDI_KEY, saveState } from '../utils/performanceStore';
 
-const STORAGE_KEY = 'fragmenta.midi.config.v1';
+// Saved in the data folder; the window keeps a copy (utils/performanceStore.js).
+const STORAGE_KEY = MIDI_KEY;
 
 const DEFAULT_CONFIG = {
-    deviceId: null,
-    deviceName: null,
-    channelFilter: 0,           
+    deviceIds: [],              // every input listened to, by port name
+    channelFilters: {},         // port name -> channel (1-16); none = any
     takeover: 'jump',           
     mappings: [],              
 };
@@ -31,10 +32,21 @@ function loadConfig() {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return { ...DEFAULT_CONFIG, mappings: [] };
-        const parsed = JSON.parse(raw);
+        const { deviceId, deviceName, channelFilter, ...parsed } = JSON.parse(raw);
+        // Before several inputs could be on at once there was one device;
+        // its port name is the id now.
+        const deviceIds = Array.isArray(parsed.deviceIds)
+            ? parsed.deviceIds
+            : (deviceName || deviceId ? [deviceName || deviceId] : []);
+        // The one channel filter there was belonged to that one device.
+        const channelFilters = parsed.channelFilters && typeof parsed.channelFilters === 'object'
+            ? parsed.channelFilters
+            : Object.fromEntries(channelFilter ? deviceIds.map((id) => [id, channelFilter]) : []);
         return {
             ...DEFAULT_CONFIG,
             ...parsed,
+            deviceIds,
+            channelFilters,
             mappings: Array.isArray(parsed.mappings) ? parsed.mappings : [],
         };
     } catch {
@@ -43,26 +55,26 @@ function loadConfig() {
 }
 
 function saveConfig(config) {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    } catch { /* quota or serialization — non-fatal */ }
+    saveState('midi', config);
 }
 
 // Wipes the persisted MIDI device + mappings. The provider will pick up the
 // reset on its next mount (caller is expected to remount).
 export function clearMidiConfig() {
-    try { localStorage.removeItem(STORAGE_KEY); }
-    catch { /* non-fatal */ }
+    saveState('midi', null);
 }
 
-function midiKey(midi) {
-    return `${midi.type}:${midi.channel}:${midi.number}`;
+// Do two mappings answer the same messages? A mapping learned before
+// several inputs could be on has no port and answers every input.
+function sameSource(a, b) {
+    return a.type === b.type && a.channel === b.channel && a.number === b.number
+        && (!a.port || !b.port || a.port === b.port);
 }
 
 function formatMidi(midi) {
     if (!midi) return '';
     const t = midi.type === 'cc' ? 'CC' : 'Note';
-    return `${t} ${midi.number} · ch.${midi.channel}`;
+    return `${t} ${midi.number} · ch.${midi.channel}${midi.port ? ` · ${midi.port}` : ''}`;
 }
 
 const MidiContext = createContext(null);
@@ -74,15 +86,23 @@ export function MidiProvider({ children }) {
     const [permissionError, setPermissionError] = useState(null);
     const [learnMode, setLearnMode] = useState(false);
     const [learnTarget, setLearnTarget] = useState(null);
+    // Inputs that are plugged in but wouldn't open (another app holding them).
+    const [failedInputs, setFailedInputs] = useState([]);
 
     const subscribersRef = useRef(new Map());
     const pickupArmedRef = useRef(new Map());
+    // Last value seen per CC, so a CC button fires once per press and Learn
+    // can tell a press from a turn.
+    const ccValuesRef = useRef(new Map());
     const configRef = useRef(config);
     const learnTargetRef = useRef(learnTarget);
 
+    // Saved only once something changes, so an install that never touched
+    // MIDI has no settings file and Settings > Import can bring one over.
+    const loadedConfigRef = useRef(config);
     useEffect(() => {
         configRef.current = config;
-        saveConfig(config);
+        if (config !== loadedConfigRef.current) saveConfig(config);
     }, [config]);
 
     useEffect(() => { learnTargetRef.current = learnTarget; }, [learnTarget]);
@@ -105,16 +125,6 @@ export function MidiProvider({ children }) {
 
     useEffect(() => { refreshInputs(); }, [refreshInputs]);
 
-    useEffect(() => {
-        if (!inputs.length || !config.deviceName) return;
-        const stillThere = config.deviceId && inputs.some(i => i.id === config.deviceId);
-        if (stillThere) return;
-        const byName = inputs.find(i => i.name === config.deviceName);
-        if (byName) {
-            setConfig(prev => ({ ...prev, deviceId: byName.id }));
-        }
-    }, [inputs, config.deviceId, config.deviceName]);
-
     const captureLearn = useCallback((controlId, midi) => {
         setConfig((prev) => {
             const subOpts = subscribersRef.current.get(controlId)?.opts || {};
@@ -127,9 +137,8 @@ export function MidiProvider({ children }) {
                 max: subOpts.max ?? 1,
                 midi,
             };
-            const targetKey = midiKey(midi);
             const filtered = prev.mappings.filter(
-                (m) => m.controlId !== controlId && midiKey(m.midi) !== targetKey,
+                (m) => m.controlId !== controlId && !sameSource(m.midi, midi),
             );
             return { ...prev, mappings: [...filtered, newMapping] };
         });
@@ -146,8 +155,10 @@ export function MidiProvider({ children }) {
         const type = status & 0xf0;
         const channel = (status & 0x0f) + 1;
         const cfg = configRef.current;
+        const port = event.port || null;
 
-        if (cfg.channelFilter && channel !== cfg.channelFilter) return;
+        const onlyChannel = cfg.channelFilters?.[port];
+        if (onlyChannel && channel !== onlyChannel) return;
 
         const isCC = type === MIDI_MODE.CC;
         const isNoteOn = type === MIDI_MODE.NOTE_ON && data2 > 0;
@@ -155,15 +166,30 @@ export function MidiProvider({ children }) {
         if (!isCC && !isNoteOn && !isNoteOff) return;
 
         const incomingType = isCC ? 'cc' : 'note';
+        let prevCC;
+        if (isCC) {
+            const ccKey = `${port}:${channel}:${data1}`;
+            prevCC = ccValuesRef.current.get(ccKey);
+            ccValuesRef.current.set(ccKey, data2);
+        }
         const target = learnTargetRef.current;
-        if (target && (isCC || isNoteOn)) {
-            captureLearn(target, { type: incomingType, channel, number: data1 });
+        if (target) {
+            // Learn only what fits the control. Encoders without detents (MIDI
+            // Fighter Twister) turn a little when pressed, so the first message
+            // alone can't be trusted: knobs take a CC that moved off its ends,
+            // buttons a note or a CC pressed and released.
+            const kind = subscribersRef.current.get(target)?.opts?.kind || 'continuous';
+            const fits = kind === 'trigger'
+                ? isNoteOn || (isCC && data2 === 0 && prevCC >= 64)
+                : isCC && data2 > 0 && data2 < 127;
+            if (fits) captureLearn(target, { type: incomingType, channel, number: data1, port });
             return;
         }
 
         for (const m of cfg.mappings) {
             if (m.midi.channel !== channel || m.midi.number !== data1) continue;
             if (m.midi.type !== incomingType) continue;
+            if (m.midi.port && port && m.midi.port !== port) continue;
             const sub = subscribersRef.current.get(m.controlId);
             if (!sub) continue;
 
@@ -172,14 +198,23 @@ export function MidiProvider({ children }) {
                 applyContinuous(sub, m, data2, cfg.takeover);
             } else if (sub.opts.kind === 'trigger') {
                 if (isNoteOn) sub.handler();
-                else if (isCC && data2 >= 64) sub.handler();
+                // Once per press, not on every message a turning knob sends.
+                else if (isCC && data2 >= 64 && !(prevCC >= 64)) sub.handler();
             }
         }
     }, [captureLearn]);
 
-    // Stream incoming MIDI from the backend over SSE. Each event is the same
-    // {data:[status,d1,d2]} shape Web MIDI gave us, so dispatchMessage is
-    // unchanged. EventSource auto-reconnects on drop.
+    // Tell the backend which ports to open. The stream only carries the open
+    // ports' events, so device selection happens server-side.
+    const selectInputs = useCallback(() => {
+        api.post('/api/midi/select', { port_ids: configRef.current?.deviceIds || [] })
+            .then(({ data }) => setFailedInputs(data?.failed || []))
+            .catch(() => { /* non-fatal */ });
+    }, []);
+
+    // Stream incoming MIDI from the backend over SSE. Each event is the
+    // {data:[status,d1,d2]} shape Web MIDI gave us, plus the port it came in
+    // on. EventSource auto-reconnects on drop.
     useEffect(() => {
         if (typeof EventSource === 'undefined') {
             setSupported(false);
@@ -192,9 +227,7 @@ export function MidiProvider({ children }) {
             // process starts with no MIDI port open, so re-assert the saved
             // selection (idempotent when the port is already open). Without
             // this, mappings stay dead after a restart until a page reload.
-            api.post('/api/midi/select', {
-                port_id: configRef.current?.deviceId || null,
-            }).catch(() => { /* non-fatal */ });
+            selectInputs();
         };
         es.onmessage = (e) => {
             try { dispatchMessage(JSON.parse(e.data)); }
@@ -202,17 +235,15 @@ export function MidiProvider({ children }) {
         };
         pickupArmedRef.current = new Map();
         return () => es.close();
-    }, [dispatchMessage]);
+    }, [dispatchMessage, selectInputs]);
 
-    // Tell the backend which port to open. The stream only carries the open
-    // port's events, so device selection happens server-side. Runs again when
-    // the saved device reappears, so plugging it back in reconnects its mappings.
-    const savedDevicePresent = inputs.some((i) => i.id === config.deviceId);
+    // Runs again when a saved device reappears, so plugging it back in
+    // reconnects its mappings.
+    const wanted = config.deviceIds.join('\n');
+    const wantedPresent = config.deviceIds.filter((id) => inputs.some((i) => i.id === id)).join('\n');
     useEffect(() => {
-        if (!supported) return;
-        api.post('/api/midi/select', { port_id: config.deviceId || null })
-            .catch(() => { /* non-fatal */ });
-    }, [config.deviceId, supported, savedDevicePresent]);
+        if (supported) selectInputs();
+    }, [wanted, wantedPresent, supported, selectInputs]);
 
     function applyContinuous(sub, mapping, midiValue, takeover) {
         const norm = midiValue / 127;
@@ -282,17 +313,18 @@ export function MidiProvider({ children }) {
         pickupArmedRef.current.clear();
     }, []);
 
-    const setDevice = useCallback((deviceId) => {
-        const found = inputs.find((i) => i.id === deviceId);
-        setConfig((prev) => ({
-            ...prev,
-            deviceId: deviceId || null,
-            deviceName: found ? found.name : null,
-        }));
-    }, [inputs]);
+    const setDeviceEnabled = useCallback((deviceId, on) => {
+        setConfig((prev) => {
+            const rest = prev.deviceIds.filter((id) => id !== deviceId);
+            return { ...prev, deviceIds: on ? [...rest, deviceId] : rest };
+        });
+    }, []);
 
-    const setChannelFilter = useCallback((channel) => {
-        setConfig((prev) => ({ ...prev, channelFilter: channel }));
+    const setChannelFilter = useCallback((deviceId, channel) => {
+        setConfig((prev) => {
+            const { [deviceId]: _old, ...rest } = prev.channelFilters || {};
+            return { ...prev, channelFilters: channel ? { ...rest, [deviceId]: channel } : rest };
+        });
     }, []);
 
     const setTakeover = useCallback((mode) => {
@@ -323,12 +355,13 @@ export function MidiProvider({ children }) {
     const value = useMemo(() => ({
         config,
         inputs,
+        failedInputs,
         supported,
         permissionError,
         learnMode,
         learnTarget,
         refreshInputs,
-        setDevice,
+        setDeviceEnabled,
         setChannelFilter,
         setTakeover,
         beginLearn,
@@ -340,8 +373,8 @@ export function MidiProvider({ children }) {
         registerSubscriber,
         unregisterSubscriber,
     }), [
-        config, inputs, supported, permissionError, learnMode, learnTarget,
-        refreshInputs, setDevice, setChannelFilter, setTakeover, beginLearn,
+        config, inputs, failedInputs, supported, permissionError, learnMode, learnTarget,
+        refreshInputs, setDeviceEnabled, setChannelFilter, setTakeover, beginLearn,
         cancelLearn, clearMapping, clearAll, toggleLearnMode, exitLearnMode,
         registerSubscriber, unregisterSubscriber,
     ]);

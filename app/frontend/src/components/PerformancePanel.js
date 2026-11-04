@@ -43,6 +43,7 @@ import {
     Plus as PlusIcon,
     ChevronDown as ChevronDownIcon,
 } from 'lucide-react';
+import ConfirmDialog from './ConfirmDialog';
 import api from '../api';
 import { extractError } from '../utils/errors';
 import { faderPosToDb, faderDbToPos, FADER_MAX_DB, FADER_UNITY_POS } from '../utils/faderLaw';
@@ -144,7 +145,7 @@ function PerformancePanelInner({
     onRefreshModels,
     onSelectLora,
     onLoraMultiplierChange,
-    steps = 250,
+    steps = 50,
     onStepsChange,
     randomSeed = true,
     seedValue = '',
@@ -152,6 +153,7 @@ function PerformancePanelInner({
     onSeedValueChange,
     onPresetLoaded,
     onOpenCheckpointManager,
+    noModelNote = null,
     // False while another tab is shown (the panel stays mounted via
     // keepMounted). Used to pause the meter RAF loops, which otherwise run
     // at full frame rate behind every other tab.
@@ -190,6 +192,7 @@ function PerformancePanelInner({
     const [linkEnabled, setLinkEnabled] = useState(session.linkEnabled ?? false);
     const [linkPeers, setLinkPeers] = useState(0);
     const [linkInstalling, setLinkInstalling] = useState(false);
+    const [confirmPrompt, setConfirmPrompt] = useState(null);
     // Link sync: Fragmenta schedules Link launches early by its measured
     // output latency (performanceAudio.js); this per-output-device trim covers
     // what the browser doesn't report. Per-viewer convenience → localStorage.
@@ -541,7 +544,7 @@ function PerformancePanelInner({
         return model?.base_model || null;
     })();
 
-    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-small-');
+    const isSmallModel = !!resolvedBaseModel && resolvedBaseModel.startsWith('sa3-') && !resolvedBaseModel.includes('medium');
     // Distilled (post-trained) SA3 variants — names that DON'T end in `-base`.
     // The Steps dropdown only locks at 8 for these; the *-base checkpoints let
     // the user pick a real step count.
@@ -563,8 +566,9 @@ function PerformancePanelInner({
     // Split baseModels by `kind` for the model-picker grouping. The render
     // helper is also hoisted to component scope so its MenuItems land as
     // direct children of <Select>, not nested inside a Fragment.
-    const distilledBaseModels = baseModels.filter(m => m.kind !== 'base');
-    const trueBaseModels = baseModels.filter(m => m.kind === 'base');
+    const mlxModels = baseModels.filter(m => m.kind === 'mlx');
+    const distilledBaseModels = baseModels.filter(m => m.kind === 'post-trained' && (!m.hidden || m.name === selectedModel));
+    const trueBaseModels = baseModels.filter(m => m.kind === 'base' && (!m.hidden || m.name === selectedModel));
     const renderBaseModelRow = (model) => (
         <MenuItem
             key={model.name}
@@ -908,25 +912,29 @@ function PerformancePanelInner({
     useEffect(() => { if (!linkEnabled) stopCalibration(); }, [linkEnabled, stopCalibration]);
     useEffect(() => () => engineRef.current?.stopCalibrationClicks(), []);
 
+    const installLink = useCallback(async () => {
+        setLinkInstalling(true);
+        try {
+            await api.post('/api/link/install');
+            setLinkAvailable(true);
+            await api.post('/api/link/enable');
+            setLinkEnabled(true);
+        } catch (err) {
+            setError(`Link install failed: ${extractError(err, 'Install failed')}`);
+        } finally {
+            setLinkInstalling(false);
+        }
+    }, []);
+
     const handleToggleLink = useCallback(async () => {
         // First click when Link isn't installed: offer to install it.
         if (!linkAvailable) {
-            const confirmed = window.confirm(
-                'Ableton Link requires the LinkPython-extern package (~1–2 MB, ~30s install).\n\n'
-                + 'Install it now? You\'ll only need to do this once.'
-            );
-            if (!confirmed) return;
-            setLinkInstalling(true);
-            try {
-                await api.post('/api/link/install');
-                setLinkAvailable(true);
-                await api.post('/api/link/enable');
-                setLinkEnabled(true);
-            } catch (err) {
-                setError(`Link install failed: ${extractError(err, 'Install failed')}`);
-            } finally {
-                setLinkInstalling(false);
-            }
+            setConfirmPrompt({
+                title: 'Install Ableton Link?',
+                text: 'Ableton Link needs the LinkPython-extern package (~1–2 MB, ~30 s to install). You\'ll only need to do this once.',
+                confirmLabel: 'Install',
+                onConfirm: installLink,
+            });
             return;
         }
 
@@ -943,7 +951,7 @@ function PerformancePanelInner({
             if (err?.response?.status === 503) setLinkAvailable(false);
             setError(extractError(err, 'Link toggle failed'));
         }
-    }, [linkEnabled, linkAvailable]);
+    }, [linkEnabled, linkAvailable, installLink]);
 
     const handlePlayAll = () => {
         engineRef.current?.playAll(true);
@@ -1126,11 +1134,15 @@ function PerformancePanelInner({
         if (onSelectModel) onSelectModel(value);
     };
 
-    const handleDeleteFineTuned = async (modelName) => {
-        const confirmed = window.confirm(
-            `Delete fine-tuned model "${modelName}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteFineTuned = (modelName) => setConfirmPrompt({
+        title: `Delete fine-tuned model "${modelName}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteFineTuned(modelName),
+    });
+
+    const deleteFineTuned = async (modelName) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(modelName)}`);
             if (selectedModel === modelName) {
@@ -1144,11 +1156,15 @@ function PerformancePanelInner({
 
     // LoRAs share the same on-disk layout as fine-tuned models (one dir under
     // models/fine_tuned/<name>/), so the same DELETE endpoint handles both.
-    const handleDeleteLora = async (loraName) => {
-        const confirmed = window.confirm(
-            `Delete LoRA "${loraName}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteLora = (loraName) => setConfirmPrompt({
+        title: `Delete LoRA "${loraName}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteLora(loraName),
+    });
+
+    const deleteLora = async (loraName) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(loraName)}`);
             // Clear the active LoRA if it points anywhere inside the deleted dir.
@@ -1667,11 +1683,12 @@ function PerformancePanelInner({
                 {/* Generation settings: one summary pill; the model, LoRA,
                     steps and seed live in its popover (set once, rarely
                     changed mid-set). */}
+                {noModelNote}
                 <ButtonBase
                     onClick={(e) => setGenMenuAnchor(e.currentTarget)}
                     aria-label="Generation settings"
                     sx={(theme) => ({
-                        ml: 'auto',
+                        ml: noModelNote ? 1.5 : 'auto',
                         height: perfTokens.height.compact,
                         px: 1.75,
                         gap: 0.75,
@@ -1717,6 +1734,12 @@ function PerformancePanelInner({
                                 generated MenuItems as direct flat children — wrapping
                                 them in an IIFE-returned Fragment broke selection
                                 (Select couldn't find the option matching `value`). */}
+                            {mlxModels.length > 0 && (
+                                <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
+                                    ── Fast on Apple Silicon ──
+                                </MenuItem>
+                            )}
+                            {mlxModels.map(renderBaseModelRow)}
                             {distilledBaseModels.length > 0 && (
                                 <MenuItem disabled sx={{ fontSize: perfTokens.fontSize.xs, color: 'text.secondary' }}>
                                     ── Distilled ──
@@ -2193,6 +2216,8 @@ function PerformancePanelInner({
 
 
             {/* Name + save dialog for a finished master recording. */}
+            <ConfirmDialog prompt={confirmPrompt} onClose={() => setConfirmPrompt(null)} />
+
             <Dialog
                 open={Boolean(pendingRecording)}
                 onClose={savingRecording ? undefined : handleDiscardRecording}

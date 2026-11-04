@@ -152,7 +152,6 @@ export const TIPS = {
     checkpoints: {
         gatedAccess: "Open on HuggingFace to accept the model's gated-access terms",
         openOnHf: 'Open the model page on HuggingFace',
-        noAccount: 'Not gated on HuggingFace — downloads without an account or token.',
     },
 
     // App.js — main Audio Generation tab (the primary "create" surface).
@@ -176,15 +175,15 @@ export const TIPS = {
         mode: 'Style transfer re-imagines the whole clip toward your prompt. Inpaint replaces just a selected region, keeping the rest. Extend continues the clip past its end.',
         initNoise: 'How far to push the source toward the prompt. Low keeps the original\'s character and timing; high lets the prompt dominate (closer to generating from scratch).',
         maskRegion: 'The slice that gets regenerated — drag on the waveform or type start/end seconds. Everything outside it is preserved, and the output stays the same total length.',
-        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt.',
-        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region; for Style/Extend it steers the whole result.',
+        extendSeconds: 'How many seconds of new audio to append after the source. The model continues from the existing material toward your prompt. If the source fades out at its end, the new audio replaces that fade.',
+        prompt: 'Describes the target sound for this edit. For Inpaint it only steers the selected region, and the surrounding audio matters more than the prompt: a small region stays close to the original, so select more for a bigger change. For Style it steers the whole result; for Extend, the new part.',
         generateButton: 'Run the edit on the source clip with the settings above. Disabled until a source clip is loaded.',
     },
 
     // MidiConfigMenu.js — MIDI device + mapping config.
     midi: {
-        device: 'Which connected MIDI controller Fragmenta listens to. "None" disables MIDI input. Unplugged-but-remembered devices reconnect automatically when plugged back in.',
-        channelFilter: 'Which MIDI channel to accept. "All" reacts to every channel; pick a specific one (1–16) when several devices share the port or you want to isolate a controller.',
+        device: 'The MIDI controllers Fragmenta listens to. Switch on as many as you like; each mapping remembers the controller it was learned from. A switched-on controller reconnects when plugged back in.',
+        channelFilter: 'Which MIDI channel to take from this controller. "Any" takes every channel; pick one (1–16) to ignore the rest.',
         takeover: 'How a knob takes control when its hardware position differs from the on-screen value. Jump snaps to the hardware on first move (can leap). Pickup waits until you sweep through the current value, so there\'s no jump.',
         mappings: 'Every hardware control you\'ve bound to a Fragmenta control. Enter MIDI mode, click a control, then move a knob/button to add one here.',
         clearAll: 'Remove every MIDI mapping at once. The device connection and filters stay.',
@@ -198,13 +197,13 @@ export const TIPS = {
         hfLoginDemo: 'Disabled in this demonstration Space. Install Fragmenta locally from misaghazimi.com/fragmenta to sign in with your own HuggingFace account.',
         hfLogout: 'Forget the saved HuggingFace token on this machine.',
         hfToken: 'Paste a HuggingFace access token (starts with "hf_"). Create one at huggingface.co/settings/tokens — read scope is enough for downloads.',
-        refresh: 'Re-scan the catalog and disk for which models are downloaded, in case something changed outside the app.',
     },
 
     // TrainingMonitor.js — training status card.
     monitor: {
         lossChart: 'Training loss per step, lower is better. A curve that falls then flattens means the LoRA is converging; a flat or rising curve suggests the learning rate or data needs attention.',
         steps: 'Progress through the run, counted in optimizer steps (SA3 trains by steps, not epochs).',
+        timeLeft: 'Hours and minutes left, estimated from the speed over the last two minutes.',
         checkpoints: 'How many LoRA snapshots have been written so far. Each is a usable adapter you can generate with or keep training from.',
     },
 

@@ -62,18 +62,23 @@ import TabPanel from './components/TabPanel';
 import DatasetPrep from './components/DatasetPrep';
 import TrainingMonitor from './components/TrainingMonitor';
 import CheckpointManagerWindow from './components/CheckpointManagerWindow';
+import ConfirmDialog from './components/ConfirmDialog';
+import { hiddenOnMac } from './utils/macModels';
 import LoraStack from './components/LoraStack';
 import EditPanel from './components/EditPanel';
 import PreEncodeProgress from './components/PreEncodeProgress';
 import { GENERATION_AUDIO_EDIT } from './features';
 import GeneratedFragmentsWindow from './components/GeneratedFragmentsWindow';
 import WelcomePage from './components/WelcomePage';
+import StarterCard, { NoModelNote, PAGE_FADE, useStarterModel } from './components/StarterCard';
+import TrainingModelOffer from './components/TrainingModelOffer';
 import DemoNoticeDialog from './components/DemoNoticeDialog';
 import AppToolbar from './components/AppToolbar';
 import SettingsDialog from './components/SettingsDialog';
 import { AudioSettingsProvider } from './components/AudioSettingsContext';
 import { MidiProvider } from './components/MidiContext';
 import { formatDuration } from './utils/format';
+import { extractError } from './utils/errors';
 import { appStyles, lightTheme } from './theme';
 
 import PerformancePanel from './components/PerformancePanel';
@@ -85,6 +90,7 @@ import BetaBadge from './components/bend/BetaBadge';
 const BendPanel = lazy(() => import('./components/bend/BendPanel'));
 
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
+const STARTER_CARD_DELAY_MS = 5000;
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
@@ -121,6 +127,7 @@ const readStoredTab = () => {
 
 function App() {
     const [showSettings, setShowSettings] = useState(false);
+    const [settingsTab, setSettingsTab] = useState(0);
     const [tabValue, setTabValue] = useState(readStoredTab);
     // Lags behind tabValue by ~fadeDuration so content swap happens
     // while the panel is invisible (cross-fade between pages).
@@ -158,10 +165,20 @@ function App() {
     const [processingStatus, setProcessingStatus] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
 
-    const [showWelcomePage, setShowWelcomePage] = useState(
-        () => window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true'
-    );
+    const [showWelcomePage, setShowWelcomePage] = useState(() => {
+        // Set just before Settings → Import starts the page again.
+        const skipOnce = window.sessionStorage.getItem('fragmenta-skip-welcome-once') === '1';
+        window.sessionStorage.removeItem('fragmenta-skip-welcome-once');
+        return !skipOnce && window.localStorage.getItem(HIDE_WELCOME_PAGE_KEY) !== 'true';
+    });
     const [checkpointMgrOpen, setCheckpointMgrOpen] = useState(false);
+    const [confirmPrompt, setConfirmPrompt] = useState(null);
+    // Closing the starter card only lasts until the next launch: this isn't
+    // saved anywhere, so it comes back while there's still no model.
+    const [starterClosed, setStarterClosed] = useState(false);
+    // Let people get into the app first; the card comes a little later.
+    const [starterDue, setStarterDue] = useState(false);
+    const [pageFromCard, setPageFromCard] = useState(false);
     const [generationModelSelectOpen, setGenerationModelSelectOpen] = useState(false);
     const [trainingBaseModelSelectOpen, setTrainingBaseModelSelectOpen] = useState(false);
     const [isOpeningDocumentation, setIsOpeningDocumentation] = useState(false);
@@ -307,7 +324,7 @@ function App() {
     const [generatedFragments, setGeneratedFragments] = useState([]);
     const [currentFilename, setCurrentFilename] = useState('');
     const [cfgScale, setCfgScale] = useState(7.0);
-    const [steps, setSteps] = useState(250);
+    const [steps, setSteps] = useState(50);
     const [batchCount, setBatchCount] = useState(1);
     const [randomSeed, setRandomSeed] = useState(true);
     const [seedValue, setSeedValue] = useState('');
@@ -623,7 +640,7 @@ function App() {
 
     const getMaxDuration = () => {
         if (!selectedModel) return 30;
-        if (resolvedBaseModel === 'sa3-medium' || resolvedBaseModel === 'sa3-medium-base') return 380;
+        if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-') && resolvedBaseModel.includes('medium')) return 380;
         if (resolvedBaseModel && resolvedBaseModel.startsWith('sa3-')) return 120;
         return 30;
     };
@@ -715,15 +732,24 @@ function App() {
     const fetchBaseModelsStatus = async () => {
         try {
             const response = await api.get('/api/checkpoints');
-            const byId = Object.fromEntries(
-                (response.data.checkpoints || []).map(c => [c.id, c])
-            );
-            setBaseModels(prevModels =>
-                prevModels.map(model => ({
+            const checkpoints = response.data.checkpoints || [];
+            const byId = Object.fromEntries(checkpoints.map(c => [c.id, c]));
+            // The catalog only lists MLX models on the machines that run them.
+            const mlxModels = checkpoints.filter(c => c.kind === 'mlx').map(c => ({
+                name: c.id,
+                displayName: `${c.name} (MLX)`,
+                description: `Apple Silicon · ≤ ${c.max_duration_sec}s`,
+                kind: 'mlx',
+                downloaded: c.downloaded,
+            }));
+            setBaseModels(prevModels => [
+                ...mlxModels,
+                ...prevModels.filter(model => model.kind !== 'mlx').map(model => ({
                     ...model,
                     downloaded: byId[model.name]?.downloaded || false,
-                }))
-            );
+                    hidden: mlxModels.length > 0 && Boolean(byId[model.name]) && hiddenOnMac(byId[model.name]),
+                })),
+            ]);
         } catch (error) {
             console.error('Error fetching checkpoint status:', error);
         }
@@ -732,12 +758,15 @@ function App() {
     // Delete a fine-tuned model OR a LoRA — both live under models/fine_tuned/<name>
     // so the same endpoint (rmtree on the directory) handles either. After
     // success, clear any selection that pointed at it and refresh both lists.
-    const handleDeleteFineTunedOrLora = async (name, { isLora } = {}) => {
-        const kind = isLora ? 'LoRA' : 'fine-tuned model';
-        const confirmed = window.confirm(
-            `Delete ${kind} "${name}"? This removes the directory and all its checkpoints. This cannot be undone.`
-        );
-        if (!confirmed) return;
+    const handleDeleteFineTunedOrLora = (name, { isLora } = {}) => setConfirmPrompt({
+        title: `Delete ${isLora ? 'LoRA' : 'fine-tuned model'} "${name}"?`,
+        text: 'This removes the directory and all its checkpoints. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
+        onConfirm: () => deleteFineTunedOrLora(name, isLora),
+    });
+
+    const deleteFineTunedOrLora = async (name, isLora) => {
         try {
             await api.delete(`/api/models/fine-tuned/${encodeURIComponent(name)}`);
             if (isLora) {
@@ -764,6 +793,30 @@ function App() {
             fetchAvailableLoras()
         ]);
     };
+
+    const starter = useStarterModel({
+        onReady: (modelId) => {
+            refreshAllModels();
+            // The card only shows with no model on disk, so a catalog model still
+            // selected (a saved Performance session can restore one) isn't installed.
+            setSelectedModel((current) => (current && !baseModels.some(m => m.name === current) ? current : modelId));
+            setProcessingStatus('Your first model is ready — try a prompt');
+        },
+    });
+    useEffect(() => {
+        if (showWelcomePage) return undefined;
+        const timer = setTimeout(() => setStarterDue(true), STARTER_CARD_DELAY_MS);
+        return () => clearTimeout(timer);
+    }, [showWelcomePage]);
+    const refreshStarter = starter.refresh;
+    useEffect(() => {
+        if (!checkpointMgrOpen) refreshStarter();
+    }, [checkpointMgrOpen, refreshStarter]);
+    const starterDownloading = Boolean(starter.status?.show) && starter.status.phase === 'downloading';
+    const openStarterCard = () => { setStarterDue(true); setStarterClosed(false); };
+    const starterPct = starter.status?.size_bytes
+        ? Math.min(100, Math.floor((starter.status.downloaded_bytes / starter.status.size_bytes) * 100))
+        : 0;
 
     const fetchGpuMemoryStatus = async () => {
         try {
@@ -1246,7 +1299,7 @@ function App() {
                     `Generation stopped after ${completedRuns}/${totalRuns} fragment${completedRuns === 1 ? '' : 's'}.`
                 );
             } else {
-                setProcessingStatus(`Generation error: ${error.response?.data?.error || error.message}`);
+                setProcessingStatus(`Generation error: ${extractError(error)}`);
             }
         } finally {
             stopProgressTicker();
@@ -1408,6 +1461,14 @@ function App() {
                     }}
                 />
 
+                <StarterCard
+                    open={Boolean(starter.status?.show) && starterDue && !starterClosed && !showWelcomePage && !checkpointMgrOpen && !showSettings}
+                    onClose={() => setStarterClosed(true)}
+                    starter={starter}
+                    onOpenManager={() => { setPageFromCard(true); setCheckpointMgrOpen(true); }}
+                    onImport={() => { setPageFromCard(true); setSettingsTab(3); setShowSettings(true); }}
+                />
+
                 {isHfSpace && (
                     <DemoNoticeDialog
                         open={showDemoNotice}
@@ -1443,7 +1504,7 @@ function App() {
                                 onToggleInfoView={toggleInfoView}
                                 updateVisible={updates.visible}
                                 onShowUpdate={() => setShowUpdateDialog(true)}
-                                onSettings={() => setShowSettings(true)}
+                                onSettings={() => { setSettingsTab(0); setShowSettings(true); }}
                             />
                         </Box>
                     </Box>
@@ -1667,7 +1728,7 @@ function App() {
                                                             post-trained models have CFG distilled out and
                                                             can't be trained against. */}
                                                         {baseModels
-                                                            .filter(m => m.name.endsWith('-base'))
+                                                            .filter(m => m.name.endsWith('-base') && (!m.hidden || m.name === trainingConfig.baseModel))
                                                             .map(m => (
                                                                 <MenuItem
                                                                     key={m.name}
@@ -1708,6 +1769,12 @@ function App() {
                                                                 </MenuItem>
                                                             ))}
                                                     </Select>
+                                                    {!baseModels.find(m => m.name === trainingConfig.baseModel)?.downloaded && (
+                                                        <TrainingModelOffer
+                                                            modelId={trainingConfig.baseModel}
+                                                            onInstalled={refreshAllModels}
+                                                        />
+                                                    )}
                                                 </Box>
 
                                                 <Accordion>
@@ -2205,6 +2272,10 @@ function App() {
                                                     <Typography variant="h6" sx={appStyles.sectionCardTitle}>Audio generation</Typography>
                                                 </Box>
 
+                                                {starter.status?.show && (
+                                                    <NoModelNote downloading={starterDownloading} onOpen={openStarterCard}
+                                                        sx={{ display: 'block', mb: 1 }} />
+                                                )}
                                                 <Box sx={appStyles.generationModelRow}>
                                                     <Tooltip title={TIPS.generate.modelSelect}>
                                                     <FormControl fullWidth variant="outlined">
@@ -2226,10 +2297,11 @@ function App() {
                                                                 <em>Select a model</em>
                                                             </MenuItem>
                                                             {[
+                                                                { kind: 'mlx',          label: '── Fast on Apple Silicon ──' },
                                                                 { kind: 'post-trained', label: '── Distilled · fixed cfg + steps (fast) ──' },
                                                                 { kind: 'base',         label: '── Base · cfg + steps live ──' },
                                                             ].flatMap(group => {
-                                                                const rows = baseModels.filter(m => m.kind === group.kind);
+                                                                const rows = baseModels.filter(m => m.kind === group.kind && (!m.hidden || m.name === selectedModel));
                                                                 if (!rows.length) return [];
                                                                 return [
                                                                     <MenuItem key={`hdr-${group.kind}`} disabled>
@@ -2603,7 +2675,7 @@ function App() {
                                                         })()}
                                                         sx={appStyles.generateButton}
                                                     >
-                                                        Generate audio
+                                                        {starterDownloading ? `Model downloading… ${starterPct}%` : 'Generate audio'}
                                                     </Button>
                                                 )}
 
@@ -2696,6 +2768,10 @@ function App() {
                                     onRandomSeedChange={setRandomSeed}
                                     onSeedValueChange={setSeedValue}
                                     onOpenCheckpointManager={() => setCheckpointMgrOpen(true)}
+                                    noModelNote={starter.status?.show ? (
+                                        <NoModelNote downloading={starterDownloading} onOpen={openStarterCard}
+                                            sx={{ ml: 'auto', whiteSpace: 'nowrap' }} />
+                                    ) : null}
                                 />}
                             </TabPanel>
                             </Box>
@@ -2839,7 +2915,10 @@ function App() {
 
             <SettingsDialog
                 open={showSettings}
-                onClose={() => setShowSettings(false)}
+                showImport={!isDocker && !isHfSpace}
+                initialTab={settingsTab}
+                onClose={() => { setShowSettings(false); setPageFromCard(false); }}
+                fade={pageFromCard ? PAGE_FADE : undefined}
                 aboutProps={{
                     onOpenDocumentation: handleOpenDocumentation,
                     isOpeningDocumentation,
@@ -2992,10 +3071,14 @@ function App() {
                 </DialogActions>
             </Dialog>
 
+            <ConfirmDialog prompt={confirmPrompt} onClose={() => setConfirmPrompt(null)} />
+
             <CheckpointManagerWindow
                 open={checkpointMgrOpen}
+                fade={pageFromCard ? PAGE_FADE : undefined}
                 onClose={() => {
                     setCheckpointMgrOpen(false);
+                    setPageFromCard(false);
                     refreshAllModels();
                 }}
             />

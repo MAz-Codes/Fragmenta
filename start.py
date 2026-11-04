@@ -8,6 +8,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -42,12 +43,24 @@ CHROMIUM_CANDIDATES = (
     "chromium-browser",
     "brave-browser",
 )
-CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+SOURCE_CHROMIUM_USER_DATA_DIR = Path.home() / ".cache" / "fragmenta-chrome-profile"
+SOURCE_WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
+CHROMIUM_USER_DATA_DIR = SOURCE_CHROMIUM_USER_DATA_DIR
 CHROMIUM_MIN_SESSION_SECONDS = 15.0
-WEBVIEW_STORAGE_DIR = Path.home() / ".cache" / "fragmenta-webview-profile"
+WEBVIEW_STORAGE_DIR = SOURCE_WEBVIEW_STORAGE_DIR
+if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+    # The installed app keeps its window's storage with the rest of its data, so
+    # Uninstall removes it and a source install on the same computer keeps its own.
+    from app.core.config import get_config
+    CHROMIUM_USER_DATA_DIR = get_config().user_data_dir / "chrome-profile"
+    WEBVIEW_STORAGE_DIR = get_config().user_data_dir / "webview-profile"
+# The backend exits with this once Uninstall has started; the window then closes.
+# Must stay in sync with app/backend/uninstall.py's EXIT_CODE.
+UNINSTALL_EXIT_CODE = 86
 DESKTOP_ENTRY_PATH = (
     Path.home() / ".local" / "share" / "applications" / "fragmenta.desktop"
 )
+ICON_COPY_PATH = Path.home() / ".local" / "share" / "icons" / "fragmenta.png"
 
 def _port_available(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -196,6 +209,14 @@ def wait_for_backend(timeout_seconds: int = 60) -> bool:
         time.sleep(0.4)
     return False
 
+def _close_on_uninstall(backend: subprocess.Popen, close) -> None:
+    """Call ``close`` from a thread once the backend exits for an uninstall."""
+    def watch() -> None:
+        if backend.wait() == UNINSTALL_EXIT_CODE:
+            close()
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def backend_process_running() -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.5)
@@ -210,6 +231,7 @@ def start_backend_subprocess() -> subprocess.Popen:
         [sys.executable, "-m", "app.backend.app"],
         cwd=str(PROJECT_ROOT),
         env=env,
+        stdin=subprocess.DEVNULL,  # it outlives this terminal and never reads input
     )
 
 def run_browser_mode() -> int:
@@ -291,21 +313,40 @@ def find_chromium() -> str | None:
     return None
 
 
-def ensure_desktop_entry() -> None:
-    if DESKTOP_ENTRY_PATH.exists():
-        return
-    DESKTOP_ENTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    contents = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Name=Fragmenta\n"
-        "Comment=Fine-tune and use text-to-audio models\n"
-        f"Icon={APP_ICON_PATH}\n"
-        "Categories=AudioVideo;Audio;\n"
-        f"StartupWMClass={APP_WM_CLASS}\n"
-        "NoDisplay=true\n"
-    )
-    DESKTOP_ENTRY_PATH.write_text(contents, encoding="utf-8")
+def wayland_app_id(chromium_path: str) -> str:
+    """What the desktop calls the app window on Wayland, where Chromium ignores
+    --class: "<browser>-<host>__-<profile>" (GetXdgAppIdForWebApp in Chromium's
+    shell_integration_linux.cc). Chrome and Chromium both say "chrome"."""
+    browser = "brave" if "brave" in Path(chromium_path).name else "chrome"
+    return f"{browser}-{BACKEND_HOST}__-Default"
+
+
+def ensure_desktop_entry(chromium_path: str) -> None:
+    # The icon gets a copy of its own: under an AppImage the code's path changes
+    # at every launch, so the entry can't point at it.
+    icon_bytes = APP_ICON_PATH.read_bytes()
+    if not ICON_COPY_PATH.exists() or ICON_COPY_PATH.read_bytes() != icon_bytes:
+        ICON_COPY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ICON_COPY_PATH.write_bytes(icon_bytes)
+    # One entry per name the window can have: --class on X11, the browser's own
+    # name for it on Wayland. The desktop matches either by file name or by
+    # StartupWMClass.
+    app_id = wayland_app_id(chromium_path)
+    for path, wm_class in ((DESKTOP_ENTRY_PATH, APP_WM_CLASS),
+                           (DESKTOP_ENTRY_PATH.with_name(f"{app_id}.desktop"), app_id)):
+        contents = (
+            "[Desktop Entry]\n"
+            "Type=Application\n"
+            "Name=Fragmenta\n"
+            "Comment=Fine-tune and use text-to-audio models\n"
+            f"Icon={ICON_COPY_PATH}\n"
+            "Categories=AudioVideo;Audio;\n"
+            f"StartupWMClass={wm_class}\n"
+            "NoDisplay=true\n"
+        )
+        if not path.exists() or path.read_text(encoding="utf-8") != contents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(contents, encoding="utf-8")
 
 
 def run_chromium_app_mode(chromium_path: str) -> int:
@@ -320,7 +361,8 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         announce_ui_ready()
 
         if sys.platform == "linux":
-            ensure_desktop_entry()
+            ensure_desktop_entry(chromium_path)
+        bring_over_window_storage(SOURCE_CHROMIUM_USER_DATA_DIR, CHROMIUM_USER_DATA_DIR)
         CHROMIUM_USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
         # Sized and scaled from the display, not baked in — this is the
@@ -370,11 +412,23 @@ def run_chromium_app_mode(chromium_path: str) -> int:
         ]
 
         quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+        uninstalling = threading.Event()
+
+        def close_for_uninstall() -> None:
+            uninstalling.set()
+            if chromium_process is not None:
+                chromium_process.terminate()
+
+        if backend_process is not None:
+            _close_on_uninstall(backend_process, close_for_uninstall)
+
         last_exit_code = 1
         for index, (label, args) in enumerate(attempts):
             launched_at = time.monotonic()
             chromium_process = subprocess.Popen(args, cwd=str(PROJECT_ROOT), **quiet)
             chromium_process.wait()
+            if uninstalling.is_set():
+                return 0
             elapsed = time.monotonic() - launched_at
             last_exit_code = chromium_process.returncode or 0
             if last_exit_code == 0:
@@ -571,6 +625,62 @@ def _windows_apply_window_icon() -> None:
             ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
     except Exception as exc:
         print(f"Could not set Windows window icon: {exc}")
+
+
+def bring_over_window_storage(source: Path, target: Path) -> None:
+    """The installed app's first launch starts from the window storage of a
+    source install on this computer, so its Performance channels, presets and
+    MIDI mappings come along; the page then moves them into the data folder.
+    Only while the app has no storage of its own, so none of it is replaced.
+    Not on a Mac: WKWebView keeps each app's storage itself and ignores the
+    folder we name."""
+    if (os.environ.get("FRAGMENTA_PACKAGED") != "1" or sys.platform == "darwin"
+            or target.exists() or not source.is_dir()):
+        return
+    try:
+        # Caches rebuild themselves; Singleton* and lockfile are the old
+        # window's locks.
+        shutil.copytree(source, target, symlinks=True,
+                        ignore=shutil.ignore_patterns("*Cache*", "Crashpad", "Singleton*", "lockfile"))
+        print(f"Brought over the window storage of {source}.")
+    except shutil.Error:
+        print(f"Brought over the window storage of {source}, except files it still had open.")
+    except OSError as exc:
+        print(f"Could not bring over the window storage of {source}: {exc}")
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def _windows_show_output_devices(window) -> None:
+    """Let Settings > Audio list the output devices on Windows.
+
+    WebView2, like Chromium, lists output devices only to pages with microphone
+    permission; without it the page sees the system device alone. Grant it to
+    the app's own page in the window's profile. No prompt appears, and the
+    microphone is never opened: the page doesn't call getUserMedia. The grant
+    is saved in the profile, so from the next launch it's there before the page
+    loads; this time Settings picks the devices up when it opens.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from System import Action
+        from Microsoft.Web.WebView2.Core import (
+            CoreWebView2PermissionKind,
+            CoreWebView2PermissionState,
+        )
+
+        form = window.native
+
+        def grant():
+            form.browser.webview.CoreWebView2.Profile.SetPermissionStateAsync(
+                CoreWebView2PermissionKind.Microphone,
+                BACKEND_URL,
+                CoreWebView2PermissionState.Allow,
+            )
+
+        form.Invoke(Action(grant))
+    except Exception as exc:
+        print(f"Could not let the window list output devices: {exc}")
 
 
 DEFAULT_WINDOW_SIZE = (1400, 850)
@@ -805,11 +915,15 @@ def run_pywebview_mode() -> int:
             )
             if sys.platform == "win32":
                 window.events.shown += _windows_apply_window_icon
+                window.events.loaded += _windows_show_output_devices
             elif sys.platform == "linux":
                 window.events.shown += _linux_apply_window_icon
             elif sys.platform == "darwin":
                 window.events.shown += _macos_apply_dock_icon
+            if backend_process is not None:
+                _close_on_uninstall(backend_process, window.destroy)
 
+            bring_over_window_storage(SOURCE_WEBVIEW_STORAGE_DIR, WEBVIEW_STORAGE_DIR)
             WEBVIEW_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             start_kwargs = {"private_mode": False, "storage_path": str(WEBVIEW_STORAGE_DIR)}
             # pywebview 6's Windows backend builds the form icon from `icon`
@@ -856,8 +970,29 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+def _warn_if_environment_stale() -> None:
+    """Starting this file directly skips the installer, so after an update it
+    can run on an old Python or old packages with nothing saying so."""
+    if os.environ.get("FRAGMENTA_PACKAGED") == "1":
+        return
+    try:
+        import install
+        wrong_python = sys.version_info[:2] != install.REQUIRED_PY
+        stale = wrong_python or not install.deps_up_to_date(install.platform_lock())
+    except Exception:
+        return  # a broken check shouldn't stop the app from starting
+    if not stale:
+        return
+    launcher = {"win32": "fragmenta.bat", "darwin": "fragmenta.command"}.get(sys.platform, "fragmenta.sh")
+    found = "Python %d.%d" % sys.version_info[:2]
+    problem = (f"Fragmenta needs Python {install.REQUIRED_PY_STR}, but this is {found}."
+               if wrong_python else "The installed packages don't match this version of Fragmenta.")
+    print(f"WARNING: {problem} Start it with {launcher} to update them.", file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = parse_args()
+    _warn_if_environment_stale()
     _install_sigterm_handler()
     configure_backend_endpoint()
     if args.browser:

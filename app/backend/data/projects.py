@@ -101,7 +101,23 @@ def get_projects_dir() -> Path:
     return root
 
 
+def is_safe_project_name(name: Any) -> bool:
+    """A plain folder name under the projects root: not empty, not `.` or
+    `..`, no path separators. Routes take `<name>` straight from the URL, and
+    `.` would resolve to the projects root itself, so a delete would take
+    every project with it."""
+    if not isinstance(name, str) or not name.strip():
+        return False
+    if name in (".", "..") or "\x00" in name:
+        return False
+    if "/" in name or "\\" in name:
+        return False
+    return Path(name).name == name
+
+
 def project_path(name: str) -> Path:
+    if not is_safe_project_name(name):
+        raise ValueError(f"Invalid project name: {name!r}")
     return get_projects_dir() / name
 
 
