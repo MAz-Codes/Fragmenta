@@ -256,11 +256,30 @@ export default function ProbeBoard({
         // Web fonts landing after the first paint can nudge the zones.
         let live = true;
         document.fonts?.ready?.then(() => { if (live) measure(); });
-        if (!innerRef.current || typeof ResizeObserver === 'undefined') return () => { live = false; };
-        const ro = new ResizeObserver(() => measure());
-        ro.observe(innerRef.current);
-        return () => { live = false; ro.disconnect(); };
-    }, [measure]);
+        // The board mounts only once the registry is in, so this effect
+        // must re-run with `columns`: before 4 Nov 2026 it ran once, before
+        // the board existed, and never attached the observer — wires stayed
+        // where the pads had been and a resized window (which re-zooms the
+        // page and re-centres the board) left them 9-100 px off their holes.
+        const box = innerRef.current;
+        if (!box) return () => { live = false; };
+        // Window resizes also change the page zoom (index.html); measure
+        // after the browser has laid the zoomed page out.
+        let raf = 0;
+        const onResize = () => {
+            cancelAnimationFrame(raf);
+            raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { if (live) measure(); }); });
+        };
+        window.addEventListener('resize', onResize);
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => measure()) : null;
+        ro?.observe(box);
+        return () => {
+            live = false;
+            cancelAnimationFrame(raf);
+            window.removeEventListener('resize', onResize);
+            ro?.disconnect();
+        };
+    }, [measure, columns]);
 
     // Named contacts, plus named wires that aren't connected right now
     // (touching one solders it back); connected wires have their own row.
