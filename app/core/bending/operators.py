@@ -241,7 +241,11 @@ def _op_sort(t, p, ctx):
 def _op_shuffle(t, p, ctx):
     """Permute entries along the feature axis with a seeded permutation
     (same permutation for every position — a rewiring, not white noise).
-    Ours."""
+    After Růžička's convolutional layer reconnection (2020: features
+    randomly swapped within a GAN layer, used in Collins, Růžička &
+    Grierson's Remixing AIs) and Klingemann's Neural Glitch (2018: weights
+    randomly altered, deleted or exchanged); seeded, and on activations
+    and latents too, is ours."""
     n = t.shape[ctx.feature_axis]
     perm = torch.randperm(n, generator=ctx.generator).to(t.device)
     return t.index_select(ctx.feature_axis, perm)

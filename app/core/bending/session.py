@@ -616,7 +616,11 @@ class BendSession:
     _JUMPER_PART_ATTR = {"attn": "self_attn", "ff": "ff"}
 
     def _jumper(self, mod: Dict[str, Any], transformer) -> None:
-        """Circuit bending's jumper wire: the output of `from_part` in block
+        """Circuit bending's jumper wire (Ghazala's procedure as Gillespie &
+        Schachter 2022 give it; in neural audio, Collins, Růžička & Grierson
+        2020 already fed a spectral autoencoder's output back "to an
+        intermediate layer" and cross-coupled two networks live; this is
+        the wire inside one forward pass of a DiT): the output of `from_part` in block
         `from` is cross-faded (by the module's mix) into the input of
         `to_part` in block `to` — a whole block, or its attention or
         feed-forward. When the source runs first the wire carries this
