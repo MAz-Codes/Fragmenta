@@ -18,7 +18,11 @@ Mechanisms (all zero-vendor-edit):
   * structural bends  -> swap the ContinuousTransformer's `layers`
                          ModuleList for a rebuilt one (bypass / repeat /
                          reorder) and/or swap activation-function submodules
-                         (swap_nonlinearity); originals restored on remove()
+                         (swap_nonlinearity — after Pavlov, ICCC 2025, who
+                         replaces a GAN's activation functions with
+                         parametric ones and finds mapping-network swaps
+                         change structure, generator swaps change style);
+                         originals restored on remove()
   * jumpers           -> a forward hook taps the output of one block (or its
                          attention / feed-forward) and a forward pre-hook
                          feeds it into the input of another (removed with

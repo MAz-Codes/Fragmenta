@@ -22,10 +22,18 @@ weight domain the offset unit is 0.1 std (the slider's ±3 reaches ±0.3).
 
 Lineage per operator is noted inline — Broad et al. 2021/2022 (numerical:
 ablation, inversion 1-x, multiplication, binary threshold; affine; morpho-
-logical erosion/dilation; applied to activations), Kotowski & Font NIME 2026
-(on weights and biases: offset, scaling, negation, circular shift, drawing
-a parameter shape), Dzwonczyk et al. DAFx 2024 (the same point-wise and
-morphological operators inside a diffusion model). Operators marked "ours"
+logical erosion/dilation; applied to activations), McCallum & Yee-King
+2020 / Yee-King & McCallum 2021 (on DDSP activations: ablation, inversion,
+threshold, translation along the unit axis with wrap-around, and an
+oscillator added to the activations; the first bending of an audio model),
+Kotowski & Font NIME 2026 (on weights and biases: offset, scaling,
+negation, circular shift, drawing a parameter shape), Dzwonczyk et al.
+DAFx 2024 (the same point-wise and morphological operators inside a
+diffusion model's U-Net), Cole, Fiebrink & Grierson 2026 (inside a video
+DiT: gain, noise and thresholding on attention maps, attention values and
+feed-forward hidden units, scoped by step, layer, token and neuron),
+Abuzuraiq & Pasquier 2026 (scalar multiply, rotation, gaussian noise on
+Stable Diffusion's U-Net layers, by step range). Operators marked "ours"
 have no source in those papers. The protocol the registry serves is
 Ghazala's anti-theory: modify, listen, log.
 
@@ -92,7 +100,8 @@ def _op_bias(t, p, ctx):
 def _op_roll(t, p, ctx):
     """Circular shift along the feature axis (K&F's circular shifting of
     the parameter array — "roll", the operation behind most rows of the
-    Bending Log fragment they publish).
+    Bending Log fragment they publish; on activations, McCallum & Yee-King
+    2020's "translation in the unit axis (wrap around)").
 
     `axis: "time"` rolls along the time axis instead where one exists.
     Shift is a fraction of the axis length so one slider works across
@@ -111,7 +120,9 @@ def _op_threshold(t, p, ctx):
     """Zero everything below |cutoff|; `hard` additionally flattens the
     survivors to ±cutoff. After Broad's binary threshold (1 if x >= t else
     0), adapted so a bend keeps sign and scale: Broad's form, applied to
-    a transformer's residual stream, replaces the signal with a constant."""
+    a transformer's residual stream, replaces the signal with a constant.
+    The soft form is what Cole et al. 2026 apply to a DiT's feed-forward
+    hidden units ("thresholding (clamping low activations)")."""
     cutoff = float(p.get("cutoff", 0.0)) * ctx.scale
     mask = t.abs() >= cutoff
     if bool(p.get("hard", False)):
@@ -121,9 +132,12 @@ def _op_threshold(t, p, ctx):
 
 def _op_noise(t, p, ctx):
     """Add seeded gaussian noise scaled to the tensor's own std, so one
-    amount slider behaves comparably across layers. Ours: none of the
-    source papers adds noise (Broad et al. 2022 get stochastic variation
-    from random *feature selection*, not from added noise)."""
+    amount slider behaves comparably across layers. Not in Broad et al.
+    (2022 get stochastic variation from random *feature selection*, not
+    from added noise) nor K&F; noise injection is a lever in Cole et al.
+    2026 (attention maps, values and feed-forward hidden units of a video
+    DiT) and Abuzuraiq & Pasquier 2026 (gaussian noise, std 1-2, on U-Net
+    layers). Scaling it to the tensor's own std is ours."""
     amount = float(p.get("amount", 0.0))
     if amount == 0.0:
         return t
