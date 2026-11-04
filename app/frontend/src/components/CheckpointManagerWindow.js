@@ -32,11 +32,6 @@ const purposeRows = (mac, signedIn) => [
         about: 'Quick results, built for Apple Silicon. No account needed.',
     },
     {
-        key: 'bend',
-        title: 'Bending',
-        about: 'The Bend tab works on this PyTorch build; MLX models can\u2019t be bent. Free Hugging Face account needed.',
-    },
-    {
         key: 'post-trained',
         title: 'Fast generation',
         about: mac
@@ -51,6 +46,11 @@ const purposeRows = (mac, signedIn) => [
         about: mac
             ? 'LoRAs train on these. Slower to generate with. No account needed.'
             : 'Generate with these or train LoRAs on them. Slower than Fast generation. No account needed.',
+    },
+    {
+        key: 'bend',
+        title: 'Bending',
+        about: 'The Bend tab works on this PyTorch build; MLX models can\u2019t be bent. Free Hugging Face account needed.',
     },
     {
         key: 'tagger',
