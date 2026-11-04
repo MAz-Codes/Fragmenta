@@ -18,7 +18,8 @@ reorder, swap_nonlinearity) once each, and the step gate.
 
     python tests/verify_bend_board.py [model_id] [--out report.json]
 
-Needs a downloaded PyTorch model (default sa3-small-music) and node on PATH.
+Needs a downloaded PyTorch model (default sa3-small-music, the one the
+board offers) and node on PATH.
 Dev-only tooling: tracked on dev/bend, never on main.
 """
 from __future__ import annotations

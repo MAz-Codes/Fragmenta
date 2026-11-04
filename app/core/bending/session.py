@@ -114,6 +114,7 @@ class BendSession:
         # 0-based index of the step the model is currently computing.
         self._step = 0
         self._total_steps = 1
+        self._t_prev: Optional[float] = None
         # Per-step modules (activation hooks, latent bends) and which of them
         # actually acted — a step range that falls between the sampler's
         # steps would otherwise be a silent no-op.
@@ -133,14 +134,22 @@ class BendSession:
         """Called from the generator's per-ODE-step callback. Updates the
         step gate and applies latent bends in place.
 
-        Latent bends act on the model's current *denoised estimate*, not on
-        the noisy state, because that is the only quantity every SA3
-        sampler carries forward: pingpong (the distilled models' default)
-        rebuilds the next state from `denoised` alone and never reads `x`
-        again, while euler/rk4 read only `x` (their `denoised` is computed
-        just for the callback). Bending `denoised` to d' and shifting `x`
-        by the same delta (x = d + t·v, so x' = d' + t·v) gives identical
-        semantics under all of them.
+        Latent bends act on the model's current *denoised estimate* d, not
+        on the noisy state x, because that is the only quantity every SA3
+        sampler carries forward: pingpong (the distilled models) rebuilds
+        the next state from `denoised` alone and never reads `x` again,
+        while euler/rk4/dpmpp (the base models) continue from `x` with a
+        velocity v they computed before the callback. For those, bending d
+        to d' is the same as bending v to v' = (x - d') / t, and the Euler
+        step x + dt·v' lands at x + dt·v - (dt / t)·(d' - d). So `x` is
+        shifted by that fraction (t_curr - t_next) / t_curr of the delta —
+        not by the whole delta, which accumulates over the 50 steps until
+        fp16 overflows (every latent contact came back NaN on
+        sa3-small-music-base, 4 Nov 2026). t_next isn't in the callback;
+        the schedule is linear or smoothly shifted, so the previous
+        decrement stands in for the next one (1/steps on the first step).
+        Under pingpong the shift is unused and d' carries at (1 - t_next),
+        the same order of weight.
         """
         i = info.get("i")
         if isinstance(i, int):
@@ -148,10 +157,24 @@ class BendSession:
         try:
             self._bend_latent(info)
         finally:
+            t = info.get("t")
+            if torch.is_tensor(t):
+                self._t_prev = float(t.flatten()[0])
             # The callback fires after step i's model call: every forward
             # from here on belongs to step i+1.
             if isinstance(i, int):
                 self._step = i + 1
+
+    def _step_fraction(self, info: Dict[str, Any]) -> float:
+        """(t_curr - t_next) / t_curr, estimated from the previous decrement."""
+        t = info.get("t")
+        if not torch.is_tensor(t):
+            return 1.0
+        t_curr = float(t.flatten()[0])
+        if t_curr <= 1e-6:
+            return 1.0
+        dec = (self._t_prev - t_curr) if self._t_prev is not None else t_curr / max(self._total_steps, 1)
+        return float(min(1.0, max(0.0, dec / t_curr)))
 
     def _bend_latent(self, info: Dict[str, Any]) -> None:
         if not self._latent_mods:
@@ -177,7 +200,7 @@ class BendSession:
         delta = cur - target
         target.copy_(cur)
         if target is d and torch.is_tensor(x) and x is not d:
-            x.add_(delta.to(x.dtype))
+            x.add_((delta * self._step_fraction(info)).to(x.dtype))
 
     def _progress(self) -> float:
         """Normalized position of the current step: 0.0 on the first step,
