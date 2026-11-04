@@ -8,7 +8,7 @@ import {
 import {
     CircuitBoard as CircuitBoardIcon, Dices as DicesIcon,
     Save as SaveIcon, ChevronDown as ExpandMoreIcon, Square as StopIcon,
-    RotateCcw as UnbendIcon, NotebookPen as LogIcon, Footprints as NearbyIcon,
+    RotateCcw as UnbendIcon, NotebookPen as LogIcon,
     Shuffle as NewInputIcon, Check as KeepIcon, Wrench as RackIcon,
 } from 'lucide-react';
 import Tooltip from '../Tooltip';
@@ -23,9 +23,10 @@ import BendingLogPanel from './BendingLogPanel';
 import BreakPanel from './BreakPanel';
 import BendTakes from './BendTakes';
 import ProbeBoard from './ProbeBoard';
+import BendLive from './BendLive';
 import RailSection from '../RailSection';
 import {
-    buildPatch, chancePatch, newModule, nextId, mutatePatch,
+    buildPatch, chancePatch, newModule, nextId,
     boardColumns, probeModules, jumperPadId, parseJumperId, isNoopWire,
     isWireId, isChordId, chordId, circuitFingerprint,
 } from './bendUtils';
@@ -145,7 +146,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     const [loraStack, setLoraStack] = useState(stored.loraStack || []);
     const [boardNames, setBoardNames] = useState({});
     const [lastTouched, setLastTouched] = useState(null);
-    // The last bent take, for Nearby / Keep / Open in rack.
+    // The last bent take, for Keep / Open in rack.
     const [lastTake, setLastTake] = useState(null);
     const [findName, setFindName] = useState('');
     const [autoPlay, setAutoPlay] = useState(null);
@@ -157,6 +158,15 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     // blink when the model is warm, but ~20 s when its weights load (first
     // render, model switch, new LoRAs) — only that long wait is shown.
     const [loadingWeights, setLoadingWeights] = useState(false);
+    // Live: a mode, never the default — while it is on, touches and module
+    // edits feed the live render instead of making takes; off, everything
+    // plays as before.
+    const [live, setLive] = useState(false);
+    const liveRef = useRef(false);
+    liveRef.current = live;
+    // The seed the live chain runs on: frozen when Live is switched on in
+    // random-seed mode, so the material only changes when asked.
+    const [liveSeed, setLiveSeed] = useState(0);
     const loadingSinceRef = useRef(null);
 
     // Bending hooks PyTorch modules, so MLX models can't be bent; on a Mac
@@ -290,7 +300,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     /**
      * One generation. Without `override` it renders the rack (bent) or
      * replays the last bent request clean. `override` lets the Probe board
-     * and Nearby render their own modules: {modules, body, probe, padId,
+     * renders its own modules: {modules, body, probe, padId,
      * autoPlay} for a bent take, {body} for a clean one. Resolves to the
      * take, or null.
      */
@@ -459,6 +469,13 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     // `fresh`: a touch (not a dry/wet re-listen) with "new input each touch" on.
     const probe = async (padIds, touchedId, at = wet, { fresh = freshInput } = {}) => {
         if (busy || !registry || !modelId) return;
+        if (liveRef.current) {
+            // Live: the circuit changed; the live render picks it up. With
+            // "Random seed" on, a touch still turns the material over.
+            setLastTouched(touchedId);
+            if (fresh) setProbeSeed(randomSeed32());
+            return;
+        }
         const mods = probeModules(padIds, columns, registry, at);
         if (!mods.length) return;
         setLastTouched(touchedId);
@@ -474,8 +491,12 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         await ensureClean(take);
     };
 
-    const touchPad = (id, { hold = false } = {}) => {
+    const touchPad = (id, { hold: holdKey = false } = {}) => {
         if (busy) return;
+        // Live: a touch latches the contact (press again to release), since
+        // the circuit on the board is what the live render plays. A touch
+        // that is only heard once has nothing to latch onto.
+        const hold = holdKey || liveRef.current;
         if (isChordId(id)) {
             // A chord find: its wires are soldered back on and its contacts
             // held (added to what is held when the hold key is down, else
@@ -538,21 +559,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         saveBoardNames(next);
     };
 
-    // Nearby: move the wire a little — same operators, small steps.
-    const nearby = async () => {
-        if (busy || !lastTake) return;
-        const base = view === 'rack' ? modules : lastTake.modules;
-        const moved = mutatePatch(base, registry);
-        if (view === 'rack') setModules(moved);
-        const take = await generate(true, {
-            modules: moved.filter(m => m.enabled !== false),
-            body: lastTake.body,
-            autoPlay: view === 'probe',
-            source: view,
-        });
-        if (view === 'probe') await ensureClean(take);
-    };
-
     // Keep names what was heard: the one contact or wire, or — when more
     // than one was in the circuit — the chord of all of them, with a
     // fingerprint of what the circuit did so a later change shows.
@@ -580,7 +586,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         setDuration(lastTake.body.duration);
         setRandomSeed(false);
         setSeed(lastTake.body.seed);
-        // The rack now holds exactly this take, so Nearby can walk from it.
         setLastTake(t => (t ? { ...t, source: 'rack' } : t));
         setView('rack');
     };
@@ -708,6 +713,37 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                    sx={{ width: 110 }} />
     );
 
+    // What Live renders: the board's circuit at its dry/wet, or the rack's
+    // enabled modules, with this view's prompt and seed.
+    const liveParams = useMemo(() => {
+        if (!modelId) return null;
+        let mods;
+        if (view === 'probe') {
+            const pads = circuit();
+            mods = pads.length && registry ? probeModules(pads, columns, registry, wet) : [];
+        } else {
+            mods = modules.filter(m => m.enabled !== false);
+        }
+        const runSeed = view === 'probe' ? probeSeed : liveSeed;
+        const body = withLoras({
+            model_id: modelId,
+            prompt: view === 'probe' ? (prompt.trim() || DEFAULT_PROBE_PROMPT) : prompt.trim(),
+            seed: runSeed,
+            bend_patch: mods.length ? buildPatch(mods, modelId, runSeed) : null,
+        });
+        if (steps && modelId.endsWith('-base')) body.steps = Number(steps);
+        return body;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [modelId, view, wires, held, wet, registry, columns, modules, prompt,
+        probeSeed, liveSeed, steps, loraStack]);
+
+    const toggleLive = (next) => {
+        if (next && !live) {
+            setLiveSeed(randomSeed ? randomSeed32() : (parseInt(seed, 10) || 0));
+        }
+        setLive(!!next);
+    };
+
     // The rail: what goes in (instrument, prompt) and what came out (takes).
     // The board and the log have the page.
     const rail = mode !== 'break' && (
@@ -746,6 +782,17 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                 {stepsField}
             </RailSection>
 
+            <RailSection title="Playback">
+                <BendLive
+                    on={live}
+                    onToggle={toggleLive}
+                    params={liveParams}
+                    disabled={!modelId || !!busy}
+                    onNotice={notify}
+                    accent={accent}
+                />
+            </RailSection>
+
             {(bentAudio || cleanAudio) && (
                 <RailSection title="Takes">
                     <BendTakes
@@ -761,7 +808,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                             cleanAudio && { ...cleanAudio, key: 'clean', title: 'Clean' },
                         ].filter(Boolean)}
                     />
-                    {/* the find: step nearby, name it, or open the case */}
+                    {/* the find: name it, or open the case */}
                     {view === 'probe' && lastTake?.source === 'probe' && bentAudio && (
                         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
@@ -783,14 +830,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                                 </Tooltip>
                             </Box>
                             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                <Tooltip title={TIPS.bend.nearby}>
-                                    <span>
-                                        <Button size="small" variant="outlined" disabled={!!busy}
-                                                startIcon={<NearbyIcon size={14} />} onClick={nearby}>
-                                            Nearby
-                                        </Button>
-                                    </span>
-                                </Tooltip>
                                 <Tooltip title={TIPS.bend.openInRack}>
                                     <Button size="small" variant="text" startIcon={<RackIcon size={14} />}
                                             disabled={!!busy} onClick={openInRack}>
@@ -1044,15 +1083,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                         </Button>
                     ) : (
                         <>
-                            <Tooltip title={TIPS.bend.nearby}>
-                                <span>
-                                    <Button variant="outlined" disabled={lastTake?.source !== 'rack' || !activeCount}
-                                            startIcon={<NearbyIcon size={14} />}
-                                            onClick={nearby}>
-                                        Nearby
-                                    </Button>
-                                </span>
-                            </Tooltip>
                             <Tooltip title={TIPS.bend.abCompare}>
                                 <span>
                                     <Button variant="outlined" disabled={!bentAudio}

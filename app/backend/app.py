@@ -91,8 +91,10 @@ CORS(app,
 
 # Bend tab routes live in their own blueprint (app/backend/bend_routes.py)
 # so this module doesn't grow; everything there is additive.
-from app.backend.bend_routes import bend_bp  # noqa: E402
-app.register_blueprint(bend_bp)
+from app.backend import bend_routes as _bend_routes  # noqa: E402
+app.register_blueprint(_bend_routes.bend_bp)
+# Live bending renders on the same generator (and behind its lock).
+_bend_routes.generator_provider = lambda: (_ensure_components(), generator)[1]
 
 
 @app.errorhandler(413)

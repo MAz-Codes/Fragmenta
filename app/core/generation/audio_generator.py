@@ -307,6 +307,25 @@ class AudioGenerator:
         return bool(self._active) and self._active.set_lora_strength(index, strength)
 
     # --- public entry ---------------------------------------------------------
+    def generate_array(self, prompt: str, **kwargs: Any):
+        """Like generate_audio, but hands back (audio[C, N] float32, bend_report)
+        and never touches disk, the log or the provenance stamp. The Bend tab's
+        live loop renders through this: it is a listening surface, not a
+        fragment. Same lock, same stop event, same engine path."""
+        with self._gen_lock:
+            stop_event = threading.Event()
+            with self._state_lock:
+                self._current_stop = stop_event
+            try:
+                return self._generate_audio_impl(
+                    prompt, stop_event=stop_event, _return_array=True, **kwargs)
+            except Exception:
+                _reset_progress()
+                raise
+            finally:
+                with self._state_lock:
+                    self._current_stop = None
+
     def generate_audio(self, prompt: str, **kwargs: Any) -> Path:
         """Serialized public entry. See _generate_audio_impl for parameters.
 
@@ -364,8 +383,14 @@ class AudioGenerator:
         # to the model for exactly this generation and removed in finally —
         # requests without it are byte-for-byte unaffected.
         bend_patch: Optional[Dict[str, Any]] = None,
+        # Live bending: the inpaint source as (sample_rate, samples) already in
+        # memory, no render-past-and-trim (the live worker handles its own
+        # headroom), and the audio handed back instead of written.
+        inpaint_audio_data: Optional[Any] = None,
+        extend_render_past: bool = True,
+        _return_array: bool = False,
         **_ignored_legacy_kwargs: Any,
-    ) -> Path:
+    ):
         # `loop_stitch` / `loop_bars` / `loop_bpm` are accepted for API
         # compatibility but ignored — the seamless-loop pipeline was
         # removed because user A/B testing showed it degraded audio
@@ -390,7 +415,7 @@ class AudioGenerator:
         engine.apply_loras(loras or [])
 
         init_audio = self._load_audio(init_audio_path) if init_audio_path else None
-        inpaint_audio = self._load_audio(inpaint_audio_path) if inpaint_audio_path else None
+        inpaint_audio = self._load_audio(inpaint_audio_path) if inpaint_audio_path else inpaint_audio_data
 
         _, kind, max_dur = _MODEL_INFO[model_id]
         is_base = (kind == "base")
@@ -408,7 +433,7 @@ class AudioGenerator:
         # winds down towards it, so a short extension comes out as a fade or silence.
         # Render past the end, with the regenerated region reaching that far, then trim.
         requested_duration = duration
-        if _is_extension(inpaint_audio, inpaint_ends, duration):
+        if extend_render_past and _is_extension(inpaint_audio, inpaint_ends, duration):
             duration = min(duration + EXTEND_RENDER_PAST_SEC, float(max_dur))
             inpaint_ends = [duration if end >= requested_duration else end for end in inpaint_ends]
             source_end = inpaint_audio[1].shape[-1] / inpaint_audio[0]
@@ -500,6 +525,11 @@ class AudioGenerator:
         if bend_session is not None:
             bend_report = list(bend_session.warnings)
             audio = _bend_output_safety(np.ascontiguousarray(audio), bend_report)
+
+        if _return_array:
+            _set_progress(phase="complete", is_generating=False,
+                          step=total_steps_logical, ended_at=time.time())
+            return np.ascontiguousarray(audio, dtype=np.float32), bend_report
 
         _set_progress(phase="decoding", step=total_steps_logical)
         try:

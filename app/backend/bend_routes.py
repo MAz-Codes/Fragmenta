@@ -14,6 +14,12 @@ Routes:
     POST   /api/bend/lora                 bend / blend adapter files (Phase 2)
     GET    /api/bend/boards/<model_id>    the Probe board's names (user's finds)
     PUT    /api/bend/boards/<model_id>    save them
+    POST   /api/bend/live/start           live on: {loop, chunk_sec, …params}
+    POST   /api/bend/live/set             change params / patch / loop while live
+    POST   /api/bend/live/advance         Next: move on to the following chunk
+    POST   /api/bend/live/stop            live mode off
+    GET    /api/bend/live/status
+    GET    /api/bend/live/next?after=N    long-poll the next rendered chunk (WAV)
 """
 from __future__ import annotations
 
@@ -35,6 +41,21 @@ from utils.logger import get_logger
 logger = get_logger("BendAPI")
 
 bend_bp = Blueprint("bend", __name__)
+
+# app.py hands us its (lazily built) AudioGenerator so live mode renders on the
+# same engine and behind the same lock as /api/generate.
+generator_provider = None
+_live = None
+
+
+def _live_session():
+    global _live
+    if _live is None:
+        from app.core.bending.live import LiveBend
+        if generator_provider is None:
+            raise RuntimeError("live bending has no generator")
+        _live = LiveBend(generator_provider())
+    return _live
 
 _PRESET_NAME_RE = re.compile(r"^[A-Za-z0-9._ -]{1,80}$")
 
@@ -305,3 +326,137 @@ def bend_board_put(model_id):
         json.dump(board, fh, indent=2)
     tmp.replace(path)
     return jsonify(board)
+
+
+# --- live mode ---------------------------------------------------------------
+
+_LIVE_FIELDS = ("loop", "model_id", "prompt", "steps", "seed",
+                "chunk_sec", "context_sec", "past_sec")
+
+
+def _live_params(data):
+    """Validate the live request body; the bend patch goes through the same
+    normalisation as /api/generate's. Returns (params, error)."""
+    params = {}
+    for k in _LIVE_FIELDS:
+        if k in data and data[k] is not None:
+            params[k] = data[k]
+    if "loop" in params:
+        params["loop"] = bool(params["loop"])
+    for k in ("chunk_sec", "context_sec", "past_sec"):
+        if k in params:
+            try:
+                params[k] = max(0.5, min(60.0, float(params[k])))
+            except (TypeError, ValueError):
+                return None, f"{k} must be a number"
+    if "steps" in params:
+        try:
+            params["steps"] = int(params["steps"])
+        except (TypeError, ValueError):
+            return None, "steps must be an integer"
+    if "seed" in params:
+        try:
+            params["seed"] = int(params["seed"])
+        except (TypeError, ValueError):
+            return None, "seed must be an integer"
+    if "bend_patch" in data:
+        raw = data["bend_patch"]
+        if raw:
+            try:
+                patch, _warnings = validate_patch(raw)
+            except PatchError as e:
+                return None, f"bend_patch invalid: {e}"
+            params["bend_patch"] = patch
+        else:
+            params["bend_patch"] = None
+    if "loras" in data:
+        loras = []
+        for item in data["loras"] or []:
+            if not isinstance(item, dict) or not item.get("path"):
+                continue
+            path = Path(str(item["path"]))
+            if not path.is_absolute():
+                path = get_config().project_root / path
+            if path.exists():
+                loras.append({"path": str(path),
+                              "strength": max(-2.0, min(2.0, float(item.get("strength", 1.0))))})
+        params["loras"] = loras
+    return params, None
+
+
+@bend_bp.route("/api/bend/live/start", methods=["POST"])
+def bend_live_start():
+    data = request.get_json(silent=True) or {}
+    params, err = _live_params(data)
+    if err:
+        return jsonify({"error": err}), 400
+    if not params.get("model_id"):
+        return jsonify({"error": "model_id is required"}), 400
+    try:
+        return jsonify(_live_session().start(params))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@bend_bp.route("/api/bend/live/set", methods=["POST"])
+def bend_live_set():
+    data = request.get_json(silent=True) or {}
+    params, err = _live_params(data)
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify(_live_session().update(params))
+
+
+@bend_bp.route("/api/bend/live/advance", methods=["POST"])
+def bend_live_advance():
+    if _live is None:
+        return jsonify({"error": "live mode is off"}), 409
+    return jsonify(_live.advance())
+
+
+@bend_bp.route("/api/bend/live/stop", methods=["POST"])
+def bend_live_stop():
+    if _live is None:
+        return jsonify({"running": False})
+    return jsonify(_live.stop())
+
+
+@bend_bp.route("/api/bend/live/status", methods=["GET"])
+def bend_live_status():
+    if _live is None:
+        return jsonify({"running": False, "seq": 0})
+    return jsonify(_live.status())
+
+
+@bend_bp.route("/api/bend/live/next", methods=["GET"])
+def bend_live_next():
+    """Long-poll: the first chunk newer than `after`, as WAV. 204 on timeout,
+    409 when live mode is off, 500 with the message when a render failed."""
+    if _live is None:
+        return jsonify({"error": "live mode is off"}), 409
+    try:
+        after = int(request.args.get("after", 0))
+        timeout = max(1.0, min(60.0, float(request.args.get("timeout", 25))))
+    except ValueError:
+        return jsonify({"error": "bad query"}), 400
+    result = _live.next_chunk(after, timeout)
+    st = _live.status()
+    if result is None:
+        if st.get("error"):
+            return jsonify({"error": st["error"]}), 500
+        if not st.get("running"):
+            return jsonify({"error": "live mode is off"}), 409
+        return ("", 204)
+    seq, wav, meta = result
+    from flask import Response
+    resp = Response(wav, mimetype="audio/wav")
+    resp.headers["X-Live-Seq"] = str(seq)
+    resp.headers["X-Live-Chunk"] = str(meta.get("chunk"))
+    resp.headers["X-Live-Loop"] = "1" if meta.get("loop") else "0"
+    resp.headers["X-Live-Version"] = str(meta.get("version"))
+    resp.headers["X-Live-Render-Ms"] = str(meta.get("render_ms"))
+    resp.headers["X-Live-Seconds"] = str(meta.get("seconds"))
+    if meta.get("warnings"):
+        resp.headers["X-Live-Warnings"] = json.dumps(meta["warnings"][:8], ensure_ascii=True)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
