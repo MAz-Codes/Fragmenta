@@ -19,6 +19,12 @@ import { generatedFragmentsWindowStyles as fragStyles } from '../../theme';
  * position over — that is what makes it an A/B: the ear compares the same
  * moment, bent against clean.
  *
+ * The takes play level-matched: each blob is decoded once, its RMS taken,
+ * and the louder take is turned down to the quieter one. Louder reads as
+ * better, so without this the A/B compares loudness, not the bend
+ * (measured 4 Nov 2026: the backend's old boost made every board contact
+ * play 3-7 dB above its clean reference). The files on disk are untouched.
+ *
  * takes: [{ key, title, titleColor, color, url, blob, filename, seed, body }]
  * autoPlay: { key, token } — play that take as soon as it lands; a new
  *   token replays (the Probe board: touch = hear, no second click).
@@ -28,6 +34,9 @@ export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay
     const [playing, setPlaying] = useState(null);      // take key
     const [time, setTime] = useState(0);
     const [durations, setDurations] = useState({});
+    // RMS per take url (0-1 linear), from decoding the blob once.
+    const [levels, setLevels] = useState({});
+    const audioCtxRef = useRef(null);
 
     // A replaced take (new generation) stops if it was the one playing.
     const urls = takes.map(t => `${t.key}:${t.url}`).join('|');
@@ -35,6 +44,52 @@ export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay
         setPlaying(p => (p && takes.some(t => t.key === p) ? p : null));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [urls]);
+
+    // Measure every new take's level.
+    useEffect(() => {
+        let live = true;
+        takes.forEach((t) => {
+            if (!t.blob || !t.url || levels[t.url] !== undefined) return;
+            try {
+                audioCtxRef.current ??= new (window.AudioContext || window.webkitAudioContext)();
+                const ctx = audioCtxRef.current;
+                t.blob.arrayBuffer()
+                    .then(buf => ctx.decodeAudioData(buf))
+                    .then((ab) => {
+                        let sum = 0, n = 0;
+                        for (let c = 0; c < ab.numberOfChannels; c++) {
+                            const d = ab.getChannelData(c);
+                            for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
+                            n += d.length;
+                        }
+                        const rms = n ? Math.sqrt(sum / n) : 0;
+                        if (live) setLevels(prev => ({ ...prev, [t.url]: rms }));
+                    })
+                    .catch(() => { if (live) setLevels(prev => ({ ...prev, [t.url]: null })); });
+            } catch {
+                setLevels(prev => ({ ...prev, [t.url]: null }));
+            }
+        });
+        return () => { live = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [urls]);
+
+    // Playback gain per take: the louder one comes down to the quieter.
+    const measured = takes.map(t => levels[t.url]).filter(v => typeof v === 'number' && v > 1e-5);
+    const target = measured.length > 1 ? Math.min(...measured) : null;
+    const gainOf = (t) => {
+        const v = levels[t.url];
+        if (target === null || typeof v !== 'number' || v <= 1e-5) return 1;
+        return Math.min(1, target / v);
+    };
+    useEffect(() => {
+        takes.forEach((t) => {
+            const el = audioRefs.current[t.key];
+            if (el) el.volume = gainOf(t);
+        });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [urls, levels]);
+    const db = (v) => `${(20 * Math.log10(Math.max(v, 1e-6))).toFixed(1)} dBFS`;
 
     const toggle = (key) => {
         const audio = audioRefs.current[key];
@@ -102,8 +157,15 @@ export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay
             {takes.map((t) => {
                 const isPlaying = playing === t.key;
                 const b = t.body || {};
+                const level = levels[t.url];
+                const gain = gainOf(t);
                 const info = [
                     `Seed: ${t.seed}`,
+                    typeof level === 'number'
+                        ? `Level: ${db(level)} RMS${gain < 0.999
+                            ? ` · played ${(20 * Math.log10(gain)).toFixed(1)} dB down to match the other take`
+                            : ''}`
+                        : null,
                     b.model_id ? `Model: ${b.model_id}` : null,
                     b.steps ? `Steps: ${b.steps}` : null,
                     b.duration ? `Duration: ${b.duration}s` : null,
@@ -170,6 +232,7 @@ export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay
                             }}
                             src={t.url}
                             preload="auto"
+                            onCanPlay={(e) => { e.target.volume = gainOf(t); }}
                             onLoadedMetadata={(e) => {
                                 const d = e.target.duration;
                                 setDurations(prev => ({ ...prev, [t.key]: Number.isFinite(d) ? d : 0 }));

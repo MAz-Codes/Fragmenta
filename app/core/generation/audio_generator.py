@@ -84,22 +84,23 @@ class GenerationStopped(Exception):
 
 # Bent output can be brutal — the first real test of a late-DiT scale bend
 # came back at an RMS ~0.5 dB below full scale. Bent generations (and only
-# those; clean output is never touched) are gain-reduced to this RMS
-# ceiling and soft-clipped below 0 dBFS.
-_BEND_RMS_CEILING = 10 ** (-16 / 20)     # -16 dBFS
-_BEND_PEAK_CEILING = 10 ** (-1 / 20)     # -1 dBFS
-# Quiet bends are brought up toward where clean SA3 renders sit (measured
-# -16…-21 dBFS RMS), so an A/B compares the bend, not its loudness — a
-# quieter take always sounds worse. The boost is capped, so a bend that all
-# but silenced the music stays near-silent instead of pumping up its floor.
-_BEND_RMS_TARGET = 10 ** (-18 / 20)      # -18 dBFS
-_BEND_MAX_BOOST = 10 ** (12 / 20)        # +12 dB
-# A bend that "blew up": near full scale AND spectrally flat like noise.
-# Clean SA3 output sits around -16 dBFS RMS with a median spectral flatness
-# below ~0.37 (bright hi-hat-heavy material included); blown takes measured
-# -0.5…-5 dBFS at 0.44…0.74.
+# those; clean output is never touched) are guarded here against what a
+# listener must not get: non-finite samples, and a take that blew up to
+# near full scale. Ordinary level differences are left alone: the Bend tab
+# plays the bent and clean takes level-matched, so an A/B compares the bend
+# and not its loudness. (Until 4 Nov 2026 this stage also brought quiet
+# takes up toward -18 dBFS and anything above -16 dBFS down to it; measured
+# on sa3-small-music that made all 79 board contacts play 3-7 dB louder
+# than their clean reference, which had been at the same level before the
+# stage touched it — louder reads as better, so the A/B was rigged.)
+# "Blown": near full scale — clean SA3 renders measured -10 dBFS (base, CFG
+# 7) to -24 dBFS (distilled) — and, when also spectrally flat like noise
+# (clean median flatness below ~0.37, blown takes 0.44…0.74), reported as
+# such. Either way the take is brought down to the ceiling.
 _BLOWN_RMS = 10 ** (-8 / 20)             # -8 dBFS
 _BLOWN_FLATNESS = 0.42
+_BEND_RMS_CEILING = 10 ** (-16 / 20)     # -16 dBFS: where a blown take lands
+_BEND_PEAK_CEILING = 10 ** (-1 / 20)     # -1 dBFS soft clip
 
 
 def _spectral_flatness(a: np.ndarray) -> float:
@@ -133,8 +134,8 @@ def _bend_output_safety(audio: np.ndarray, report: list) -> np.ndarray:
                       "mix, narrow the blocks, or try another stage.")
         return a
     rms = float(np.sqrt(np.mean(np.square(a))))
-    if rms > _BEND_RMS_CEILING:
-        blown = rms > _BLOWN_RMS and _spectral_flatness(a) > _BLOWN_FLATNESS
+    if rms > _BLOWN_RMS:
+        blown = _spectral_flatness(a) > _BLOWN_FLATNESS
         a = a * (_BEND_RMS_CEILING / rms)
         report.append(
             "This bend blew up into noise — the model was pushed further than "
@@ -142,8 +143,6 @@ def _bend_output_safety(audio: np.ndarray, report: list) -> np.ndarray:
             if blown else
             f"Bent output was very loud ({20 * np.log10(rms):.1f} dBFS RMS); "
             f"level reduced to -16 dBFS for hearing safety.")
-    elif rms < _BEND_RMS_TARGET:
-        a = a * min(_BEND_RMS_TARGET / rms, _BEND_MAX_BOOST)
     # tanh is ~linear at low levels, so this only rounds off the peaks.
     return (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING).astype(np.float32)
 
