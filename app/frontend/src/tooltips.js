@@ -231,9 +231,7 @@ export const TIPS = {
         clearBoard: 'Release every held contact and remove every wire. Your named finds stay — touch one to bring it back.',
         keep: 'Mark this find. Its name goes on the contact you touched and into the Bending Log.',
         openInRack: 'Open the case: load this sound into the Rack, with every module and parameter visible and editable.',
-        live: 'Hear the bend as you change it. Off: touches and Generate make takes, as usual. On: the model continues a chain of short chunks, and what you change is heard on the next render — about a quarter of a second. Nothing is saved or logged while Live is on.',
-        liveLoop: 'Loop on: the current chunk repeats, and every change re-renders it — the same material, bent differently. Loop off: each chunk is followed by the next; the sound evolves.',
-        liveNext: 'Move on: continue once into the next chunk, which then loops. For when the current loop has done its job, or landed badly.',
-        liveLength: 'How long a chunk is. Shorter follows the knobs sooner; longer gives the model more to work with.',
+        live: 'Hear the bend as you change it. Off: touches and Generate make takes, as usual. Loop: one clip (this seed, prompt and length) loops, and every change re-renders it — the same material, bent differently. Stream: the model keeps continuing what was just played, with the bend as it is now; the sound evolves instead of looping. Nothing is saved or logged while this is on.',
+        liveChunk: 'How much the model continues at a time. Shorter chunks follow the knobs sooner; longer ones give it more to work with.',
     },
 };

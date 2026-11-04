@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Box, Typography, Button, ToggleButton, Slider, Switch, FormControlLabel, useTheme } from '@mui/material';
-import { Repeat as LoopIcon, SkipForward as NextIcon } from 'lucide-react';
+import { Box, Typography, ToggleButton, ToggleButtonGroup, Slider, useTheme } from '@mui/material';
+import { Radio as LiveIcon } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import api from '../../api';
 import { TIPS } from '../../tooltips';
@@ -11,16 +11,22 @@ import { faderPosToDb, faderDbToPos, FADER_MAX_DB } from '../../utils/faderLaw';
 import { performanceChannelStyles as chStyles } from '../../theme';
 
 /**
- * Live — hear a bend change while it is being changed. A mode, off by
+ * Playback — hear a bend change while it is being changed. A mode, off by
  * default; the board and the rack play their takes exactly as before
- * until it is switched on.
+ * until Loop or Stream is picked.
  *
- * The material is a chain of chunks the model continues one from the
- * other (app/core/bending/live.py). With Loop on, the current chunk
- * repeats and every change re-renders it — same material, bent
- * differently — and the player crossfades to the new render at the same
- * position. Next moves on to the following chunk, which then loops. With
- * Loop off, every chunk is followed by the next: the sound evolves.
+ *   Loop    one clip (this seed and prompt, the board's / rack's length)
+ *           loops; every change re-renders it — same material, bent
+ *           differently — and the player crossfades to the new render at
+ *           the same position. Delay = one render.
+ *   Stream  the model keeps continuing what was just played, one chunk at
+ *           a time, with the bend as it is now. Changes land in the next
+ *           chunk; the sound evolves instead of looping.
+ *
+ * Both run on the backend's chunk chain (app/core/bending/live.py): the
+ * clip is cut from the middle of a longer render, never from a clip's
+ * wound-down end, and what the stream continues from is always a clean
+ * render, so a bend never feeds back into itself.
  *
  * Playback goes through one Performance channel strip (a one-channel
  * PerformanceEngine: the same filter, gain, delay and reverb sends, master
@@ -80,11 +86,15 @@ const fadeEdges = (buffer) => {
     return buffer;
 };
 
-export default function BendLive({ on, onToggle, params, disabled = false, onNotice, accent }) {
+export default function BendLive({ mode, onModeChange, params, loopSeconds = 5, disabled = false, onNotice, accent }) {
     const theme = useTheme();
     const stored = useRef(readStore()).current;
-    const [loop, setLoop] = useState(stored.loop !== false);
+    const on = mode !== 'off';
+    const loop = mode === 'loop';
     const [chunkSec, setChunkSec] = useState(stored.chunkSec || 4);
+    // The chain's chunk length: the board's / rack's length when looping,
+    // the stream's own slider when streaming.
+    const lengthSec = loop ? Number(loopSeconds) || 5 : chunkSec;
     const [knobs, setKnobs] = useState({ ...DEFAULT_KNOBS, ...(stored.knobs || {}) });
     const [status, setStatus] = useState({ renderMs: null, count: 0, chunk: null, ahead: 0, gaps: 0, error: null, waiting: false });
     const engineRef = useRef(null);      // PerformanceEngine(1); channels[0] is ours
@@ -96,6 +106,7 @@ export default function BendLive({ on, onToggle, params, disabled = false, onNot
     const meterRafRef = useRef(null);
     const loopRef = useRef(loop);
     loopRef.current = loop;
+    const onToggle = (v) => { if (!v) onModeChange?.('off'); };
     const paramsKey = JSON.stringify(params || {});
     const paramsRef = useRef(params);
     paramsRef.current = params;
@@ -276,7 +287,7 @@ export default function BendLive({ on, onToggle, params, disabled = false, onNot
         stopAudio();
         setStatus({ renderMs: null, count: 0, chunk: null, ahead: 0, gaps: 0, error: null, waiting: true });
         ctx();
-        const body = { ...paramsRef.current, loop: loopRef.current, chunk_sec: chunkSec };
+        const body = { ...paramsRef.current, loop: loopRef.current, chunk_sec: lengthSec };
         api.post('/api/bend/live/start', body)
             .then(() => { if (runRef.current === run) pull(run); })
             .catch((err) => {
@@ -327,31 +338,40 @@ export default function BendLive({ on, onToggle, params, disabled = false, onNot
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [paramsKey, on]);
 
-    const advance = () => { if (on) api.post('/api/bend/live/advance', {}).catch(() => {}); };
-
-    // Loop on/off applies to the chunk playing now, and tells the backend.
-    const toggleLoop = () => {
-        const next = !loop;
-        setLoop(next);
-        loopRef.current = next;
-        writeStore({ loop: next });
+    // Loop ↔ Stream while on: applies to the chunk playing now (a loop keeps
+    // its pass, then the stream carries on from it), and tells the backend.
+    const firstModeRef = useRef(mode);
+    useEffect(() => {
+        if (!on || firstModeRef.current === mode) { firstModeRef.current = mode; return; }
+        firstModeRef.current = mode;
         const cur = curRef.current;
         if (cur) {
-            try { cur.src.loop = next; } catch { /* done */ }
+            try { cur.src.loop = loop; } catch { /* done */ }
         }
-        if (on) {
-            api.post('/api/bend/live/set', { loop: next }).catch(() => {});
-            // Loop on after the chunk already ended (a gap): ask for the next
-            // one so there is something to loop.
-            const c = engineRef.current?.ctx;
-            if (next && cur && c && c.currentTime > cur.startAt + cur.duration) advance();
+        api.post('/api/bend/live/set', { loop, chunk_sec: lengthSec }).catch(() => {});
+        // Loop picked after the chunk already ended (a gap): ask for the
+        // next one so there is something to loop.
+        const c = engineRef.current?.ctx;
+        if (loop && cur && c && c.currentTime > cur.startAt + cur.duration) {
+            api.post('/api/bend/live/advance', {}).catch(() => {});
         }
-    };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [mode]);
 
-    const chunkCommitted = (v) => {
-        writeStore({ chunkSec: v });
-        if (on) api.post('/api/bend/live/set', { chunk_sec: v }).catch(() => {});
-    };
+    // The length changed while on (the dur slider in Loop, the chunk slider
+    // in Stream): new material of that length.
+    const firstLenRef = useRef(lengthSec);
+    useEffect(() => {
+        if (!on || firstLenRef.current === lengthSec) { firstLenRef.current = lengthSec; return undefined; }
+        const t = setTimeout(() => {
+            firstLenRef.current = lengthSec;
+            api.post('/api/bend/live/set', { chunk_sec: lengthSec }).catch(() => {});
+        }, 250);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [lengthSec, on]);
+
+    const chunkCommitted = (v) => writeStore({ chunkSec: v });
 
     const handleKnob = (key, value) => {
         setKnobs(prev => {
@@ -375,49 +395,42 @@ export default function BendLive({ on, onToggle, params, disabled = false, onNot
         : status.error ? status.error
             : status.count === 0 ? (status.waiting ? 'Rendering…' : '')
                 : loop
-                    ? `Looping chunk ${(status.chunk || '').split('.')[1] ?? ''} · last render ${status.renderMs} ms · ${status.count} renders`
-                    : `Flowing · ${status.renderMs} ms per ${chunkSec} s · ${status.ahead.toFixed(1)} s ahead${
+                    ? `Looping · last render ${status.renderMs} ms · ${status.count} renders`
+                    : `Streaming · ${status.renderMs} ms per ${chunkSec} s chunk · ${status.ahead.toFixed(1)} s ahead${
                         status.gaps ? ` · ${status.gaps} gap${status.gaps > 1 ? 's' : ''}` : ''}`;
 
     const deep = theme.palette.bend?.dark || accent;
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 <Tooltip title={TIPS.bend.live}>
-                    <FormControlLabel
-                        sx={{ ml: -0.5, mr: 0.5 }}
-                        control={<Switch size="small" checked={on} disabled={disabled}
-                                         onChange={(e) => onToggle?.(e.target.checked)} />}
-                        label={<Typography variant="caption">Live</Typography>}
-                    />
+                    <ToggleButtonGroup
+                        size="small" exclusive value={mode} color="bend"
+                        onChange={(_, v) => { if (v) onModeChange?.(v); }}
+                        disabled={disabled}
+                    >
+                        <ToggleButton value="off" sx={{ px: 1.5 }}>Off</ToggleButton>
+                        <ToggleButton value="loop" sx={{ px: 1.5 }}>Loop</ToggleButton>
+                        <ToggleButton value="stream" sx={{ px: 1.5 }}>Stream</ToggleButton>
+                    </ToggleButtonGroup>
                 </Tooltip>
-                <Tooltip title={TIPS.bend.liveLoop}>
-                    <ToggleButton size="small" value="loop" selected={loop} onChange={toggleLoop}
-                                  color="bend" sx={{ px: 1 }} aria-label="Loop">
-                        <LoopIcon size={14} />
-                        <Typography variant="caption" sx={{ ml: 0.5 }}>Loop</Typography>
-                    </ToggleButton>
-                </Tooltip>
-                <Tooltip title={TIPS.bend.liveNext}>
-                    <span>
-                        <Button size="small" variant="outlined" disabled={!on}
-                                startIcon={<NextIcon size={14} />} onClick={advance}>
-                            Next
-                        </Button>
-                    </span>
-                </Tooltip>
+                {on && (
+                    <LiveIcon size={16} style={{ color: accent, opacity: status.waiting ? 0.45 : 1 }} />
+                )}
             </Box>
-            <Tooltip title={TIPS.bend.liveLength}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography variant="caption" color="textSecondary">length</Typography>
-                    <Slider size="small" value={chunkSec} min={1} max={12} step={0.5}
-                            onChange={(_, v) => setChunkSec(v)}
-                            onChangeCommitted={(_, v) => chunkCommitted(v)}
-                            sx={{ width: 110 }} />
-                    <Typography variant="caption">{chunkSec}s</Typography>
-                </Box>
-            </Tooltip>
+            {mode === 'stream' && (
+                <Tooltip title={TIPS.bend.liveChunk}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="caption" color="textSecondary">chunk</Typography>
+                        <Slider size="small" value={chunkSec} min={1} max={12} step={0.5}
+                                onChange={(_, v) => setChunkSec(v)}
+                                onChangeCommitted={(_, v) => chunkCommitted(v)}
+                                sx={{ width: 110 }} />
+                        <Typography variant="caption">{chunkSec}s</Typography>
+                    </Box>
+                </Tooltip>
+            )}
 
             {/* The channel: the Performance strip's knobs and meter, so the
                 live sound is played, not just heard. */}

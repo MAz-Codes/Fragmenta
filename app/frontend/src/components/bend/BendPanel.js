@@ -161,9 +161,9 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     // Live: a mode, never the default — while it is on, touches and module
     // edits feed the live render instead of making takes; off, everything
     // plays as before.
-    const [live, setLive] = useState(false);
+    const [live, setLive] = useState('off');          // 'off' | 'loop' | 'stream'
     const liveRef = useRef(false);
-    liveRef.current = live;
+    liveRef.current = live !== 'off';
     // The seed the live chain runs on: frozen when Live is switched on in
     // random-seed mode, so the material only changes when asked.
     const [liveSeed, setLiveSeed] = useState(0);
@@ -737,11 +737,11 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     }, [modelId, view, wires, held, wet, registry, columns, modules, prompt,
         probeSeed, liveSeed, steps, loraStack]);
 
-    const toggleLive = (next) => {
-        if (next && !live) {
+    const setLiveMode = (next) => {
+        if (next !== 'off' && live === 'off') {
             setLiveSeed(randomSeed ? randomSeed32() : (parseInt(seed, 10) || 0));
         }
-        setLive(!!next);
+        setLive(next);
     };
 
     // The rail: what goes in (instrument, prompt) and what came out (takes).
@@ -784,9 +784,10 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
 
             <RailSection title="Playback">
                 <BendLive
-                    on={live}
-                    onToggle={toggleLive}
+                    mode={live}
+                    onModeChange={setLiveMode}
                     params={liveParams}
+                    loopSeconds={view === 'probe' ? probeDuration : duration}
                     disabled={!modelId || !!busy}
                     onNotice={notify}
                     accent={accent}
