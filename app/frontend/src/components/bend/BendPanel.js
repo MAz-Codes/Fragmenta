@@ -23,6 +23,7 @@ import BendingLogPanel from './BendingLogPanel';
 import BreakPanel from './BreakPanel';
 import BendTakes from './BendTakes';
 import ProbeBoard from './ProbeBoard';
+import RailSection from '../RailSection';
 import {
     buildPatch, chancePatch, newModule, nextId, mutatePatch,
     boardColumns, probeModules, jumperPadId, parseJumperId, isNoopWire,
@@ -642,7 +643,116 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
 
     const activeCount = modules.filter(m => m.enabled !== false).length;
 
+    // Steps only exist on base models; the field lives with the prompt.
+    const stepsField = modelId.endsWith('-base') && (
+        <TextField size="small" label="Steps" type="number"
+                   value={steps ?? ''} placeholder="50"
+                   onChange={(e) => setSteps(e.target.value ? parseInt(e.target.value, 10) : null)}
+                   sx={{ width: 110 }} />
+    );
+
+    // The rail: what goes in (instrument, prompt) and what came out (takes).
+    // The board and the log have the page.
+    const rail = mode !== 'break' && (
+        <Box sx={{
+            width: { xs: '100%', lg: 340 }, flex: 'none',
+            display: 'flex', flexDirection: 'column', gap: 2,
+            position: { lg: 'sticky' }, top: { lg: 16 },
+        }}>
+            <RailSection title="Instrument">
+                <Tooltip title={TIPS.bend.model}>
+                    <FormControl size="small" fullWidth>
+                        <InputLabel>Model</InputLabel>
+                        <Select value={modelId} label="Model"
+                                onChange={(e) => setModelId(e.target.value)}>
+                            {downloadedModels.map(m => (
+                                <MenuItem key={m.name} value={m.name}>{m.displayName || m.name}</MenuItem>
+                            ))}
+                            {!downloadedModels.length && (
+                                <MenuItem value="" disabled>
+                                    Bending needs Small - Music (the PyTorch build) — get it in the Checkpoint Manager
+                                </MenuItem>
+                            )}
+                        </Select>
+                    </FormControl>
+                </Tooltip>
+                <LoraStack selectedModel={modelId} value={loraStack} onChange={setLoraStack} bare />
+            </RailSection>
+
+            <RailSection title="Prompt">
+                <TextField
+                    fullWidth multiline minRows={2} maxRows={6} size="small" value={prompt}
+                    placeholder={view === 'probe' ? DEFAULT_PROBE_PROMPT
+                        : 'Describe the sound — then bend what the model does with it…'}
+                    onChange={(e) => setPrompt(e.target.value)}
+                />
+                {stepsField}
+            </RailSection>
+
+            {(bentAudio || cleanAudio) && (
+                <RailSection title="Takes">
+                    <BendTakes
+                        compact
+                        isDocker={isDocker}
+                        onMessage={setStatusMsg}
+                        autoPlay={autoPlay}
+                        takes={[
+                            bentAudio && {
+                                ...bentAudio, key: 'bent', title: 'Bent',
+                                color: accent, titleColor: accent,
+                            },
+                            cleanAudio && { ...cleanAudio, key: 'clean', title: 'Clean' },
+                        ].filter(Boolean)}
+                    />
+                    {/* the find: step nearby, name it, or open the case */}
+                    {view === 'probe' && lastTake?.source === 'probe' && bentAudio && (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                <TextField
+                                    size="small" value={findName} sx={{ flex: 1, minWidth: 0 }}
+                                    placeholder="Name what you heard…"
+                                    inputProps={{ maxLength: 60 }}
+                                    onChange={(e) => setFindName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') keepFind(); }}
+                                />
+                                <Tooltip title={TIPS.bend.keep}>
+                                    <span>
+                                        <Button size="small" variant="contained" color="bend"
+                                                startIcon={<KeepIcon size={14} />}
+                                                disabled={!findName.trim()} onClick={keepFind}>
+                                            Keep
+                                        </Button>
+                                    </span>
+                                </Tooltip>
+                            </Box>
+                            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                <Tooltip title={TIPS.bend.nearby}>
+                                    <span>
+                                        <Button size="small" variant="outlined" disabled={!!busy}
+                                                startIcon={<NearbyIcon size={14} />} onClick={nearby}>
+                                            Nearby
+                                        </Button>
+                                    </span>
+                                </Tooltip>
+                                {advanced && (
+                                    <Tooltip title={TIPS.bend.openInRack}>
+                                        <Button size="small" variant="text" startIcon={<RackIcon size={14} />}
+                                                disabled={!!busy} onClick={openInRack}>
+                                            Open in rack
+                                        </Button>
+                                    </Tooltip>
+                                )}
+                            </Box>
+                        </Box>
+                    )}
+                </RailSection>
+            )}
+        </Box>
+    );
+
     return (
+        <Box sx={{ display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, alignItems: 'flex-start', gap: 2 }}>
+        <Box sx={{ flex: 1, minWidth: 0, width: '100%' }}>
         <Paper sx={appStyles.elevatedInfoCard}>
             <Box sx={appStyles.sectionCardHeader}>
                 <Box component="span" sx={appStyles.sectionCardIcon}>
@@ -671,7 +781,8 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     modelId && modelId.endsWith('-base') ? modelId : 'sa3-small-music-base'} />
             ) : (
             <>
-                {/* toolbar */}
+                {/* toolbar: only the advanced toggles and the Rack's tools */}
+                {advanced && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
                     {advanced && (
                         <ToggleButtonGroup
@@ -687,34 +798,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                             </Tooltip>
                         </ToggleButtonGroup>
                     )}
-                    <Tooltip title={TIPS.bend.model}>
-                        <FormControl size="small" sx={{ minWidth: 180, flex: 1 }}>
-                            <InputLabel>Model</InputLabel>
-                            <Select value={modelId} label="Model"
-                                    onChange={(e) => setModelId(e.target.value)}>
-                                {downloadedModels.map(m => (
-                                    <MenuItem key={m.name} value={m.name}>{m.displayName || m.name}</MenuItem>
-                                ))}
-                                {!downloadedModels.length && (
-                                    <MenuItem value="" disabled>
-                                        Bending needs Small - Music (the PyTorch build) — get it in the Checkpoint Manager
-                                    </MenuItem>
-                                )}
-                            </Select>
-                        </FormControl>
-                    </Tooltip>
-                    {view === 'probe' && (
-                        <>
-                            <Tooltip title={TIPS.bend.showWiring}>
-                                <FormControlLabel
-                                    sx={{ ml: 0.5, mr: 0 }}
-                                    control={<Switch size="small" checked={showWiring}
-                                                     onChange={(e) => setShowWiring(e.target.checked)} />}
-                                    label={<Typography variant="caption">Show wiring</Typography>}
-                                />
-                            </Tooltip>
-                        </>
-                    )}
+                    <Box sx={{ flex: 1 }} />
                     {view === 'rack' && (<>
                     <Tooltip title={TIPS.bend.presets}>
                         <Button size="small" variant="outlined" startIcon={<SaveIcon size={14} />}
@@ -761,21 +845,10 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     </Tooltip>
                     </>)}
                 </Box>
-
-                <Box sx={{ mb: 1.5 }}>
-                    <LoraStack selectedModel={modelId} value={loraStack} onChange={setLoraStack} />
-                </Box>
+                )}
 
                 {view === 'probe' ? (
                 <>
-                    <TextField
-                        fullWidth size="small" label="Prompt" value={prompt}
-                        placeholder={DEFAULT_PROBE_PROMPT}
-                        InputLabelProps={{ shrink: true }}
-                        onChange={(e) => setPrompt(e.target.value)}
-                        // The floating label needs clear air below the LoRA Stack.
-                        sx={{ mt: 1, mb: 1 }}
-                    />
                     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 1 }}>
                         <Tooltip title={TIPS.bend.dryWet}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 190 }}>
@@ -799,12 +872,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                                 <Typography variant="caption">{probeDuration}s</Typography>
                             </Box>
                         </Tooltip>
-                        {modelId.endsWith('-base') && (
-                            <TextField size="small" label="Steps" type="number"
-                                       value={steps ?? ''} placeholder="50"
-                                       onChange={(e) => setSteps(e.target.value ? parseInt(e.target.value, 10) : null)}
-                                       sx={{ width: 90 }} />
-                        )}
                         <Box sx={{ flex: 1 }} />
                         <Tooltip title={TIPS.bend.newInput}>
                             <span>
@@ -838,6 +905,14 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                                 Stop
                             </Button>
                         )}
+                        <Tooltip title={TIPS.bend.showWiring}>
+                            <FormControlLabel
+                                sx={{ ml: 0.5, mr: 0 }}
+                                control={<Switch size="small" checked={showWiring}
+                                                 onChange={(e) => setShowWiring(e.target.checked)} />}
+                                label={<Typography variant="caption">Show wiring</Typography>}
+                            />
+                        </Tooltip>
                     </Box>
                     <ProbeBoard
                         registry={registry}
@@ -890,15 +965,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     </Box>
                 )}
 
-                {/* generate strip */}
-                <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center', mb: 1 }}>
-                    <TextField
-                        fullWidth multiline minRows={1} maxRows={3}
-                        label="Prompt" value={prompt}
-                        placeholder="Describe the sound — then bend what the model does with it…"
-                        onChange={(e) => setPrompt(e.target.value)}
-                    />
-                </Box>
+                {/* generate strip — the prompt lives in the rail */}
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
                     <Tooltip title={TIPS.bend.duration}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 170 }}>
@@ -909,12 +976,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                             <Typography variant="caption">{duration}s</Typography>
                         </Box>
                     </Tooltip>
-                    {modelId.endsWith('-base') && (
-                        <TextField size="small" label="Steps" type="number"
-                                   value={steps ?? ''} placeholder="50"
-                                   onChange={(e) => setSteps(e.target.value ? parseInt(e.target.value, 10) : null)}
-                                   sx={{ width: 90 }} />
-                    )}
                     <FormControlLabel
                         control={<Checkbox size="small" checked={randomSeed}
                                            onChange={(e) => setRandomSeed(e.target.checked)} />}
@@ -1001,60 +1062,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     </Typography>
                 )}
 
-                {/* results / A-B — the app's fragment-player idiom */}
-                {(bentAudio || cleanAudio) && (
-                    <BendTakes
-                        isDocker={isDocker}
-                        onMessage={setStatusMsg}
-                        autoPlay={autoPlay}
-                        takes={[
-                            bentAudio && {
-                                ...bentAudio, key: 'bent', title: 'Bent',
-                                color: accent, titleColor: accent,
-                            },
-                            cleanAudio && { ...cleanAudio, key: 'clean', title: 'Clean' },
-                        ].filter(Boolean)}
-                    />
-                )}
-
-                {/* the find: step nearby, name it, or open the case */}
-                {view === 'probe' && lastTake?.source === 'probe' && bentAudio && (
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
-                        <Tooltip title={TIPS.bend.nearby}>
-                            <span>
-                                <Button size="small" variant="outlined" disabled={!!busy}
-                                        startIcon={<NearbyIcon size={14} />} onClick={nearby}>
-                                    Nearby
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        <TextField
-                            size="small" value={findName} sx={{ flex: 1, minWidth: 180 }}
-                            placeholder="Name what you heard…"
-                            inputProps={{ maxLength: 60 }}
-                            onChange={(e) => setFindName(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') keepFind(); }}
-                        />
-                        <Tooltip title={TIPS.bend.keep}>
-                            <span>
-                                <Button size="small" variant="contained" color="bend"
-                                        startIcon={<KeepIcon size={14} />}
-                                        disabled={!findName.trim()} onClick={keepFind}>
-                                    Keep
-                                </Button>
-                            </span>
-                        </Tooltip>
-                        {advanced && (
-                            <Tooltip title={TIPS.bend.openInRack}>
-                                <Button size="small" variant="text" startIcon={<RackIcon size={14} />}
-                                        disabled={!!busy} onClick={openInRack}>
-                                    Open in rack
-                                </Button>
-                            </Tooltip>
-                        )}
-                    </Box>
-                )}
-
                 {/* Bending Log */}
                 <Accordion disableGutters expanded={logOpen}
                            onChange={(_, v) => { setLogOpen(v); if (v) refreshLog(); }}>
@@ -1081,5 +1088,8 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
             </>
             )}
         </Paper>
+        </Box>
+        {rail}
+        </Box>
     );
 }

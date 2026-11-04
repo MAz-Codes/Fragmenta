@@ -23,7 +23,7 @@ import { generatedFragmentsWindowStyles as fragStyles } from '../../theme';
  * autoPlay: { key, token } — play that take as soon as it lands; a new
  *   token replays (the Probe board: touch = hear, no second click).
  */
-export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay = null }) {
+export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay = null, compact = false }) {
     const audioRefs = useRef({});
     const [playing, setPlaying] = useState(null);      // take key
     const [time, setTime] = useState(0);
@@ -131,7 +131,7 @@ export default function BendTakes({ takes, isDocker = false, onMessage, autoPlay
                         </Box>
                         {/* Same slot width as a Generated Fragments row, so
                             the waveform reads the same (thin bars). */}
-                        <Box sx={{ display: 'flex', width: { xs: 140, sm: 200 }, flexShrink: 0 }}>
+                        <Box sx={compact ? { display: 'flex', flex: 1, minWidth: 90 } : { display: 'flex', width: { xs: 140, sm: 200 }, flexShrink: 0 }}>
                             <GenerationWaveform
                                 blob={t.blob}
                                 audioUrl={t.url}

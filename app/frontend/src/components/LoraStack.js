@@ -86,7 +86,7 @@ const besideRow = (row, panel) => {
     return { left: x / scale, top: y / scale };
 };
 
-export default function LoraStack({ selectedModel, value, onChange }) {
+export default function LoraStack({ selectedModel, value, onChange, bare = false }) {
     const [available, setAvailable] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -210,19 +210,8 @@ export default function LoraStack({ selectedModel, value, onChange }) {
         return null;
     })();
 
-    return (
-        <Accordion
-            disableGutters
-            defaultExpanded={Boolean(value && value.some((s) => s.path))}
-        >
-            <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
-                {/* Hover the title to surface the help in the Info View pill
-                    (when it's on) — no inline "i", matching the rest of the app. */}
-                <Tooltip title={TIPS.lora.stackInfo(MAX_SLOTS)}>
-                    <Typography variant="subtitle1">LoRA Stack</Typography>
-                </Tooltip>
-            </AccordionSummary>
-            <AccordionDetails>
+    const body = (
+        <>
             {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
             {hint && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -434,7 +423,35 @@ export default function LoraStack({ selectedModel, value, onChange }) {
             </Box>,
             document.body,
             )}
-            </AccordionDetails>
+        </>
+    );
+    if (bare) {
+        // Inside a rail band (the Bend tab): no accordion of its own, just a
+        // caption and the slots.
+        return (
+            <Box>
+                <Tooltip title={TIPS.lora.stackInfo(MAX_SLOTS)}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                        LoRA stack
+                    </Typography>
+                </Tooltip>
+                {body}
+            </Box>
+        );
+    }
+    return (
+        <Accordion
+            disableGutters
+            defaultExpanded={Boolean(value && value.some((s) => s.path))}
+        >
+            <AccordionSummary expandIcon={<ChevronDownIcon size={18} />}>
+                {/* Hover the title to surface the help in the Info View pill
+                    (when it's on) — no inline "i", matching the rest of the app. */}
+                <Tooltip title={TIPS.lora.stackInfo(MAX_SLOTS)}>
+                    <Typography variant="subtitle1">LoRA Stack</Typography>
+                </Tooltip>
+            </AccordionSummary>
+            <AccordionDetails>{body}</AccordionDetails>
         </Accordion>
     );
 }
