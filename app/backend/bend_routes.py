@@ -238,14 +238,19 @@ def bend_lora_route():
 
 # --- Probe boards -----------------------------------------------------------
 # What each contact on the board does is fixed (bendUtils.padModule on the
-# client), so all that is stored is what the user found: the names they gave
-# contacts and wires after listening, one board per model. Plain JSON in
-# bends/boards/, readable and portable outside the app.
+# client), so what is stored is what the user found: the names they gave
+# contacts, wires and chords (several contacts heard together, keyed
+# `c.<hash>` with their `pads`) after listening, one board per model, plus
+# `does`, the client's fingerprint of what the circuit did when it was
+# named, so a changed draw can be noticed. Plain JSON in bends/boards/,
+# readable and portable outside the app.
 
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _PAD_ID_RE = re.compile(r"^[a-z0-9._-]{1,32}$")
 _PAD_NAME_MAX = 60
 _MAX_PADS = 512
+_FIND_DOES_MAX = 2048
+_CHORD_MAX_PADS = 64
 
 
 def _board_file(model_id: str) -> Path:
@@ -275,10 +280,21 @@ def bend_board_put(model_id):
         return jsonify({"error": "pads must be an object."}), 400
     pads = {}
     for pad_id, entry in list(raw.items())[:_MAX_PADS]:
-        name = str((entry or {}).get("name", "")).strip()[:_PAD_NAME_MAX] \
-            if isinstance(entry, dict) else ""
-        if _PAD_ID_RE.match(str(pad_id)) and name:
-            pads[str(pad_id)] = {"name": name}
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()[:_PAD_NAME_MAX]
+        if not (_PAD_ID_RE.match(str(pad_id)) and name):
+            continue
+        find = {"name": name}
+        chord = entry.get("pads")
+        if isinstance(chord, list):
+            chord = [str(p) for p in chord if isinstance(p, str) and _PAD_ID_RE.match(p)]
+            if chord:
+                find["pads"] = chord[:_CHORD_MAX_PADS]
+        does = entry.get("does")
+        if isinstance(does, str) and does.strip():
+            find["does"] = does.strip()[:_FIND_DOES_MAX]
+        pads[str(pad_id)] = find
     board = {"model_id": model_id, "pads": pads, "updated": time.time()}
     path = _board_file(model_id)
     if not pads:

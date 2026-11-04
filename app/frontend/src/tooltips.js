@@ -228,6 +228,7 @@ export const TIPS = {
         newInput: 'Pick a new seed: the board gets new material to bend. Contacts behave the same; the sound passing through them changes.',
         freshInput: 'Random seed: every press starts from a new seed, so the same contact never sounds the same twice. Each press also renders its own clean version for A/B, so it takes about twice as long. Off: every press uses the same seed, which makes contacts easy to compare.',
         nearby: 'Move the wire a little: the same bend, nudged a step to the side. Press again to keep walking around a sound.',
+        logAll: 'Show the log for every model, not just the one on the board. A row from another model recalls onto this board: the same contacts, that model\u2019s sound if it is offered, otherwise this one\u2019s.',
         clearBoard: 'Release every held contact and remove every wire. Your named finds stay — touch one to bring it back.',
         keep: 'Mark this find. Its name goes on the contact you touched and into the Bending Log.',
         openInRack: 'Open the case: load this sound into the Rack, with every module and parameter visible and editable.',

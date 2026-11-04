@@ -371,18 +371,23 @@ const HOT_CONTACT_MIX = 0.35;
  *  offset near 0, a kernel of 1-2, a cutoff below the noise floor, a clamp
  *  wider than the signal, a curve that stays flat. Measured on the board
  *  (4 Nov 2026): such draws changed the output by 20-30 dB less than the
- *  signal, i.e. not audibly. A contact must do something. */
-function weakDraw(opName, p) {
-    const near = (v, c, d) => Math.abs((v ?? c) - c) < d;
+ *  signal, i.e. not audibly. A contact must do something. `strength` is
+ *  the contact's built-in mix (the hot contacts' series resistor): at 0.35
+ *  a draw has to be about three times as strong to be heard — `time.w`'s
+ *  23-level quantise passed the plain rule and still came out 22 dB under
+ *  the signal. */
+function weakDraw(opName, p, strength = 1) {
+    const k = 1 / Math.max(strength, 0.05);
+    const near = (v, c, d) => Math.abs((v ?? c) - c) < d * k;
     switch (opName) {
         case 'scale': return near(p.factor, 1, 0.3);
         case 'bias': return near(p.offset, 0, 0.3);
         case 'roll': return near(p.amount, 0, 0.05) || near(p.amount, 1, 0.05) || near(p.amount, -1, 0.05);
         case 'noise': return near(p.amount, 0, 0.3);
         case 'threshold': return near(p.cutoff, 0, 0.3);
-        case 'clamp': return (p.lo ?? -1) < -2.5 && (p.hi ?? 1) > 2.5;
-        case 'quantize': return (p.levels ?? 8) > 40;
-        case 'smear': case 'erode': case 'dilate': return (p.kernel ?? 5) < 3;
+        case 'clamp': return (p.lo ?? -1) < -2.5 * strength && (p.hi ?? 1) > 2.5 * strength;
+        case 'quantize': return (p.levels ?? 8) > 40 * strength;
+        case 'smear': case 'erode': case 'dilate': return (p.kernel ?? 5) < 3 * k;
         case 'draw': {
             const c = p.mode === 'offset' ? 0 : 1;
             return (p.points || []).every(v => near(v, c, 0.3));
@@ -397,9 +402,10 @@ export function padModule(pad, registry) {
     const opDomain = pad.domain === 'latent' ? 'latent' : pad.domain;
     const ops = (registry?.operators || []).filter(o => o.domains.includes(opDomain));
     const op = pick(ops, rng);
+    const strength = HOT_CONTACTS.has(pad.id) ? HOT_CONTACT_MIX : 1.0;
     let params = randomParams(op, 0.85, rng);
     // Re-draw (still seeded, still fixed per contact) until it is audible.
-    for (let i = 0; i < 8 && weakDraw(op?.name, params); i++) params = randomParams(op, 1.0, rng);
+    for (let i = 0; i < 8 && weakDraw(op?.name, params, strength); i++) params = randomParams(op, 1.0, rng);
     const mod = {
         id: `p.${pad.id}`,
         enabled: true,
@@ -431,6 +437,48 @@ export function padModule(pad, registry) {
     }
     return mod;
 }
+
+// --- Finds ------------------------------------------------------------------
+//
+// A find is what the user named after listening: one contact, one wire, or
+// a chord (several contacts and wires heard together). It is stored on the
+// board file with a fingerprint of what the circuit did at the time, so a
+// later change to a contact's draw (the operator list of a domain changed,
+// say) can be noticed instead of silently renaming a different sound.
+
+export const CHORD_PREFIX = 'c.';
+export const isWireId = (id) => typeof id === 'string' && id.startsWith('j.');
+export const isChordId = (id) => typeof id === 'string' && id.startsWith(CHORD_PREFIX);
+
+/** A stable id for a set of pads heard together (order-free). */
+export const chordId = (padIds) =>
+    CHORD_PREFIX + hashString([...padIds].sort().join('+')).toString(16);
+
+/** What a contact does, as a short hash: operator, parameters, feature
+ *  selection and step window. The mix is left out (the dry/wet is the
+ *  player's, not the contact's). A wire is its own description. */
+export function padFingerprint(id, columns, registry) {
+    if (isWireId(id)) return 'wire';
+    const pad = columns.flatMap(c => c.pads).find(p => p.id === id);
+    if (!pad) return null;
+    const m = padModule(pad, registry);
+    return hashString(JSON.stringify([
+        m.operator, m.params, m.target.features || null, m.steps || null,
+    ])).toString(16);
+}
+
+/** The fingerprint of a whole circuit, one entry per pad. */
+export const circuitFingerprint = (padIds, columns, registry) =>
+    [...padIds].sort().map(id => `${id}=${padFingerprint(id, columns, registry)}`).join(' ');
+
+/** The pads a find stands for: its chord, or itself. */
+export const findPads = (id, find) =>
+    (isChordId(id) ? (find?.pads || []) : [id]);
+
+/** True when a find's circuit no longer does what it did when it was named. */
+export const findChanged = (id, find, columns, registry) =>
+    !!(find?.does && columns?.length && registry
+        && find.does !== circuitFingerprint(findPads(id, find), columns, registry));
 
 /** The modules for a set of touched/held pads and wires, at a dry/wet. */
 export function probeModules(padIds, columns, registry, wet) {

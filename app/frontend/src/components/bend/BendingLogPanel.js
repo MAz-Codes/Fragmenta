@@ -28,7 +28,7 @@ function loraLabel(path) {
     return ep ? `${run} · ep ${ep[1]}` : run;
 }
 
-export default function BendingLogPanel({ entries, registry, onRecall, onChanged, showWiring = true }) {
+export default function BendingLogPanel({ entries, registry, modelId = '', onRecall, onChanged, showWiring = true }) {
     const [editing, setEditing] = useState(null);      // entry id
     const [draft, setDraft] = useState('');
 
@@ -67,6 +67,11 @@ export default function BendingLogPanel({ entries, registry, onRecall, onChanged
                 }}>
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.25 }}>
+                            {/* A row from another model: the same contacts, a different sound. */}
+                            {e.model_id && modelId && e.model_id !== modelId && (
+                                <Chip size="small" label={e.model_id}
+                                      sx={{ fontSize: '0.62rem', height: 20 }} />
+                            )}
                             {/* Board finds stay unlabelled unless the wiring is shown. */}
                             {e.patch?.probe && !showWiring ? (
                                 <Chip size="small" variant="outlined"

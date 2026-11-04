@@ -27,6 +27,7 @@ import RailSection from '../RailSection';
 import {
     buildPatch, chancePatch, newModule, nextId, mutatePatch,
     boardColumns, probeModules, jumperPadId, parseJumperId, isNoopWire,
+    isWireId, isChordId, chordId, circuitFingerprint,
 } from './bendUtils';
 
 /**
@@ -114,6 +115,9 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     const [chanceAnchor, setChanceAnchor] = useState(null);
     const [logEntries, setLogEntries] = useState([]);
     const [logOpen, setLogOpen] = useState(false);
+    // The log is per model by default; "all models" shows every row (the
+    // board used to offer more models, and those rows are still finds).
+    const [logAll, setLogAll] = useState(!!stored.logAll);
 
     // Probe board, wired like a real one: a soldered wire is in the circuit
     // for every render until it is disconnected; contacts are momentary
@@ -182,11 +186,11 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     }, [modelId]);
 
     const refreshLog = useCallback(() => {
-        const q = modelId ? `?model_id=${encodeURIComponent(modelId)}` : '';
+        const q = modelId && !logAll ? `?model_id=${encodeURIComponent(modelId)}` : '';
         api.get(`/api/bend/log${q}`)
             .then(({ data }) => setLogEntries(data.entries || []))
             .catch(() => {});
-    }, [modelId]);
+    }, [modelId, logAll]);
 
     const refreshPresets = useCallback(() => {
         api.get('/api/bend/presets')
@@ -207,10 +211,11 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
             window.localStorage.setItem(STORE_KEY, JSON.stringify({
                 mode, modelId, modules, prompt, duration, steps, seed, randomSeed,
                 view, held, wires, wet, probeSeed, freshInput, probeDuration, showWiring, loraStack,
+                logAll,
             }));
         } catch { /* ignore */ }
     }, [mode, modelId, modules, prompt, duration, steps, seed, randomSeed,
-        view, held, wires, wet, probeSeed, freshInput, probeDuration, showWiring, loraStack]);
+        view, held, wires, wet, probeSeed, freshInput, probeDuration, showWiring, loraStack, logAll]);
 
     // The user's names for this model's contacts.
     useEffect(() => {
@@ -382,6 +387,8 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                 setLastTake({
                     modules: activeModules, body, logId, modelId,
                     padId: override?.padId ?? null,
+                    // The whole circuit that was heard: what Keep names.
+                    pads: override?.probe?.pads || null,
                     source: override?.source || (override ? 'probe' : 'rack'),
                 });
                 setFindName('');
@@ -462,14 +469,28 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         }
         const take = await generate(true, {
             modules: mods, body: probeBody(seed), padId: touchedId, autoPlay: true,
-            probe: { pads: padIds, wet: at },
+            probe: { pads: padIds, wet: at, ...(touchedId ? { touched: touchedId } : {}) },
         });
         await ensureClean(take);
     };
 
     const touchPad = (id, { hold = false } = {}) => {
         if (busy) return;
-        if (id.startsWith('j.')) {
+        if (isChordId(id)) {
+            // A chord find: its wires are soldered back on and its contacts
+            // held (added to what is held when the hold key is down, else
+            // in place of it), then the circuit plays.
+            const pads = boardNames[id]?.pads || [];
+            if (!pads.length) return;
+            const wiresNow = Array.from(new Set([...wires, ...pads.filter(isWireId)]));
+            const chordHeld = pads.filter(p => !isWireId(p));
+            const heldNow = hold ? Array.from(new Set([...held, ...chordHeld])) : chordHeld;
+            setWires(wiresNow);
+            setHeld(heldNow);
+            probe(circuit([], { wiresNow, heldNow }), id);
+            return;
+        }
+        if (isWireId(id)) {
             // A wire is already live: clicking it plays the board again (and
             // makes it the find Keep will name). A named wire picked from the
             // finds is soldered back on first.
@@ -532,6 +553,9 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         if (view === 'probe') await ensureClean(take);
     };
 
+    // Keep names what was heard: the one contact or wire, or — when more
+    // than one was in the circuit — the chord of all of them, with a
+    // fingerprint of what the circuit did so a later change shows.
     const keepFind = () => {
         const name = findName.trim();
         if (!name || !lastTake) return;
@@ -539,8 +563,12 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
             api.patch(`/api/bend/log/${encodeURIComponent(lastTake.logId)}`, { note: name })
                 .then(refreshLog).catch(() => {});
         }
-        if (lastTake.padId && lastTake.modelId === modelId) {
-            saveBoardNames({ ...boardNames, [lastTake.padId]: { name } });
+        const pads = lastTake.pads?.length ? lastTake.pads : (lastTake.padId ? [lastTake.padId] : []);
+        if (pads.length && lastTake.modelId === modelId) {
+            const id = pads.length === 1 ? pads[0] : chordId(pads);
+            const find = { name, does: circuitFingerprint(pads, columns, registry) };
+            if (pads.length > 1) find.pads = pads;
+            saveBoardNames({ ...boardNames, [id]: find });
         }
         setFindName('');
     };
@@ -598,25 +626,60 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     };
 
     const recallLogEntry = (entry) => {
+        if (busy) return;
+        const loras = (entry.loras || []).filter(l => l.path);
         if (Array.isArray(entry.loras)) {
-            setLoraStack(entry.loras.map(l => ({ path: l.path, strength: l.strength, bypassed: false })));
+            setLoraStack(loras.map(l => ({ path: l.path, strength: l.strength, bypassed: false })));
         }
+        const otherModel = entry.model_id && entry.model_id !== modelId ? entry.model_id : null;
+        const offered = otherModel && downloadedModels.some(m => m.name === otherModel);
         const origin = entry.patch?.probe;
         if (origin && Array.isArray(origin.pads) && origin.pads.length) {
-            // Found on the board: put the same contacts back under the
-            // finger, with the same input.
+            // Found on the board: the same contacts go back under the same
+            // finger — held ones held, the pressed one pressed — with the
+            // same input, and it plays again.
+            const touched = origin.touched && origin.pads.includes(origin.touched) ? origin.touched : null;
+            const wiresNow = origin.pads.filter(isWireId);
+            const heldNow = origin.pads.filter(id => !isWireId(id) && id !== touched);
+            const wetNow = typeof origin.wet === 'number' ? origin.wet : wet;
             setView('probe');
-            setWires(origin.pads.filter(id => id.startsWith('j.')));
-            setHeld(origin.pads.filter(id => !id.startsWith('j.')));
-            if (typeof origin.wet === 'number') setWet(origin.wet);
+            setWires(wiresNow);
+            setHeld(heldNow);
+            setWet(wetNow);
             if (entry.prompt) setPrompt(entry.prompt);
             if (entry.duration) setProbeDuration(entry.duration);
             setSteps(entry.steps || null);
             setProbeSeed(entry.seed);
             // Hearing it again needs that exact input.
             setFreshInput(false);
-            setLastTouched(null);
+            setLastTouched(touched);
             setMode('bend');
+            if (otherModel) {
+                // Another model: its contacts are the same places on the
+                // board, but the sound is that model's. Switch when it is
+                // offered; either way wait for a touch.
+                if (offered) setModelId(otherModel);
+                notify('warning', offered
+                    ? `This was found on ${otherModel} — switched to it. Touch the board to hear it.`
+                    : `This was found on ${otherModel}, which the board no longer offers. `
+                      + `Its contacts are back on the board; touch them to hear what they do on ${modelId}.`);
+                return;
+            }
+            const mods = probeModules(origin.pads, columns, registry, wetNow);
+            if (!mods.length) return;
+            const body = {
+                model_id: modelId,
+                prompt: entry.prompt || prompt.trim() || DEFAULT_PROBE_PROMPT,
+                duration: Number(entry.duration || probeDuration),
+                seed: entry.seed,
+                batch_size: 1,
+            };
+            if (entry.steps && modelId.endsWith('-base')) body.steps = Number(entry.steps);
+            if (loras.length) body.loras = loras.map(l => ({ path: l.path, strength: l.strength }));
+            generate(true, {
+                modules: mods, body, padId: touched, autoPlay: true,
+                probe: { pads: origin.pads, wet: wetNow, ...(touched ? { touched } : {}) },
+            }).then(ensureClean);
             return;
         }
         setModules((entry.patch?.modules || []).map(m => ({ ...m, id: nextId() })));
@@ -630,7 +693,9 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
         setSeed(entry.seed);
         setMode('bend');
         setView('rack');
-        setStatusMsg(`Recalled bend from the log (seed ${entry.seed}).`);
+        if (otherModel && offered) setModelId(otherModel);
+        setStatusMsg(`Recalled bend from the log (seed ${entry.seed})${
+            otherModel ? (offered ? `, switched to ${otherModel}` : ` — logged on ${otherModel}, playing on ${modelId}`) : ''}.`);
     };
 
     const activeCount = modules.filter(m => m.enabled !== false).length;
@@ -1062,9 +1127,20 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                         </Box>
                     </AccordionSummary>
                     <AccordionDetails>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 0.5 }}>
+                            <Tooltip title={TIPS.bend.logAll}>
+                                <FormControlLabel
+                                    sx={{ mr: 0 }}
+                                    control={<Switch size="small" checked={logAll}
+                                                     onChange={(e) => setLogAll(e.target.checked)} />}
+                                    label={<Typography variant="caption">All models</Typography>}
+                                />
+                            </Tooltip>
+                        </Box>
                         <BendingLogPanel
                             entries={logEntries}
                             registry={registry}
+                            modelId={modelId}
                             showWiring={view === 'rack' || showWiring}
                             onRecall={recallLogEntry}
                             onChanged={refreshLog}

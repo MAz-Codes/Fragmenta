@@ -42,8 +42,10 @@ of the signal (or weights), not its energy. The Probe board sets it on every
 contact; the Rack leaves it off unless asked.
 
 Optional top-level `probe` records which Probe-board contacts a patch came
-from, so a Bending Log row can be recalled onto the board:
-    "probe": {"pads": ["dit.4", "j.3-9"], "wet": 0.8}
+from, so a Bending Log row can be recalled onto the board — `touched` is
+the contact that was pressed (the rest were held or wired), so a recall
+puts the same finger on the same contact:
+    "probe": {"pads": ["dit.4", "j.3-9"], "wet": 0.8, "touched": "dit.4"}
 """
 from __future__ import annotations
 
@@ -193,6 +195,9 @@ def _norm_probe(raw: Any) -> Any:
         out["wet"] = _clamp(float(raw["wet"]), 0.0, 1.0)
     except (KeyError, TypeError, ValueError):
         pass
+    touched = raw.get("touched")
+    if isinstance(touched, str) and touched[:32] in pads:
+        out["touched"] = touched[:32]
     return out
 
 

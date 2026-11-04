@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Box, Typography, Chip, CircularProgress, Fade, useTheme } from '@mui/material';
 import { keyframes } from '@emotion/react';
+import Tooltip from '../Tooltip';
 import {
     STAGE_SHORT, PART_LABEL, boardColumns, padModule, parseJumperId, wireEndPad, wireIsForward,
-    isNoopWire,
+    isNoopWire, isChordId, findPads, findChanged,
 } from './bendUtils';
 
 /**
@@ -281,21 +282,31 @@ export default function ProbeBoard({
         };
     }, [measure, columns]);
 
-    // Named contacts, plus named wires that aren't connected right now
-    // (touching one solders it back); connected wires have their own row.
+    // Named contacts and chords, plus named wires that aren't connected
+    // right now (touching one solders it back); connected wires have their
+    // own row. A find whose circuit no longer does what it did when it was
+    // named is marked, not hidden: the name is still the user's.
     const connected = useMemo(() => new Set(wires), [wires]);
     const finds = useMemo(() => Object.entries(names || {})
-        .filter(([id]) => !connected.has(id)), [names, connected]);
+        .filter(([id]) => !connected.has(id))
+        .map(([id, f]) => [id, f, findChanged(id, f, columns, registry)]),
+        [names, connected, columns, registry]);
+    const changedOf = useMemo(() => Object.fromEntries(finds.filter(f => f[2]).map(f => [f[0], true])), [finds]);
+    const CHANGED_NOTE = 'This find does something else now: the contact\u2019s wiring changed since it was named. Touch it and listen again.';
     const holdKey = (e) => e.shiftKey || e.metaKey || e.ctrlKey;
     const cutting = altDown && hover && wires.includes(hover) ? hover : null;
     // How to use what's under the pointer, when there's nothing else to say.
     const affordance = (id) => (parseJumperId(id) ? 'click to hear · alt/option-click to disconnect'
         : stageOf[id] === 'dit' ? 'press to hear · shift-press to hold · drag to another hole to wire'
             : stageOf[id] ? 'press to hear · shift-press to hold' : null);
+    const chordNote = (id) => (isChordId(id)
+        ? `chord of ${findPads(id, names?.[id]).length} · press to hear · shift-press to add to what is held` : null);
     const readout = cutting
         ? 'Click to disconnect this wire.'
         : hover
-            ? ([names?.[hover]?.name, showWiring && (wiring[hover] || wireLabel(parseJumperId(hover)))]
+            ? ([names?.[hover]?.name, chordNote(hover),
+                changedOf[hover] && 'changed since it was named',
+                showWiring && (wiring[hover] || wireLabel(parseJumperId(hover)))]
                 .filter(Boolean).join('  ·  ') || affordance(hover))
             : '';
 
@@ -608,24 +619,45 @@ export default function ProbeBoard({
             {finds.length > 0 && (
                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5, alignItems: 'center' }}>
                     <Typography variant="caption" color="textSecondary" sx={{ mr: 0.5 }}>Your finds</Typography>
-                    {finds.map(([id, f]) => (
-                        <Chip
-                            key={id} size="small" label={f.name} disabled={disabled}
-                            variant={heldSet.has(id) ? 'filled' : 'outlined'}
-                            icon={<Box component="span" sx={{
-                                width: 8, height: 8, borderRadius: '50%', ml: '6px !important',
-                                backgroundColor: theme.palette.board?.[stageOf[id]] || accent,
-                            }} />}
-                            onClick={(e) => onTouch(id, { hold: holdKey(e) })}
-                            onDelete={disabled ? undefined : () => onForget(id)}
-                            onMouseEnter={() => setHover(id)}
-                            onMouseLeave={() => setHover(h => (h === id ? null : h))}
-                            sx={{
-                                fontSize: '0.68rem', height: 22, borderColor: `${accent}88`,
-                                ...(heldSet.has(id) ? { backgroundColor: accent, color: theme.palette.bend?.contrastText } : {}),
-                            }}
-                        />
-                    ))}
+                    {finds.map(([id, f, changed]) => {
+                        // A chord is held when every one of its contacts is.
+                        const pads = findPads(id, f);
+                        const isHeld = isChordId(id)
+                            ? pads.length > 0 && pads.every(p => heldSet.has(p) || connected.has(p))
+                            : heldSet.has(id);
+                        const chip = (
+                            <Chip
+                                key={id} size="small" label={f.name} disabled={disabled}
+                                variant={isHeld ? 'filled' : 'outlined'}
+                                icon={isChordId(id) ? (
+                                    // A chord's mark: one dot per stage it touches.
+                                    <Box component="span" sx={{ display: 'inline-flex', gap: '2px', ml: '6px !important' }}>
+                                        {[...new Set(pads.map(p => stageOf[p] || 'dit'))].slice(0, 4).map(st => (
+                                            <Box key={st} component="span" sx={{
+                                                width: 6, height: 6, borderRadius: '50%',
+                                                backgroundColor: theme.palette.board?.[st] || accent,
+                                            }} />
+                                        ))}
+                                    </Box>
+                                ) : (
+                                    <Box component="span" sx={{
+                                        width: 8, height: 8, borderRadius: '50%', ml: '6px !important',
+                                        backgroundColor: theme.palette.board?.[stageOf[id]] || accent,
+                                    }} />
+                                )}
+                                onClick={(e) => onTouch(id, { hold: holdKey(e) })}
+                                onDelete={disabled ? undefined : () => onForget(id)}
+                                onMouseEnter={() => setHover(id)}
+                                onMouseLeave={() => setHover(h => (h === id ? null : h))}
+                                sx={{
+                                    fontSize: '0.68rem', height: 22, borderColor: `${accent}88`,
+                                    ...(changed ? { borderStyle: 'dashed', color: 'text.secondary' } : {}),
+                                    ...(isHeld ? { backgroundColor: accent, color: theme.palette.bend?.contrastText } : {}),
+                                }}
+                            />
+                        );
+                        return changed ? <Tooltip key={id} title={CHANGED_NOTE}>{chip}</Tooltip> : chip;
+                    })}
                 </Box>
             )}
         </Box>
