@@ -367,18 +367,45 @@ export function boardColumns(registry) {
 const HOT_CONTACTS = new Set(['cond.w', 'time.w']);
 const HOT_CONTACT_MIX = 0.35;
 
+/** A parameter draw that would do almost nothing: a scale near 1, an
+ *  offset near 0, a kernel of 1-2, a cutoff below the noise floor, a clamp
+ *  wider than the signal, a curve that stays flat. Measured on the board
+ *  (4 Nov 2026): such draws changed the output by 20-30 dB less than the
+ *  signal, i.e. not audibly. A contact must do something. */
+function weakDraw(opName, p) {
+    const near = (v, c, d) => Math.abs((v ?? c) - c) < d;
+    switch (opName) {
+        case 'scale': return near(p.factor, 1, 0.3);
+        case 'bias': return near(p.offset, 0, 0.3);
+        case 'roll': return near(p.amount, 0, 0.05) || near(p.amount, 1, 0.05) || near(p.amount, -1, 0.05);
+        case 'noise': return near(p.amount, 0, 0.3);
+        case 'threshold': return near(p.cutoff, 0, 0.3);
+        case 'clamp': return (p.lo ?? -1) < -2.5 && (p.hi ?? 1) > 2.5;
+        case 'quantize': return (p.levels ?? 8) > 40;
+        case 'smear': case 'erode': case 'dilate': return (p.kernel ?? 5) < 3;
+        case 'draw': {
+            const c = p.mode === 'offset' ? 0 : 1;
+            return (p.points || []).every(v => near(v, c, 0.3));
+        }
+        default: return false;
+    }
+}
+
 /** What touching `pad` does — always the same for the same contact. */
 export function padModule(pad, registry) {
     const rng = seededRandom(hashString(pad.id));
     const opDomain = pad.domain === 'latent' ? 'latent' : pad.domain;
     const ops = (registry?.operators || []).filter(o => o.domains.includes(opDomain));
     const op = pick(ops, rng);
+    let params = randomParams(op, 0.85, rng);
+    // Re-draw (still seeded, still fixed per contact) until it is audible.
+    for (let i = 0; i < 8 && weakDraw(op?.name, params); i++) params = randomParams(op, 1.0, rng);
     const mod = {
         id: `p.${pad.id}`,
         enabled: true,
         target: { stage: pad.stage, domain: pad.domain },
         operator: op?.name || 'scale',
-        params: randomParams(op, 0.85, rng),
+        params,
         mix: HOT_CONTACTS.has(pad.id) ? HOT_CONTACT_MIX : 1.0,
         // Contacts reshape the signal (or weights), never its energy: at full
         // strength an unlevelled bend on the small embedding layers that feed
