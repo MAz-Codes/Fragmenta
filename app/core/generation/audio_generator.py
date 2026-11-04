@@ -102,28 +102,39 @@ _BLOWN_RMS = 10 ** (-8 / 20)             # -8 dBFS
 _BLOWN_FLATNESS = 0.42
 
 
-def _spectral_flatness(a: torch.Tensor) -> float:
-    """Median spectral flatness of the mono mix (0 = tonal, 1 = white noise)."""
-    mono = a.reshape(-1, a.shape[-1]).mean(0)
-    if mono.numel() < 4096:
+def _spectral_flatness(a: np.ndarray) -> float:
+    """Median spectral flatness of the mono mix (0 = tonal, 1 = white noise).
+    numpy only: the generator is engine-agnostic and must not need torch."""
+    mono = a.reshape(-1, a.shape[-1]).mean(0).astype(np.float64)
+    n_fft, hop = 2048, 1024
+    if mono.size < 2 * n_fft:
         return 0.0
-    spec = torch.stft(mono, n_fft=2048, hop_length=1024,
-                      window=torch.hann_window(2048, device=mono.device),
-                      return_complex=True).abs() + 1e-10
-    flat = torch.exp(torch.log(spec).mean(0)) / spec.mean(0)
-    return float(flat.median())
+    n_frames = 1 + (mono.size - n_fft) // hop
+    idx = np.arange(n_fft)[None, :] + hop * np.arange(n_frames)[:, None]
+    frames = mono[idx] * np.hanning(n_fft)[None, :]
+    spec = np.abs(np.fft.rfft(frames, axis=1)) + 1e-10          # (frames, bins)
+    flat = np.exp(np.log(spec).mean(axis=1)) / spec.mean(axis=1)
+    return float(np.median(flat))
 
 
-def _bend_output_safety(audio: torch.Tensor, report: list) -> torch.Tensor:
-    a = torch.nan_to_num(audio.detach().float(), nan=0.0, posinf=1.0, neginf=-1.0)
-    peak = float(a.abs().max()) if a.numel() else 0.0
+def _bend_output_safety(audio: np.ndarray, report: list) -> np.ndarray:
+    if not np.isfinite(audio).all():
+        # Measured on sa3-small-music: some weight bends send fp16 attention
+        # logits past the half-precision range, and the whole render comes
+        # back NaN. That is not a quiet bend, it is a broken one; say so.
+        report.append("This bend broke the model's arithmetic (the output came "
+                      "back non-finite), so the take is silent. Lower the "
+                      "dry/wet or try another contact.")
+        return np.zeros_like(audio, dtype=np.float32)
+    a = audio.astype(np.float32)
+    peak = float(np.abs(a).max()) if a.size else 0.0
     if peak < 1e-4:
         report.append("This bend collapsed the signal to silence — lower the "
                       "mix, narrow the blocks, or try another stage.")
         return a
-    rms = float(a.pow(2).mean().sqrt())
+    rms = float(np.sqrt(np.mean(np.square(a))))
     if rms > _BEND_RMS_CEILING:
-        blown = rms > _BLOWN_RMS and _spectral_flatness(a.cpu()) > _BLOWN_FLATNESS
+        blown = rms > _BLOWN_RMS and _spectral_flatness(a) > _BLOWN_FLATNESS
         a = a * (_BEND_RMS_CEILING / rms)
         report.append(
             "This bend blew up into noise — the model was pushed further than "
@@ -134,7 +145,7 @@ def _bend_output_safety(audio: torch.Tensor, report: list) -> torch.Tensor:
     elif rms < _BEND_RMS_TARGET:
         a = a * min(_BEND_RMS_TARGET / rms, _BEND_MAX_BOOST)
     # tanh is ~linear at low levels, so this only rounds off the peaks.
-    return torch.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING
+    return (np.tanh(a / _BEND_PEAK_CEILING) * _BEND_PEAK_CEILING).astype(np.float32)
 
 
 def _slugify(text: str, max_len: int = 40) -> str:
@@ -483,10 +494,7 @@ class AudioGenerator:
         bend_report = None
         if bend_session is not None:
             bend_report = list(bend_session.warnings)
-            # The engine hands back numpy; the safety stage works on tensors.
-            audio = _bend_output_safety(
-                torch.from_numpy(np.ascontiguousarray(audio)), bend_report
-            ).numpy()
+            audio = _bend_output_safety(np.ascontiguousarray(audio), bend_report)
 
         _set_progress(phase="decoding", step=total_steps_logical)
         try:

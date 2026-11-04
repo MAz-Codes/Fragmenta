@@ -7,13 +7,27 @@ preserve shape, dtype, and device. Operators never mutate their input.
 own params: the axes that mean "features" and "time" for the tensor at hand
 (they differ per bend stage — transformer activations are (B, seq, dim),
 latents and decoder activations are (B, C, T), weights are (out, in) or
-(n,)), plus a seeded torch.Generator for the stochastic operators so a
-patch + seed reproduces bit-exactly.
+(n,)), a seeded torch.Generator for the stochastic operators so a
+patch + seed reproduces bit-exactly, and `scale`, the tensor's own standard
+deviation. Every additive or absolute parameter (an offset, a threshold, a
+clamp limit, a drawn offset curve) is in units of that scale: measured on
+sa3-small-music (4 Nov 2026), weight matrices have a std of 0.04-0.19, the
+timestep embedding 0.15-0.5, latents 1-5 and the DiT's residual stream
+24-73, so an absolute 0.5 was a blow-up on one and nothing on the other.
+On weights an additive offset is a special case: shifting every entry of a
+matrix the same way makes its dot products add up coherently, and fp16
+overflows. Measured on sa3-small-music: offsets of 0.25 std keep the
+music, 0.5 std and up turn it to noise, 1.5-2 std come back NaN. So in the
+weight domain the offset unit is 0.1 std (the slider's ±3 reaches ±0.3).
 
-Lineage per operator is noted inline — Broad et al. 2021/2022 (activation
-taxonomy), Kotowski & Font NIME 2026 (parameter-level: scale / offset /
-negate / roll / draw), torchbend (noise), Gillespie & Schachter DAFx 2022
-(the protocol the whole registry serves).
+Lineage per operator is noted inline — Broad et al. 2021/2022 (numerical:
+ablation, inversion 1-x, multiplication, binary threshold; affine; morpho-
+logical erosion/dilation; applied to activations), Kotowski & Font NIME 2026
+(on weights and biases: offset, scaling, negation, circular shift, drawing
+a parameter shape), Dzwonczyk et al. DAFx 2024 (the same point-wise and
+morphological operators inside a diffusion model). Operators marked "ours"
+have no source in those papers. The protocol the registry serves is
+Ghazala's anti-theory: modify, listen, log.
 
 Every application is followed by a NaN scrub in `apply_operator` — a bend
 that explodes must degrade to silence/limits, never poison the run with
@@ -33,6 +47,14 @@ class OpContext:
     feature_axis: int = -1     # axis whose entries are "features/channels"
     time_axis: Optional[int] = None   # sequence/time axis, None for weights
     generator: Optional[torch.Generator] = None  # CPU generator, pre-seeded
+    scale: float = 1.0         # the tensor's std; absolute params are × this
+    domain: str = "activation"  # activation | weight | latent
+
+    @property
+    def offset_unit(self) -> float:
+        """What an additive offset of 1.0 means for this tensor (see the
+        module docstring for why weights get a tenth)."""
+        return self.scale * (0.1 if self.domain == "weight" else 1.0)
 
     def randn_like(self, t: torch.Tensor) -> torch.Tensor:
         # Draw on CPU with the seeded generator, then move — identical
@@ -55,17 +77,22 @@ def _op_ablate(t, p, ctx):
 
 
 def _op_scale(t, p, ctx):
-    """Multiply. factor < 0 inverts (Broad's inversion; K&F's negate)."""
+    """Multiply (Broad: multiplication by a scalar; K&F: scaling). A
+    negative factor negates (K&F's "negation (flipping)"). Not Broad's
+    inversion, which is 1 - x and has no direct equivalent here."""
     return t * float(p.get("factor", 1.0))
 
 
 def _op_bias(t, p, ctx):
-    """Add a constant offset. (K&F: offset.)"""
-    return t + float(p.get("offset", 0.0))
+    """Add a constant offset, in units of the tensor's std (a tenth of
+    it on weights). (K&F: offset.)"""
+    return t + float(p.get("offset", 0.0)) * ctx.offset_unit
 
 
 def _op_roll(t, p, ctx):
-    """Circular shift along the feature axis (K&F's most productive op).
+    """Circular shift along the feature axis (K&F's circular shifting of
+    the parameter array — "roll", the operation behind most rows of the
+    Bending Log fragment they publish).
 
     `axis: "time"` rolls along the time axis instead where one exists.
     Shift is a fraction of the axis length so one slider works across
@@ -81,9 +108,11 @@ def _op_roll(t, p, ctx):
 
 
 def _op_threshold(t, p, ctx):
-    """Zero everything below |cutoff|; `hard` additionally binarises the
-    survivors to ±1 × their sign scale. (Broad: binary threshold.)"""
-    cutoff = float(p.get("cutoff", 0.0))
+    """Zero everything below |cutoff|; `hard` additionally flattens the
+    survivors to ±cutoff. After Broad's binary threshold (1 if x >= t else
+    0), adapted so a bend keeps sign and scale: Broad's form, applied to
+    a transformer's residual stream, replaces the signal with a constant."""
+    cutoff = float(p.get("cutoff", 0.0)) * ctx.scale
     mask = t.abs() >= cutoff
     if bool(p.get("hard", False)):
         return torch.where(mask, torch.sign(t) * cutoff, torch.zeros_like(t))
@@ -92,7 +121,9 @@ def _op_threshold(t, p, ctx):
 
 def _op_noise(t, p, ctx):
     """Add seeded gaussian noise scaled to the tensor's own std, so one
-    amount slider behaves comparably across layers. (torchbend.)"""
+    amount slider behaves comparably across layers. Ours: none of the
+    source papers adds noise (Broad et al. 2022 get stochastic variation
+    from random *feature selection*, not from added noise)."""
     amount = float(p.get("amount", 0.0))
     if amount == 0.0:
         return t
@@ -103,11 +134,14 @@ def _op_noise(t, p, ctx):
 
 
 def _op_clamp(t, p, ctx):
-    return t.clamp(float(p.get("lo", -1.0)), float(p.get("hi", 1.0)))
+    """Hard limit at lo/hi × the tensor's std. Ours (a DSP idiom, not
+    from the bending papers)."""
+    return t.clamp(float(p.get("lo", -1.0)) * ctx.scale, float(p.get("hi", 1.0)) * ctx.scale)
 
 
 def _op_quantize(t, p, ctx):
-    """Bit-crush: snap values to `levels` steps across the tensor's range."""
+    """Bit-crush: snap values to `levels` steps across the tensor's range.
+    Ours; a coarse relative of Broad's binary threshold (posterisation)."""
     levels = max(2, int(p.get("levels", 8)))
     lo, hi = t.min(), t.max()
     span = (hi - lo)
@@ -149,21 +183,27 @@ def _time_or_feature_axis(p, ctx):
 
 
 def _op_smear(t, p, ctx):
-    """1-D blur along the time axis — Broad's morphological filters
-    translated to sequence data."""
+    """1-D mean blur along the time axis. Ours; the sliding-window
+    engine it shares with erode/dilate is Broad's morphology made 1-D."""
     return _smooth_1d(t, _time_or_feature_axis(p, ctx), p.get("kernel", 5), "mean")
 
 
 def _op_erode(t, p, ctx):
+    """Sliding minimum — Broad's erosion (a circular structuring element
+    on 2-D activation maps) as a 1-D window along time or features."""
     return _smooth_1d(t, _time_or_feature_axis(p, ctx), p.get("kernel", 5), "min")
 
 
 def _op_dilate(t, p, ctx):
+    """Sliding maximum — Broad's dilation, 1-D (see erode)."""
     return _smooth_1d(t, _time_or_feature_axis(p, ctx), p.get("kernel", 5), "max")
 
 
 def _op_reflect(t, p, ctx):
-    """Reverse along the time axis (feature axis for weights)."""
+    """Reverse along the time axis (feature axis for weights). After
+    Broad's affine reflection of an activation map; Broad et al. 2022 report
+    that their affine rotation and scaling did not transfer to audio, so
+    only this one is kept."""
     return torch.flip(t, dims=[_time_or_feature_axis(p, ctx)])
 
 
@@ -178,14 +218,16 @@ def _op_sort(t, p, ctx):
 
 def _op_shuffle(t, p, ctx):
     """Permute entries along the feature axis with a seeded permutation
-    (same permutation for every position — a rewiring, not white noise)."""
+    (same permutation for every position — a rewiring, not white noise).
+    Ours."""
     n = t.shape[ctx.feature_axis]
     perm = torch.randperm(n, generator=ctx.generator).to(t.device)
     return t.index_select(ctx.feature_axis, perm)
 
 
 def _op_draw(t, p, ctx):
-    """K&F's freehand curve: `points` is a list of 2-128 floats forming an
+    """K&F's "draw a new parameter shape directly with the cursor":
+    `points` is a list of 2-128 floats forming an
     envelope over the feature axis, linearly resampled to the axis length,
     then applied as multiplier (`mode: "scale"`, curve value 1.0 = unity)
     or offset (`mode: "offset"`)."""
@@ -201,7 +243,7 @@ def _op_draw(t, p, ctx):
     shape[ctx.feature_axis] = n
     curve = curve.view(shape)
     if str(p.get("mode", "scale")) == "offset":
-        return t + curve
+        return t + curve * ctx.offset_unit
     return t * curve
 
 
@@ -244,7 +286,7 @@ _register(OperatorSpec(
 _register(OperatorSpec(
     "bias", _op_bias, "Offset", 1,
     {"offset": {"min": -3.0, "max": 3.0, "default": 0.5, "step": 0.01}},
-    description="Push every value up or down by a constant."))
+    description="Push every value up or down by a constant, in units of the layer's own level."))
 _register(OperatorSpec(
     "roll", _op_roll, "Roll", 1,
     {"amount": {"min": -1.0, "max": 1.0, "default": 0.25, "step": 0.005},
@@ -254,7 +296,7 @@ _register(OperatorSpec(
     "threshold", _op_threshold, "Threshold", 1,
     {"cutoff": {"min": 0.0, "max": 3.0, "default": 0.5, "step": 0.01},
      "hard": {"type": "bool", "default": False}},
-    description="Only values above the cutoff survive; hard mode binarises them."))
+    description="Only values above the cutoff (× the layer's own level) survive; hard mode binarises them."))
 _register(OperatorSpec(
     "noise", _op_noise, "Noise", 1,
     {"amount": {"min": 0.0, "max": 3.0, "default": 0.5, "step": 0.01}},
@@ -263,7 +305,7 @@ _register(OperatorSpec(
     "clamp", _op_clamp, "Clamp", 1,
     {"lo": {"min": -4.0, "max": 0.0, "default": -1.0, "step": 0.01},
      "hi": {"min": 0.0, "max": 4.0, "default": 1.0, "step": 0.01}},
-    description="Hard-limit the range — squashes dynamics into distortion."))
+    description="Hard-limit the range (× the layer's own level) — squashes dynamics into distortion."))
 _register(OperatorSpec(
     "quantize", _op_quantize, "Quantize", 1,
     {"levels": {"min": 2, "max": 64, "default": 8, "step": 1, "type": "int"}},
@@ -275,17 +317,20 @@ _register(OperatorSpec(
      "axis": {"type": "enum", "options": ["time", "feature"], "default": "time"}},
     domains=("activation", "latent", "weight"),
     description="Blur along time — transients dissolve into wash."))
+# Erode/dilate stay off weights: a running min/max turns a weight matrix
+# into same-sign blocks whose dot products overflow fp16 — every such
+# contact on sa3-small-music came back NaN (5 of 5, 4 Nov 2026).
 _register(OperatorSpec(
     "erode", _op_erode, "Erode", 2,
     {"kernel": {"min": 2, "max": 64, "default": 5, "step": 1, "type": "int"},
      "axis": {"type": "enum", "options": ["time", "feature"], "default": "time"}},
-    domains=("activation", "latent", "weight"),
+    domains=("activation", "latent"),
     description="Sliding minimum — hollows the signal out."))
 _register(OperatorSpec(
     "dilate", _op_dilate, "Dilate", 2,
     {"kernel": {"min": 2, "max": 64, "default": 5, "step": 1, "type": "int"},
      "axis": {"type": "enum", "options": ["time", "feature"], "default": "time"}},
-    domains=("activation", "latent", "weight"),
+    domains=("activation", "latent"),
     description="Sliding maximum — peaks swallow their surroundings."))
 _register(OperatorSpec(
     "reflect", _op_reflect, "Reflect", 2,
@@ -315,6 +360,9 @@ def apply_operator(name: str, tensor: torch.Tensor, params: Dict[str, Any],
     spec = OPERATORS.get(name)
     if spec is None:
         raise ValueError(f"Unknown bend operator: {name!r}")
+    if tensor.dtype.is_floating_point and tensor.numel() > 1:
+        std = tensor.detach().float().std()
+        ctx.scale = float(std) if torch.isfinite(std) and float(std) > 0 else 1.0
     out = spec.fn(tensor, params or {}, ctx)
     if out.dtype.is_floating_point:
         out = torch.nan_to_num(out, nan=0.0, posinf=6e4, neginf=-6e4)

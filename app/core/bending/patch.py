@@ -1,7 +1,7 @@
 """Bend patch schema — validation and normalization.
 
 A bend patch is the unit of saving, sharing and reproducing a bend: a plain
-JSON document (see BEND_PLAN.md §3). `validate_patch` normalizes one and
+JSON document (phd/network-bending.md describes it). `validate_patch` normalizes one and
 returns (patch, warnings). Validation is deliberately permissive where the
 model is involved — a block index that doesn't exist on the loaded model is
 a *warning at apply time*, not an error here, so patches survive across
@@ -72,6 +72,10 @@ JUMPER_LEVELS = ("match", "raw")
 
 class PatchError(ValueError):
     """Raised when a patch is structurally unusable (not merely degraded)."""
+
+
+class _SkipModule(Exception):
+    """One module can't apply any more; the rest of the patch still can."""
 
 
 def _clamp(v, lo, hi):
@@ -210,6 +214,9 @@ def validate_patch(patch: Any) -> Tuple[Dict[str, Any], List[str]]:
         mid = str(m.get("id") or f"module[{i}]") if isinstance(m, dict) else f"module[{i}]"
         try:
             norm_modules.append(_norm_module(m, mid, warnings))
+        except _SkipModule as e:
+            warnings.append(str(e))
+            continue
         except PatchError:
             raise
         except (TypeError, ValueError) as e:
@@ -217,6 +224,8 @@ def validate_patch(patch: Any) -> Tuple[Dict[str, Any], List[str]]:
             # server error (500).
             raise PatchError(f"{mid}: malformed value ({e}).")
 
+    if not norm_modules:
+        raise PatchError("bend_patch has no module that still applies: " + "; ".join(warnings))
     try:
         seed = int(patch.get("seed", 0))
         version = int(patch.get("version", 1))
@@ -277,9 +286,12 @@ def _norm_module(m: Any, mid: str, warnings: List[str]) -> Dict[str, Any]:
         spec_domains = OPERATORS[op].domains
         op_domain = "latent" if domain == "latent" else domain
         if op_domain not in spec_domains:
-            raise PatchError(
-                f"{mid}: operator {op!r} does not support the "
-                f"{op_domain!r} domain.")
+            # An operator can lose a domain between versions (erode/dilate
+            # left weights on 4 Nov 2026); a saved preset or log entry that
+            # used it still has to play, minus that module.
+            raise _SkipModule(
+                f"{mid}: operator {op!r} no longer applies to the "
+                f"{op_domain!r} domain; module skipped.")
         nm["operator"] = op
         nm["params"] = _norm_params(op, m.get("params"), warnings, mid)
         if m.get("keep_level"):

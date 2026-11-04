@@ -322,12 +322,15 @@ class BendSession:
     @staticmethod
     def _cluster_mask(t: torch.Tensor, f_ax: int, k: int, index: int,
                       seed: int) -> torch.Tensor:
-        """Broad et al.'s clustered feature selection: group the features
-        by how they behave (k-means over each feature's activation profile)
-        and select one cluster, so a bend hits a set of features that act
-        together rather than a random scatter. Computed from the first
-        tensor seen and then frozen, so the selection is stable across
-        sampling steps and chunks."""
+        """Clustered feature selection after Broad et al.: group the
+        features by how they behave and select one cluster, so a bend hits
+        a set of features that act together rather than a random scatter.
+        Simplified: Broad et al. embed each feature's spatial activation map
+        with a metric-learning CNN and k-means the embeddings; here k-means
+        (Lloyd, 12 rounds, seeded init) runs directly on each feature's
+        activation profile, downsampled to 64 points and normalised.
+        Computed from the first tensor seen and then frozen, so the
+        selection is stable across sampling steps and chunks."""
         size = t.shape[f_ax]
         # CPU first: MPS's adaptive pooling rejects non-divisible sizes.
         feats = t.detach().float().cpu().movedim(f_ax, 0).reshape(size, -1)
@@ -391,7 +394,8 @@ class BendSession:
             # "time"-style axis is the input dimension, 1-D biases have none.
             f_ax = feature_axis
             t_ax = 1 if t.ndim >= 2 else None
-        ctx = OpContext(feature_axis=f_ax, time_axis=t_ax, generator=self._generator)
+        ctx = OpContext(feature_axis=f_ax, time_axis=t_ax, generator=self._generator,
+                        domain=mod["target"]["domain"])
         bent = apply_operator(mod["operator"], t, mod.get("params"), ctx)
 
         mix = float(mod.get("mix", 1.0))
@@ -406,7 +410,13 @@ class BendSession:
             out = bent
         else:
             out = t * (1 - mix) + bent * mix
-        if mod.get("keep_level"):
+        # Level matching keeps the signal's energy while the shape changes.
+        # Where level IS the whole effect (a plain scale or ablate of every
+        # feature) matching it would undo the bend: measured on the board,
+        # such contacts came back as the identity (4 Nov 2026). With a
+        # feature mask the relative levels still change, so it stays on.
+        level_only = mod["operator"] in ("scale", "ablate") and mask is None
+        if mod.get("keep_level") and not level_only:
             out = _match_level(out, t)
         return out
 
