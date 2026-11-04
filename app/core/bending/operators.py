@@ -33,8 +33,12 @@ diffusion model's U-Net), Cole, Fiebrink & Grierson 2026 (inside a video
 DiT: gain, noise and thresholding on attention maps, attention values and
 feed-forward hidden units, scoped by step, layer, token and neuron),
 Abuzuraiq & Pasquier 2026 (scalar multiply, rotation, gaussian noise on
-Stable Diffusion's U-Net layers, by step range). Operators marked "ours"
-have no source in those papers. The protocol the registry serves is
+Stable Diffusion's U-Net layers, by step range), Collins AES 2025 (Stable
+Audio 1.0's weights: gaussian noise at a fixed absolute amplitude per
+layer, zeroing or randomising a random subset across the model; his
+"short circuits", "model cannibalization" and "coarse tuning" futures are
+the jumper, the structural modules and Break mode). Operators marked
+"ours" have no source in those papers. The protocol the registry serves is
 Ghazala's anti-theory: modify, listen, log.
 
 Every application is followed by a NaN scrub in `apply_operator` — a bend
@@ -80,7 +84,9 @@ class OpContext:
 # --- Phase 1 ---------------------------------------------------------------
 
 def _op_ablate(t, p, ctx):
-    """Zero the targeted values. (Broad: ablation.)"""
+    """Zero the targeted values. (Broad: ablation; on weights, Collins
+    2025's zeroing/pruning — Stable Audio 1.0 survived only ~3 zeroed
+    connections in a million before going silent.)"""
     return torch.zeros_like(t)
 
 
@@ -136,8 +142,10 @@ def _op_noise(t, p, ctx):
     (2022 get stochastic variation from random *feature selection*, not
     from added noise) nor K&F; noise injection is a lever in Cole et al.
     2026 (attention maps, values and feed-forward hidden units of a video
-    DiT) and Abuzuraiq & Pasquier 2026 (gaussian noise, std 1-2, on U-Net
-    layers). Scaling it to the tensor's own std is ours."""
+    DiT), Abuzuraiq & Pasquier 2026 (gaussian noise, std 1-2, on U-Net
+    layers) and Collins 2025 (gaussian noise of amplitude 0.03/0.3/3 on
+    each of Stable Audio 1.0's 745 weight tensors — absolute, whatever the
+    tensor's scale). Scaling it to the tensor's own std is ours."""
     amount = float(p.get("amount", 0.0))
     if amount == 0.0:
         return t
