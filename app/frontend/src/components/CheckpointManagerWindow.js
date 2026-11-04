@@ -32,6 +32,11 @@ const purposeRows = (mac, signedIn) => [
         about: 'Quick results, built for Apple Silicon. No account needed.',
     },
     {
+        key: 'bend',
+        title: 'Bending',
+        about: 'The Bend tab works on this PyTorch build; MLX models can\u2019t be bent. Free Hugging Face account needed.',
+    },
+    {
         key: 'post-trained',
         title: 'Fast generation',
         about: mac
@@ -118,20 +123,73 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
     const anyInstalled = catalog.some(c => c.downloaded);
     const appleSilicon = catalog.some(c => c.kind === 'mlx');
     const shown = catalog.filter(c => !(appleSilicon && hiddenOnMac(c)));
-    // On a Mac the Bend tab's PyTorch model sits under its MLX twin, in the
-    // same cell of the MLX row, so it is clear it is only needed for that
-    // one tab. Off a Mac it is an ordinary Fast generation model.
+    // On a Mac the Bend tab's PyTorch model has a row of its own, with the
+    // Hugging Face sign-in beside it, since that is the one thing on a Mac
+    // that needs an account. Off a Mac it is an ordinary Fast generation
+    // model and the sign-in stays in the title bar.
     const bendTwin = appleSilicon ? shown.find(bendOnlyOnMac) : null;
-    const MLX_TWIN_ID = 'sa3-mlx-small-music';
-    const rowOf = (c) => (c === bendTwin ? (shown.some(m => m.id === MLX_TWIN_ID) ? 'mlx' : c.kind) : c.kind);
+    const rowOf = (c) => (c === bendTwin ? 'bend' : c.kind);
     const hasGatedRow = shown.some(c => c.kind === 'post-trained' && !c.downloaded);
     // Public HF Spaces demo: checkpoints are pre-provisioned and visitors
     // must not hand a personal HF token to a shared Space, so sign-in is
     // greyed out there. Every other platform is unaffected.
     const isHfDemo = Boolean(env?.hf_space);
+    const accountNote = (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'right', mb: bendTwin ? 0 : 2, '& a': { color: 'inherit' } }}>
+            Needs a free{' '}
+            <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">Hugging Face account</a>
+            {' '}and a{' '}
+            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Read access token</a>.
+        </Typography>
+    );
     const usedShare = storage
         ? storage.total_used_bytes / Math.max(1, storage.total_used_bytes + storage.total_free_bytes)
         : 0;
+
+    const signIn = hfAuth.signed_in ? (
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                        <Typography variant="caption" color="text.secondary">
+                            Hugging Face: signed in as <strong>{hfAuth.username}</strong>
+                        </Typography>
+                        <Tooltip title={TIPS.manager.hfLogout}>
+                            <Button size="small" variant="text" onClick={logout}>Sign out</Button>
+                        </Tooltip>
+                    </Stack>
+                ) : showTokenInput ? (
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                        <Tooltip title={TIPS.manager.hfToken}>
+                            <TextField
+                                size="small"
+                                placeholder="hf_..."
+                                value={tokenDraft}
+                                onChange={(e) => setTokenDraft(e.target.value)}
+                                type="password"
+                                sx={{ width: 240 }}
+                            />
+                        </Tooltip>
+                        <Button size="small" variant="contained" onClick={submitToken}>
+                            Sign in
+                        </Button>
+                        <Button size="small" onClick={() => { setShowTokenInput(false); setTokenDraft(''); }}>
+                            Cancel
+                        </Button>
+                    </Stack>
+                ) : hasGatedRow && (
+                    <Tooltip title={isHfDemo ? TIPS.manager.hfLoginDemo : TIPS.manager.hfLogin}>
+                        {/* span wrapper so the tooltip works on a disabled button */}
+                        <span>
+                            <Button
+                                size="small"
+                                variant="text"
+                                onClick={() => setShowTokenInput(true)}
+                                disabled={isHfDemo}
+                                sx={(t) => ({ height: 38, px: 2.25, backgroundColor: t.palette.fragmenta.surface })}
+                            >
+                                Sign in to Hugging Face
+                            </Button>
+                        </span>
+                    </Tooltip>
+                );
 
     return (
         <>
@@ -147,63 +205,13 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 2.5, p: '28px 32px 0' }}>
                     <Box sx={{ flex: 1, fontSize: 30, lineHeight: 1.2 }}>Checkpoint Manager</Box>
 
-                    {hfAuth.signed_in ? (
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                            <Typography variant="caption" color="text.secondary">
-                                Hugging Face: signed in as <strong>{hfAuth.username}</strong>
-                            </Typography>
-                            <Tooltip title={TIPS.manager.hfLogout}>
-                                <Button size="small" variant="text" onClick={logout}>Sign out</Button>
-                            </Tooltip>
-                        </Stack>
-                    ) : showTokenInput ? (
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                            <Tooltip title={TIPS.manager.hfToken}>
-                                <TextField
-                                    size="small"
-                                    placeholder="hf_..."
-                                    value={tokenDraft}
-                                    onChange={(e) => setTokenDraft(e.target.value)}
-                                    type="password"
-                                    sx={{ width: 240 }}
-                                />
-                            </Tooltip>
-                            <Button size="small" variant="contained" onClick={submitToken}>
-                                Sign in
-                            </Button>
-                            <Button size="small" onClick={() => { setShowTokenInput(false); setTokenDraft(''); }}>
-                                Cancel
-                            </Button>
-                        </Stack>
-                    ) : hasGatedRow && (
-                        <Tooltip title={isHfDemo ? TIPS.manager.hfLoginDemo : TIPS.manager.hfLogin}>
-                            {/* span wrapper so the tooltip works on a disabled button */}
-                            <span>
-                                <Button
-                                    size="small"
-                                    variant="text"
-                                    onClick={() => setShowTokenInput(true)}
-                                    disabled={isHfDemo}
-                                    sx={(t) => ({ height: 38, px: 2.25, backgroundColor: t.palette.fragmenta.surface })}
-                                >
-                                    Sign in to Hugging Face
-                                </Button>
-                            </span>
-                        </Tooltip>
-                    )}
+                    {!bendTwin && signIn}
 
                     <IconButton onClick={onClose} aria-label="Close"><CloseIcon size={20} /></IconButton>
                 </DialogTitle>
 
                 <DialogContent sx={{ p: '22px 32px 32px !important' }}>
-                    {showTokenInput && !hfAuth.signed_in && (
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'right', mb: 2, '& a': { color: 'inherit' } }}>
-                            Needs a free{' '}
-                            <a href="https://huggingface.co/join" target="_blank" rel="noreferrer">Hugging Face account</a>
-                            {' '}and a{' '}
-                            <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Read access token</a>.
-                        </Typography>
-                    )}
+                    {showTokenInput && !hfAuth.signed_in && !bendTwin && accountNote}
                     {authError && <Alert severity="error" sx={{ mb: 2 }}>{authError}</Alert>}
 
                     {isHfDemo && (
@@ -235,12 +243,7 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                             return (
                                 <React.Fragment key={row.key}>
                                     {index > 0 && <Box sx={{ height: '1px', backgroundColor: 'divider' }} />}
-                                    <Box sx={{
-                                        display: 'grid', gridTemplateColumns: ROW_COLUMNS, gap: 1.5,
-                                        // The stacked Bend card makes its cell tall; the other
-                                        // cards keep their own height rather than stretching to it.
-                                        alignItems: bendTwin && row.key === 'mlx' ? 'start' : 'stretch',
-                                    }}>
+                                    <Box sx={{ display: 'grid', gridTemplateColumns: ROW_COLUMNS, gap: 1.5 }}>
                                         <Box sx={{ alignSelf: 'center', pr: 1.5 }}>
                                             <Typography variant="subtitle1" component="h3" sx={{ fontSize: 20, lineHeight: 1.15 }}>
                                                 {row.title}
@@ -249,33 +252,26 @@ export default function CheckpointManagerWindow({ open, onClose, fade }) {
                                                 {row.about}
                                             </Typography>
                                         </Box>
-                                        {models.filter(c => !(c === bendTwin && rowOf(c) === 'mlx')).map(c => {
-                                            const card = (
-                                                <CheckpointRow
-                                                    key={c.id}
-                                                    checkpoint={c}
-                                                    env={env}
-                                                    terms={terms}
-                                                    onAuthRequired={() => setShowTokenInput(true)}
-                                                    onChanged={refresh}
-                                                />
-                                            );
-                                            if (!(bendTwin && c.id === MLX_TWIN_ID)) return card;
-                                            return (
-                                                <Box key={c.id} sx={{ display: 'grid', gap: 1.5, alignContent: 'start' }}>
-                                                    {card}
-                                                    <CheckpointRow
-                                                        checkpoint={bendTwin}
-                                                        name="Small - Music (PyTorch)"
-                                                        note="For the Bend tab only. Hugging Face account needed."
-                                                        env={env}
-                                                        terms={terms}
-                                                        onAuthRequired={() => setShowTokenInput(true)}
-                                                        onChanged={refresh}
-                                                    />
-                                                </Box>
-                                            );
-                                        })}
+                                        {models.map(c => (
+                                            <CheckpointRow
+                                                key={c.id}
+                                                checkpoint={c}
+                                                env={env}
+                                                terms={terms}
+                                                onAuthRequired={() => setShowTokenInput(true)}
+                                                onChanged={refresh}
+                                            />
+                                        ))}
+                                        {row.key === 'bend' && (
+                                            <Box sx={{ gridColumn: '3 / span 2', justifySelf: 'end', alignSelf: 'center', display: 'grid', justifyItems: 'end', gap: 0.75 }}>
+                                                {signIn}
+                                                {!hfAuth.signed_in && !bendTwin.downloaded && (showTokenInput ? accountNote : (
+                                                    <Typography variant="caption" color="text.secondary">
+                                                        Needed to download this model.
+                                                    </Typography>
+                                                ))}
+                                            </Box>
+                                        )}
                                         {withStorage && (
                                             <Tooltip title={TIPS.manager.storage}>
                                                 {/* span wrapper so the tooltip works before storage has loaded */}
