@@ -32,14 +32,14 @@ import {
 /**
  * Bend — network bending & model bending as an instrument.
  *
- * What people see is the Probe board alone: the model as an unlabelled
- * board of contacts — touch, hear, name what you found (ProbeBoard). The
- * rest of the engine stays in the code but out of sight: the Rack (the
- * case opened — signal path + module rack with every parameter, presets,
- * Chance) and Break (training-time model bending — BreakPanel) only appear
- * with the advanced flag, `localStorage['fragmenta.bend.advanced'] = '1'`
- * (reload after setting it). Performance channels keep generating through
- * saved presets either way. Grounded in Ghazala's anti-theory (via
+ * Two views of one engine. The Probe board is the default and the naive
+ * companion: the model as an unlabelled board of contacts — touch, hear,
+ * name what you found (ProbeBoard). The Rack is the case opened: signal
+ * path + module rack with every target, operator and parameter, presets,
+ * Chance. Break (training-time model bending — BreakPanel) stays out of
+ * sight unless `localStorage['fragmenta.bend.advanced'] = '1'` (reload
+ * after setting it). Performance channels generate through saved presets
+ * either way. Grounded in Ghazala's anti-theory (via
  * Kotowski & Font, NIME 2026), Broad et al. (2021/2022) and Dzwonczyk et
  * al. (DAFx 2024); the write-up is phd/network-bending.md.
  *
@@ -52,7 +52,7 @@ import {
 const STORE_KEY = 'fragmenta.bend.v1';
 // The models the board can bend (see the comment at downloadedModels).
 const BEND_MODELS = [BEND_MODEL];
-// Rack and Break are hidden unless this flag is set; see the header comment.
+// Break is hidden unless this flag is set; see the header comment.
 const ADVANCED_KEY = 'fragmenta.bend.advanced';
 const readAdvanced = () => {
     try { return window.localStorage.getItem(ADVANCED_KEY) === '1'; } catch { return false; }
@@ -84,8 +84,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     const stored = useMemo(readStore, []);
     const advanced = useMemo(readAdvanced, []);
 
-    // Without the advanced flag the panel is the board and nothing else: a
-    // remembered Rack or Break state from an earlier session is ignored.
+    // Without the advanced flag a remembered Break state is ignored.
     const [mode, setMode] = useState(advanced ? (stored.mode || 'bend') : 'bend');
     const [modelId, setModelId] = useState(stored.modelId || '');
     const [registry, setRegistry] = useState(null);
@@ -120,7 +119,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     // for every render until it is disconnected; contacts are momentary
     // (press) or latched (shift-press → `held`). Every contact always does
     // the same thing.
-    const [view, setView] = useState(advanced ? (stored.view || 'probe') : 'probe');
+    const [view, setView] = useState(stored.view || 'probe');
     // Wires that join points already joined (block n → block n+1) change
     // nothing; older sessions could hold them, so they are dropped on load.
     const [wires, setWires] = useState(() => Array.from(new Set([
@@ -547,7 +546,7 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
     };
 
     const openInRack = () => {
-        if (!lastTake || !advanced) return;
+        if (!lastTake) return;
         setModules(lastTake.modules.map(m => ({ ...m, id: nextId() })));
         setPrompt(lastTake.body.prompt || prompt);
         setDuration(lastTake.body.duration);
@@ -618,13 +617,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
             setFreshInput(false);
             setLastTouched(null);
             setMode('bend');
-            return;
-        }
-        if (!advanced) {
-            // Built in the Rack (or by a Performance channel's preset); there
-            // is no Rack to open it in on the plain board.
-            notify('info', 'This bend was built in the Rack, which is hidden. '
-                + 'Set fragmenta.bend.advanced to 1 in the browser\u2019s local storage and reload to open it.');
             return;
         }
         setModules((entry.patch?.modules || []).map(m => ({ ...m, id: nextId() })));
@@ -734,14 +726,12 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                                         </Button>
                                     </span>
                                 </Tooltip>
-                                {advanced && (
-                                    <Tooltip title={TIPS.bend.openInRack}>
-                                        <Button size="small" variant="text" startIcon={<RackIcon size={14} />}
-                                                disabled={!!busy} onClick={openInRack}>
-                                            Open in rack
-                                        </Button>
-                                    </Tooltip>
-                                )}
+                                <Tooltip title={TIPS.bend.openInRack}>
+                                    <Button size="small" variant="text" startIcon={<RackIcon size={14} />}
+                                            disabled={!!busy} onClick={openInRack}>
+                                        Open in rack
+                                    </Button>
+                                </Tooltip>
                             </Box>
                         </Box>
                     )}
@@ -781,23 +771,20 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     modelId && modelId.endsWith('-base') ? modelId : 'sa3-small-music-base'} />
             ) : (
             <>
-                {/* toolbar: only the advanced toggles and the Rack's tools */}
-                {advanced && (
+                {/* toolbar: the view, and the Rack's tools */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
-                    {advanced && (
-                        <ToggleButtonGroup
-                            size="small" exclusive value={view}
-                            onChange={(_, v) => v && setView(v)}
-                            sx={{ '& .MuiToggleButton-root': { px: 1.5, py: 0.4 } }}
-                        >
-                            <Tooltip title={TIPS.bend.viewProbe}>
-                                <ToggleButton value="probe">Probe</ToggleButton>
-                            </Tooltip>
-                            <Tooltip title={TIPS.bend.viewRack}>
-                                <ToggleButton value="rack">Rack</ToggleButton>
-                            </Tooltip>
-                        </ToggleButtonGroup>
-                    )}
+                    <ToggleButtonGroup
+                        size="small" exclusive value={view}
+                        onChange={(_, v) => v && setView(v)}
+                        sx={{ '& .MuiToggleButton-root': { px: 1.5, py: 0.4 } }}
+                    >
+                        <Tooltip title={TIPS.bend.viewProbe}>
+                            <ToggleButton value="probe">Board</ToggleButton>
+                        </Tooltip>
+                        <Tooltip title={TIPS.bend.viewRack}>
+                            <ToggleButton value="rack">Rack</ToggleButton>
+                        </Tooltip>
+                    </ToggleButtonGroup>
                     <Box sx={{ flex: 1 }} />
                     {view === 'rack' && (<>
                     <Tooltip title={TIPS.bend.presets}>
@@ -845,7 +832,6 @@ export default function BendPanel({ models, active = true, isDocker = false }) {
                     </Tooltip>
                     </>)}
                 </Box>
-                )}
 
                 {view === 'probe' ? (
                 <>

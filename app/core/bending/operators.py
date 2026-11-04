@@ -285,7 +285,7 @@ _register(OperatorSpec(
     description="Amplify or invert. Negative values flip the feature's meaning."))
 _register(OperatorSpec(
     "bias", _op_bias, "Offset", 1,
-    {"offset": {"min": -3.0, "max": 3.0, "default": 0.5, "step": 0.01}},
+    {"offset": {"min": -3.0, "max": 3.0, "default": 0.5, "step": 0.01, "unit": "level"}},
     description="Push every value up or down by a constant, in units of the layer's own level."))
 _register(OperatorSpec(
     "roll", _op_roll, "Roll", 1,
@@ -294,7 +294,7 @@ _register(OperatorSpec(
     description="Circular shift — features land on their neighbours' wiring."))
 _register(OperatorSpec(
     "threshold", _op_threshold, "Threshold", 1,
-    {"cutoff": {"min": 0.0, "max": 3.0, "default": 0.5, "step": 0.01},
+    {"cutoff": {"min": 0.0, "max": 3.0, "default": 0.5, "step": 0.01, "unit": "level"},
      "hard": {"type": "bool", "default": False}},
     description="Only values above the cutoff (× the layer's own level) survive; hard mode binarises them."))
 _register(OperatorSpec(
@@ -303,8 +303,8 @@ _register(OperatorSpec(
     description="Seeded gaussian noise, scaled to the layer's own level."))
 _register(OperatorSpec(
     "clamp", _op_clamp, "Clamp", 1,
-    {"lo": {"min": -4.0, "max": 0.0, "default": -1.0, "step": 0.01},
-     "hi": {"min": 0.0, "max": 4.0, "default": 1.0, "step": 0.01}},
+    {"lo": {"min": -4.0, "max": 0.0, "default": -1.0, "step": 0.01, "unit": "level"},
+     "hi": {"min": 0.0, "max": 4.0, "default": 1.0, "step": 0.01, "unit": "level"}},
     description="Hard-limit the range (× the layer's own level) — squashes dynamics into distortion."))
 _register(OperatorSpec(
     "quantize", _op_quantize, "Quantize", 1,

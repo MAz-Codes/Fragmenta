@@ -119,8 +119,9 @@ def get_targets(model_id: str, pretrained_root: Path) -> Dict[str, Any]:
             "count": depth,
             "domains": ["activation", "weight", "structure"],
             "axes": {"feature": -1, "time": 1},
-            "hint": ("The core playground. Early blocks shape structure and "
-                     "composition; late blocks shape timbre and texture."),
+            "hint": ("The core playground: the transformer's blocks in a row, "
+                     "each working on what the ones before made of the sound. "
+                     "Pick a few, or all."),
             "size_hint": "large",
             # Weight sub-targets inside one block, resolved by subtree prefix.
             "weight_slots": [
@@ -135,8 +136,8 @@ def get_targets(model_id: str, pretrained_root: Path) -> Dict[str, Any]:
             "domains": ["latent"],
             "axes": {"feature": 1, "time": -1},
             "hint": ("The evolving sound-in-progress, bent between denoising "
-                     "steps. Use the step range: early = structure, late = "
-                     "texture."),
+                     "steps. Use the step range: early steps settle the rough "
+                     "shape, late steps the surface."),
             "size_hint": "small",
         },
         {

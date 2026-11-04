@@ -80,7 +80,7 @@ function BlockGrid({ count, value, onChange, accent }) {
  *  as an abstract bend curve over labelled index axes — deliberately NOT
  *  waveform-styled (Brave: weight arrays that look like waveforms confuse
  *  musicians). Y range 0..2 (1 = unity for scale mode). */
-function CurveEditor({ points, onChange, accent }) {
+function CurveEditor({ points, onChange, accent, mode = 'scale' }) {
     const N = 24;
     const H = 64;
     const ref = useRef(null);
@@ -132,7 +132,9 @@ function CurveEditor({ points, onChange, accent }) {
             </Box>
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.6rem' }}>
-                    feature 0 → N · drag to draw · centre = unity
+                    {mode === 'offset'
+                        ? 'feature 0 → N · drag to draw · bottom = no offset, top = +2 × level'
+                        : 'feature 0 → N · drag to draw · centre = unity'}
                 </Typography>
                 <Typography
                     variant="caption" onClick={() => onChange([])}
@@ -177,14 +179,20 @@ function ParamControls({ opSpec, params, onChange, accent }) {
                     );
                 }
                 if (desc.type === 'curve') {
-                    return <CurveEditor key={name} points={value}
+                    return <CurveEditor key={name} points={value} mode={params?.mode}
                                         onChange={(pts) => onChange({ ...params, [name]: pts })}
                                         accent={accent} />;
                 }
                 return (
                     <Box key={name} sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <Typography variant="caption" color="textSecondary"
-                                    sx={{ minWidth: 52 }}>{name}</Typography>
+                        {/* "× level": the value is in units of the layer's own
+                            level (its std), so one slider means the same on a
+                            weight matrix and on the residual stream. */}
+                        <Tooltip title={desc.unit === 'level'
+                            ? 'In units of the layer\u2019s own level, so the same value means the same thing on every stage.' : ''}>
+                            <Typography variant="caption" color="textSecondary"
+                                        sx={{ minWidth: 52 }}>{name}{desc.unit === 'level' ? ' ×lvl' : ''}</Typography>
+                        </Tooltip>
                         <Slider
                             size="small" value={Number(value ?? 0)}
                             min={desc.min} max={desc.max}
@@ -541,7 +549,7 @@ export default function BendModuleCard({
                                     {Math.round((mod.mix ?? 1) * 100)}%
                                 </Typography>
                             </Box>
-                            <Tooltip title="Keep level: after the bend, scale the result back to the original's level — it changes the shape, not the energy. Probe-board contacts always keep their level.">
+                            <Tooltip title="Keep level: after the bend, scale the result back to the original's level — it changes the shape, not the energy. Board contacts always keep their level. A plain scale or ablate of all features is left alone (level is its whole effect).">
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                     <Switch size="small" checked={!!mod.keep_level}
                                             onChange={(e) => set({ keep_level: e.target.checked })} />
