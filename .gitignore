@@ -158,3 +158,9 @@ tests/ab_samples/
 tests/*_ab/
 tests/mode_comparison*/
 tests/percussion_grids/
+
+# ===== Perpetual engine: decisions and art documentation (local only) =====
+perpetual/
+
+# ===== Perpetual engine runtime data (clips, anchor cache, recordings) =====
+/engine/

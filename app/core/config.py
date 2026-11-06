@@ -86,6 +86,8 @@ class ProjectConfig:
             "performance": self.user_data_dir / "performance",
             # This install's signing key for exported audio: never in the code folder's git.
             "credentials": self.user_data_dir / "credentials",
+            # The perpetual engine's clips, anchor cache, scenes, layouts, recordings.
+            "engine": self.user_data_dir / "engine",
 
             "application": self.project_root,
             "backend": self.project_root / "app" / "backend",

@@ -1,0 +1,96 @@
+# Scenes for "Places I Have Always Never Been". A scene = blend + parameters +
+# modulators + event types (each type is a `Sources` value rendered as a close
+# event) + soundmarks. Scenes are sequenced by hand, by `sequence`, or by wander.
+scenes:
+  - id: bazaar_midday
+    label: Bazaar, midday
+    blend: {bazaar: 1.0}
+    params: {/events/density: 0.6, /events/sparseness: 0.2, /events/max_concurrent: 3}
+    modulators:
+      /events/density: {type: walk, rate: 0.05, depth: 0.15, seed: 17}
+    events:
+      vendors: {probability: 0.4}
+      voices: {probability: 0.3}
+      footsteps: {probability: 0.2, trajectory: passby}
+      bells: {probability: 0.1, distance: [2, 8]}
+    soundmarks:
+      - {id: azan, fields: {sources: [prayer call], perspective: far, setting: exterior}, duration_s: 8}
+  - id: bazaar_evening
+    label: Bazaar, evening
+    blend: {bazaar: 0.8, late_night: 0.2}
+    params: {/events/density: 0.45, /events/sparseness: 0.3}
+    events:
+      vendors: {probability: 0.3}
+      voices: {probability: 0.4}
+      doors: {probability: 0.2}
+      music: {probability: 0.1, distance: [4, 10]}
+  - id: street_midday
+    label: Street, midday
+    blend: {street: 1.0}
+    params: {/events/density: 0.5, /events/sparseness: 0.25, /spatial/events/distance_max: 12}
+    events:
+      scooters: {probability: 0.4, trajectory: passby}
+      traffic: {probability: 0.2, trajectory: passby, distance: [3, 12]}
+      voices: {probability: 0.25}
+      horns: {probability: 0.15, distance: [4, 15]}
+  - id: intersection
+    label: Intersection
+    blend: {intersection: 0.8, street: 0.2}
+    params: {/events/density: 0.7, /events/sparseness: 0.1, /events/max_concurrent: 4}
+    events:
+      horns: {probability: 0.35, distance: [3, 15]}
+      scooters: {probability: 0.35, trajectory: passby}
+      traffic: {probability: 0.2, trajectory: passby}
+      voices: {probability: 0.1}
+  - id: shop
+    label: Inside a shop
+    blend: {shop: 0.7, street: 0.3}
+    params: {/events/density: 0.3, /events/sparseness: 0.5, /spatial/events/distance_max: 4}
+    events:
+      voices: {probability: 0.5}
+      doors: {probability: 0.3}
+      machinery: {probability: 0.2}
+  - id: cafe_evening
+    label: Cafe, evening
+    blend: {cafe: 0.9, street: 0.1}
+    params: {/events/density: 0.35, /events/sparseness: 0.4}
+    events:
+      voices: {probability: 0.6}
+      machinery: {probability: 0.25}
+      doors: {probability: 0.15}
+  - id: park_morning
+    label: Park, morning
+    blend: {park: 1.0}
+    params: {/events/density: 0.3, /events/sparseness: 0.5, /spatial/events/distance_max: 20}
+    modulators:
+      /events/density: {type: lfo, rate: 0.004, depth: 0.15}
+    events:
+      birds: {probability: 0.6, distance: [3, 20]}
+      footsteps: {probability: 0.2, trajectory: passby}
+      voices: {probability: 0.2, distance: [5, 20]}
+  - id: metro
+    label: Metro
+    blend: {metro: 1.0}
+    params: {/events/density: 0.5, /events/sparseness: 0.3}
+    events:
+      machinery: {probability: 0.4, trajectory: passby, distance: [2, 10]}
+      footsteps: {probability: 0.3, trajectory: passby}
+      voices: {probability: 0.2}
+      doors: {probability: 0.1}
+  - id: night_metro
+    label: Metro, late night
+    blend: {metro: 0.5, late_night: 0.5}
+    params: {/events/density: 0.2, /events/sparseness: 0.6, /events/max_concurrent: 2}
+    events:
+      machinery: {probability: 0.5, trajectory: passby, distance: [3, 12]}
+      footsteps: {probability: 0.4}
+      doors: {probability: 0.1}
+  - id: night_street
+    label: Street, late night
+    blend: {late_night: 0.8, street: 0.2}
+    params: {/events/density: 0.15, /events/sparseness: 0.7, /spatial/events/distance_max: 25}
+    events:
+      traffic: {probability: 0.5, trajectory: passby, distance: [6, 25]}
+      wind: {probability: 0.3, distance: [2, 6]}
+      footsteps: {probability: 0.2}
+sequence: [bazaar_midday, street_midday, intersection, shop, cafe_evening, bazaar_evening, metro, night_metro, night_street, park_morning]

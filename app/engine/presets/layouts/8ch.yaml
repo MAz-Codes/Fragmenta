@@ -1,0 +1,16 @@
+# Eight speakers in a ring (azimuth degrees, 0 = front, positive = left).
+# Decoded to stereo until the HOA decoder exists (plan E5.2).
+name: 8ch ring
+decoder: speakers
+order: 3
+channels: 8
+speakers:
+  - {az: 22.5, el: 0}
+  - {az: -22.5, el: 0}
+  - {az: 67.5, el: 0}
+  - {az: -67.5, el: 0}
+  - {az: 112.5, el: 0}
+  - {az: -112.5, el: 0}
+  - {az: 157.5, el: 0}
+  - {az: -157.5, el: 0}
+device: null

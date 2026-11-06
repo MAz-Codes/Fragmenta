@@ -1,0 +1,7 @@
+# Binaural (headphones, documentation). Decoded to stereo until the HRTF
+# decoder exists (plan E5.3); the file is here so clients can already pick it.
+name: binaural
+decoder: binaural
+channels: 2
+hrtf: null          # SOFA file, chosen in E5.3
+device: null

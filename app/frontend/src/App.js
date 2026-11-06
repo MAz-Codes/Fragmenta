@@ -49,6 +49,7 @@ import {
     CloudDownload as CloudDownloadIcon,
     Piano as PerformanceIcon,
     CircuitBoard as BendIcon,
+    Infinity as EngineIcon,
     AlertCircle as AlertIcon,
     Wand2 as WandIcon,
     Trash2 as DeleteIcon,
@@ -88,20 +89,22 @@ import BetaBadge from './components/bend/BetaBadge';
 
 // Bend tab — lazy chunk so non-users pay zero JS cost for it.
 const BendPanel = lazy(() => import('./components/bend/BendPanel'));
+// Engine tab — the perpetual engine's client, also a lazy chunk.
+const EnginePanel = lazy(() => import('./components/engine/EnginePanel'));
 
 const HIDE_WELCOME_PAGE_KEY = 'fragmenta-hide-welcome-v2';
 const STARTER_CARD_DELAY_MS = 5000;
 const INFO_VIEW_STORAGE_KEY = 'fragmenta-info-view';
 
 // Persisted across reload so the user lands back where they were.
-// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance, 4=Bend.
+// Tabs are: 0=Dataset, 1=Training, 2=Generation, 3=Performance, 4=Bend, 5=Engine.
 // The v2 key stored Bend at 3 and Performance at 4, so moving Bend below
 // Performance moved the index to a v3 key; a v2 value is migrated once
 // (3 ↔ 4), and a pre-Bend legacy value maps unchanged.
 const TAB_STORAGE_KEY = 'fragmenta.lastTab.v3';
 const V2_TAB_STORAGE_KEY = 'fragmenta.lastTab.v2';
 const LEGACY_TAB_STORAGE_KEY = 'fragmenta.lastTab';
-const TAB_COUNT = 5;
+const TAB_COUNT = 6;
 const readStoredTab = () => {
     try {
         const raw = window.localStorage.getItem(TAB_STORAGE_KEY);
@@ -137,6 +140,8 @@ function App() {
     // switch doesn't discard the A/B takes or an in-flight generation.
     const [bendVisited, setBendVisited] = useState(false);
     useEffect(() => { if (displayedTab === 4) setBendVisited(true); }, [displayedTab]);
+    const [engineVisited, setEngineVisited] = useState(false);
+    useEffect(() => { if (displayedTab === 5) setEngineVisited(true); }, [displayedTab]);
 
     // Persist the active tab so a reload returns the user to it.
     useEffect(() => {
@@ -1547,6 +1552,21 @@ function App() {
                                         </Box>
                                     )}
                                 />
+                                <Tab
+                                    icon={(isIconOnlySidebar || isMobileLayout) ? (
+                                        <Box component="span" sx={{ position: 'relative', display: 'inline-flex' }}>
+                                            <EngineIcon size={20} />
+                                            <BetaBadge compact sx={{ position: 'absolute', top: -8, right: -16 }} />
+                                        </Box>
+                                    ) : <EngineIcon size={20} />}
+                                    iconPosition={isIconOnlySidebar ? 'top' : 'start'}
+                                    label={(isIconOnlySidebar || isMobileLayout) ? undefined : (
+                                        <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+                                            Engine
+                                            <BetaBadge />
+                                        </Box>
+                                    )}
+                                />
                             </Tabs>
                         </Paper>
 
@@ -2747,6 +2767,20 @@ function App() {
                                     }>
                                         <BendPanel models={baseModels} active={displayedTab === 4}
                                                    isDocker={isDocker} />
+                                    </Suspense>
+                                )}
+                            </TabPanel>
+
+                            {/* Engine Tab — lazy chunk; mounts on first visit, kept after so the stream stays open. */}
+                            <TabPanel value={displayedTab} index={5} keepMounted>
+                                {(engineVisited || displayedTab === 5) && (
+                                    <Suspense fallback={
+                                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                                            <CircularProgress size={28} />
+                                        </Box>
+                                    }>
+                                        <EnginePanel models={baseModels} loras={availableLoras} active={displayedTab === 5}
+                                                     isDocker={isDocker} />
                                     </Suspense>
                                 )}
                             </TabPanel>

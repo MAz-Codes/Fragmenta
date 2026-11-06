@@ -1,0 +1,5 @@
+# Stereo output: the fallback decoder every layout has in E1.
+name: stereo
+decoder: stereo
+channels: 2
+device: null        # PortAudio device name or index when sounddevice is installed
