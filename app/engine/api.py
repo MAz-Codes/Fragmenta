@@ -232,25 +232,18 @@ def create_app(engine: Engine, shutdown_cb: Optional[Any] = None) -> Flask:
 
     @app.get("/v1/output")
     def output_get():
-        return jsonify({"layout": engine.layout, "sink": engine.sink.status(), "channels": engine.mixer.channels})
+        return jsonify({**engine.output, "layout_file": engine.layout, "sink_status": engine.sink.status(),
+                        "mixer": engine.mixer.output_config(), "layers": ["bed:%d" % i for i in range(int(engine.params.get("/bed/takes")))] + ["events", "soundmarks"]})
+
+    @app.get("/v1/output/devices")
+    def output_devices():
+        from app.engine.audio import list_output_devices
+        devs = list_output_devices()
+        return jsonify({"devices": devs, "note": "" if devs else "no PortAudio devices: install the sounddevice extra for speaker output"})
 
     @app.put("/v1/output")
     def output_put():
-        b = body()
-        from app.engine.audio import make_sink
-        if "layout" in b:
-            engine.layout = engine._load_layout(b["layout"])
-        kind = b.get("sink", engine.sink_kind)
-        engine.sink.stop()
-        if "radio" in b:
-            engine.radio_targets = list(b["radio"] or [])
-        engine.sink, note = make_sink(kind, engine.mixer, path=engine.root / "recordings" / "engine_output.wav",
-                                      device=b.get("device", engine.layout.get("device")), targets=engine.radio_targets)
-        engine.sink_kind = kind
-        if note:
-            engine.notes.append(note)
-        engine.sink.start()
-        return jsonify({"layout": engine.layout, "sink": engine.sink.status(), "note": note})
+        return jsonify(engine.apply_output(body()))
 
     @app.get("/v1/presets")
     def presets():

@@ -98,6 +98,10 @@ def engine_start():
                 args += ["--lora", f"{l['path']}:{float(l.get('strength', 1.0))}"]
             elif isinstance(l, str):
                 args += ["--lora", l]
+        if body.get("device") not in (None, ""):
+            args += ["--device", str(body["device"])]
+        if body.get("channels"):
+            args += ["--channels", str(int(body["channels"]))]
         for u in body.get("radio") or []:
             if isinstance(u, str) and u.strip():
                 args += ["--radio", u.strip()]

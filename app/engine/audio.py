@@ -358,17 +358,41 @@ class Limiter:
         return np.clip(out, -self.ceiling, self.ceiling)
 
 
+LAYERS = ("bed", "events", "soundmarks")
+DEFAULT_ROUTING: Dict[str, Dict[str, Any]] = {k: {"mode": "spatial"} for k in LAYERS}
+
+
+def _route_ok(route: Dict[str, Any]) -> Dict[str, Any]:
+    mode = str(route.get("mode", "spatial"))
+    if mode not in ("spatial", "direct"):
+        raise ValueError(f"routing mode must be spatial or direct, not {mode!r}")
+    chans = [int(c) for c in (route.get("channels") or [])]
+    if mode == "direct" and not chans:
+        raise ValueError("a direct route needs channels, e.g. [3, 4]")
+    if any(c < 1 for c in chans):
+        raise ValueError("channels are 1-based")
+    return {"mode": mode, "channels": chans[:2]}
+
+
 class Mixer:
+    """Layers → outputs. Every layer (each bed take, events, soundmarks) is a
+    stereo block; a route sends it through the spatial decoder (stereo for
+    now, HOA later) or straight to fixed output channels. The stereo monitor
+    mix (Listen, meters, taps) is made from the layers before routing, so it
+    always hears everything."""
+
     def __init__(self, sr: int = SR, channels: int = 2) -> None:
-        self.sr, self.channels = sr, channels
+        self.sr, self.channels = sr, max(1, int(channels))
         self.beds: Dict[str, BedStream] = {}
         self.voices: List[EventVoice] = []
         self.master_gain = 1.0
         self.limiter = Limiter(sr=sr)
+        self.monitor_limiter = Limiter(sr=sr)
         self.limiter_on = True
         self._lock = threading.RLock()
-        self.peak = np.zeros(channels, dtype=np.float32)
-        self.rms = np.zeros(channels, dtype=np.float32)
+        self.peak = np.zeros(self.channels, dtype=np.float32)
+        self.rms = np.zeros(self.channels, dtype=np.float32)
+        self.monitor_peak = np.zeros(2, dtype=np.float32)
         self.frames = 0
         self._taps: List[queue.Queue] = []
         self._recorder = None
@@ -376,6 +400,52 @@ class Mixer:
         self.record_frames = 0
         self.on_voice_done: Optional[Callable[[EventVoice], None]] = None
         self.underruns = 0
+        self.routing: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in DEFAULT_ROUTING.items()}
+        self.spatial_channels: List[int] = [1, 2]
+
+    # --- outputs -------------------------------------------------------------
+    def set_channels(self, n: int) -> None:
+        n = max(1, int(n))
+        with self._lock:
+            if n == self.channels:
+                return
+            self.stop_record()
+            self.channels = n
+            self.peak = np.zeros(n, dtype=np.float32)
+            self.rms = np.zeros(n, dtype=np.float32)
+
+    def set_routing(self, routing: Optional[Dict[str, Any]] = None, spatial_channels: Optional[List[int]] = None) -> None:
+        new = {k: dict(v) for k, v in DEFAULT_ROUTING.items()}
+        for name, route in (routing or {}).items():
+            if name not in LAYERS and not (name.startswith("bed:") and name[4:].isdigit()):
+                raise ValueError(f"unknown layer {name!r}")
+            new[name] = _route_ok(route or {})
+        sc = [int(c) for c in (spatial_channels or [1, 2])][:2] or [1, 2]
+        with self._lock:
+            self.routing = new
+            self.spatial_channels = sc
+
+    def route_for(self, layer: str) -> Dict[str, Any]:
+        r = self.routing.get(layer)
+        if r is None and layer.startswith("bed:"):
+            r = self.routing.get("bed")
+        return r or {"mode": "spatial"}
+
+    def _place(self, out: np.ndarray, stereo: np.ndarray, route: Dict[str, Any]) -> None:
+        chans = self.spatial_channels if route.get("mode", "spatial") == "spatial" else (route.get("channels") or [1, 2])
+        chans = [c - 1 for c in chans if 1 <= c <= self.channels]
+        if not chans:
+            return
+        if len(chans) == 1:
+            out[chans[0]] += (stereo[0] + stereo[1]) * 0.5
+        else:
+            out[chans[0]] += stereo[0]
+            out[chans[1]] += stereo[1]
+
+    def output_config(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"channels": self.channels, "routing": {k: dict(v) for k, v in self.routing.items()},
+                    "spatial_channels": list(self.spatial_channels)}
 
     # --- content -------------------------------------------------------------
     def bed(self, key: str, create: bool = True, **kw: Any) -> Optional[BedStream]:
@@ -439,26 +509,47 @@ class Mixer:
 
     # --- the block -----------------------------------------------------------
     def pull(self, n: int = BLOCK) -> np.ndarray:
-        out = np.zeros((self.channels, n), dtype=np.float32)
         with self._lock:
+            layers: Dict[str, np.ndarray] = {}
             done_beds = []
             for key, b in self.beds.items():
-                out[:2] += b.pull(n)
+                take = key.split(":")[-1]
+                blk = b.pull(n)
+                name = f"bed:{take}"
+                layers[name] = layers[name] + blk if name in layers else blk
                 if b.done:
                     done_beds.append(key)
             for key in done_beds:
                 self.beds.pop(key, None)
+            events = np.zeros((2, n), dtype=np.float32)
+            marks = np.zeros((2, n), dtype=np.float32)
             finished = []
             for v in self.voices:
-                out[:2] += v.pull(n)
+                blk = v.pull(n)
+                if v.event_type.startswith("soundmark:"):
+                    marks += blk
+                else:
+                    events += blk
                 if v.done:
                     finished.append(v)
             for v in finished:
                 self.voices.remove(v)
+            layers["events"] = events
+            layers["soundmarks"] = marks
+            # the stereo monitor: every layer, before routing
+            monitor = np.zeros((2, n), dtype=np.float32)
+            out = np.zeros((self.channels, n), dtype=np.float32)
+            for name, blk in layers.items():
+                monitor += blk
+                self._place(out, blk, self.route_for(name))
             out *= self.master_gain
+            monitor *= self.master_gain
             if self.limiter_on:
                 out = self.limiter.process(out)
-            self.peak = np.max(np.abs(out), axis=1) if n else self.peak
+                monitor = self.monitor_limiter.process(monitor)
+            if n:
+                self.peak = np.max(np.abs(out), axis=1)
+                self.monitor_peak = np.max(np.abs(monitor), axis=1)
             self.rms = np.sqrt(np.mean(out * out, axis=1) + 1e-12)
             self.frames += n
             if self._recorder is not None:
@@ -468,7 +559,7 @@ class Mixer:
                 except Exception:
                     self.stop_record()
             if self._taps:
-                pcm = (np.clip(out[:2].T, -1, 1) * 32767).astype("<i2").tobytes()
+                pcm = (np.clip(monitor.T, -1, 1) * 32767).astype("<i2").tobytes()
                 for q in self._taps:
                     try:
                         q.put_nowait(pcm)
@@ -491,7 +582,8 @@ class Mixer:
             return {
                 "peak_db": [round(20 * math.log10(max(1e-6, float(p))), 1) for p in self.peak],
                 "rms_db": [round(20 * math.log10(max(1e-6, float(r))), 1) for r in self.rms],
-                "limiter_db": self.limiter.reduction_db,
+                "monitor_peak_db": [round(20 * math.log10(max(1e-6, float(p))), 1) for p in self.monitor_peak],
+                "limiter_db": self.limiter.reduction_db, "channels": self.channels,
                 "voices": len(self.voices),
                 "beds": {k: {"ahead_s": round(b.ahead_seconds(), 1), "queued": b.queued(), "state": b.state,
                              "gain": round(b._gain_cur, 3), "azimuth": round(b.azimuth, 1),
@@ -572,6 +664,28 @@ class FileSink(NullSink):
             pass
 
 
+def list_output_devices() -> List[Dict[str, Any]]:
+    """Output devices PortAudio sees (empty, with no error, when sounddevice is absent)."""
+    try:
+        import sounddevice as sd
+    except Exception:
+        return []
+    out = []
+    try:
+        apis = sd.query_hostapis()
+        default = sd.default.device[1] if isinstance(sd.default.device, (list, tuple)) else sd.default.device
+        for i, d in enumerate(sd.query_devices()):
+            if d.get("max_output_channels", 0) <= 0:
+                continue
+            out.append({"index": i, "name": d["name"], "channels": int(d["max_output_channels"]),
+                        "samplerate": int(d.get("default_samplerate", 0)),
+                        "hostapi": apis[d["hostapi"]]["name"] if 0 <= d.get("hostapi", -1) < len(apis) else "",
+                        "default": i == default})
+    except Exception:
+        pass
+    return out
+
+
 class SoundDeviceSink:
     """PortAudio through `sounddevice`, when it is installed (an extra)."""
 
@@ -580,10 +694,17 @@ class SoundDeviceSink:
     def __init__(self, mixer: Mixer, device: Optional[Any] = None, block: int = BLOCK) -> None:
         import sounddevice as sd  # noqa: F401  (ImportError propagates to the factory)
         self._sd = sd
-        self.mixer, self.device, self.block = mixer, device, block
+        self.mixer, self.block = mixer, block
+        self.device = device if device not in ("", None, "default") else None
+        if isinstance(self.device, str) and self.device.isdigit():
+            self.device = int(self.device)
         self._stream = None
         self.blocks = 0
         self.late = 0
+        self.error = ""
+        # fail now, not in the callback, if the device can't do this many channels
+        sd.check_output_settings(device=self.device, channels=mixer.channels, samplerate=mixer.sr, dtype="float32")
+        self.device_name = str(sd.query_devices(self.device, "output")["name"]) if self.device is not None else "default"
 
     def start(self) -> None:
         sd = self._sd
@@ -591,12 +712,17 @@ class SoundDeviceSink:
         def callback(outdata, frames, _time, status):
             if status:
                 self.late += 1
-            outdata[:] = self.mixer.pull(frames).T
+            try:
+                outdata[:] = self.mixer.pull(frames).T
+            except Exception as exc:
+                outdata.fill(0)
+                self.error = str(exc)
+                self.mixer.underruns += 1
             self.blocks += 1
 
         self._stream = sd.OutputStream(samplerate=self.mixer.sr, channels=self.mixer.channels,
                                        blocksize=self.block, device=self.device, dtype="float32",
-                                       callback=callback)
+                                       latency="high", callback=callback)
         self._stream.start()
 
     def stop(self) -> None:
@@ -609,7 +735,8 @@ class SoundDeviceSink:
             self._stream = None
 
     def status(self) -> Dict[str, Any]:
-        return {"sink": self.name, "blocks": self.blocks, "late": self.late, "device": str(self.device)}
+        return {"sink": self.name, "blocks": self.blocks, "late": self.late, "device": self.device_name,
+                "channels": self.mixer.channels, "error": self.error}
 
 
 def make_sink(kind: str, mixer: Mixer, path: Optional[Path] = None, device: Optional[Any] = None,

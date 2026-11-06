@@ -74,6 +74,10 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [transition, setTransition] = useState(stored.transition ?? 20);
     const [fromAz, setFromAz] = useState(stored.fromAz ?? 0);
     const [listening, setListening] = useState(false);
+    // live output: device, channel count, one route per layer (/v1/output)
+    const [devices, setDevices] = useState([]);
+    const [outDraft, setOutDraft] = useState(null);
+    const [outLayers, setOutLayers] = useState(['bed:0', 'bed:1', 'events', 'soundmarks']);
     const [oneshot, setOneshot] = useState(null);     // {id, state, url}
     const audioRef = useRef(null);
     const throttles = useRef({});
@@ -94,10 +98,46 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             setAnchors(a.anchors || []);
             setBlend(a.blend || {});
             setScenes(s.scenes || []);
+            const [o, d] = await Promise.all([v1(base, 'GET', '/v1/output'), v1(base, 'GET', '/v1/output/devices')]);
+            setOutLayers(o.layers || outLayers);
+            setDevices(d.devices || []);
+            setOutDraft((prev) => prev || { device: o.device ?? '', channels: o.channels, routing: o.routing || {}, sink: o.sink });
         } catch (e) {
             setError(errorText(e, 'Could not read the engine'));
         }
-    }, [base]);
+    }, [base]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+    const routeValue = (layer) => {
+        const r = outDraft?.routing?.[layer] || (layer.startsWith('bed:') ? outDraft?.routing?.bed : null);
+        return !r || r.mode !== 'direct' ? 'spatial' : `direct:${(r.channels || []).join('-')}`;
+    };
+    const setRoute = (layer, value) => {
+        const routing = { ...(outDraft.routing || {}) };
+        if (value === 'spatial') routing[layer] = { mode: 'spatial' };
+        else routing[layer] = { mode: 'direct', channels: value.slice(7).split('-').map(Number) };
+        setOutDraft({ ...outDraft, routing });
+    };
+    const applyOutput = async () => {
+        if (!outDraft) return;
+        setBusy('output');
+        try {
+            const hasDevice = outDraft.device !== '' && outDraft.device !== null && outDraft.device !== undefined;
+            const r = await call('PUT', '/v1/output', {
+                device: hasDevice ? outDraft.device : null, channels: Number(outDraft.channels) || 2,
+                routing: outDraft.routing, sink: hasDevice ? 'sounddevice' : 'null',
+            });
+            if (r.note) setError(r.note);
+            setOutDraft({ device: r.device ?? '', channels: r.channels, routing: r.routing || {}, sink: r.sink });
+            eng.refreshStatus();
+        } catch (e) { setError(errorText(e, 'Output change refused')); } finally { setBusy(''); }
+    };
+    const channelPairs = useMemo(() => {
+        const n = Math.min(64, Math.max(1, Number(outDraft?.channels) || 2));
+        const opts = [];
+        for (let i = 1; i < n; i += 1) opts.push(`${i}-${i + 1}`);
+        for (let i = 1; i <= n; i += 1) opts.push(`${i}`);
+        return opts;
+    }, [outDraft?.channels]);
 
     useEffect(() => { if (connected) loadAll(); }, [connected, loadAll]);
     // scene changes rewrite parameters and the blend
@@ -309,9 +349,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                             </Tooltip>
                         </FormControl>
                         <FormControl size="small" sx={{ minWidth: 130 }}>
-                            <InputLabel>Output</InputLabel>
+                            <InputLabel>Layout</InputLabel>
                             <Tooltip title={TIPS.engine.layout}>
-                                <Select value={layout} label="Output" onChange={(e) => setLayout(e.target.value)}>
+                                <Select value={layout} label="Layout" onChange={(e) => setLayout(e.target.value)}>
                                     <MenuItem value="stereo">Stereo</MenuItem>
                                     <MenuItem value="binaural">Binaural (soon)</MenuItem>
                                     <MenuItem value="8ch">8 speakers (soon)</MenuItem>
@@ -452,6 +492,51 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                 : 'no blend'}
                             {status.conductor.transition < 1 ? ` · transition ${Math.round(status.conductor.transition * 100)}%` : ''}
                         </Typography>
+                    )}
+                </RailSection>
+                <RailSection title="Output" defaultOpen={false}>
+                    {!running && <Typography variant="caption" color="textSecondary">Off.</Typography>}
+                    {running && !outDraft && <Typography variant="caption" color="textSecondary">…</Typography>}
+                    {running && outDraft && (
+                        <>
+                            <FormControl size="small" fullWidth>
+                                <InputLabel>Device</InputLabel>
+                                <Tooltip title={TIPS.engine.device}>
+                                    <Select value={outDraft.device ?? ''} label="Device" displayEmpty
+                                            renderValue={(v) => (v === '' || v === null || v === undefined)
+                                                ? 'None (monitor only)'
+                                                : (devices.find((d) => d.index === v)?.name || String(v))}
+                                            onChange={(e) => setOutDraft({ ...outDraft, device: e.target.value })}>
+                                        <MenuItem value="">None (monitor only)</MenuItem>
+                                        {devices.map((d) => (
+                                            <MenuItem key={d.index} value={d.index}>{d.name} · {d.channels} ch{d.default ? ' · default' : ''}</MenuItem>
+                                        ))}
+                                    </Select>
+                                </Tooltip>
+                            </FormControl>
+                            <Tooltip title={TIPS.engine.channels}>
+                                <TextField size="small" type="number" label="Channels" value={outDraft.channels} inputProps={{ min: 1, max: 64, step: 1 }}
+                                           onChange={(e) => setOutDraft({ ...outDraft, channels: e.target.value })} sx={{ width: 110 }} />
+                            </Tooltip>
+                            {outLayers.map((layer) => (
+                                <Box key={layer} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <Typography variant="caption" sx={{ flex: 1 }}>{layer.replace(':', ' ')}</Typography>
+                                    <Tooltip title={TIPS.engine.route}>
+                                        <Select size="small" value={routeValue(layer)} onChange={(e) => setRoute(layer, e.target.value)}
+                                                sx={{ minWidth: 118, '& .MuiSelect-select': { py: 0.4, fontSize: 12 } }}>
+                                            <MenuItem value="spatial">Spatial</MenuItem>
+                                            {channelPairs.map((p) => <MenuItem key={p} value={`direct:${p}`}>→ {p}</MenuItem>)}
+                                        </Select>
+                                    </Tooltip>
+                                </Box>
+                            ))}
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Button size="small" variant="outlined" onClick={applyOutput} disabled={!connected || busy === 'output'}>Apply</Button>
+                                <Typography variant="caption" color="textSecondary">
+                                    {status?.output?.sink === 'sounddevice' ? `${status.output.device} · ${status.output.channels} ch` : 'monitor only'}
+                                </Typography>
+                            </Box>
+                        </>
                     )}
                 </RailSection>
                 <RailSection title="Buffers">

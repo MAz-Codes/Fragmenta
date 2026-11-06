@@ -27,6 +27,8 @@ def main(argv=None) -> int:
     ap.add_argument("--renderer", choices=("torch", "fake"), default="torch")
     ap.add_argument("--sink", choices=("auto", "sounddevice", "file", "null", "radio"), default="auto")
     ap.add_argument("--radio", action="append", default=[], help="stream target for the radio sink, repeatable: icecast://source:PASSWORD@host:8000/tehran.mp3 (codec from the extension: .mp3 · .opus)")
+    ap.add_argument("--device", default=None, help="PortAudio output device (index or name part) for the sounddevice sink")
+    ap.add_argument("--channels", type=int, default=None, help="output channel count (default: the layout's)")
     ap.add_argument("--radio-name", default="Places I Have Always Never Been", help="stream name sent to Icecast")
     ap.add_argument("--clock", action="store_true", help="scenes follow the scene file's clock program (local time of the place)")
     ap.add_argument("--model", default="sa3-small-sfx-base")
@@ -58,7 +60,7 @@ def main(argv=None) -> int:
                     seed=args.seed, fake_render_time=args.fake_render_time, config=config,
                     autoload=not args.no_autoload, resume=not args.no_resume,
                     radio=[radio_target(u, name=args.radio_name) for u in args.radio] or None,
-                    clock=True if args.clock else None)
+                    clock=True if args.clock else None, device=args.device, channels=args.channels)
     engine.start()
     if args.play or getattr(engine, "_resume_playing", False):
         engine.transport(True)

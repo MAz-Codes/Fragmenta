@@ -103,7 +103,8 @@ class Engine:
                  osc_port: int = 9000, osc_out: Optional[str] = "127.0.0.1:9001", seed: int = 0,
                  fake_render_time: float = 0.0, clip_cap_gb: float = 4.0, config: Any = None,
                  autoload: bool = True, resume: bool = True, radio: Optional[List[Any]] = None,
-                 clock: Optional[bool] = None) -> None:
+                 clock: Optional[bool] = None, device: Optional[Any] = None, channels: Optional[int] = None,
+                 routing: Optional[Dict[str, Any]] = None) -> None:
         self.root = Path(data_dir) / "engine"
         for sub in ("clips", "anchors_cache", "presets", "recordings"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
@@ -125,12 +126,35 @@ class Engine:
         self.clips = ClipStore(self.root / "clips", cap_bytes=int(clip_cap_gb * 1024 ** 3))
         self.renderer_kind = renderer
         self.renderer = make_renderer(renderer, self.clips, self.bank, config=config, render_time=fake_render_time)
-        self.mixer = Mixer()
+        self.state_path = self.root / "state.json"
         self.layout: Dict[str, Any] = self._load_layout(layout)
-        self.sink_kind = sink
+        # output: what was saved last time, then what the command line says
+        self.output: Dict[str, Any] = {"sink": sink, "device": None, "channels": int(self.layout.get("channels") or 2),
+                                       "layout": self.layout.get("id", "stereo"), "routing": {}, "spatial_channels": [1, 2]}
+        saved = self._read_state() if resume else {}
+        if isinstance(saved.get("output"), dict):
+            self.output.update({k: v for k, v in saved["output"].items() if k in self.output})
+            if self.output.get("layout") != self.layout.get("id"):
+                self.layout = self._load_layout(self.output.get("layout"))
+        if sink != "auto":
+            self.output["sink"] = sink
+        if device is not None:
+            self.output["device"] = device
+        if channels:
+            self.output["channels"] = int(channels)
+        if routing is not None:
+            self.output["routing"] = dict(routing)
+        self.mixer = Mixer(channels=self.output["channels"])
+        try:
+            self.mixer.set_routing(self.output["routing"], self.output.get("spatial_channels"))
+        except ValueError as exc:
+            self.notes.append(f"routing reset: {exc}")
+            self.output["routing"] = {}
+            self.mixer.set_routing({})
+        self.sink_kind = self.output["sink"]
         self.radio_targets = list(radio or [])
-        self.sink, note = make_sink(sink, self.mixer, path=self.root / "recordings" / "engine_output.wav",
-                                    device=self.layout.get("device"), targets=self.radio_targets)
+        self.sink, note = make_sink(self.output["sink"], self.mixer, path=self.root / "recordings" / "engine_output.wav",
+                                    device=self.output.get("device"), targets=self.radio_targets)
         if note:
             self.notes.append(note)
         self.conductor = Conductor(self.params, self.bank, self.renderer, self.clips, self.mixer, self.emit, seed=seed)
@@ -151,7 +175,6 @@ class Engine:
         self._stop = threading.Event()
         self._loop_thread: Optional[threading.Thread] = None
         self._renderer_restarts = 0
-        self.state_path = self.root / "state.json"
         self.oneshots: Dict[str, Dict[str, Any]] = {}
         self.renderer.on_done(self._oneshot_done)
 
@@ -247,16 +270,66 @@ class Engine:
 
     def _load_layout(self, name: Optional[str]) -> Dict[str, Any]:
         p = _resolve(self.root, "layouts", name)
-        layout = {"name": "stereo", "decoder": "stereo", "channels": 2, "device": None}
+        layout = {"id": "stereo", "name": "stereo", "decoder": "stereo", "channels": 2, "device": None}
         if p:
             try:
                 layout.update(yaml.safe_load(p.read_text(encoding="utf-8")) or {})
                 layout["file"] = str(p)
+                layout["id"] = p.stem          # what `--layout` and /v1/output take; the name is for people
             except (OSError, yaml.YAMLError) as exc:
                 self.notes.append(f"layout {p.name}: {exc}")
         if layout.get("decoder") not in ("stereo",):
             self.notes.append(f"decoder '{layout.get('decoder')}' is not built yet; decoding to stereo (plan E5)")
         return layout
+
+    # --- output ---------------------------------------------------------------------
+    def apply_output(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+        """Change device, channel count, layout, routing or sink while running.
+        Returns the config plus a note when the device could not be opened."""
+        from app.engine.audio import make_sink as _make_sink
+        new = dict(self.output)
+        if "layout" in cfg:
+            self.layout = self._load_layout(cfg["layout"])
+            new["layout"] = self.layout.get("id", str(cfg["layout"]))
+            if "channels" not in cfg and self.layout.get("channels"):
+                new["channels"] = int(self.layout["channels"])
+        for k in ("sink", "device", "channels", "routing", "spatial_channels"):
+            if k in cfg:
+                new[k] = cfg[k]
+        new["channels"] = max(1, int(new["channels"] or 2))
+        if "radio" in cfg:
+            self.radio_targets = list(cfg["radio"] or [])
+        # routing first: a bad table is a 400 before anything is touched
+        self.mixer.set_routing(new.get("routing") or {}, new.get("spatial_channels"))
+        self.mixer.set_channels(new["channels"])
+        running = bool(self._loop_thread and self._loop_thread.is_alive())
+        try:
+            self.sink.stop()
+        except Exception:
+            pass
+        try:
+            sink, note = _make_sink(new.get("sink") or "auto", self.mixer, path=self.root / "recordings" / "engine_output.wav",
+                                    device=new.get("device"), targets=self.radio_targets)
+        except Exception as exc:              # a device that does not exist or refuses the channel count
+            from app.engine.audio import NullSink
+            sink, note = NullSink(self.mixer), f"could not open the device: {exc}"
+            new["sink"] = "null"
+        if note:
+            self.notes.append(note)
+        self.sink, self.sink_kind = sink, getattr(sink, "name", new.get("sink"))
+        if running:
+            try:
+                self.sink.start()
+            except Exception as exc:          # a device that refuses: keep the engine alive on the null sink
+                note = f"{self.sink.name}: {exc}"
+                self.notes.append(note)
+                from app.engine.audio import NullSink
+                self.sink = NullSink(self.mixer)
+                self.sink.start()
+        self.output = new
+        self.snapshot()
+        self.events.publish("output", {**self.output, "note": note})
+        return {**self.output, "note": note, "sink_status": self.sink.status()}
 
     def save_scenes(self) -> Path:
         out = self.root / "scenes" / "custom.yaml"
@@ -444,7 +517,7 @@ class Engine:
     def snapshot(self) -> None:
         data = {"saved": time.time(), "scene": self.conductor.scene.id if self.conductor.scene else None,
                 "playing": self.conductor.playing, "params": self.params.snapshot(), "model_id": self.model_id,
-                "loras": self.loras, "version": __version__}
+                "loras": self.loras, "version": __version__, "output": self.output}
         tmp = self.state_path.with_suffix(".tmp")
         try:
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -452,10 +525,16 @@ class Engine:
         except OSError:
             pass
 
-    def restore(self) -> bool:
+    def _read_state(self) -> Dict[str, Any]:
         try:
             d = json.loads(self.state_path.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
         except (OSError, ValueError):
+            return {}
+
+    def restore(self) -> bool:
+        d = self._read_state()
+        if not d:
             return False
         self.params.restore(d.get("params", {}))
         if d.get("loras") and not self.loras:
@@ -510,7 +589,7 @@ class Engine:
             "renderer": r, "anchors": {"count": len(self.bank), "encoded": sum(1 for a in self.bank.ids() if self.bank.get(a).encoded),
                                        "file": str(self.anchors_path) if self.anchors_path else None},
             "conductor": self.conductor.status(), "audio": {**self.mixer.meters(), **self.sink.status()},
-            "clips": self.clips.stats(), "layout": self.layout,
+            "clips": self.clips.stats(), "layout": self.layout, "output": {**self.output, **self.sink.status()},
             "osc": {"in_port": self.osc_server.port if self.osc_server else None,
                     "received": self.osc_server.received if self.osc_server else 0,
                     "out": f"{self.osc_client.host}:{self.osc_client.port}" if self.osc_client else None},

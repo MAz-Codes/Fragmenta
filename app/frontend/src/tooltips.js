@@ -251,6 +251,9 @@ export const TIPS = {
         blend: 'Drag between the anchors. Every bed take shares this blend and differs only by seed; events are rendered close, from the same blend.',
         wander: 'Let the blend drift by itself through anchor space.',
         oneshot: 'Render ten seconds from the current blend and play it here, to hear what a blend sounds like before committing to it.',
+        device: 'The audio interface the engine plays through (PortAudio). None keeps the engine silent except for Listen and the radio.',
+        channels: 'How many output channels to open on the device. Routes beyond this number are dropped.',
+        route: 'Where this layer goes: Spatial = through the decoder (stereo now, speaker layouts later); an arrow = straight to those output channels, for mixing or processing outside.',
         radioUrl: 'Where the stream goes: an Icecast mount (icecast://source:password@host:8000/tehran.mp3). The codec follows the extension: .mp3 or .opus. The engine reconnects by itself if the link drops.',
         clock: 'The scene follows Tehran\u2019s time of day from the radio scene file, so a restart lands in the right place. Off: scenes are chosen here or by the sequence.',
         knobs: {

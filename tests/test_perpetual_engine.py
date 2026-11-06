@@ -434,6 +434,67 @@ def _():
         assert eng2.params.base("/bed/takes") == 1
 
 
+# --- output routing ---------------------------------------------------------------------
+@check("output: layers route to fixed channels or the spatial pair; monitor hears everything; channel count changes")
+def _():
+    m = Mixer(channels=4)
+    m.set_routing({"bed": {"mode": "direct", "channels": [3, 4]}, "events": {"mode": "spatial"}})
+    b = m.bed("g1:0", crossfade_s=0.1)
+    b.push("c", np.ones((2, SR), dtype=np.float32) * 0.3)
+    b.fade_in(0.001)
+    m.add_voice(EventVoice("e", np.ones(BLOCK * 8, dtype=np.float32) * 0.2, "voices", azimuth=0))
+    for _ in range(4):
+        out = m.pull(BLOCK)
+    assert out.shape == (4, BLOCK)
+    assert out[2].max() > 0.25 and out[3].max() > 0.25          # the bed on 3-4
+    assert 0.05 < out[0].max() < 0.2 and abs(out[0].max() - out[1].max()) < 1e-3   # only the event on 1-2
+    assert m.monitor_peak[0] > 0.3                              # monitor = bed + event
+    assert m.meters()["channels"] == 4 and len(m.meters()["peak_db"]) == 4
+    m.set_routing({"bed:0": {"mode": "direct", "channels": [1]}})
+    out = m.pull(BLOCK)
+    assert out[0].max() > 0.3 and out[2].max() < 0.01           # take 0 overrides "bed"; mono sum on channel 1
+    m.set_channels(2)
+    out = m.pull(BLOCK)
+    assert out.shape == (2, BLOCK)
+    for bad in ({"nope": {"mode": "direct", "channels": [1]}}, {"bed": {"mode": "direct"}}, {"bed": {"mode": "x"}}):
+        try:
+            m.set_routing(bad)
+            assert False, bad
+        except ValueError:
+            pass
+
+
+@check("output API: devices listed, config applied live, saved and resumed")
+def _():
+    from app.engine.api import create_app
+    from app.engine.engine import Engine
+    with tempfile.TemporaryDirectory() as td:
+        eng = Engine(Path(td), scene="places", renderer="fake", sink="null", osc_port=0, osc_out=None, autoload=False, resume=False)
+        eng.start()
+        c = create_app(eng).test_client()
+        try:
+            d = c.get("/v1/output/devices").get_json()
+            assert isinstance(d["devices"], list)
+            o = c.get("/v1/output").get_json()
+            assert o["channels"] == 2 and o["sink"] == "null" and o["layers"] == ["bed:0", "bed:1", "events", "soundmarks"]
+            r = c.put("/v1/output", json={"channels": 6, "routing": {"bed": {"mode": "direct", "channels": [3, 4]}, "events": {"mode": "direct", "channels": [5, 6]}}, "sink": "null"})
+            assert r.status_code == 200, r.get_json()
+            assert r.get_json()["channels"] == 6 and eng.mixer.channels == 6 and eng.mixer.route_for("bed:1")["channels"] == [3, 4]
+            assert c.put("/v1/output", json={"routing": {"bed": {"mode": "direct"}}}).status_code == 400
+            assert eng.mixer.channels == 6                      # a refused table changes nothing
+            r2 = c.put("/v1/output", json={"layout": "8ch", "sink": "null"}).get_json()
+            assert r2["channels"] == 8 and r2["layout"] == "8ch" and eng.layout["name"] == "8ch ring"
+            assert c.get("/v1/status").get_json()["output"]["channels"] == 8
+            r3 = c.put("/v1/output", json={"sink": "sounddevice", "device": "no such device ever"}).get_json()
+            assert r3["sink_status"]["sink"] == "null" and r3["note"]        # unknown device → null sink, with a note
+        finally:
+            eng.stop()
+        eng2 = Engine(Path(td), scene="places", renderer="fake", sink="auto", osc_port=0, osc_out=None, autoload=False, resume=True)
+        assert eng2.output["channels"] == 8 and eng2.mixer.route_for("bed:0")["channels"] == [3, 4] and eng2.layout["name"] == "8ch ring"
+        eng3 = Engine(Path(td), scene="places", renderer="fake", sink="null", osc_port=0, osc_out=None, autoload=False, resume=True, channels=2)
+        assert eng3.output["channels"] == 2                     # the command line wins over the saved state
+
+
 # --- radio and clock ------------------------------------------------------------------
 @check("radio: PCM through ffmpeg to a target, bytes counted, reconnects after ffmpeg dies")
 def _():
@@ -556,9 +617,9 @@ def _():
             assert c.get("/v1/params/events/density").get_json()["value"] == 0.2   # night_metro's value, saved in the preset
             assert c.delete("/v1/presets/Night test").get_json()["deleted"] is True
             o = c.get("/v1/output").get_json()
-            assert o["layout"]["decoder"] == "stereo" and o["sink"]["sink"] == "null"
+            assert o["layout_file"]["decoder"] == "stereo" and o["sink_status"]["sink"] == "null"
             o2 = c.put("/v1/output", json={"layout": "8ch", "sink": "null"}).get_json()
-            assert o2["layout"]["channels"] == 8 and "not built yet" in o2["note"] or any("not built" in n for n in eng.notes)
+            assert o2["channels"] == 8 and any("not built" in n for n in eng.notes)
             # model endpoint
             assert c.get("/v1/model").get_json()["state"] == "ready"
             # SSE: first bytes carry the hello event and a param change
