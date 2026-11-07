@@ -256,6 +256,12 @@ export const TIPS = {
         route: 'Where this layer goes: Spatial = through the decoder (stereo now, speaker layouts later); an arrow = straight to those output channels, for mixing or processing outside.',
         radioUrl: 'Where the stream goes: an Icecast mount (icecast://source:password@host:8000/tehran.mp3). The codec follows the extension: .mp3 or .opus. The engine reconnects by itself if the link drops.',
         clock: 'The scene follows Tehran\u2019s time of day from the radio scene file, so a restart lands in the right place. Off: scenes are chosen here or by the sequence.',
+        program: 'The piece as a list: which scene, for how many minutes, how it arrives, and whether the beds are generated, played from the real-recording pool, or both. Saved as a file in the data folder, so another dataset makes another piece.',
+        programLoad: 'Make this program the one playing. It starts at its first step; the loop runs until you stop it.',
+        programSave: 'Save the steps as shown. A program that is playing picks up the edit at once.',
+        programNext: 'Skip to the next step now, with that step\u2019s own transition.',
+        programLoop: 'At the end, start again from the first step. Off: the last scene stays until you change it.',
+        programBeds: 'Where the beds of this step come from. Generated = the model; Pool = real recordings and pre-rendered beds from the pool folder; Both = mixed. The pool player arrives with E4.6.',
         knobs: {
             '/events/density': 'How often events happen. The most important knob after Silence.',
             '/events/sparseness': 'The chance that a scheduled event is skipped: silence as a parameter.',

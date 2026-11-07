@@ -434,6 +434,54 @@ def _():
         assert eng2.params.base("/bed/takes") == 1
 
 
+@check("program: steps advance on time with their own transitions, loop, jump, edit live, resume")
+def _():
+    with tempfile.TemporaryDirectory() as td:
+        eng = _engine_parts(td)
+        assert wait(lambda: eng.model_state == "ready", 5.0)
+        c = eng.conductor
+        clock = [1_000_000.0]
+        c.now_fn = lambda: clock[0]
+        progs = {p["id"] for p in eng.list_programs()}
+        assert "tehran_hour" in progs, progs                      # shipped preset copied on first run
+        r = eng.load_program("tehran_hour", start_step=None)
+        assert r["problems"] == [], r["problems"]
+        assert c.program.total_seconds == 58 * 60
+        eng.start()
+        try:
+            eng.transport(True)
+            assert c.step_index == 0 and c.scene.id == "street_midday"
+            assert eng.params.get("/bed/source") == "both"
+            clock[0] += 9 * 60; c.tick(0.1)
+            assert c.step_index == 0
+            clock[0] += 61; c.tick(0.1)
+            assert c.step_index == 1 and c.scene.id == "bazaar_midday" and c._trans_len == 30.0
+            st = c.program_status()
+            assert st["step"] == 1 and st["steps"] == 6 and st["loop"] is True
+            c.goto_step(5, transition_s=0.0)
+            clock[0] += 12 * 60 + 1; c.tick(0.1)
+            assert c.step_index == 0, "loops to the first step"
+            # edit while playing: a shorter program keeps the step in range
+            short = c.program.to_dict(); short["steps"] = short["steps"][:2]; short["loop"] = False; short["id"] = "two_steps"
+            eng.save_program(short)
+            assert (eng.programs_dir() / "two_steps.yaml").exists()
+            eng.load_program("two_steps", start_step=1)
+            clock[0] += 10 * 60 + 1; c.tick(0.1)
+            assert c.program_ended is True and c.scene.id == "bazaar_midday", "a non-looping program stays on its last scene"
+            eng.snapshot()
+            d = json.loads(eng.state_path.read_text())
+            assert d["program"] == "two_steps" and d["program_step"] == 1
+        finally:
+            eng.stop()
+        from app.engine.engine import Engine
+        eng2 = Engine(Path(td), scene="places", renderer="fake", sink="null", osc_port=0, osc_out=None, autoload=False, resume=True)
+        assert eng2.conductor.program and eng2.conductor.program.id == "two_steps" and eng2.conductor.step_index == 1
+        assert eng2.conductor.scene.id == "bazaar_midday"
+        # the command-line / API path: a program by name loads its scene file
+        eng3 = Engine(Path(td), scene="tehran_radio", renderer="fake", sink="null", osc_port=0, osc_out=None, autoload=False, resume=False, program="tehran_hour")
+        assert eng3.conductor.program.id == "tehran_hour" and "street_midday" in eng3.conductor.scenes
+
+
 # --- output routing ---------------------------------------------------------------------
 @check("output: layers route to fixed channels or the spatial pair; monitor hears everything; channel count changes")
 def _():

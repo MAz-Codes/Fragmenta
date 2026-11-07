@@ -123,6 +123,47 @@ def create_app(engine: Engine, shutdown_cb: Optional[Any] = None) -> Flask:
         s = engine.conductor.activate(sid, transition_s=b.get("transition_s"), from_azimuth=b.get("from_azimuth"))
         return jsonify({"activated": s.id, "transition_s": engine.conductor._trans_len})
 
+    # --- programs (the piece as data; decision 11) ----------------------------------
+    @app.get("/v1/programs")
+    def programs():
+        return jsonify({"programs": engine.list_programs(), "current": engine.conductor.program_status()})
+
+    @app.get("/v1/programs/<pid>")
+    def program_get(pid):
+        return jsonify(engine.get_program(pid).to_dict())
+
+    @app.put("/v1/programs/<pid>")
+    def program_put(pid):
+        b = body()
+        b["id"] = pid
+        return jsonify(engine.save_program(b))
+
+    @app.delete("/v1/programs/<pid>")
+    def program_delete(pid):
+        return jsonify({"deleted": engine.delete_program(pid)})
+
+    @app.post("/v1/programs/<pid>/load")
+    def program_load(pid):
+        b = body()
+        step = b.get("step", 0)
+        return jsonify(engine.load_program(pid, start_step=None if step is None else int(step), transition_s=b.get("transition_s")))
+
+    @app.post("/v1/program/next")
+    def program_next():
+        s = engine.conductor.next_step()
+        return jsonify({"step": s.to_dict() if s else None, "status": engine.conductor.program_status()})
+
+    @app.post("/v1/program/step/<int:n>")
+    def program_step(n):
+        b = body()
+        s = engine.conductor.goto_step(int(n), transition_s=b.get("transition_s"))
+        return jsonify({"step": s.to_dict() if s else None, "status": engine.conductor.program_status()})
+
+    @app.delete("/v1/program")
+    def program_clear():
+        engine.clear_program()
+        return jsonify({"program": None})
+
     # --- anchors ----------------------------------------------------------------
     @app.get("/v1/anchors")
     def anchors():

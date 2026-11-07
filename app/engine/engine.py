@@ -20,6 +20,7 @@ from app.engine import __version__
 from app.engine.anchors import AnchorBank, AnchorDef
 from app.engine.audio import Mixer, make_sink
 from app.engine.clips import ClipStore
+from app.engine.program import Program, list_programs, load_program, save_program
 from app.engine.conductor import Conductor, Scene
 from app.engine.osc import OscClient, OscServer
 from app.engine.params import ParameterStore
@@ -73,7 +74,7 @@ class EventHub:
 
 def _ensure_presets(user_dir: Path) -> None:
     """Shipped scenes / layouts / anchors are copied on first run, never overwritten."""
-    for sub in ("scenes", "layouts", "anchors"):
+    for sub in ("scenes", "layouts", "anchors", "programs"):
         src, dst = PRESETS_DIR / sub, user_dir / sub
         dst.mkdir(parents=True, exist_ok=True)
         if src.exists():
@@ -104,7 +105,7 @@ class Engine:
                  fake_render_time: float = 0.0, clip_cap_gb: float = 4.0, config: Any = None,
                  autoload: bool = True, resume: bool = True, radio: Optional[List[Any]] = None,
                  clock: Optional[bool] = None, device: Optional[Any] = None, channels: Optional[int] = None,
-                 routing: Optional[Dict[str, Any]] = None) -> None:
+                 routing: Optional[Dict[str, Any]] = None, program: Optional[str] = None) -> None:
         self.root = Path(data_dir) / "engine"
         for sub in ("clips", "anchors_cache", "presets", "recordings"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
@@ -187,6 +188,14 @@ class Engine:
             host, _, port = str(osc_out).rpartition(":")
             self.osc_client = OscClient(host or "127.0.0.1", int(port or 9001))
 
+        # the piece (decision 11): after the model attributes exist, before the saved state
+        self.program_path: Optional[Path] = None
+        self._program_arg = program
+        if program:
+            try:
+                self.load_program(program, start_step=None)
+            except (OSError, ValueError, KeyError) as exc:
+                self.notes.append(f"program {program}: {exc}")
         self.params.subscribe(self._param_changed)
         if resume:
             self.restore()
@@ -202,6 +211,7 @@ class Engine:
         P("/scene/clock/on", False, label="Follow the clock")
         P("/scene/transition_s", 20.0, (0.0, 120.0), label="Transition", unit="s")
         P("/scene/from_azimuth", 0.0, (-180.0, 180.0), label="Arrive from", unit="°")
+        P("/bed/source", "generated", kind="str", label="Bed source")   # generated | pool | both (pool arrives with E4.6)
         P("/bed/takes", 2, (1, 4), label="Bed takes")
         P("/bed/clip_length", 60.0, (10.0, 114.0), label="Bed clip length", unit="s")
         P("/bed/crossfade_s", 8.0, (1.0, 30.0), label="Bed crossfade", unit="s")
@@ -336,6 +346,58 @@ class Engine:
         data = {"scenes": [s.to_dict() for s in self.conductor.scenes.values()], "sequence": self.conductor.sequence}
         out.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
         return out
+
+    # --- programs -------------------------------------------------------------------
+    def programs_dir(self) -> Path:
+        d = self.root / "programs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def list_programs(self) -> List[Dict[str, Any]]:
+        return list_programs(self.programs_dir(), PRESETS_DIR / "programs")
+
+    def get_program(self, name: str) -> Program:
+        p = _resolve(self.root, "programs", name)
+        if not p:
+            raise KeyError(name)
+        return load_program(p)
+
+    def load_program(self, name: str, start_step: Optional[int] = 0, transition_s: Optional[float] = None) -> Dict[str, Any]:
+        """Make `name` the playing program. If it names another scene file, that file is loaded first."""
+        prog = self.get_program(name)
+        if prog.scenes:
+            sp = _resolve(self.root, "scenes", prog.scenes)
+            if sp and sp != self.scene_path:
+                self.scene_path = sp
+                self._load_scenes(sp)
+        problems = prog.validate(list(self.conductor.scenes))
+        self.program_path = _resolve(self.root, "programs", name)
+        self.conductor.set_program(prog, start_step=start_step, transition_s=transition_s)
+        self.snapshot()
+        return {"program": prog.to_dict(), "problems": problems, "file": str(self.program_path)}
+
+    def save_program(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        prog = Program.from_dict(data)
+        path = save_program(prog, self.programs_dir())
+        # a running program of the same id picks up the edit without restarting the piece
+        if self.conductor.program and self.conductor.program.id == prog.id:
+            keep = self.conductor.step_index
+            self.conductor.program = prog
+            if keep >= len(prog.steps):
+                self.conductor.step_index = max(0, len(prog.steps) - 1)
+        return {"program": prog.to_dict(), "problems": prog.validate(list(self.conductor.scenes)), "file": str(path)}
+
+    def delete_program(self, name: str) -> bool:
+        p = self.programs_dir() / f"{name}.yaml"
+        if p.exists():
+            p.unlink()
+            return True
+        return False
+
+    def clear_program(self) -> None:
+        self.conductor.set_program(None)
+        self.program_path = None
+        self.snapshot()
 
     # --- model -------------------------------------------------------------------
     def load_model(self, model_id: str, loras: Optional[List[Dict[str, Any]]] = None) -> None:
@@ -517,7 +579,9 @@ class Engine:
     def snapshot(self) -> None:
         data = {"saved": time.time(), "scene": self.conductor.scene.id if self.conductor.scene else None,
                 "playing": self.conductor.playing, "params": self.params.snapshot(), "model_id": self.model_id,
-                "loras": self.loras, "version": __version__, "output": self.output}
+                "loras": self.loras, "version": __version__, "output": self.output,
+                "program": self.conductor.program.id if self.conductor.program else None,
+                "program_step": self.conductor.step_index}
         tmp = self.state_path.with_suffix(".tmp")
         try:
             tmp.write_text(json.dumps(data), encoding="utf-8")
@@ -541,6 +605,13 @@ class Engine:
             self.loras = d["loras"]
         if d.get("scene") in self.conductor.scenes:
             self.conductor.activate(d["scene"], transition_s=0.0)
+        if d.get("program") and not self._program_arg:
+            try:
+                self.load_program(str(d["program"]), start_step=None)
+            except (OSError, ValueError, KeyError) as exc:
+                self.notes.append(f"saved program {d['program']}: {exc}")
+        if self.conductor.program and isinstance(d.get("program_step"), int) and d["program_step"] >= 0:
+            self.conductor.goto_step(int(d["program_step"]), transition_s=0.0)
         self._resume_playing = bool(d.get("playing"))
         self.notes.append(f"resumed state from {time.strftime('%H:%M:%S', time.localtime(d.get('saved', 0)))}")
         return True
@@ -596,4 +667,5 @@ class Engine:
             "stream_subscribers": self.events.subscribers, "notes": self.notes[-5:],
             "radio": self.sink.status() if getattr(self.sink, "name", "") == "radio" else None,
             "renderer_restarts": self._renderer_restarts, "scene_file": str(self.scene_path) if self.scene_path else None,
+            "program_file": str(self.program_path) if self.program_path else None,
         }

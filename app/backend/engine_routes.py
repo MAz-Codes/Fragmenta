@@ -4,7 +4,7 @@ The tab talks to the engine's own API (`/v1` on its port) directly; these
 three routes only manage the process, so the headless command line and the
 Start button run the same thing. Off on the Space and in Docker.
 
-    POST /api/engine/start   {scene, layout, port, model_id, loras, renderer, sink, osc_port}
+    POST /api/engine/start   {scene, program, layout, port, model_id, loras, renderer, sink, osc_port}
     POST /api/engine/stop
     GET  /api/engine/status
 """
@@ -91,6 +91,8 @@ def engine_start():
                 "--scene", str(body.get("scene") or "places"), "--layout", str(body.get("layout") or "stereo"),
                 "--renderer", "fake" if body.get("renderer") == "fake" else "torch",
                 "--sink", str(body.get("sink") or "auto"), "--osc-port", str(int(body.get("osc_port", 9000)))]
+        if body.get("program"):
+            args += ["--program", str(body["program"])]
         if body.get("model_id"):
             args += ["--model", str(body["model_id"])]
         for l in body.get("loras") or []:

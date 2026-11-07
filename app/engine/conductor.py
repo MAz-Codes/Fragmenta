@@ -23,6 +23,7 @@ from app.engine.anchors import AnchorBank
 from app.engine.audio import EventVoice, Mixer, Trajectory
 from app.engine.clips import Clip, ClipStore
 from app.engine.params import ParameterStore
+from app.engine.program import Program, ProgramStep
 from app.engine.renderer import BaseRenderer, RenderJob
 
 Emit = Callable[[str, Dict[str, Any]], None]
@@ -62,6 +63,11 @@ class Conductor:
         self.params, self.bank, self.renderer, self.clips, self.mixer, self.emit = params, bank, renderer, clips, mixer, emit
         self.scenes: Dict[str, Scene] = {}
         self.sequence: List[str] = []
+        # the program: steps with lengths; replaces `sequence` when set (decision 11)
+        self.program: Optional[Program] = None
+        self.step_index: int = -1
+        self._step_started: float = 0.0
+        self.program_ended = False
         self.scene: Optional[Scene] = None
         self.playing = False
         self._rng = np.random.default_rng(seed)
@@ -101,6 +107,69 @@ class Conductor:
     def remove_scene(self, sid: str) -> bool:
         with self._lock:
             return self.scenes.pop(sid, None) is not None
+
+    # --- program ----------------------------------------------------------------
+    def set_program(self, program: Optional[Program], start_step: Optional[int] = 0, transition_s: Optional[float] = None) -> None:
+        """Load a program; with `start_step` set, jump to that step now (its scene is activated)."""
+        with self._lock:
+            self.program = program
+            self.program_ended = False
+            self.step_index = -1
+            if program and start_step is not None and program.steps:
+                self.goto_step(start_step, transition_s=transition_s)
+
+    def goto_step(self, index: int, transition_s: Optional[float] = None) -> Optional[ProgramStep]:
+        with self._lock:
+            if not self.program or not self.program.steps:
+                return None
+            index = index % len(self.program.steps)
+            step = self.program.steps[index]
+            if step.scene not in self.scenes:
+                self.warnings.append(f"program step {index + 1}: scene '{step.scene}' missing")
+                return None
+            self.step_index = index
+            self._step_started = self.now_fn()
+            self.program_ended = False
+            self.activate(step.scene, transition_s=step.transition_s if transition_s is None else transition_s,
+                          from_azimuth=step.from_azimuth)
+            if self.params.exists("/bed/source"):
+                self.params.set("/bed/source", step.beds)
+            if step.params:
+                self.params.set_many(step.params)
+            self.emit("program", {"id": self.program.id, "step": index, "scene": step.scene, "label": step.label,
+                                  "seconds": step.seconds, "loop": self.program.loop})
+            return step
+
+    def next_step(self) -> Optional[ProgramStep]:
+        with self._lock:
+            if not self.program or not self.program.steps:
+                return None
+            nxt = self.step_index + 1
+            if nxt >= len(self.program.steps):
+                if not self.program.loop:
+                    self.program_ended = True
+                    self.emit("program", {"id": self.program.id, "ended": True})
+                    return None
+                nxt = 0
+            return self.goto_step(nxt)
+
+    def _tick_program(self) -> None:
+        if not self.program or self.step_index < 0 or self.program_ended:
+            return
+        step = self.program.steps[self.step_index]
+        if self.now_fn() - self._step_started >= step.seconds:
+            self.next_step()
+
+    def program_status(self) -> Optional[Dict[str, Any]]:
+        if not self.program:
+            return None
+        step = self.program.steps[self.step_index] if 0 <= self.step_index < len(self.program.steps) else None
+        elapsed = (self.now_fn() - self._step_started) if step else 0.0
+        return {"id": self.program.id, "label": self.program.label or self.program.id, "loop": self.program.loop,
+                "steps": len(self.program.steps), "step": self.step_index, "step_label": step.label if step else "",
+                "step_scene": step.scene if step else None, "step_elapsed_s": round(elapsed, 1),
+                "step_total_s": step.seconds if step else 0.0, "beds": step.beds if step else None,
+                "ended": self.program_ended, "total_s": self.program.total_seconds}
 
     def activate(self, sid: str, transition_s: Optional[float] = None, from_azimuth: Optional[float] = None) -> Scene:
         with self._lock:
@@ -447,7 +516,9 @@ class Conductor:
                 self._tick_event_pool()
                 self._tick_events(now)
                 self._tick_soundmarks(dt)
-                if self.scene.duration_s > 0 and now - self._scene_started >= self.scene.duration_s:
+                if self.program is not None:
+                    self._tick_program()
+                elif self.scene.duration_s > 0 and now - self._scene_started >= self.scene.duration_s:
                     nxt = self.next_in_sequence()
                     if nxt and nxt != self.scene.id:
                         self.activate(nxt)
@@ -456,7 +527,9 @@ class Conductor:
         with self._lock:
             self.playing = True
             self._next_onset = time.time() + 2.0
-            if self.scene is None and self.scenes:
+            if self.program and self.program.steps and self.step_index < 0:
+                self.goto_step(0, transition_s=0.0)
+            elif self.scene is None and self.scenes:
                 c = self.clock_now() if (self.params.exists("/scene/clock/on") and self.params.get("/scene/clock/on")) else None
                 self.activate(c["scene"] if c else (self.sequence[0] if self.sequence else next(iter(self.scenes))))
 
@@ -480,5 +553,5 @@ class Conductor:
                 "active_events": [v.to_dict() for v in self.mixer.active_voices()],
                 "scene_elapsed_s": round(time.time() - self._scene_started, 1) if self.scene else 0.0,
                 "sequence": self.sequence, "warnings": self.warnings[-5:],
-                "clock": self.clock_now(),
+                "clock": self.clock_now(), "program": self.program_status(),
             }

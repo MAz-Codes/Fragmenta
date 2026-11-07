@@ -20,6 +20,7 @@ def main(argv=None) -> int:
     ap.add_argument("--scene", default="places", help="scene file name in <data>/engine/scenes or a path")
     ap.add_argument("--layout", default="stereo", help="layout file name in <data>/engine/layouts or a path")
     ap.add_argument("--anchors", default=None, help="anchor file (default: same name as the scene, else places)")
+    ap.add_argument("--program", default=None, help="program file name in <data>/engine/programs or a path (the piece: timed steps, looped)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("FRAGMENTA_ENGINE_PORT", "5002")))
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--osc-port", type=int, default=9000, help="0 disables OSC input")
@@ -57,7 +58,7 @@ def main(argv=None) -> int:
     from app.engine.engine import Engine
     engine = Engine(data_dir, scene=args.scene, layout=args.layout, anchors=args.anchors, renderer=args.renderer,
                     sink=args.sink, model_id=args.model, loras=loras, osc_port=args.osc_port, osc_out=args.osc_out or None,
-                    seed=args.seed, fake_render_time=args.fake_render_time, config=config,
+                    seed=args.seed, fake_render_time=args.fake_render_time, config=config, program=args.program,
                     autoload=not args.no_autoload, resume=not args.no_resume,
                     radio=[radio_target(u, name=args.radio_name) for u in args.radio] or None,
                     clock=True if args.clock else None, device=args.device, channels=args.channels)

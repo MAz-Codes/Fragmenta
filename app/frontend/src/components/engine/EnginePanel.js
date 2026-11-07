@@ -7,6 +7,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Infinity as EngineIcon, Play as PlayIcon, Square as StopIcon, Circle as RecordIcon,
     Headphones as ListenIcon, Radio as PowerIcon, RefreshCw as RefreshIcon, Waves as RenderIcon,
+    ChevronUp, ChevronDown, X as RemoveIcon, Plus as AddIcon, SkipForward as NextIcon, Save as SaveIcon, ListMusic as ProgramIcon,
 } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import RotaryKnob from '../RotaryKnob';
@@ -72,6 +73,11 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [blend, setBlend] = useState({});
     const [scenes, setScenes] = useState([]);
     const [transition, setTransition] = useState(stored.transition ?? 20);
+    // the program: the piece as timed steps (decision 11)
+    const [programs, setPrograms] = useState([]);
+    const [programId, setProgramId] = useState(stored.programId || 'tehran_hour');
+    const [progDraft, setProgDraft] = useState(null);
+    const [progProblems, setProgProblems] = useState([]);
     const [fromAz, setFromAz] = useState(stored.fromAz ?? 0);
     const [listening, setListening] = useState(false);
     // live output: device, channel count, one route per layer (/v1/output)
@@ -84,9 +90,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
 
     useEffect(() => {
         try {
-            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, layout, transition, fromAz, radioUrl, clock }));
+            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, layout, transition, fromAz, radioUrl, clock, programId }));
         } catch { /* noop */ }
-    }, [modelId, loraPath, layout, transition, fromAz, radioUrl, clock]);
+    }, [modelId, loraPath, layout, transition, fromAz, radioUrl, clock, programId]);
 
     const loadAll = useCallback(async () => {
         if (!base) return;
@@ -98,6 +104,16 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             setAnchors(a.anchors || []);
             setBlend(a.blend || {});
             setScenes(s.scenes || []);
+            try {
+                const pr = await v1(base, 'GET', '/v1/programs');
+                setPrograms(pr.programs || []);
+                const cur = pr.current?.id || programId;
+                if (cur && !progDraft) {
+                    const full = await v1(base, 'GET', `/v1/programs/${encodeURIComponent(cur)}`);
+                    setProgDraft(full);
+                    if (pr.current?.id) setProgramId(pr.current.id);
+                }
+            } catch { /* an engine without programs */ }
             const [o, d] = await Promise.all([v1(base, 'GET', '/v1/output'), v1(base, 'GET', '/v1/output/devices')]);
             setOutLayers(o.layers || outLayers);
             setDevices(d.devices || []);
@@ -154,6 +170,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             const radio = layout === 'radio';
             await eng.start({
                 model_id: modelId, loras: loraList, layout: radio ? 'stereo' : layout, scene: radio || clock ? 'tehran_radio' : 'places',
+                program: clock ? undefined : (programId || undefined),
                 sink: radio ? 'radio' : 'auto', radio: radio && radioUrl ? [radioUrl] : [], clock,
             });
         } catch (e) {
@@ -185,6 +202,39 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             eng.refreshStatus();
         } catch (e) { setError(errorText(e, 'Scene change failed')); }
     };
+    // --- program ---------------------------------------------------------------
+    const pickProgram = async (id) => {
+        setProgramId(id);
+        if (!connected) { setProgDraft(null); return; }
+        try { setProgDraft(await v1(base, 'GET', `/v1/programs/${encodeURIComponent(id)}`)); setProgProblems([]); } catch (e) { setError(errorText(e, 'Could not read the program')); }
+    };
+    const loadProgram = async () => {
+        if (!programId) return;
+        try {
+            const r = await call('POST', `/v1/programs/${encodeURIComponent(programId)}/load`, { step: 0 });
+            setProgDraft(r.program); setProgProblems(r.problems || []); eng.refreshStatus();
+        } catch (e) { setError(errorText(e, 'Could not load the program')); }
+    };
+    const saveProgram = async () => {
+        if (!progDraft) return;
+        const id = (progDraft.id || 'program').toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
+        try {
+            const r = await call('PUT', `/v1/programs/${encodeURIComponent(id)}`, { ...progDraft, id });
+            setProgDraft(r.program); setProgProblems(r.problems || []); setProgramId(id);
+            const pr = await v1(base, 'GET', '/v1/programs'); setPrograms(pr.programs || []);
+        } catch (e) { setError(errorText(e, 'Could not save the program')); }
+    };
+    const nextStep = async () => { try { await call('POST', '/v1/program/next'); eng.refreshStatus(); } catch (e) { setError(errorText(e, 'Next step failed')); } };
+    const newProgram = () => setProgDraft({ id: 'my_piece', label: 'My piece', loop: true, scenes: '', steps: [{ scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] });
+    const editStep = (i, patch) => setProgDraft((d) => ({ ...d, steps: d.steps.map((s, k) => (k === i ? { ...s, ...patch } : s)) }));
+    const moveStep = (i, dir) => setProgDraft((d) => {
+        const j = i + dir; if (j < 0 || j >= d.steps.length) return d;
+        const steps = [...d.steps]; [steps[i], steps[j]] = [steps[j], steps[i]]; return { ...d, steps };
+    });
+    const removeStep = (i) => setProgDraft((d) => ({ ...d, steps: d.steps.filter((_, k) => k !== i) }));
+    const addStep = () => setProgDraft((d) => ({ ...d, steps: [...d.steps, { scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] }));
+    const mmss = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.floor((s || 0) % 60)).padStart(2, '0')}`;
+    const prog = status?.conductor?.program;
 
     // throttled parameter writes: at most one in flight per 80 ms, the last value always lands
     const setParam = useCallback((path, value) => {
@@ -382,6 +432,81 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                             </Tooltip>
                         )}
                     </Box>
+
+                    {/* program: the piece as timed steps */}
+                    <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.75 }}>
+                        <ProgramIcon size={14} />
+                        <Typography variant="subtitle2">Program</Typography>
+                        <Tooltip title={TIPS.engine.program}>
+                            <FormControl size="small" sx={{ minWidth: 190 }}>
+                                <InputLabel>Program</InputLabel>
+                                <Select value={programs.some((x) => x.id === programId) ? programId : ''} label="Program" onChange={(e) => pickProgram(e.target.value)} disabled={!connected && programs.length === 0}>
+                                    {programs.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}{x.total_s ? ` · ${Math.round(x.total_s / 60)} min` : ''}</MenuItem>)}
+                                </Select>
+                            </FormControl>
+                        </Tooltip>
+                        <Tooltip title={TIPS.engine.programLoad}><span>
+                            <Button size="small" variant="outlined" onClick={loadProgram} disabled={!connected || !programId}>Load</Button>
+                        </span></Tooltip>
+                        <Tooltip title={TIPS.engine.programNext}><span>
+                            <Button size="small" variant="text" startIcon={<NextIcon size={14} />} onClick={nextStep} disabled={!connected || !prog}>Next</Button>
+                        </span></Tooltip>
+                        <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={newProgram} disabled={!connected}>New</Button>
+                        {prog && (
+                            <Typography variant="caption" color="textSecondary" sx={{ ml: 'auto' }}>
+                                {prog.label} · step {prog.step + 1}/{prog.steps}{prog.step_label ? ` · ${prog.step_label}` : ''} · {mmss(prog.step_elapsed_s)} / {mmss(prog.step_total_s)}{prog.ended ? ' · ended' : ''}
+                            </Typography>
+                        )}
+                    </Box>
+                    {prog && prog.step_total_s > 0 && (
+                        <LinearProgress variant="determinate" value={Math.min(100, (100 * prog.step_elapsed_s) / prog.step_total_s)} sx={{ mb: 1, height: 3 }} />
+                    )}
+                    {progDraft && (
+                        <Box sx={{ mb: 1.5, p: 1, border: `1px solid ${theme.palette.divider}`, borderRadius: 1 }}>
+                            <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.75 }}>
+                                <TextField size="small" label="Id" value={progDraft.id || ''} sx={{ width: 150 }} onChange={(e) => setProgDraft({ ...progDraft, id: e.target.value })} />
+                                <TextField size="small" label="Name" value={progDraft.label || ''} sx={{ width: 200 }} onChange={(e) => setProgDraft({ ...progDraft, label: e.target.value })} />
+                                <Tooltip title={TIPS.engine.programLoop}>
+                                    <FormControlLabel control={<Switch size="small" checked={!!progDraft.loop} onChange={(e) => setProgDraft({ ...progDraft, loop: e.target.checked })} />}
+                                                      label={<Typography variant="caption">Loop</Typography>} />
+                                </Tooltip>
+                                <Typography variant="caption" color="textSecondary">{Math.round((progDraft.steps || []).reduce((a, s) => a + Number(s.minutes || 0), 0))} min</Typography>
+                                <Tooltip title={TIPS.engine.programSave}><span>
+                                    <Button size="small" variant="contained" startIcon={<SaveIcon size={14} />} onClick={saveProgram} disabled={!connected} sx={{ ml: 'auto' }}>Save</Button>
+                                </span></Tooltip>
+                            </Box>
+                            {(progDraft.steps || []).map((s, i) => (
+                                <Box key={i} sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.5,
+                                                   bgcolor: prog && prog.id === progDraft.id && prog.step === i ? theme.palette.action.selected : 'transparent', borderRadius: 1, px: 0.5 }}>
+                                    <Typography variant="caption" sx={{ width: 18, textAlign: 'right' }}>{i + 1}</Typography>
+                                    <FormControl size="small" sx={{ minWidth: 170 }}>
+                                        <Select value={scenes.some((x) => x.id === s.scene) ? s.scene : ''} displayEmpty onChange={(e) => editStep(i, { scene: e.target.value })}>
+                                            <MenuItem value="" disabled>scene…</MenuItem>
+                                            {scenes.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}</MenuItem>)}
+                                        </Select>
+                                    </FormControl>
+                                    <TextField size="small" type="number" label="min" value={s.minutes} sx={{ width: 72 }} inputProps={{ min: 0.1, step: 0.5 }} onChange={(e) => editStep(i, { minutes: Number(e.target.value) })} />
+                                    <TextField size="small" type="number" label="arrives s" value={s.transition_s ?? ''} sx={{ width: 86 }} inputProps={{ min: 0, max: 120, step: 1 }} onChange={(e) => editStep(i, { transition_s: e.target.value === '' ? null : Number(e.target.value) })} />
+                                    <TextField size="small" type="number" label="from °" value={s.from_azimuth ?? ''} sx={{ width: 80 }} inputProps={{ min: -180, max: 180, step: 5 }} onChange={(e) => editStep(i, { from_azimuth: e.target.value === '' ? null : Number(e.target.value) })} />
+                                    <Tooltip title={TIPS.engine.programBeds}>
+                                        <FormControl size="small" sx={{ minWidth: 112 }}>
+                                            <Select value={s.beds || 'generated'} onChange={(e) => editStep(i, { beds: e.target.value })}>
+                                                <MenuItem value="generated">Generated</MenuItem>
+                                                <MenuItem value="pool">Pool</MenuItem>
+                                                <MenuItem value="both">Both</MenuItem>
+                                            </Select>
+                                        </FormControl>
+                                    </Tooltip>
+                                    <TextField size="small" label="label" value={s.label || ''} sx={{ width: 120 }} onChange={(e) => editStep(i, { label: e.target.value })} />
+                                    <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }} onClick={() => moveStep(i, -1)} disabled={i === 0}><ChevronUp size={14} /></Button>
+                                    <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }} onClick={() => moveStep(i, 1)} disabled={i === progDraft.steps.length - 1}><ChevronDown size={14} /></Button>
+                                    <Button size="small" variant="text" color="error" sx={{ minWidth: 0, px: 0.5 }} onClick={() => removeStep(i)}><RemoveIcon size={14} /></Button>
+                                </Box>
+                            ))}
+                            <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={addStep}>Add step</Button>
+                            {progProblems.length > 0 && <Alert severity="warning" sx={{ mt: 0.75 }}>{progProblems.join(' · ')}</Alert>}
+                        </Box>
+                    )}
 
                     {/* scenes */}
                     <Typography variant="subtitle2" sx={{ mb: 0.75 }}>Scenes</Typography>
