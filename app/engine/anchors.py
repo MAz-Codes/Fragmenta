@@ -38,7 +38,7 @@ VOCABULARY: Dict[str, Tuple[str, ...]] = {
     "density": ("sparse", "moderate", "dense"),
     "time": ("morning", "midday", "evening", "night"),
     "setting": ("interior", "exterior"),
-    "sources": ("voices", "footsteps", "scooters", "traffic", "vendors", "music",
+    "sources": ("voices", "footsteps", "motorcycles", "traffic", "vendors", "music",
                 "machinery", "birds", "water", "doors", "bells", "horns", "wind", "rain"),
 }
 _ASCII = re.compile(r"[^a-z0-9 ]")

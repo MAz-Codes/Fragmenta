@@ -29,7 +29,7 @@ scenes:
     blend: {street: 1.0}
     params: {/events/density: 0.5, /events/sparseness: 0.25, /spatial/events/distance_max: 12}
     events:
-      scooters: {probability: 0.4, trajectory: passby}
+      motorcycles: {probability: 0.4, trajectory: passby}
       traffic: {probability: 0.2, trajectory: passby, distance: [3, 12]}
       voices: {probability: 0.25}
       horns: {probability: 0.15, distance: [4, 15]}
@@ -39,7 +39,7 @@ scenes:
     params: {/events/density: 0.7, /events/sparseness: 0.1, /events/max_concurrent: 4}
     events:
       horns: {probability: 0.35, distance: [3, 15]}
-      scooters: {probability: 0.35, trajectory: passby}
+      motorcycles: {probability: 0.35, trajectory: passby}
       traffic: {probability: 0.2, trajectory: passby}
       voices: {probability: 0.1}
   - id: shop

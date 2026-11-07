@@ -17,20 +17,20 @@ anchors:
   - id: street
     label: Street
     color: "#A0B2D5"
-    fields: {type: ambience, place: street, perspective: mid, density: moderate, time: midday, setting: exterior, sources: [traffic, scooters, voices]}
+    fields: {type: ambience, place: street, perspective: mid, density: moderate, time: midday, setting: exterior, sources: [traffic, motorcycles, voices]}
     variants:
       - {sources: [traffic, voices]}
-      - {sources: [scooters, footsteps]}
+      - {sources: [motorcycles, footsteps]}
       - {density: dense}
       - {time: evening}
       - {perspective: far, sources: [traffic]}
   - id: intersection
     label: Intersection
     color: "#C18992"
-    fields: {type: ambience, place: intersection, perspective: mid, density: dense, time: midday, setting: exterior, sources: [traffic, horns, scooters]}
+    fields: {type: ambience, place: intersection, perspective: mid, density: dense, time: midday, setting: exterior, sources: [traffic, horns, motorcycles]}
     variants:
       - {sources: [traffic, horns]}
-      - {sources: [traffic, scooters, voices]}
+      - {sources: [traffic, motorcycles, voices]}
       - {perspective: far}
       - {time: evening}
   - id: shop

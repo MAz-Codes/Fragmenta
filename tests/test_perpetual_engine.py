@@ -288,7 +288,7 @@ def _():
 @check("audio: event voice pans, moves on a pass-by, finishes; limiter holds the ceiling")
 def _():
     mono = np.ones(SR // 2, dtype=np.float32) * 0.3
-    v = EventVoice("e", mono, "scooters", azimuth=80, distance=1.0, trajectory=Trajectory("passby", speed=6.0))
+    v = EventVoice("e", mono, "motorcycles", azimuth=80, distance=1.0, trajectory=Trajectory("passby", speed=6.0))
     a0 = v.azimuth
     blocks = []
     while not v.done:
