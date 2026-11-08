@@ -66,7 +66,6 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [loraRun, setLoraRun] = useState(stored.loraRun || '');
     const [layout, setLayout] = useState(stored.layout || 'stereo');
     const [radioUrl, setRadioUrl] = useState(stored.radioUrl || '');
-    const [clock, setClock] = useState(!!stored.clock);
     const [busy, setBusy] = useState('');
     const [error, setError] = useState('');
 
@@ -75,13 +74,11 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [anchors, setAnchors] = useState([]);
     const [blend, setBlend] = useState({});
     const [scenes, setScenes] = useState([]);
-    const [transition, setTransition] = useState(stored.transition ?? 20);
     // the program: the piece as timed steps (decision 11)
     const [programs, setPrograms] = useState([]);
     const [programId, setProgramId] = useState(stored.programId || 'tehran_hour');
     const [progDraft, setProgDraft] = useState(null);
     const [progProblems, setProgProblems] = useState([]);
-    const [fromAz, setFromAz] = useState(stored.fromAz ?? 0);
     const [listening, setListening] = useState(false);
     // live output: device, channel count, one route per layer (/v1/output)
     const [devices, setDevices] = useState([]);
@@ -93,9 +90,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
 
     useEffect(() => {
         try {
-            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, loraRun, layout, transition, fromAz, radioUrl, clock, programId }));
+            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, loraRun, layout, radioUrl, programId }));
         } catch { /* noop */ }
-    }, [modelId, loraPath, loraRun, layout, transition, fromAz, radioUrl, clock, programId]);
+    }, [modelId, loraPath, loraRun, layout, radioUrl, programId]);
 
     // /api/loras gives all_checkpoints as path strings (older shapes: objects with .path)
     const ckptsOf = (run) => ((run?.all_checkpoints) || []).map((c) => (typeof c === 'string' ? { path: c } : c)).filter((c) => c.path);
@@ -195,9 +192,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             const loraList = loraPath ? [{ path: loraPath, strength: Number(params['/render/lora_strength']?.value ?? 0.85) }] : [];
             const radio = layout === 'radio';
             await eng.start({
-                model_id: modelId, loras: loraList, layout: radio ? 'stereo' : layout, scene: radio || clock ? 'tehran_radio' : 'places',
-                program: clock ? undefined : (programId || undefined),
-                sink: radio ? 'radio' : 'auto', radio: radio && radioUrl ? [radioUrl] : [], clock,
+                model_id: modelId, loras: loraList, layout: radio ? 'stereo' : layout, scene: 'places',
+                program: programId || undefined,
+                sink: radio ? 'radio' : 'auto', radio: radio && radioUrl ? [radioUrl] : [],
             });
         } catch (e) {
             setError(errorText(e, 'The engine did not start'));
@@ -221,12 +218,6 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     };
     const record = async (on) => {
         try { await call('POST', `/v1/record/${on ? 'start' : 'stop'}`); eng.refreshStatus(); } catch (e) { setError(errorText(e, 'Record failed')); }
-    };
-    const activateScene = async (id) => {
-        try {
-            await call('POST', `/v1/scenes/${encodeURIComponent(id)}/activate`, { transition_s: Number(transition), from_azimuth: Number(fromAz) });
-            eng.refreshStatus();
-        } catch (e) { setError(errorText(e, 'Scene change failed')); }
     };
     // --- program ---------------------------------------------------------------
     const pickProgram = async (id) => {
@@ -349,7 +340,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                 <Paper sx={appStyles.elevatedInfoCard}>
                     <Box sx={appStyles.sectionCardHeader}>
                         <Box component="span" sx={appStyles.sectionCardIcon}><EngineIcon size={20} /></Box>
-                        <Typography variant="h6" sx={appStyles.sectionCardTitle}>Engine</Typography>
+                        <Typography variant="h6" sx={appStyles.sectionCardTitle}>Perpetual Engine</Typography>
                         <BetaBadge />
                         <Chip size="small" label={procLabel} variant="outlined"
                               sx={{ ml: 1, borderColor: running && connected ? warmColor : undefined, color: running && connected ? warmColor : undefined }} />
@@ -459,12 +450,6 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                            placeholder="icecast://source:password@host:8000/tehran.mp3" sx={{ minWidth: 320 }} disabled={running} />
                             </Tooltip>
                         )}
-                        <Tooltip title={TIPS.engine.clock}>
-                            <FormControlLabel control={
-                                <Switch size="small" checked={running ? !!params['/scene/clock/on']?.value : clock}
-                                        onChange={(e) => { setClock(e.target.checked); if (running) setParam('/scene/clock/on', e.target.checked); }} />
-                            } label={<Typography variant="caption">Tehran's clock{status?.conductor?.clock ? ` · ${status.conductor.clock.local_time}` : ''}</Typography>} />
-                        </Tooltip>
                         {running && (
                             <Tooltip title={TIPS.engine.loadModel}>
                                 <span>
@@ -477,14 +462,14 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                         )}
                     </Box>
 
-                    {/* program: the piece as timed steps */}
+                    {/* scenes: the piece as timed steps (a program file underneath) */}
                     <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.75 }}>
                         <ProgramIcon size={14} />
-                        <Typography variant="subtitle2">Program</Typography>
+                        <Typography variant="subtitle2">Scenes</Typography>
                         <Tooltip title={TIPS.engine.program}>
                             <FormControl size="small" sx={{ minWidth: 190 }}>
-                                <InputLabel>Program</InputLabel>
-                                <Select value={programs.some((x) => x.id === programId) ? programId : ''} label="Program" onChange={(e) => pickProgram(e.target.value)} disabled={!connected && programs.length === 0}>
+                                <InputLabel>Scenes</InputLabel>
+                                <Select value={programs.some((x) => x.id === programId) ? programId : ''} label="Scenes" onChange={(e) => pickProgram(e.target.value)} disabled={!connected && programs.length === 0}>
                                     {programs.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}{x.total_s ? ` · ${Math.round(x.total_s / 60)} min` : ''}</MenuItem>)}
                                 </Select>
                             </FormControl>
@@ -525,7 +510,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                     <Typography variant="caption" sx={{ width: 18, textAlign: 'right' }}>{i + 1}</Typography>
                                     <FormControl size="small" sx={{ minWidth: 170 }}>
                                         <Select value={scenes.some((x) => x.id === s.scene) ? s.scene : ''} displayEmpty onChange={(e) => editStep(i, { scene: e.target.value })}>
-                                            <MenuItem value="" disabled>scene…</MenuItem>
+                                            <MenuItem value="" disabled>place…</MenuItem>
                                             {scenes.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}</MenuItem>)}
                                         </Select>
                                     </FormControl>
@@ -547,32 +532,10 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                     <Button size="small" variant="text" color="error" sx={{ minWidth: 0, px: 0.5 }} onClick={() => removeStep(i)}><RemoveIcon size={14} /></Button>
                                 </Box>
                             ))}
-                            <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={addStep}>Add step</Button>
+                            <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={addStep}>Add scene</Button>
                             {progProblems.length > 0 && <Alert severity="warning" sx={{ mt: 0.75 }}>{progProblems.join(' · ')}</Alert>}
                         </Box>
                     )}
-
-                    {/* scenes */}
-                    <Typography variant="subtitle2" sx={{ mb: 0.75 }}>Scenes</Typography>
-                    <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', alignItems: 'center', mb: 1.5 }}>
-                        {scenes.length === 0 && <Typography variant="caption" color="textSecondary">{running ? 'No scenes loaded.' : 'Start the engine to see its scenes.'}</Typography>}
-                        {scenes.map((s) => (
-                            <Chip key={s.id} label={s.label} size="small" clickable onClick={() => activateScene(s.id)}
-                                  color={sceneId === s.id ? 'primary' : 'default'} variant={sceneId === s.id ? 'filled' : 'outlined'}
-                                  disabled={!connected} />
-                        ))}
-                    </Box>
-                    <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', justifyContent: 'flex-end', mb: 1.5 }}>
-                        <Typography variant="caption" color="textSecondary" sx={{ mr: 0.5 }}>Next scene arrives over</Typography>
-                        <Tooltip title={TIPS.engine.transition}>
-                            <TextField size="small" type="number" label="Transition s" value={transition} sx={{ width: 110 }}
-                                       inputProps={{ min: 0, max: 120, step: 1 }} onChange={(e) => setTransition(e.target.value)} />
-                        </Tooltip>
-                        <Tooltip title={TIPS.engine.fromAzimuth}>
-                            <TextField size="small" type="number" label="From °" value={fromAz} sx={{ width: 90 }}
-                                       inputProps={{ min: -180, max: 180, step: 5 }} onChange={(e) => setFromAz(e.target.value)} />
-                        </Tooltip>
-                    </Box>
 
                     <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         {/* blend */}

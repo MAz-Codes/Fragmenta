@@ -1562,7 +1562,7 @@ function App() {
                                     iconPosition={isIconOnlySidebar ? 'top' : 'start'}
                                     label={(isIconOnlySidebar || isMobileLayout) ? undefined : (
                                         <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
-                                            Engine
+                                            Perpetual
                                             <BetaBadge />
                                         </Box>
                                     )}
