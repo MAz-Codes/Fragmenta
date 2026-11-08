@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     Box, Typography, Paper, Button, Select, MenuItem, TextField, FormControl, InputLabel,
-    Chip, Switch, FormControlLabel, LinearProgress, Alert, Divider, ToggleButton, ToggleButtonGroup,
+    Chip, Switch, FormControlLabel, LinearProgress, Alert, Divider, ToggleButton, ToggleButtonGroup, Slider, Checkbox,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -46,6 +46,8 @@ const KNOBS = [
     { path: '/bed/crossfade_s', label: 'Crossfade', fmt: (v) => `${Math.round(v)} s`, step: 0.5 },
     { path: '/spatial/events/distance_max', label: 'Farthest', fmt: (v) => `${Math.round(v)} m`, step: 0.5 },
     { path: '/render/lora_strength', label: 'LoRA', fmt: (v) => Number(v).toFixed(2), step: 0.05 },
+    { path: '/render/steps', label: 'Steps', fmt: (v) => `${Math.round(v)}`, step: 5 },
+    { path: '/render/cfg', label: 'CFG', fmt: (v) => Number(v).toFixed(1), step: 0.5 },
     { path: '/master/gain', label: 'Master', fmt: (v) => `${Math.round(v * 100)}%`, step: 0.01, midi: 'engine.master' },
 ];
 
@@ -82,6 +84,12 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [progSaved, setProgSaved] = useState('');      // JSON of the last loaded/saved list; Save lights up when the draft differs
     const [showMeta, setShowMeta] = useState(false);
     const progDirty = !!progDraft && JSON.stringify(progDraft) !== progSaved;
+    // places (scenes), anchors and words are data the user edits here (E8.B / E8.D)
+    const [vocab, setVocab] = useState({ fields: {}, order: [] });
+    const [wordsDraft, setWordsDraft] = useState(null);
+    const [wordInput, setWordInput] = useState({});
+    const [placeDraft, setPlaceDraft] = useState(null);
+    const [anchorDraft, setAnchorDraft] = useState(null);
     const [listening, setListening] = useState(false);
     // live output: device, channel count, one route per layer (/v1/output)
     const [devices, setDevices] = useState([]);
@@ -130,6 +138,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             setAnchors(a.anchors || []);
             setBlend(a.blend || {});
             setScenes(s.scenes || []);
+            try { const vw = await v1(base, 'GET', '/v1/vocabulary'); setVocab(vw); } catch { /* older engine */ }
             try {
                 const pr = await v1(base, 'GET', '/v1/programs');
                 setPrograms(pr.programs || []);
@@ -254,6 +263,53 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const removeStep = (i) => setProgDraft((d) => ({ ...d, steps: d.steps.filter((_, k) => k !== i) }));
     const addStep = () => setProgDraft((d) => ({ ...d, steps: [...d.steps, { scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] }));
     const mmss = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.floor((s || 0) % 60)).padStart(2, '0')}`;
+    // --- places / anchors / words ------------------------------------------------------
+    const realAnchors = useMemo(() => anchors.filter((a) => !String(a.id).includes('|')), [anchors]);
+    const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const newPlace = () => setPlaceDraft({ id: '', label: '', blend: {}, params: { '/events/density': 0.4, '/events/sparseness': 0.3, '/events/max_concurrent': 3 }, events: {}, modulators: {}, soundmarks: [], _new: true });
+    const editPlace = (s) => setPlaceDraft({ ...s, blend: { ...(s.blend || {}) }, params: { ...(s.params || {}) }, events: { ...(s.events || {}) } });
+    const savePlace = async () => {
+        if (!placeDraft) return;
+        const id = placeDraft._new ? slug(placeDraft.label || placeDraft.id) : placeDraft.id;
+        if (!id) { setError('A place needs a name'); return; }
+        const blend = Object.fromEntries(Object.entries(placeDraft.blend || {}).filter(([, w]) => Number(w) > 0));
+        if (!Object.keys(blend).length) { setError('Give the place at least one anchor weight'); return; }
+        const { _new, ...rest } = placeDraft;
+        try {
+            await call('POST', '/v1/scenes', { ...rest, id, label: placeDraft.label || id, blend });
+            setPlaceDraft(null); await loadAll();
+        } catch (e) { setError(errorText(e, 'Could not save the place')); }
+    };
+    const deletePlace = async () => {
+        if (!placeDraft || placeDraft._new) { setPlaceDraft(null); return; }
+        try { await call('DELETE', `/v1/scenes/${encodeURIComponent(placeDraft.id)}`); setPlaceDraft(null); await loadAll(); } catch (e) { setError(errorText(e, 'Could not delete the place')); }
+    };
+    const setPlaceEvent = (word, on, prob) => setPlaceDraft((d) => {
+        const ev = { ...(d.events || {}) };
+        if (!on) delete ev[word]; else ev[word] = { ...(ev[word] || {}), probability: prob ?? ev[word]?.probability ?? 0.3 };
+        return { ...d, events: ev };
+    });
+    const newAnchor = () => setAnchorDraft({ id: '', label: '', setting: 'exterior', perspective: 'mid', density: 'moderate', sources: [] });
+    const saveAnchor = async () => {
+        const id = slug(anchorDraft.id || anchorDraft.label);
+        if (!id) { setError('An anchor needs a place word'); return; }
+        const fields = { type: 'ambience', place: id, perspective: anchorDraft.perspective, density: anchorDraft.density, setting: anchorDraft.setting, sources: anchorDraft.sources };
+        try {
+            await call('POST', '/v1/anchors', { id, label: anchorDraft.label || id, fields, variants: [{ density: anchorDraft.density === 'dense' ? 'moderate' : 'dense' }, { perspective: 'far' }] });
+            setAnchorDraft(null); await loadAll();
+        } catch (e) { setError(errorText(e, 'Could not save the anchor')); }
+    };
+    const deleteAnchor = async (id) => { try { await call('DELETE', `/v1/anchors/${encodeURIComponent(id)}`); await loadAll(); } catch (e) { setError(errorText(e, 'Could not delete the anchor')); } };
+    const words = wordsDraft || vocab.fields || {};
+    const wordsDirty = !!wordsDraft && JSON.stringify(wordsDraft) !== JSON.stringify(vocab.fields || {});
+    const addWord = (field) => {
+        const w = slug(wordInput[field] || '').replace(/_/g, ' ');
+        if (!w) return;
+        setWordsDraft({ ...words, [field]: [...(words[field] || []).filter((x) => x !== w), w] });
+        setWordInput({ ...wordInput, [field]: '' });
+    };
+    const removeWord = (field, w) => setWordsDraft({ ...words, [field]: (words[field] || []).filter((x) => x !== w) });
+    const saveWords = async () => { try { const r = await call('PUT', '/v1/vocabulary', { fields: wordsDraft }); setVocab((v) => ({ ...v, fields: r.fields })); setWordsDraft(null); } catch (e) { setError(errorText(e, 'Could not save the words')); } };
     const prog = status?.conductor?.program;
     const padAnchors = useMemo(() => {
         const steps = progDraft?.steps || [];
@@ -634,6 +690,134 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
 
             {/* the rail: space, buffers, machine */}
             <Box sx={{ width: { xs: '100%', lg: 300 }, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                <RailSection title="Places" defaultOpen={false}>
+                    {!connected && <Typography variant="caption" color="textSecondary">Start the engine to edit places.</Typography>}
+                    {connected && (
+                        <>
+                            <Tooltip title={TIPS.engine.places}>
+                                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                                    {scenes.map((s) => (
+                                        <Chip key={s.id} label={s.label} size="small" clickable onClick={() => editPlace(s)}
+                                              color={placeDraft && placeDraft.id === s.id ? 'primary' : 'default'} variant={placeDraft && placeDraft.id === s.id ? 'filled' : 'outlined'} />
+                                    ))}
+                                    <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={newPlace}>New place</Button>
+                                </Box>
+                            </Tooltip>
+                            {placeDraft && (
+                                <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    <TextField size="small" label="Name" value={placeDraft.label || ''} onChange={(e) => setPlaceDraft({ ...placeDraft, label: e.target.value })} fullWidth />
+                                    <Typography variant="caption" color="textSecondary">Blend of anchors</Typography>
+                                    {realAnchors.map((a) => (
+                                        <Box key={a.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Typography variant="caption" sx={{ width: 76, flexShrink: 0 }}>{a.label || a.id}</Typography>
+                                            <Slider size="small" min={0} max={1} step={0.05} value={Number(placeDraft.blend?.[a.id] || 0)} sx={{ flex: 1 }}
+                                                    onChange={(_, v) => setPlaceDraft({ ...placeDraft, blend: { ...placeDraft.blend, [a.id]: v } })} />
+                                            <Typography variant="caption" color="textSecondary" sx={{ width: 32, textAlign: 'right' }}>{Math.round((placeDraft.blend?.[a.id] || 0) * 100)}%</Typography>
+                                        </Box>
+                                    ))}
+                                    {[['/events/density', 'Density'], ['/events/sparseness', 'Silence']].map(([k, lbl]) => (
+                                        <Box key={k} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Typography variant="caption" sx={{ width: 76, flexShrink: 0 }}>{lbl}</Typography>
+                                            <Slider size="small" min={0} max={1} step={0.05} value={Number(placeDraft.params?.[k] ?? 0.4)} sx={{ flex: 1 }}
+                                                    onChange={(_, v) => setPlaceDraft({ ...placeDraft, params: { ...placeDraft.params, [k]: v } })} />
+                                            <Typography variant="caption" color="textSecondary" sx={{ width: 32, textAlign: 'right' }}>{Math.round((placeDraft.params?.[k] ?? 0.4) * 100)}%</Typography>
+                                        </Box>
+                                    ))}
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Typography variant="caption" sx={{ width: 76 }}>Max events</Typography>
+                                        <TextField size="small" type="number" value={placeDraft.params?.['/events/max_concurrent'] ?? 3} inputProps={{ min: 1, max: 8 }} sx={{ width: 70 }}
+                                                   onChange={(e) => setPlaceDraft({ ...placeDraft, params: { ...placeDraft.params, '/events/max_concurrent': Number(e.target.value) } })} />
+                                    </Box>
+                                    <Typography variant="caption" color="textSecondary">Events: which sources, how likely</Typography>
+                                    <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 1 }}>
+                                        {(vocab.fields?.sources || []).map((w) => {
+                                            const on = !!placeDraft.events?.[w];
+                                            return (
+                                                <Box key={w} sx={{ display: 'flex', alignItems: 'center', gap: 0.25, minHeight: 28 }}>
+                                                    <Checkbox size="small" checked={on} onChange={(e) => setPlaceEvent(w, e.target.checked)} sx={{ p: 0.25 }} />
+                                                    <Typography variant="caption" sx={{ flex: 1 }}>{w}</Typography>
+                                                    {on && <TextField size="small" type="number" value={placeDraft.events[w].probability ?? 0.3} inputProps={{ min: 0, max: 1, step: 0.05, style: { padding: '2px 4px', fontSize: 11, width: 40 } }}
+                                                                       onChange={(e) => setPlaceEvent(w, true, Number(e.target.value))} />}
+                                                </Box>
+                                            );
+                                        })}
+                                    </Box>
+                                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                                        <Button size="small" variant="contained" startIcon={<SaveIcon size={14} />} onClick={savePlace}>Save place</Button>
+                                        <Button size="small" variant="text" onClick={() => setPlaceDraft(null)}>Cancel</Button>
+                                        {!placeDraft._new && <Button size="small" variant="text" color="error" onClick={deletePlace} sx={{ ml: 'auto' }}>Delete</Button>}
+                                    </Box>
+                                </Box>
+                            )}
+                            <Divider sx={{ my: 1 }} />
+                            <Tooltip title={TIPS.engine.anchorsList}>
+                                <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <Typography variant="caption" color="textSecondary" sx={{ mr: 0.5 }}>Anchors</Typography>
+                                    {realAnchors.map((a) => <Chip key={a.id} label={a.label || a.id} size="small" variant="outlined" onDelete={() => deleteAnchor(a.id)} />)}
+                                    <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={newAnchor}>Anchor</Button>
+                                </Box>
+                            </Tooltip>
+                            {anchorDraft && (
+                                <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                        <FormControl size="small" sx={{ flex: 1 }}>
+                                            <InputLabel shrink>Place word</InputLabel>
+                                            <Select value={anchorDraft.id} label="Place word" displayEmpty notched onChange={(e) => setAnchorDraft({ ...anchorDraft, id: e.target.value, label: anchorDraft.label || e.target.value })}>
+                                                <MenuItem value="" disabled>from Words › place</MenuItem>
+                                                {(vocab.fields?.place || []).filter((w) => !realAnchors.some((a) => a.id === w)).map((w) => <MenuItem key={w} value={w}>{w}</MenuItem>)}
+                                            </Select>
+                                        </FormControl>
+                                        <TextField size="small" label="Label" value={anchorDraft.label} onChange={(e) => setAnchorDraft({ ...anchorDraft, label: e.target.value })} sx={{ flex: 1 }} />
+                                    </Box>
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                        {[['setting', 'Setting'], ['perspective', 'Perspective'], ['density', 'Density']].map(([k, lbl]) => (
+                                            <FormControl key={k} size="small" sx={{ flex: 1 }}>
+                                                <InputLabel>{lbl}</InputLabel>
+                                                <Select value={anchorDraft[k]} label={lbl} onChange={(e) => setAnchorDraft({ ...anchorDraft, [k]: e.target.value })}>
+                                                    {(vocab.fields?.[k] || []).map((w) => <MenuItem key={w} value={w}>{w}</MenuItem>)}
+                                                </Select>
+                                            </FormControl>
+                                        ))}
+                                    </Box>
+                                    <FormControl size="small" fullWidth>
+                                        <InputLabel>Sources</InputLabel>
+                                        <Select multiple value={anchorDraft.sources} label="Sources" onChange={(e) => setAnchorDraft({ ...anchorDraft, sources: e.target.value })} renderValue={(v) => v.join(', ')}>
+                                            {(vocab.fields?.sources || []).map((w) => <MenuItem key={w} value={w}>{w}</MenuItem>)}
+                                        </Select>
+                                    </FormControl>
+                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                        <Button size="small" variant="contained" onClick={saveAnchor}>Save anchor</Button>
+                                        <Button size="small" variant="text" onClick={() => setAnchorDraft(null)}>Cancel</Button>
+                                    </Box>
+                                </Box>
+                            )}
+                        </>
+                    )}
+                </RailSection>
+                <RailSection title="Words" defaultOpen={false}>
+                    {!connected && <Typography variant="caption" color="textSecondary">Start the engine to edit the vocabulary.</Typography>}
+                    {connected && (
+                        <Tooltip title={TIPS.engine.words}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                {(vocab.order || Object.keys(words)).filter((f) => f !== 'type' && f !== 'mood').map((f) => (
+                                    <Box key={f}>
+                                        <Typography variant="caption" color="textSecondary" sx={{ textTransform: 'capitalize' }}>{f}</Typography>
+                                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                                            {(words[f] || []).map((w) => <Chip key={w} label={w} size="small" variant="outlined" onDelete={() => removeWord(f, w)} />)}
+                                            <TextField size="small" placeholder="add…" value={wordInput[f] || ''} sx={{ width: 96, '& .MuiInputBase-input': { py: 0.4, px: 1, fontSize: 12 } }}
+                                                       onChange={(e) => setWordInput({ ...wordInput, [f]: e.target.value })}
+                                                       onKeyDown={(e) => { if (e.key === 'Enter') addWord(f); }} />
+                                        </Box>
+                                    </Box>
+                                ))}
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button size="small" variant={wordsDirty ? 'contained' : 'outlined'} startIcon={<SaveIcon size={14} />} onClick={saveWords} disabled={!wordsDirty}>Save words</Button>
+                                    {wordsDirty && <Button size="small" variant="text" onClick={() => setWordsDraft(null)}>Cancel</Button>}
+                                </Box>
+                            </Box>
+                        </Tooltip>
+                    )}
+                </RailSection>
                 <RailSection title="Space">
                     <SpatialView beds={beds} events={liveEvents} size={268} />
                     {status?.conductor && (
@@ -651,9 +835,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                     {running && outDraft && (
                         <>
                             <FormControl size="small" fullWidth>
-                                <InputLabel>Device</InputLabel>
+                                <InputLabel shrink>Device</InputLabel>
                                 <Tooltip title={TIPS.engine.device}>
-                                    <Select value={outDraft.device ?? ''} label="Device" displayEmpty
+                                    <Select value={outDraft.device ?? ''} label="Device" displayEmpty notched
                                             renderValue={(v) => (v === '' || v === null || v === undefined)
                                                 ? 'None (monitor only)'
                                                 : (devices.find((d) => d.index === v)?.name || String(v))}

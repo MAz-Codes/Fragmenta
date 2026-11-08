@@ -33,14 +33,17 @@ FIELDS: Tuple[Tuple[str, str], ...] = (
 )
 VOCABULARY: Dict[str, Tuple[str, ...]] = {
     "type": ("ambience", "event"),
-    "place": ("bazaar", "street", "intersection", "shop", "cafe", "park", "metro"),
+    "place": ("bazaar", "street", "intersection", "shop", "cafe", "park", "metro", "mosque"),
     "perspective": ("close", "mid", "far"),
     "density": ("sparse", "moderate", "dense"),
     "time": ("morning", "midday", "evening", "night"),
     "setting": ("interior", "exterior"),
     "sources": ("voices", "footsteps", "motorcycles", "traffic", "vendors", "music",
-                "machinery", "birds", "water", "doors", "bells", "horns", "wind", "rain"),
+                "machinery", "birds", "water", "doors", "bells", "horns", "wind", "rain",
+                "children", "announcements", "azan"),
 }
+# The built-in words are a default. A dataset brings its own: the anchors file's
+# `vocabulary:` block replaces a field's list (engine plan E8.D).
 _ASCII = re.compile(r"[^a-z0-9 ]")
 
 
@@ -161,13 +164,17 @@ class Anchor:
 
 
 class AnchorBank:
-    def __init__(self, definitions: Iterable[AnchorDef], cache_dir: Optional[Path] = None) -> None:
+    def __init__(self, definitions: Iterable[AnchorDef], cache_dir: Optional[Path] = None,
+                 vocabulary: Optional[Dict[str, Iterable[str]]] = None) -> None:
         self._anchors: Dict[str, Anchor] = {d.id: Anchor(d) for d in definitions}
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.encoder_key: str = ""
         self._lock = threading.RLock()
+        self.vocabulary: Dict[str, List[str]] = {k: list(v) for k, v in VOCABULARY.items()}
+        if vocabulary:
+            self.set_vocabulary(vocabulary)
 
     # --- definitions ---------------------------------------------------------
     @classmethod
@@ -175,7 +182,45 @@ class AnchorBank:
         import yaml
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
         defs = [AnchorDef.from_dict(d) for d in data.get("anchors", [])]
-        return cls(defs, cache_dir)
+        return cls(defs, cache_dir, vocabulary=data.get("vocabulary") or None)
+
+    def set_vocabulary(self, fields: Dict[str, Iterable[str]]) -> Dict[str, List[str]]:
+        """Replace a field's word list (only the template's fields; values normalised, de-duplicated, order kept)."""
+        with self._lock:
+            for key, values in (fields or {}).items():
+                if key not in dict(FIELDS):
+                    continue
+                seen, out = set(), []
+                for v in (values if isinstance(values, (list, tuple)) else str(values).split(",")):
+                    nv = normalise_value(v)
+                    if nv and nv not in seen:
+                        seen.add(nv)
+                        out.append(nv)
+                self.vocabulary[key] = out
+            return dict(self.vocabulary)
+
+    def to_yaml(self, path: Path) -> Path:
+        """Anchors (not the derived per-override ones) and the vocabulary, as the file the engine loads."""
+        import yaml
+        rows = []
+        for a in self._anchors.values():
+            d = a.definition
+            if "|" in d.id:
+                continue
+            row: Dict[str, Any] = {"id": d.id, "label": d.label or d.id}
+            if d.color:
+                row["color"] = d.color
+            if d.position:
+                row["position"] = list(d.position)
+            row["fields"] = dict(d.fields)
+            if d.variants:
+                row["variants"] = [dict(v) for v in d.variants]
+            rows.append(row)
+        data = {"vocabulary": {k: list(v) for k, v in self.vocabulary.items()}, "anchors": rows}
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("# Anchors and vocabulary — edited from the Perpetual tab or by hand. Values lowercase ASCII.\n"
+                              + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        return Path(path)
 
     def ids(self) -> List[str]:
         return list(self._anchors)

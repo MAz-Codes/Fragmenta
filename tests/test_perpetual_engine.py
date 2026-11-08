@@ -522,6 +522,42 @@ def _():
     assert _trim_bed(flat, sr).shape[1] >= n - int(0.5 * sr) - sr, "a steady clip loses only its head"
 
 
+@check("places as data: vocabulary and anchors save to the user's anchors file, scenes to the user's scene file, an edit of the playing place takes effect")
+def _():
+    with tempfile.TemporaryDirectory() as td:
+        eng = _engine_parts(td)
+        assert wait(lambda: eng.model_state == "ready", 5.0)
+        from app.engine.anchors import AnchorBank, AnchorDef
+        from app.engine.conductor import Scene
+        assert "mosque" in eng.bank.vocabulary["place"] and "azan" in eng.bank.vocabulary["sources"]
+        v = eng.set_vocabulary({"sources": ["Voices", "horns", "horns", "Namaki calls", "ignored?"], "bogus": ["x"]})
+        assert v["sources"] == ["voices", "horns", "namaki calls", "ignored"] and "bogus" not in v
+        assert eng.anchors_path.is_relative_to(eng.root), eng.anchors_path
+        bank2 = AnchorBank.from_yaml(eng.anchors_path)
+        assert bank2.vocabulary["sources"] == v["sources"] and set(bank2.ids()) == {a for a in eng.bank.ids() if "|" not in a}
+        eng.bank.add(AnchorDef(id="mosque", label="Mosque", fields={"type": "ambience", "place": "mosque", "setting": "interior", "sources": ["voices", "azan"]}))
+        eng._define_blend_param("mosque"); eng.save_anchors()
+        assert "mosque" in AnchorBank.from_yaml(eng.anchors_path).ids()
+        # scenes: saved into the user's copy of the loaded file, include/clock blocks kept
+        eng.conductor.activate("street_midday", transition_s=0.0)
+        edited = Scene.from_dict({**eng.conductor.scenes["street_midday"].to_dict(), "blend": {"street": 0.5, "mosque": 0.5},
+                                  "params": {"/events/density": 0.9}, "events": {"azan": {"probability": 0.5}}})
+        eng.conductor.add_scene(edited)
+        assert eng.conductor.scene.params["/events/density"] == 0.9 and abs(eng.params.base("/events/density") - 0.9) < 1e-6   # base: density is smoothed over 2 s
+        assert eng.params.exists("/events/types/azan/probability")
+        assert abs(eng.params.base("/scene/blend/mosque") - 0.5) < 1e-6   # base: `get` advances on the engine tick, which this test does not run
+        out = eng.save_scenes()
+        assert out.is_relative_to(eng.root) and out.name == "places.yaml"
+        import yaml as _y
+        d = _y.safe_load(out.read_text())
+        assert any(s["id"] == "street_midday" and s["blend"].get("mosque") == 0.5 for s in d["scenes"])
+        eng.stop()
+        from app.engine.engine import Engine
+        eng2 = Engine(Path(td), scene="places", renderer="fake", sink="null", osc_port=0, osc_out=None, autoload=False, resume=False)
+        assert eng2.conductor.scenes["street_midday"].blend.get("mosque") == 0.5 and "mosque" in eng2.bank.ids()
+        assert eng2.bank.vocabulary["sources"] == v["sources"]
+
+
 # --- output routing ---------------------------------------------------------------------
 @check("output: layers route to fixed channels or the spatial pair; monitor hears everything; channel count changes")
 def _():
@@ -672,7 +708,7 @@ def _():
             assert a["activated"] == "night_metro"
             assert c.get("/v1/anchors").get_json()["blend"] == {"metro": 0.5, "late_night": 0.5}
             n = c.post("/v1/scenes", json={"id": "test", "blend": {"park": 1}, "events": {"birds": {"probability": 1}}, "save": True})
-            assert n.status_code == 201 and (eng.root / "scenes" / "custom.yaml").exists()
+            assert n.status_code == 201 and (eng.root / "scenes" / "places.yaml").exists()   # saved into the user's copy of the loaded scene file
             assert c.delete("/v1/scenes/test").get_json()["deleted"] is True
             an = c.post("/v1/anchors", json={"id": "bridge", "fields": {"place": "bridge", "sources": ["wind"]}})
             assert an.status_code == 201 and eng.bank.get("bridge").encoded and eng.params.exists("/scene/blend/bridge")

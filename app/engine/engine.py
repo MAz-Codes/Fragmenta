@@ -230,7 +230,7 @@ class Engine:
         P("/events/gain_db", 0.0, (-24.0, 12.0), smoothing_s=0.5, label="Events gain", unit="dB")
         P("/soundmarks/probability", 0.5, (0.0, 10.0), label="Soundmarks per minute")
         P("/render/cfg", 7.0, (1.0, 15.0), label="CFG")
-        P("/render/steps", 50, (4, 100), label="Steps")
+        P("/render/steps", 50, (4, 300), label="Steps")       # medium wants 100–250 for beds (plan E8.E)
         P("/render/lora_strength", 0.85, (0.0, 1.5), label="LoRA strength")
         P("/render/init_strength", 0.0, (0.0, 1.0), label="Init strength")
         P("/render/seed_mode", "spread", kind="str", label="Seed mode")   # spread | fixed
@@ -342,11 +342,38 @@ class Engine:
         self.events.publish("output", {**self.output, "note": note})
         return {**self.output, "note": note, "sink_status": self.sink.status()}
 
+    def _user_copy(self, sub: str, path: Optional[Path], default_stem: str) -> Path:
+        """Where edits go: the loaded file when it is already the user's, else a copy of it in the user's folder."""
+        if path and Path(path).resolve().is_relative_to(self.root.resolve()):
+            return Path(path)
+        return self.root / sub / f"{Path(path).stem if path else default_stem}.yaml"
+
     def save_scenes(self) -> Path:
-        out = self.root / "scenes" / "custom.yaml"
-        data = {"scenes": [s.to_dict() for s in self.conductor.scenes.values()], "sequence": self.conductor.sequence}
+        out = self._user_copy("scenes", self.scene_path, "custom")
+        data: Dict[str, Any] = {}
+        if out.exists():
+            try:
+                data = yaml.safe_load(out.read_text(encoding="utf-8")) or {}   # keep include / clock blocks
+            except yaml.YAMLError:
+                data = {}
+        data["scenes"] = [s.to_dict() for s in self.conductor.scenes.values()]
+        data["sequence"] = self.conductor.sequence
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        self.scene_path = out
         return out
+
+    def save_anchors(self) -> Path:
+        out = self._user_copy("anchors", self.anchors_path, "places")
+        self.bank.to_yaml(out)
+        self.anchors_path = out
+        return out
+
+    def set_vocabulary(self, fields: Dict[str, Any]) -> Dict[str, List[str]]:
+        v = self.bank.set_vocabulary(fields)
+        self.save_anchors()
+        self.events.publish("vocabulary", v)
+        return v
 
     # --- programs -------------------------------------------------------------------
     def programs_dir(self) -> Path:

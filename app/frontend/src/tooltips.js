@@ -262,6 +262,9 @@ export const TIPS = {
         programSave: 'Save the list as shown. A list that is playing picks up the edit at once.',
         programNext: 'Skip to the next scene now, with its own transition.',
         programLoop: 'At the end, start again from the first scene. Off: the last scene stays until you change it.',
+        places: 'A place is a blend of anchors plus how dense and how quiet it is and which events it allows. The scene list picks from these. Saved into your scene file.',
+        anchorsList: 'Anchors are the words the LoRA knows as places, written in the training template. Add one when your dataset has a place the list lacks; it appears on the blend pad after the next model load.',
+        words: 'The vocabulary the captions were written with. Add a word here only if the dataset has clips carrying it; saved with the anchors.',
         programBeds: 'Where the beds of this scene come from. Generated = the model; Pool = real recordings and pre-rendered beds from the pool folder; Both = mixed. The pool player arrives with E4.6.',
         knobs: {
             '/events/density': 'How often events happen. The most important knob after Silence.',

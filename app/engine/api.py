@@ -170,26 +170,53 @@ def create_app(engine: Engine, shutdown_cb: Optional[Any] = None) -> Flask:
         return jsonify({"anchors": engine.bank.describe(), "encoder": engine.bank.encoder_key,
                         "blend": engine.conductor.effective_blend()})
 
+    def _upsert_anchor(b):
+        a = AnchorDef.from_dict(b)
+        if "|" in a.id:
+            raise ValueError("anchor ids cannot contain '|'")
+        engine.bank.add(a)
+        if not engine.params.exists(f"/scene/blend/{a.id}"):
+            engine._define_blend_param(a.id)
+        if engine.renderer.encoder is not None:
+            engine.renderer.ensure_anchors()
+        if b.get("save", True):
+            engine.save_anchors()
+        return a
+
     @app.post("/v1/anchors")
     def anchors_post():
         b = body()
         if b.get("rebuild"):
             return jsonify({"rebuilt": engine.rebuild_anchors()})
         if "id" in b:
-            a = AnchorDef.from_dict(b)
-            engine.bank.add(a)
-            if not engine.params.exists(f"/scene/blend/{a.id}"):
-                engine._define_blend_param(a.id)
-            if engine.renderer.encoder is not None:
-                engine.renderer.ensure_anchors()
-            return jsonify(a.to_dict()), 201
+            return jsonify(_upsert_anchor(b).to_dict()), 201
         raise ValueError("send {rebuild: true} or an anchor definition")
+
+    @app.put("/v1/anchors/<aid>")
+    def anchor_put(aid):
+        b = body()
+        b["id"] = aid
+        return jsonify(_upsert_anchor(b).to_dict())
 
     @app.delete("/v1/anchors/<aid>")
     def anchor_delete(aid):
         ok = engine.bank.remove(aid)
         engine.params.undefine(f"/scene/blend/{aid}")
+        if ok:
+            engine.save_anchors()
         return jsonify({"deleted": ok})
+
+    # --- vocabulary: the words the LoRA was trained with, as data (E8.D) --------------
+    @app.get("/v1/vocabulary")
+    def vocabulary():
+        from app.engine.anchors import FIELDS
+        return jsonify({"fields": engine.bank.vocabulary, "order": [k for k, _ in FIELDS],
+                        "file": str(engine.anchors_path) if engine.anchors_path else None})
+
+    @app.put("/v1/vocabulary")
+    def vocabulary_put():
+        b = body()
+        return jsonify({"fields": engine.set_vocabulary(b.get("fields", b)), "file": str(engine.anchors_path)})
 
     @app.put("/v1/blend")
     def blend_set():

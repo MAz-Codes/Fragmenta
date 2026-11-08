@@ -103,6 +103,15 @@ class Conductor:
     def add_scene(self, scene: Scene) -> None:
         with self._lock:
             self.scenes[scene.id] = scene
+            if self.scene is not None and self.scene.id == scene.id:   # an edit of the playing place
+                self.scene = scene
+                self.params.set_many(scene.params)
+                self._sync_event_type_params(scene)
+                self._blend_to = AnchorBank.normalise_weights(scene.blend)
+                for aid in self.bank.ids():
+                    p = f"/scene/blend/{aid}"
+                    if self.params.exists(p):
+                        self.params.set(p, self._blend_to.get(aid, 0.0), notify=False)
 
     def remove_scene(self, sid: str) -> bool:
         with self._lock:
