@@ -7,7 +7,7 @@ import { useTheme } from '@mui/material/styles';
 import {
     Infinity as EngineIcon, Play as PlayIcon, Square as StopIcon, Circle as RecordIcon,
     Headphones as ListenIcon, Radio as PowerIcon, RefreshCw as RefreshIcon, Waves as RenderIcon,
-    ChevronUp, ChevronDown, X as RemoveIcon, Plus as AddIcon, SkipForward as NextIcon, Save as SaveIcon, ListMusic as ProgramIcon,
+    ChevronUp, ChevronDown, X as RemoveIcon, Plus as AddIcon, SkipForward as NextIcon, Save as SaveIcon, ListMusic as ProgramIcon, Pencil as EditIcon,
 } from 'lucide-react';
 import Tooltip from '../Tooltip';
 import RotaryKnob from '../RotaryKnob';
@@ -79,6 +79,9 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const [programId, setProgramId] = useState(stored.programId || 'tehran_hour');
     const [progDraft, setProgDraft] = useState(null);
     const [progProblems, setProgProblems] = useState([]);
+    const [progSaved, setProgSaved] = useState('');      // JSON of the last loaded/saved list; Save lights up when the draft differs
+    const [showMeta, setShowMeta] = useState(false);
+    const progDirty = !!progDraft && JSON.stringify(progDraft) !== progSaved;
     const [listening, setListening] = useState(false);
     // live output: device, channel count, one route per layer (/v1/output)
     const [devices, setDevices] = useState([]);
@@ -133,7 +136,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                 const cur = pr.current?.id || programId;
                 if (cur && !progDraft) {
                     const full = await v1(base, 'GET', `/v1/programs/${encodeURIComponent(cur)}`);
-                    setProgDraft(full);
+                    setProgDraft(full); setProgSaved(JSON.stringify(full));
                     if (pr.current?.id) setProgramId(pr.current.id);
                 }
             } catch { /* an engine without programs */ }
@@ -223,13 +226,13 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const pickProgram = async (id) => {
         setProgramId(id);
         if (!connected) { setProgDraft(null); return; }
-        try { setProgDraft(await v1(base, 'GET', `/v1/programs/${encodeURIComponent(id)}`)); setProgProblems([]); } catch (e) { setError(errorText(e, 'Could not read the program')); }
+        try { const full = await v1(base, 'GET', `/v1/programs/${encodeURIComponent(id)}`); setProgDraft(full); setProgSaved(JSON.stringify(full)); setProgProblems([]); setShowMeta(false); } catch (e) { setError(errorText(e, 'Could not read the program')); }
     };
     const loadProgram = async () => {
         if (!programId) return;
         try {
             const r = await call('POST', `/v1/programs/${encodeURIComponent(programId)}/load`, { step: 0 });
-            setProgDraft(r.program); setProgProblems(r.problems || []); eng.refreshStatus();
+            setProgDraft(r.program); setProgSaved(JSON.stringify(r.program)); setProgProblems(r.problems || []); eng.refreshStatus();
         } catch (e) { setError(errorText(e, 'Could not load the program')); }
     };
     const saveProgram = async () => {
@@ -237,12 +240,12 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
         const id = (progDraft.id || 'program').toLowerCase().replace(/[^a-z0-9_-]+/g, '_');
         try {
             const r = await call('PUT', `/v1/programs/${encodeURIComponent(id)}`, { ...progDraft, id });
-            setProgDraft(r.program); setProgProblems(r.problems || []); setProgramId(id);
+            setProgDraft(r.program); setProgSaved(JSON.stringify(r.program)); setProgProblems(r.problems || []); setProgramId(id); setShowMeta(false);
             const pr = await v1(base, 'GET', '/v1/programs'); setPrograms(pr.programs || []);
         } catch (e) { setError(errorText(e, 'Could not save the program')); }
     };
     const nextStep = async () => { try { await call('POST', '/v1/program/next'); eng.refreshStatus(); } catch (e) { setError(errorText(e, 'Next step failed')); } };
-    const newProgram = () => setProgDraft({ id: 'my_piece', label: 'My piece', loop: true, scenes: '', steps: [{ scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] });
+    const newProgram = () => { setProgDraft({ id: 'my_piece', label: 'My piece', loop: true, scenes: '', steps: [{ scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] }); setProgSaved(''); setShowMeta(true); };
     const editStep = (i, patch) => setProgDraft((d) => ({ ...d, steps: d.steps.map((s, k) => (k === i ? { ...s, ...patch } : s)) }));
     const moveStep = (i, dir) => setProgDraft((d) => {
         const j = i + dir; if (j < 0 || j >= d.steps.length) return d;
@@ -465,77 +468,93 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                     {/* scenes: the piece as timed steps (a program file underneath) */}
                     <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.75 }}>
                         <ProgramIcon size={14} />
-                        <Typography variant="subtitle2">Scenes</Typography>
+                        <Typography variant="subtitle2" sx={{ mr: 0.5 }}>Scenes</Typography>
                         <Tooltip title={TIPS.engine.program}>
-                            <FormControl size="small" sx={{ minWidth: 190 }}>
-                                <InputLabel>Scenes</InputLabel>
-                                <Select value={programs.some((x) => x.id === programId) ? programId : ''} label="Scenes" onChange={(e) => pickProgram(e.target.value)} disabled={!connected && programs.length === 0}>
-                                    {programs.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}{x.total_s ? ` · ${Math.round(x.total_s / 60)} min` : ''}</MenuItem>)}
-                                </Select>
-                            </FormControl>
+                            <Select size="small" value={programs.some((x) => x.id === programId) ? programId : ''} displayEmpty onChange={(e) => pickProgram(e.target.value)}
+                                    disabled={!connected && programs.length === 0} sx={{ minWidth: 210, '& .MuiSelect-select': { py: 0.6, fontSize: 13 } }}
+                                    renderValue={(v) => { const x = programs.find((p) => p.id === v); return x ? `${x.label}${x.total_s ? ` · ${Math.round(x.total_s / 60)} min` : ''}` : 'Choose a list…'; }}>
+                                {programs.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}{x.total_s ? ` · ${Math.round(x.total_s / 60)} min` : ''}</MenuItem>)}
+                            </Select>
                         </Tooltip>
                         <Tooltip title={TIPS.engine.programLoad}><span>
                             <Button size="small" variant="outlined" onClick={loadProgram} disabled={!connected || !programId}>Load</Button>
                         </span></Tooltip>
                         <Tooltip title={TIPS.engine.programNext}><span>
-                            <Button size="small" variant="text" startIcon={<NextIcon size={14} />} onClick={nextStep} disabled={!connected || !prog}>Next</Button>
+                            <Button size="small" variant="text" startIcon={<NextIcon size={14} />} onClick={nextStep} disabled={!connected || !prog || !playing}>Next</Button>
                         </span></Tooltip>
                         <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={newProgram} disabled={!connected}>New</Button>
-                        {prog && (
+                        {prog && playing && (
                             <Typography variant="caption" color="textSecondary" sx={{ ml: 'auto' }}>
-                                {prog.label} · step {prog.step + 1}/{prog.steps}{prog.step_label ? ` · ${prog.step_label}` : ''} · {mmss(prog.step_elapsed_s)} / {mmss(prog.step_total_s)}{prog.ended ? ' · ended' : ''}
+                                {prog.step + 1}/{prog.steps}{prog.step_label ? ` · ${prog.step_label}` : ''} · {mmss(prog.step_elapsed_s)} / {mmss(prog.step_total_s)}{prog.ended ? ' · ended' : ''}
                             </Typography>
                         )}
                     </Box>
-                    {prog && prog.step_total_s > 0 && (
+                    {prog && playing && prog.step_total_s > 0 && (
                         <LinearProgress variant="determinate" value={Math.min(100, (100 * prog.step_elapsed_s) / prog.step_total_s)} sx={{ mb: 1, height: 3 }} />
                     )}
-                    {progDraft && (
-                        <Box sx={{ mb: 1.5, p: 1, border: `1px solid ${theme.palette.divider}`, borderRadius: 1 }}>
-                            <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.75 }}>
-                                <TextField size="small" label="Id" value={progDraft.id || ''} sx={{ width: 150 }} onChange={(e) => setProgDraft({ ...progDraft, id: e.target.value })} />
-                                <TextField size="small" label="Name" value={progDraft.label || ''} sx={{ width: 200 }} onChange={(e) => setProgDraft({ ...progDraft, label: e.target.value })} />
-                                <Tooltip title={TIPS.engine.programLoop}>
-                                    <FormControlLabel control={<Switch size="small" checked={!!progDraft.loop} onChange={(e) => setProgDraft({ ...progDraft, loop: e.target.checked })} />}
-                                                      label={<Typography variant="caption">Loop</Typography>} />
-                                </Tooltip>
-                                <Typography variant="caption" color="textSecondary">{Math.round((progDraft.steps || []).reduce((a, s) => a + Number(s.minutes || 0), 0))} min</Typography>
-                                <Tooltip title={TIPS.engine.programSave}><span>
-                                    <Button size="small" variant="contained" startIcon={<SaveIcon size={14} />} onClick={saveProgram} disabled={!connected} sx={{ ml: 'auto' }}>Save</Button>
-                                </span></Tooltip>
-                            </Box>
-                            {(progDraft.steps || []).map((s, i) => (
-                                <Box key={i} sx={{ display: 'flex', gap: 0.75, alignItems: 'center', flexWrap: 'wrap', mb: 0.5,
-                                                   bgcolor: prog && prog.id === progDraft.id && prog.step === i ? theme.palette.action.selected : 'transparent', borderRadius: 1, px: 0.5 }}>
-                                    <Typography variant="caption" sx={{ width: 18, textAlign: 'right' }}>{i + 1}</Typography>
-                                    <FormControl size="small" sx={{ minWidth: 170 }}>
-                                        <Select value={scenes.some((x) => x.id === s.scene) ? s.scene : ''} displayEmpty onChange={(e) => editStep(i, { scene: e.target.value })}>
-                                            <MenuItem value="" disabled>place…</MenuItem>
-                                            {scenes.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}</MenuItem>)}
-                                        </Select>
-                                    </FormControl>
-                                    <TextField size="small" type="number" label="min" value={s.minutes} sx={{ width: 72 }} inputProps={{ min: 0.1, step: 0.5 }} onChange={(e) => editStep(i, { minutes: Number(e.target.value) })} />
-                                    <TextField size="small" type="number" label="arrives s" value={s.transition_s ?? ''} sx={{ width: 86 }} inputProps={{ min: 0, max: 120, step: 1 }} onChange={(e) => editStep(i, { transition_s: e.target.value === '' ? null : Number(e.target.value) })} />
-                                    <TextField size="small" type="number" label="from °" value={s.from_azimuth ?? ''} sx={{ width: 80 }} inputProps={{ min: -180, max: 180, step: 5 }} onChange={(e) => editStep(i, { from_azimuth: e.target.value === '' ? null : Number(e.target.value) })} />
-                                    <Tooltip title={TIPS.engine.programBeds}>
-                                        <FormControl size="small" sx={{ minWidth: 112 }}>
-                                            <Select value={s.beds || 'generated'} onChange={(e) => editStep(i, { beds: e.target.value })}>
-                                                <MenuItem value="generated">Generated</MenuItem>
-                                                <MenuItem value="pool">Pool</MenuItem>
-                                                <MenuItem value="both">Both</MenuItem>
-                                            </Select>
-                                        </FormControl>
-                                    </Tooltip>
-                                    <TextField size="small" label="label" value={s.label || ''} sx={{ width: 120 }} onChange={(e) => editStep(i, { label: e.target.value })} />
-                                    <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }} onClick={() => moveStep(i, -1)} disabled={i === 0}><ChevronUp size={14} /></Button>
-                                    <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }} onClick={() => moveStep(i, 1)} disabled={i === progDraft.steps.length - 1}><ChevronDown size={14} /></Button>
-                                    <Button size="small" variant="text" color="error" sx={{ minWidth: 0, px: 0.5 }} onClick={() => removeStep(i)}><RemoveIcon size={14} /></Button>
+                    {progDraft && (() => {
+                        const cols = '22px minmax(150px, 1.4fr) 66px 78px 72px 104px minmax(110px, 1fr) 82px';
+                        const cell = { '& .MuiInputBase-input': { py: 0.45, px: 1, fontSize: 12 }, '& .MuiSelect-select': { py: 0.45, fontSize: 12 } };
+                        const head = (txt) => <Typography variant="caption" color="textSecondary" sx={{ fontSize: 11 }}>{txt}</Typography>;
+                        const total = Math.round((progDraft.steps || []).reduce((a, s) => a + Number(s.minutes || 0), 0));
+                        return (
+                            <Box sx={{ mb: 1.5, p: 1, pt: 0.75, border: `1px solid ${theme.palette.divider}`, borderRadius: 1 }}>
+                                {showMeta && (
+                                    <Box sx={{ display: 'flex', gap: 0.75, alignItems: 'center', mb: 1 }}>
+                                        <TextField size="small" label="Id" value={progDraft.id || ''} sx={{ width: 160, ...cell }} onChange={(e) => setProgDraft({ ...progDraft, id: e.target.value })} />
+                                        <TextField size="small" label="Name" value={progDraft.label || ''} sx={{ width: 220, ...cell }} onChange={(e) => setProgDraft({ ...progDraft, label: e.target.value })} />
+                                    </Box>
+                                )}
+                                <Box sx={{ display: 'grid', gridTemplateColumns: cols, gap: 0.75, alignItems: 'center', px: 0.5, mb: 0.25 }}>
+                                    {head('')}{head('Place')}{head('Minutes')}{head('Arrives s')}{head('From °')}{head('Beds')}{head('Label')}{head('')}
                                 </Box>
-                            ))}
-                            <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={addStep}>Add scene</Button>
-                            {progProblems.length > 0 && <Alert severity="warning" sx={{ mt: 0.75 }}>{progProblems.join(' · ')}</Alert>}
-                        </Box>
-                    )}
+                                {(progDraft.steps || []).map((s, i) => {
+                                    const live = prog && prog.id === progDraft.id && prog.step === i && playing;
+                                    return (
+                                        <Box key={i} sx={{ display: 'grid', gridTemplateColumns: cols, gap: 0.75, alignItems: 'center', px: 0.5, py: 0.25, borderRadius: 1,
+                                                           bgcolor: live ? theme.palette.action.selected : 'transparent' }}>
+                                            <Typography variant="caption" color={live ? 'primary' : 'textSecondary'} sx={{ textAlign: 'right', fontSize: 11 }}>{i + 1}</Typography>
+                                            <Select size="small" value={scenes.some((x) => x.id === s.scene) ? s.scene : ''} displayEmpty onChange={(e) => editStep(i, { scene: e.target.value })} sx={cell}>
+                                                <MenuItem value="" disabled>place…</MenuItem>
+                                                {scenes.map((x) => <MenuItem key={x.id} value={x.id}>{x.label}</MenuItem>)}
+                                            </Select>
+                                            <TextField size="small" type="number" value={s.minutes} inputProps={{ min: 0.1, step: 0.5 }} sx={cell} onChange={(e) => editStep(i, { minutes: Number(e.target.value) })} />
+                                            <TextField size="small" type="number" value={s.transition_s ?? ''} inputProps={{ min: 0, max: 120, step: 1 }} sx={cell} onChange={(e) => editStep(i, { transition_s: e.target.value === '' ? null : Number(e.target.value) })} />
+                                            <TextField size="small" type="number" value={s.from_azimuth ?? ''} inputProps={{ min: -180, max: 180, step: 5 }} sx={cell} onChange={(e) => editStep(i, { from_azimuth: e.target.value === '' ? null : Number(e.target.value) })} />
+                                            <Tooltip title={TIPS.engine.programBeds}>
+                                                <Select size="small" value={s.beds || 'generated'} onChange={(e) => editStep(i, { beds: e.target.value })} sx={cell}>
+                                                    <MenuItem value="generated">Generated</MenuItem>
+                                                    <MenuItem value="pool">Pool</MenuItem>
+                                                    <MenuItem value="both">Both</MenuItem>
+                                                </Select>
+                                            </Tooltip>
+                                            <TextField size="small" value={s.label || ''} placeholder={scenes.find((x) => x.id === s.scene)?.label || ''} sx={cell} onChange={(e) => editStep(i, { label: e.target.value })} />
+                                            <Box sx={{ display: 'flex', justifyContent: 'flex-end', color: 'text.secondary' }}>
+                                                <Button size="small" variant="text" color="inherit" sx={{ minWidth: 0, p: 0.4 }} onClick={() => moveStep(i, -1)} disabled={i === 0}><ChevronUp size={13} /></Button>
+                                                <Button size="small" variant="text" color="inherit" sx={{ minWidth: 0, p: 0.4 }} onClick={() => moveStep(i, 1)} disabled={i === progDraft.steps.length - 1}><ChevronDown size={13} /></Button>
+                                                <Button size="small" variant="text" color="inherit" sx={{ minWidth: 0, p: 0.4 }} onClick={() => removeStep(i)}><RemoveIcon size={13} /></Button>
+                                            </Box>
+                                        </Box>
+                                    );
+                                })}
+                                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 0.75 }}>
+                                    <Button size="small" variant="text" startIcon={<AddIcon size={14} />} onClick={addStep}>Add scene</Button>
+                                    <Tooltip title={TIPS.engine.programLoop}>
+                                        <FormControlLabel sx={{ ml: 0.5 }} control={<Switch size="small" checked={!!progDraft.loop} onChange={(e) => setProgDraft({ ...progDraft, loop: e.target.checked })} />}
+                                                          label={<Typography variant="caption">Loop</Typography>} />
+                                    </Tooltip>
+                                    <Typography variant="caption" color="textSecondary">{total} min</Typography>
+                                    <Button size="small" variant="text" color="inherit" startIcon={<EditIcon size={12} />} onClick={() => setShowMeta((v) => !v)} sx={{ color: 'text.secondary', textTransform: 'none' }}>
+                                        {progDraft.label || progDraft.id}
+                                    </Button>
+                                    <Tooltip title={TIPS.engine.programSave}><span>
+                                        <Button size="small" variant={progDirty ? 'contained' : 'outlined'} startIcon={<SaveIcon size={14} />} onClick={saveProgram} disabled={!connected || !progDirty} sx={{ ml: 'auto' }}>Save</Button>
+                                    </span></Tooltip>
+                                </Box>
+                                {progProblems.length > 0 && <Alert severity="warning" sx={{ mt: 0.75 }}>{progProblems.join(' · ')}</Alert>}
+                            </Box>
+                        );
+                    })()}
 
                     <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         {/* blend */}
