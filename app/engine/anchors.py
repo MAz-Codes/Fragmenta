@@ -202,7 +202,9 @@ class AnchorBank:
     def describe(self) -> List[Dict[str, Any]]:
         n = len(self._anchors)
         out = []
-        for i, a in enumerate(self._anchors.values()):
+        shown = [a for a in self._anchors.values() if "|" not in a.definition.id]   # derived (per-override) anchors are internal
+        n = len(shown)
+        for i, a in enumerate(shown):
             d = a.definition.to_dict()
             if d["position"] is None:
                 ang = 2 * np.pi * i / max(1, n) - np.pi / 2

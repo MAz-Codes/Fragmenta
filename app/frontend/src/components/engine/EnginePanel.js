@@ -17,6 +17,7 @@ import { MidiMappable } from '../MidiContext';
 import { TIPS } from '../../tooltips';
 import { appStyles } from '../../theme';
 import useEngine, { v1 } from './useEngine';
+import api from '../../api';
 import BlendPad from './BlendPad';
 import SpatialView from './SpatialView';
 
@@ -61,6 +62,8 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const baseModels = useMemo(() => models.filter((m) => m.kind === 'base'), [models]);
     const [modelId, setModelId] = useState(stored.modelId || 'sa3-small-sfx-base');
     const [loraPath, setLoraPath] = useState(stored.loraPath || '');
+    const [loraRuns, setLoraRuns] = useState([]);      // /api/loras?base_model=<modelId>: only adapters that fit the base
+    const [loraRun, setLoraRun] = useState(stored.loraRun || '');
     const [layout, setLayout] = useState(stored.layout || 'stereo');
     const [radioUrl, setRadioUrl] = useState(stored.radioUrl || '');
     const [clock, setClock] = useState(!!stored.clock);
@@ -90,9 +93,30 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
 
     useEffect(() => {
         try {
-            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, layout, transition, fromAz, radioUrl, clock, programId }));
+            window.localStorage.setItem(STORE_KEY, JSON.stringify({ modelId, loraPath, loraRun, layout, transition, fromAz, radioUrl, clock, programId }));
         } catch { /* noop */ }
-    }, [modelId, loraPath, layout, transition, fromAz, radioUrl, clock, programId]);
+    }, [modelId, loraPath, loraRun, layout, transition, fromAz, radioUrl, clock, programId]);
+
+    // LoRAs that fit the chosen base (the backend knows each run's base model); a run has many checkpoints
+    useEffect(() => {
+        let gone = false;
+        api.get(`/api/loras?base_model=${encodeURIComponent(modelId)}`).then((r) => {
+            if (gone) return;
+            const runs = r.data.loras || [];
+            setLoraRuns(runs);
+            const run = runs.find((x) => x.id === loraRun) || runs.find((x) => (x.all_checkpoints || []).some((c) => c.path === loraPath));
+            if (!run) { setLoraRun(''); setLoraPath(''); }
+            else if (run.id !== loraRun) setLoraRun(run.id);
+        }).catch(() => setLoraRuns([]));
+        return () => { gone = true; };
+    }, [modelId]);   // eslint-disable-line react-hooks/exhaustive-deps
+    const runCkpts = useMemo(() => (loraRuns.find((x) => x.id === loraRun)?.all_checkpoints) || [], [loraRuns, loraRun]);
+    const stepOf = (c) => { const m = /step=(\d+)/.exec(c.checkpoint || c.path || ''); return m ? `step ${m[1]}` : (c.checkpoint || c.path); };
+    const pickRun = (id) => {
+        setLoraRun(id);
+        const ck = (loraRuns.find((x) => x.id === id)?.all_checkpoints) || [];
+        setLoraPath(ck.length ? ck[ck.length - 1].path : '');
+    };
 
     const loadAll = useCallback(async () => {
         if (!base) return;
@@ -235,6 +259,14 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
     const addStep = () => setProgDraft((d) => ({ ...d, steps: [...d.steps, { scene: scenes[0]?.id || '', minutes: 10, transition_s: 25, from_azimuth: 0, beds: 'generated', label: '' }] }));
     const mmss = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.floor((s || 0) % 60)).padStart(2, '0')}`;
     const prog = status?.conductor?.program;
+    const padAnchors = useMemo(() => {
+        const steps = progDraft?.steps || [];
+        if (!prog || !steps.length) return anchors;
+        const used = new Set();
+        steps.forEach((s) => { const sc = scenes.find((x) => x.id === s.scene); Object.keys(sc?.blend || {}).forEach((k) => used.add(k)); });
+        const sub = anchors.filter((a) => used.has(a.id));
+        return sub.length ? sub : anchors;
+    }, [anchors, scenes, progDraft, prog]);
 
     // throttled parameter writes: at most one in flight per 80 ms, the last value always lands
     const setParam = useCallback((path, value) => {
@@ -392,12 +424,22 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                         <FormControl size="small" sx={{ minWidth: 200 }}>
                             <InputLabel>LoRA</InputLabel>
                             <Tooltip title={TIPS.engine.lora}>
-                                <Select value={loraPath} label="LoRA" onChange={(e) => setLoraPath(e.target.value)}>
+                                <Select value={loraRuns.some((x) => x.id === loraRun) ? loraRun : ''} label="LoRA" onChange={(e) => pickRun(e.target.value)}>
                                     <MenuItem value="">None (plain base)</MenuItem>
-                                    {loras.map((l) => <MenuItem key={l.path || l.name} value={l.path || l.name}>{l.name}</MenuItem>)}
+                                    {loraRuns.map((l) => <MenuItem key={l.id} value={l.id}>{l.name}</MenuItem>)}
                                 </Select>
                             </Tooltip>
                         </FormControl>
+                        {runCkpts.length > 1 && (
+                            <FormControl size="small" sx={{ minWidth: 140 }}>
+                                <InputLabel>Checkpoint</InputLabel>
+                                <Tooltip title={TIPS.engine.checkpoint}>
+                                    <Select value={runCkpts.some((c) => c.path === loraPath) ? loraPath : ''} label="Checkpoint" onChange={(e) => setLoraPath(e.target.value)}>
+                                        {runCkpts.map((c) => <MenuItem key={c.path} value={c.path}>{stepOf(c)}</MenuItem>)}
+                                    </Select>
+                                </Tooltip>
+                            </FormControl>
+                        )}
                         <FormControl size="small" sx={{ minWidth: 130 }}>
                             <InputLabel>Layout</InputLabel>
                             <Tooltip title={TIPS.engine.layout}>
@@ -536,7 +578,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                             <Typography variant="subtitle2" sx={{ mb: 0.75 }}>Blend</Typography>
                             <Tooltip title={TIPS.engine.blend}>
                                 <Box>
-                                    <BlendPad anchors={anchors} blend={blend} onChange={setBlendWeights} disabled={!connected} />
+                                    <BlendPad anchors={padAnchors} blend={blend} onChange={setBlendWeights} disabled={!connected} />
                                 </Box>
                             </Tooltip>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>

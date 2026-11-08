@@ -81,6 +81,26 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
+
+    def watch_fatal() -> None:
+        # a poisoned CUDA context cannot be repaired in-process: save, stop, and become a fresh
+        # process with the same arguments (same PID, so a supervising backend keeps its handle)
+        while not stopping.is_set():
+            if getattr(engine, "fatal_exit", False):
+                if os.environ.get("FRAGMENTA_ENGINE_NO_RESTART"):
+                    log.error("fatal GPU error; self-restart disabled, exiting 75")
+                    shutdown(); return
+                stopping.set()
+                log.error("fatal GPU error: %s — restarting the engine process in 5 s", engine.model_error)
+                try:
+                    engine.stop()
+                except Exception:
+                    pass
+                threading.Event().wait(5.0)
+                os.execv(sys.executable, [sys.executable, "-m", "app.engine", *sys.argv[1:]])
+            threading.Event().wait(0.5)
+
+    threading.Thread(target=watch_fatal, name="fatal-watch", daemon=True).start()
     app = create_app(engine, shutdown_cb=shutdown)
     log.info("engine %s on http://%s:%d/v1  OSC in :%s  data %s", engine.status()["version"], args.host, args.port,
              engine.osc_server.port if engine.osc_server else "off", engine.root)

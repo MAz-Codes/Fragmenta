@@ -86,7 +86,7 @@ def post_process(audio: np.ndarray, sr: int, role: str, targets: Optional[Dict[s
     if a.ndim == 1:
         a = a[None, :]
     if role == "bed":
-        return _normalise(a, targets["bed"])
+        return _normalise(_trim_bed(a, sr), targets["bed"])
     if role == "oneshot":
         peak = float(np.max(np.abs(a)) + 1e-9)
         return (a * min(1.0, 10 ** (-1 / 20) / peak)).astype(np.float32)
@@ -110,7 +110,39 @@ def post_process(audio: np.ndarray, sr: int, role: str, targets: Optional[Dict[s
     return _normalise(mono[None, :], targets.get(role, targets["event"]))
 
 
+def _trim_bed(a: np.ndarray, sr: int, head_s: float = 0.5, frame_s: float = 0.5, drop_db: float = 6.0, keep_min: float = 0.7) -> np.ndarray:
+    """SA3 winds a clip down toward its stated length, so the last seconds of a
+    bed decay toward silence; crossfading over that decay is the audible seam.
+    Cut the tail back to the last frame still within `drop_db` of the clip's
+    median level (never below `keep_min` of the clip), and skip a soft head."""
+    n = a.shape[1]
+    hop = max(1, int(frame_s * sr))
+    frames = n // hop
+    if frames < 8:
+        return a
+    mono = a.mean(axis=0)[: frames * hop].reshape(frames, hop)
+    rms_db = 20 * np.log10(np.sqrt(np.mean(mono ** 2, axis=1)) + 1e-9)
+    mid = rms_db[frames // 4: max(frames // 4 + 1, 3 * frames // 4)]
+    ref = float(np.median(mid)) if mid.size else float(np.median(rms_db))
+    last = frames - 1
+    while last > int(frames * keep_min) and rms_db[last] < ref - drop_db:
+        last -= 1
+    end = min(n, (last + 1) * hop)
+    start = min(int(head_s * sr), max(0, end - int(sr * 2)))
+    return np.ascontiguousarray(a[:, start:end])
+
+
 # --- the queue and the base worker -----------------------------------------
+def _is_fatal_device_error(exc: BaseException) -> bool:
+    """A CUDA error that poisons the context (launch timeout, illegal address, device lost).
+    Out-of-memory is not fatal: `_render` already retries smaller."""
+    name = exc.__class__.__name__
+    msg = str(exc)
+    if "OutOfMemoryError" in name or "out of memory" in msg.lower():
+        return False
+    return name in ("AcceleratorError",) or "CUDA error" in msg or "device-side assert" in msg
+
+
 class BaseRenderer:
     name = "base"
 
@@ -123,6 +155,7 @@ class BaseRenderer:
         self._done_cbs: List[JobDone] = []
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self.fatal: Optional[str] = None       # set once by a dead-context error; the engine restarts the process
         self._lock = threading.RLock()
         self.current: Optional[RenderJob] = None
         self.progress = 0.0
@@ -264,13 +297,26 @@ class BaseRenderer:
                         blend=dict(job.blend), seed=int(job.seed) + i, prompt=prompt,
                         render_s=round(time.perf_counter() - t0, 2)))
                 self.renders += 1
-            except Exception as exc:  # the loop must survive any job
+            except Exception as exc:  # the loop must survive any job …
                 if self._stop.is_set():
                     break
                 self.errors += 1
                 err = f"{exc.__class__.__name__}: {exc}"
                 self.last_error = err
                 traceback.print_exc()
+                if _is_fatal_device_error(exc):
+                    # … except a dead CUDA context: nothing rendered in this process will ever
+                    # succeed again, so stop taking jobs and let the engine restart the process
+                    self.fatal = err
+                    with self._lock:
+                        self.current = None
+                        self._jobs.pop(jid, None)
+                    for cb in list(self._done_cbs):
+                        try:
+                            cb(job, [], err)
+                        except Exception:
+                            traceback.print_exc()
+                    break
             self.last_render_s = time.perf_counter() - t0
             self.render_times.append(self.last_render_s)
             self.render_times = self.render_times[-100:]

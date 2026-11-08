@@ -482,6 +482,46 @@ def _():
         assert eng3.conductor.program.id == "tehran_hour" and "street_midday" in eng3.conductor.scenes
 
 
+@check("renderer: a dead-context CUDA error stops the worker and flags the engine; OOM does not; beds lose their wind-down tail")
+def _():
+    from app.engine.renderer import BaseRenderer, _is_fatal_device_error, _trim_bed
+    class Dead(Exception):
+        pass
+    Dead.__name__ = "AcceleratorError"
+    assert _is_fatal_device_error(Dead("CUDA error: the launch timed out and was terminated"))
+    assert _is_fatal_device_error(RuntimeError("CUDA error: an illegal memory access was encountered"))
+    assert not _is_fatal_device_error(RuntimeError("CUDA out of memory. Tried to allocate 2 GiB"))
+    with tempfile.TemporaryDirectory() as td:
+        eng = _engine_parts(td)
+        assert wait(lambda: eng.model_state == "ready", 5.0)
+        r = eng.renderer
+        def boom(job):
+            raise Dead("CUDA error: the launch timed out and was terminated")
+        r._render = boom
+        eng.start()
+        try:
+            eng.transport(True)
+            assert wait(lambda: r.fatal is not None, 10.0), "fatal not set"
+            assert wait(lambda: eng.fatal_exit and eng.model_state == "error", 5.0)
+            time.sleep(0.6)
+            assert r.errors <= 3, f"worker kept failing jobs: {r.errors}"
+            assert not r.running, "worker should have stopped"
+            assert eng._renderer_restarts == 0, "a fatal worker must not be restarted in-process"
+            assert "restarts itself" in eng.model_error
+        finally:
+            eng.stop()
+    # bed trim: a clip that decays over its last 6 s loses that tail, keeps >= 70 %
+    sr = 44100
+    n = 30 * sr
+    a = np.random.default_rng(0).normal(0, 0.1, (2, n)).astype(np.float32)
+    ramp = np.ones(n, dtype=np.float32); ramp[-6 * sr:] = np.linspace(1, 0.01, 6 * sr)
+    a *= ramp
+    b = _trim_bed(a, sr)
+    assert 0.7 * n <= b.shape[1] <= n - int(2.5 * sr), b.shape   # cut where the level has fallen 6 dB (gain 0.5, ~3 s into the ramp)
+    flat = np.random.default_rng(1).normal(0, 0.1, (2, n)).astype(np.float32)
+    assert _trim_bed(flat, sr).shape[1] >= n - int(0.5 * sr) - sr, "a steady clip loses only its head"
+
+
 # --- output routing ---------------------------------------------------------------------
 @check("output: layers route to fixed channels or the spatial pair; monitor hears everything; channel count changes")
 def _():

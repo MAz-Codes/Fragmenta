@@ -176,6 +176,7 @@ class Engine:
         self._stop = threading.Event()
         self._loop_thread: Optional[threading.Thread] = None
         self._renderer_restarts = 0
+        self.fatal_exit = False          # a dead CUDA context: __main__ re-executes the process (state resumes)
         self.oneshots: Dict[str, Dict[str, Any]] = {}
         self.renderer.on_done(self._oneshot_done)
 
@@ -470,7 +471,14 @@ class Engine:
                 self.mixer.limiter_on = bool(self.params.get("/master/limiter"))
                 if self.model_state == "ready" or self.renderer_kind == "fake":
                     self.conductor.tick(step)
-                if not self.renderer.running and not self._stop.is_set():
+                if getattr(self.renderer, "fatal", None) and not self.fatal_exit:
+                    self.fatal_exit = True
+                    self.model_state = "error"
+                    self.model_error = f"GPU error, the engine restarts itself: {self.renderer.fatal.splitlines()[0]}"
+                    self.notes.append(self.model_error)
+                    self.events.publish("warning", {"error": self.model_error, "fatal": True})
+                    self.snapshot()
+                if not self.renderer.running and not self._stop.is_set() and not getattr(self.renderer, "fatal", None):
                     self._renderer_restarts += 1
                     self.events.publish("warning", {"error": "render worker died; restarted", "restarts": self._renderer_restarts})
                     self.renderer.start()
