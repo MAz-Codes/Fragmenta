@@ -743,7 +743,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                         })}
                                     </Box>
                                     <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                        <Button size="small" variant="contained" startIcon={<SaveIcon size={14} />} onClick={savePlace}>Save place</Button>
+                                        <Button size="small" variant="contained" startIcon={<SaveIcon size={14} />} onClick={savePlace}>Save</Button>
                                         <Button size="small" variant="text" onClick={() => setPlaceDraft(null)}>Cancel</Button>
                                         {!placeDraft._new && <Button size="small" variant="text" color="error" onClick={deletePlace} sx={{ ml: 'auto' }}>Delete</Button>}
                                     </Box>
@@ -786,7 +786,7 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
                                         </Select>
                                     </FormControl>
                                     <Box sx={{ display: 'flex', gap: 1 }}>
-                                        <Button size="small" variant="contained" onClick={saveAnchor}>Save anchor</Button>
+                                        <Button size="small" variant="contained" onClick={saveAnchor}>Save</Button>
                                         <Button size="small" variant="text" onClick={() => setAnchorDraft(null)}>Cancel</Button>
                                     </Box>
                                 </Box>
