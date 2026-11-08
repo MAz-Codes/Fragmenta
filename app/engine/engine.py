@@ -230,7 +230,7 @@ class Engine:
         P("/events/gain_db", 0.0, (-24.0, 12.0), smoothing_s=0.5, label="Events gain", unit="dB")
         P("/soundmarks/probability", 0.5, (0.0, 10.0), label="Soundmarks per minute")
         P("/render/cfg", 7.0, (1.0, 15.0), label="CFG")
-        P("/render/steps", 50, (4, 300), label="Steps")       # medium wants 100–250 for beds (plan E8.E)
+        P("/render/steps", 100, (20, 300), label="Steps")     # base models: 50–250 (medium beds 250); distilled checkpoints ignore it
         P("/render/lora_strength", 0.85, (0.0, 1.5), label="LoRA strength")
         P("/render/init_strength", 0.0, (0.0, 1.0), label="Init strength")
         P("/render/seed_mode", "spread", kind="str", label="Seed mode")   # spread | fixed
