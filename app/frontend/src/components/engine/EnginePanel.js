@@ -97,6 +97,8 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
         } catch { /* noop */ }
     }, [modelId, loraPath, loraRun, layout, transition, fromAz, radioUrl, clock, programId]);
 
+    // /api/loras gives all_checkpoints as path strings (older shapes: objects with .path)
+    const ckptsOf = (run) => ((run?.all_checkpoints) || []).map((c) => (typeof c === 'string' ? { path: c } : c)).filter((c) => c.path);
     // LoRAs that fit the chosen base (the backend knows each run's base model); a run has many checkpoints
     useEffect(() => {
         let gone = false;
@@ -104,17 +106,17 @@ export default function EnginePanel({ models = [], loras = [], active = true, is
             if (gone) return;
             const runs = r.data.loras || [];
             setLoraRuns(runs);
-            const run = runs.find((x) => x.id === loraRun) || runs.find((x) => (x.all_checkpoints || []).some((c) => c.path === loraPath));
+            const run = runs.find((x) => x.id === loraRun) || runs.find((x) => ckptsOf(x).some((c) => c.path === loraPath));
             if (!run) { setLoraRun(''); setLoraPath(''); }
             else if (run.id !== loraRun) setLoraRun(run.id);
         }).catch(() => setLoraRuns([]));
         return () => { gone = true; };
     }, [modelId]);   // eslint-disable-line react-hooks/exhaustive-deps
-    const runCkpts = useMemo(() => (loraRuns.find((x) => x.id === loraRun)?.all_checkpoints) || [], [loraRuns, loraRun]);
-    const stepOf = (c) => { const m = /step=(\d+)/.exec(c.checkpoint || c.path || ''); return m ? `step ${m[1]}` : (c.checkpoint || c.path); };
+    const runCkpts = useMemo(() => ckptsOf(loraRuns.find((x) => x.id === loraRun)), [loraRuns, loraRun]);
+    const stepOf = (c) => { const m = /step=(\d+)/.exec(c.path || ''); return m ? `step ${m[1]}` : (c.path || '').split('/').pop(); };
     const pickRun = (id) => {
         setLoraRun(id);
-        const ck = (loraRuns.find((x) => x.id === id)?.all_checkpoints) || [];
+        const ck = ckptsOf(loraRuns.find((x) => x.id === id));
         setLoraPath(ck.length ? ck[ck.length - 1].path : '');
     };
 
