@@ -95,12 +95,7 @@ from app.backend import bend_routes as _bend_routes  # noqa: E402
 app.register_blueprint(_bend_routes.bend_bp)
 # Live bending renders on the same generator (and behind its lock).
 _bend_routes.generator_provider = lambda: (_ensure_components(), generator)[1]
-# The Engine tab's process management (app/backend/engine_routes.py); the tab
-# itself talks to the engine's own /v1 API.
-from app.backend import engine_routes as _engine_routes  # noqa: E402
-app.register_blueprint(_engine_routes.engine_bp)
 import atexit as _atexit  # noqa: E402
-_atexit.register(_engine_routes.stop_on_exit)
 
 
 @app.errorhandler(413)

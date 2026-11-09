@@ -159,8 +159,8 @@ tests/*_ab/
 tests/mode_comparison*/
 tests/percussion_grids/
 
-# ===== Perpetual engine: decisions and art documentation (local only) =====
+# ===== Perpetual (now its own app, ~/Documents/Perpetual): old local notes =====
 perpetual/
 
-# ===== Perpetual engine runtime data (clips, anchor cache, recordings) =====
+# ===== Perpetual's runtime data in this data folder (clips, anchors, recordings, logs) =====
 /engine/
